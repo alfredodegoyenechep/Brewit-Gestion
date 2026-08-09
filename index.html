@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Brewit-Gestion</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">
+        <span></span>
+      </div>
+      <div>
+        <div class="brand-kicker">BREWIT</div>
+        <div class="brand-title">Gestion</div>
+      </div>
+    </div>
+
+    <nav class="navigation">
+      <div class="nav-label">Workspace</div>
+      <a href="#" class="nav-link active">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M3 13h8l3-7 3 7h5" />
+          <path d="M3 19h18" />
+        </svg>
+        Overview
+      </a>
+      <a href="#" class="nav-link">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="18" rx="3" />
+          <path d="M8 2v4M16 2v4M3 10h18" />
+        </svg>
+        Orders
+      </a>
+      <a href="#" class="nav-link">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M6 11h12M6 7h12M6 15h12M6 19h7" />
+        </svg>
+        Menu
+      </a>
+      <a href="#" class="nav-link">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M3 21h18" />
+          <path d="M4 21V10" />
+          <path d="M20 21V10" />
+          <path d="M4 10l8-7 8 7" />
+        </svg>
+        Inventory
+      </a>
+      <a href="#" class="nav-link">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="18" rx="3" />
+          <path d="M9 16h6M9 12h6M9 8h3" />
+        </svg>
+        Reports
+      </a>
+      <a href="#" class="nav-link">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
+          <path d="M19.4 15a7.7 7.7 0 0 0 .1-1 7.7 7.7 0 0 0-.1-1l2.1-1.7-2-3.4-2.6 1a7 7 0 0 0-1.8-1L14.5 2h-5l-.7 2.9a7 7 0 0 0-1.8 1l-2.6-1-2 3.4 2.1 1.7a7.7 7.7 0 0 0-.1 1 7.7 7.7 0 0 0 .1 1l-2.1 1.7 2 3.4 2.6-1a7 7 0 0 0 1.8 1l.7 2.9h5l.7-2.9a7 7 0 0 0 1.8-1l2.6 1 2-3.4Z" />
+        </svg>
+        Settings
+      </a>
+    </nav>
+
+    <div class="workspace-user">
+      <div class="user-row">
+        <div class="avatar">BS</div>
+        <div>
+          <div class="user-name">Brewit Studio</div>
+          <div class="user-role">Admin Console</div>
+        </div>
+      </div>
+      <button class="primary small">+ New Order</button>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <header class="topbar">
+      <div>
+        <div class="page-kicker">Brewit-Gestion</div>
+        <h1>Good morning, Mira</h1>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-button">Today, Aug 09</button>
+        <button class="primary">Create Order</button>
+      </div>
+    </header>
+
+    <section class="summary-grid">
+      <article class="summary-card highlight">
+        <div class="summary-head">
+          <span class="label">Today’s Revenue</span>
+          <span class="chip positive">+12.4%</span>
+        </div>
+        <div class="value">$2,406.40</div>
+        <div class="trend-row">
+          <span class="trend-up">↑ $410.22 vs yesterday</span>
+          <span class="subtle">Live sales</span>
+        </div>
+      </article>
+
+      <article class="summary-card">
+        <div class="summary-head">
+          <span class="label">Orders</span>
+          <span class="chip neutral">24h</span>
+        </div>
+        <div class="value">126</div>
+        <div class="trend-row">
+          <span class="trend-up">↑ 18 active</span>
+          <span class="subtle">6 waiting</span>
+        </div>
+      </article>
+
+      <article class="summary-card">
+        <div class="summary-head">
+          <span class="label">Guests served</span>
+          <span class="chip">Live</span>
+        </div>
+        <div class="value">324</div>
+        <div class="trend-row">
+          <span class="trend-up">↑ 42 today</span>
+          <span class="subtle">Peak 2 PM</span>
+        </div>
+      </article>
+
+      <article class="summary-card">
+        <div class="summary-head">
+          <span class="label">Inventory health</span>
+          <span class="chip warning">Low beans</span>
+        </div>
+        <div class="value">82%</div>
+        <div class="trend-row">
+          <span class="trend-down">↓ 2 products low</span>
+          <span class="subtle">Restock alert</span>
+        </div>
+      </article>
+    </section>
+
+    <section class="content-layout">
+      <section class="panel wide-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-eyebrow">Sales Overview</div>
+            <h2>Revenue Tracking</h2>
+          </div>
+          <div class="segmented">
+            <button class="segmented-button active">Week</button>
+            <button class="segmented-button">Month</button>
+            <button class="segmented-button">Year</button>
+          </div>
+        </div>
+        <div class="chart-area">
+          <div class="chart-empty">
+            <div class="chart-bars">
+              <div class="bar" style="height: 24%"></div>
+              <div class="bar" style="height: 58%"></div>
+              <div class="bar" style="height: 38%"></div>
+              <div class="bar" style="height: 88%"></div>
+              <div class="bar" style="height: 50%"></div>
+              <div class="bar" style="height: 71%"></div>
+              <div class="bar" style="height: 63%"></div>
+              <div class="bar" style="height: 88%"></div>
+              <div class="bar" style="height: 48%"></div>
+              <div class="bar" style="height: 72%"></div>
+              <div class="bar" style="height: 46%"></div>
+              <div class="bar" style="height: 62%"></div>
+            </div>
+          </div>
+        </div>
+        <div class="chart-labels">
+          <span>Mon</span>
+          <span>Tue</span>
+          <span>Wed</span>
+          <span>Thu</span>
+          <span>Fri</span>
+          <span>Sat</span>
+          <span>Sun</span>
+        </div>
+      </section>
+
+      <aside class="panel activity-panel">
+        <div class="panel-head compact">
+          <div>
+            <div class="panel-eyebrow">Service Queue</div>
+            <h2>Live Orders</h2>
+          </div>
+          <button class="icon-button small">Refresh</button>
+        </div>
+        <div class="activity-list">
+          <article class="activity-row">
+            <div class="status-dot ready"></div>
+            <div>
+              <div class="order-title">#1004 - Cappuccino</div>
+              <div class="order-meta">Table 03 • 2 min ago</div>
+            </div>
+            <span class="badge ready-badge">Ready</span>
+          </article>
+          <article class="activity-row">
+            <div class="status-dot prep"></div>
+            <div>
+              <div class="order-title">#1005 - Cold Brew</div>
+              <div class="order-meta">Pickup • 4 min ago</div>
+            </div>
+            <span class="badge prep-badge">Prep</span>
+          </article>
+          <article class="activity-row">
+            <div class="status-dot waiting"></div>
+            <div>
+              <div class="order-title">#1006 - Breakfast Set</div>
+              <div class="order-meta">Table 11 • 8 min ago</div>
+            </div>
+            <span class="badge waiting-badge">Queued</span>
+          </article>
+        </div>
+      </aside>
+    </section>
+
+    <section class="lower-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-eyebrow">Popular Products</div>
+            <h2>Top Menu Items</h2>
+          </div>
+          <button class="icon-button">View menu</button>
+        </div>
+        <div class="product-list">
+          <article class="product-row">
+            <div class="product-icon coffee">☕</div>
+            <div>
+              <div class="product-name">Signature Cappuccino</div>
+              <div class="product-subtitle">Espresso • 14 oz</div>
+            </div>
+            <div class="product-stats">48 sold</div>
+          </article>
+          <article class="product-row">
+            <div class="product-icon ib">🥐</div>
+            <div>
+              <div class="product-name">Butter Croissant</div>
+              <div class="product-subtitle">Bakery • Fresh batch</div>
+            </div>
+            <div class="product-stats">34 sold</div>
+          </article>
+          <article class="product-row">
+            <div class="product-icon cold">🥤</div>
+            <div>
+              <div class="product-name">Brewit Cold Brew</div>
+              <div class="product-subtitle">Slow steep • 12 oz</div>
+            </div>
+            <div class="product-stats">27 sold</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-eyebrow">Inventory Status</div>
+            <h2>Supply Monitor</h2>
+          </div>
+          <button class="icon-button">Restock</button>
+        </div>
+        <div class="inventory-list">
+          <div class="inventory-row">
+            <span class="inventory-label">Arabica Beans</span>
+            <div class="progress-wrap">
+              <div class="progress"><div style="width: 72%"></div></div>
+            </div>
+            <span class="inventory-number">72%</span>
+          </div>
+          <div class="inventory-row">
+            <span class="inventory-label">Milk</span>
+            <div class="progress-wrap">
+              <div class="progress"><div style="width: 58%"></div></div>
+            </div>
+            <span class="inventory-number">Low</span>
+          </div>
+          <div class="inventory-row">
+            <span class="inventory-label">Pastries</span>
+            <div class="progress-wrap">
+              <div class="progress"><div style="width: 91%"></div></div>
+            </div>
+            <span class="inventory-number">91%</span>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
