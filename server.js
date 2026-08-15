@@ -17,7 +17,7 @@ const DEFAULT_LOCATIONS = [
   { id: 'store-2', name: 'Tienda 2', type: 'store' },
   { id: 'main-warehouse', name: 'Bodega principal', type: 'warehouse' }
 ];
-const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales'].map(name => ({ name, maxCount: 1 }));
+const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'mercadopago'].map(name => ({ name, maxCount: 1 }));
 const MASTER_FIELDS = [
   { name: 'master-catalog', maxCount: 1 },
   { name: 'product-hierarchy', maxCount: 1 },
@@ -135,7 +135,7 @@ function migrateLegacySundayWeeks(weeksRoot) {
 }
 
 function fieldsForLocation(type) {
-  return type === 'warehouse' ? ['kardex'] : ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales'];
+  return type === 'warehouse' ? ['kardex'] : ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'mercadopago'];
 }
 
 function safeFilename(file) {
@@ -193,11 +193,11 @@ function toIsoDate(year, month, day) {
 function datesInText(value) {
   const text = String(value || '');
   const dates = [];
-  for (const match of text.matchAll(/\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
+  for (const match of text.matchAll(/(?<!\d)(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g)) {
     const parsed = toIsoDate(Number(match[1]), Number(match[2]), Number(match[3]));
     if (parsed) dates.push(parsed);
   }
-  for (const match of text.matchAll(/\b(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})\b/g)) {
+  for (const match of text.matchAll(/(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})(?!\d)/g)) {
     const parsed = toIsoDate(Number(match[3]), Number(match[2]), Number(match[1]));
     if (parsed) dates.push(parsed);
   }
@@ -235,6 +235,146 @@ function detectFileDateRange(file) {
   }
   const sorted = [...dates].sort();
   return sorted.length ? { from: sorted[0], to: sorted.at(-1) } : null;
+}
+
+const UPLOAD_STRUCTURE_LABELS = {
+  kardex: 'Kardex / tarjeta de inventario',
+  waste: 'Merma',
+  marketing: 'Consumo de marketing',
+  employees: 'Consumo de colaboradores',
+  purchases: 'Compras',
+  sales: 'Transacciones de venta',
+  mercadopago: 'Transacciones MercadoPago',
+  'master-catalog': 'Maestro Productos / Ingredientes / Extras',
+  'product-hierarchy': 'Jerarquía Productos',
+  'ingredient-hierarchy': 'Jerarquía Ingredientes',
+  'extras-hierarchy': 'Jerarquía Extras',
+  'master-recipes': 'Maestro de recetas',
+  'master-suppliers': 'Maestro Proveedores',
+  inventory: 'un archivo Kardex o Merma',
+  consumption: 'una planilla de consumo',
+  unknown: 'una estructura no reconocida'
+};
+
+function workbookStructure(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  return workbook.SheetNames.map(name => ({
+    name,
+    normalizedName: normalizeHeader(name),
+    rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+      header: 1,
+      defval: null,
+      raw: true,
+      blankrows: false
+    }).slice(0, 10)
+  }));
+}
+
+function normalizedRow(row) {
+  return (row || []).map(value => normalizeHeader(value));
+}
+
+function rowContainsAll(row, required) {
+  const cells = new Set(normalizedRow(row));
+  return required.every(value => cells.has(normalizeHeader(value)));
+}
+
+function structureHasHeader(sheets, required) {
+  return sheets.some(sheet => sheet.rows.slice(0, 5).some(row => rowContainsAll(row, required)));
+}
+
+function detectUploadStructure(file) {
+  let sheets;
+  try {
+    sheets = workbookStructure(file.path);
+  } catch {
+    return { field: 'unknown', reason: 'El archivo no pudo leerse como CSV, XLS, XLSX o TXT.' };
+  }
+  if (!sheets.length || !sheets.some(sheet => sheet.rows.length)) {
+    return { field: 'unknown', reason: 'El archivo está vacío.' };
+  }
+  if (structureHasHeader(sheets, ['ID de orden', 'Fecha de creacion', 'Pago total'])) {
+    return { field: 'sales', reason: 'Se detectaron columnas de órdenes, fecha de creación y pago total.' };
+  }
+  if (structureHasHeader(sheets, ['Fecha emisión', 'Documento', 'Proveedor/Para', 'PRODUCTO'])) {
+    return { field: 'purchases', reason: 'Se detectaron columnas de fecha de emisión, proveedor, documento y producto.' };
+  }
+  const inventorySheet = sheets.find(sheet => {
+    const first = sheet.rows[0] || [];
+    const second = normalizedRow(sheet.rows[1]);
+    return rowContainsAll(first, ['Código', 'Nombre', 'Unidad'])
+      && first.slice(3).some(value => cellDate(value))
+      && second.some(value => value.startsWith('ii - inventario inicial'))
+      && second.some(value => value.startsWith('if - inventario final'));
+  });
+  if (inventorySheet) {
+    const filename = normalizeHeader(file.originalname);
+    if (/\bbme\b|merma/.test(filename)) {
+      return { field: 'waste', family: 'inventory', reason: 'La estructura es de Kardex y el nombre identifica una carga de Merma.' };
+    }
+    if (/\bblc\b|\bbce\b|kardex/.test(filename)) {
+      return { field: 'kardex', family: 'inventory', reason: 'Se detectó la estructura diaria de Kardex.' };
+    }
+    return { field: 'inventory', family: 'inventory', reason: 'Se detectó una estructura común de Kardex/Merma.' };
+  }
+  if (structureHasHeader(sheets, ['Id Producto', 'Id Ingrediente', 'Cantidad Ingrediente', 'Unidad Medida'])) {
+    return { field: 'master-recipes', reason: 'Se detectaron columnas de producto, ingrediente, cantidad y unidad de receta.' };
+  }
+  if (structureHasHeader(sheets, ['Nombre*', 'RUT/Fiscal ID*'])) {
+    return { field: 'master-suppliers', reason: 'Se detectaron las columnas de nombre y RUT de proveedores.' };
+  }
+  const hierarchySheet = sheets.find(sheet => structureHasHeader([sheet], ['ID Jerarquia', 'ID Nodo **', 'ID nodo padre']));
+  if (hierarchySheet) {
+    const identifiers = hierarchySheet.rows.slice(1).map(row => String(row[0] || '').trim().toUpperCase());
+    if (identifiers.some(value => value.startsWith('AB.'))) return { field: 'product-hierarchy', reason: 'Se detectaron nodos de jerarquía AB.' };
+    if (identifiers.some(value => value.startsWith('IC.'))) return { field: 'ingredient-hierarchy', reason: 'Se detectaron nodos de jerarquía IC.' };
+    if (identifiers.some(value => value.startsWith('BA.'))) return { field: 'extras-hierarchy', reason: 'Se detectaron nodos de jerarquía BA.' };
+    return { field: 'unknown', reason: 'La jerarquía no contiene identificadores AB, IC o BA reconocibles.' };
+  }
+  const consumptionSheet = sheets.find(sheet => {
+    const dateCount = (sheet.rows[0] || []).filter(value => cellDate(value)).length;
+    return dateCount > 0 && sheet.rows.slice(0, 3).some(row => rowContainsAll(row, ['ID Producto **', 'Nombre Producto *']));
+  });
+  if (consumptionSheet) {
+    const hint = normalizeHeader(`${file.originalname} ${sheets.map(sheet => sheet.name).join(' ')}`);
+    if (/beneficio|colaborador|empleado|equipo/.test(hint)) {
+      return { field: 'employees', family: 'consumption', reason: 'La planilla contiene fechas por producto y referencias a colaboradores/equipo.' };
+    }
+    if (/marketing|coffee break|coffe break/.test(hint)) {
+      return { field: 'marketing', family: 'consumption', reason: 'La planilla contiene fechas por producto y referencias a marketing/coffee break.' };
+    }
+    return { field: 'consumption', family: 'consumption', reason: 'Se detectó una estructura común de consumos por producto y fecha.' };
+  }
+  if (structureHasHeader(sheets, ['ID Producto **', 'Nombre Producto *', 'Costo'])) {
+    return { field: 'master-catalog', reason: 'Se detectaron columnas de código, nombre y costo del catálogo.' };
+  }
+  return { field: 'unknown', reason: 'No se encontraron los encabezados u hojas esperados para ninguna categoría.' };
+}
+
+function validateUploadStructure(file) {
+  const expected = file.fieldname;
+  const detected = detectUploadStructure(file);
+  if (expected === 'mercadopago') {
+    return {
+      ok: true,
+      permissive: true,
+      expected,
+      detected: detected.field,
+      reason: 'Aceptado sin validación estructural porque aún no existe un archivo MercadoPago de referencia.'
+    };
+  }
+  const sharedInventory = ['kardex', 'waste'].includes(expected) && detected.field === 'inventory';
+  const sharedConsumption = ['marketing', 'employees'].includes(expected) && detected.field === 'consumption';
+  if (detected.field === expected || sharedInventory || sharedConsumption) {
+    return { ok: true, expected, detected: detected.field, reason: detected.reason };
+  }
+  return {
+    ok: false,
+    expected,
+    detected: detected.field,
+    reason: detected.reason,
+    error: `El archivo “${file.originalname}” fue seleccionado como ${UPLOAD_STRUCTURE_LABELS[expected] || expected}, pero parece corresponder a ${UPLOAD_STRUCTURE_LABELS[detected.field] || detected.field}. ${detected.reason}`
+  };
 }
 
 function filterPreviewRowsByDate(allRows, field, dateFrom, dateTo) {
@@ -383,6 +523,12 @@ function parseKardexWorkbook(filePath) {
 function kardexMetricValue(product, group, matcher) {
   const metric = group.metrics.find(item => matcher(item.normalized));
   return metric ? numericValue(product.row[metric.column]) || 0 : 0;
+}
+
+function kardexMetricTotal(product, group, matcher) {
+  return group.metrics
+    .filter(item => matcher(item.normalized))
+    .reduce((sum, metric) => sum + Math.abs(numericValue(product.row[metric.column]) || 0), 0);
 }
 
 function kardexMovementDirection(definition) {
@@ -629,6 +775,55 @@ function parseIngredientCatalog(filePath) {
         unit: String(row[unitColumn] ?? '').trim(),
         unitCost: numericValue(row[costColumn]) || 0
       });
+    }
+  }
+  return catalog;
+}
+
+function parsePurchaseUnitConversions(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  const catalog = new Map();
+  for (const sheetName of workbook.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      header: 1,
+      defval: null,
+      raw: true,
+      blankrows: false
+    });
+    const headerIndex = rows.slice(0, 5).findIndex(row => findHeaderColumn(row, ['ID Producto **', 'ID Producto']) >= 0);
+    if (headerIndex < 0) continue;
+    const labels = rows[headerIndex];
+    const technical = rows[Math.max(0, headerIndex - 1)] || [];
+    const codeColumn = findHeaderColumn(labels, ['ID Producto **', 'ID Producto']);
+    const baseUnitColumn = findHeaderColumn(labels, ['Unidad Base', 'Medida Base']);
+    const conversionGroups = technical.flatMap((header, column) => {
+      const match = String(header || '').match(/^conv\.(\d+)\.umed$/i);
+      if (!match) return [];
+      const prefix = `conv.${match[1]}.`;
+      return [{
+        unitColumn: column,
+        baseUnitColumn: technical.findIndex(value => String(value).toLowerCase() === `${prefix}umedb`),
+        numeratorColumn: technical.findIndex(value => String(value).toLowerCase() === `${prefix}cnum`),
+        denominatorColumn: technical.findIndex(value => String(value).toLowerCase() === `${prefix}cden`)
+      }];
+    });
+    for (const row of rows.slice(headerIndex + 1)) {
+      const code = String(row[codeColumn] ?? '').trim();
+      if (!code) continue;
+      const baseUnit = String(row[baseUnitColumn] ?? '').trim();
+      const conversions = new Map();
+      for (const group of conversionGroups) {
+        const purchaseUnit = String(row[group.unitColumn] ?? '').trim();
+        const numerator = numericValue(row[group.numeratorColumn]);
+        const denominator = numericValue(row[group.denominatorColumn]);
+        if (!purchaseUnit || numerator === null || denominator === null || denominator === 0) continue;
+        conversions.set(normalizedUnit(purchaseUnit), {
+          purchaseUnit,
+          baseUnit: String(row[group.baseUnitColumn] ?? '').trim() || baseUnit,
+          unitsPerPurchaseUnit: numerator / denominator
+        });
+      }
+      catalog.set(code.toUpperCase(), { code, baseUnit, conversions });
     }
   }
   return catalog;
@@ -1009,21 +1204,21 @@ function addDays(dateKey, amount) {
   return date.toISOString().slice(0, 10);
 }
 
-function buildSalesReport(dailySales, todayKey) {
-  const previousDate = addDays(todayKey, -1);
-  const previousDayNumber = new Date(`${previousDate}T00:00:00.000Z`).getUTCDay();
-  const weekStart = addDays(previousDate, -((previousDayNumber + 6) % 7));
-  const monthStart = `${previousDate.slice(0, 7)}-01`;
-  const historicalDates = Object.keys(dailySales).filter(date => date <= previousDate).sort();
-  const hasPreviousDay = Object.hasOwn(dailySales, previousDate);
-  const previous = dailySales[previousDate] || { gross: 0, discounts: 0, net: 0 };
-  const sameWeekdayDates = historicalDates.filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === previousDayNumber);
-  const priorEight = sameWeekdayDates.filter(date => date < previousDate).sort().reverse().slice(0, 8);
+function buildSalesReport(dailySales, todayKey, includeToday = false) {
+  const referenceDate = includeToday ? todayKey : addDays(todayKey, -1);
+  const referenceDayNumber = new Date(`${referenceDate}T00:00:00.000Z`).getUTCDay();
+  const weekStart = addDays(referenceDate, -((referenceDayNumber + 6) % 7));
+  const monthStart = `${referenceDate.slice(0, 7)}-01`;
+  const historicalDates = Object.keys(dailySales).filter(date => date <= referenceDate).sort();
+  const hasReferenceDay = Object.hasOwn(dailySales, referenceDate);
+  const reference = dailySales[referenceDate] || { gross: 0, discounts: 0, net: 0 };
+  const sameWeekdayDates = historicalDates.filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceDayNumber);
+  const priorEight = sameWeekdayDates.filter(date => date < referenceDate).sort().reverse().slice(0, 8);
   const sameWeekdayAverage = priorEight.length
     ? priorEight.reduce((sum, date) => sum + dailySales[date].net, 0) / priorEight.length
     : 0;
   const rank = dates => ({
-    position: hasPreviousDay && dates.length ? 1 + dates.filter(date => dailySales[date].net > previous.net).length : null,
+    position: hasReferenceDay && dates.length ? 1 + dates.filter(date => dailySales[date].net > reference.net).length : null,
     total: dates.length
   });
   const sumRange = (from, to) => historicalDates
@@ -1033,21 +1228,23 @@ function buildSalesReport(dailySales, todayKey) {
   return {
     basis: 'gross-plus-signed-discounts-divided-by-1.19',
     currency: 'CLP',
+    includeToday,
+    cutoff: includeToday ? 'today' : 'yesterday',
     previousDay: {
-      date: previousDate,
-      grossSales: previous.gross,
-      discounts: previous.discounts,
-      netSales: previous.net,
+      date: referenceDate,
+      grossSales: reference.gross,
+      discounts: reference.discounts,
+      netSales: reference.net,
       generalRank: rank(historicalDates),
       sameWeekdayRank: rank(sameWeekdayDates),
       sameWeekdayAverage,
-      comparisonToAveragePercent: hasPreviousDay && sameWeekdayAverage
-        ? ((previous.net / sameWeekdayAverage) - 1) * 100
+      comparisonToAveragePercent: hasReferenceDay && sameWeekdayAverage
+        ? ((reference.net / sameWeekdayAverage) - 1) * 100
         : null,
       averageSampleSize: priorEight.length
     },
-    week: { from: weekStart, to: previousDate, netSales: sumRange(weekStart, previousDate) },
-    month: { from: monthStart, to: previousDate, netSales: sumRange(monthStart, previousDate) },
+    week: { from: weekStart, to: referenceDate, netSales: sumRange(weekStart, referenceDate) },
+    month: { from: monthStart, to: referenceDate, netSales: sumRange(monthStart, referenceDate) },
     coverage: historicalDates.length ? { from: historicalDates[0], to: historicalDates.at(-1) } : null
   };
 }
@@ -1158,6 +1355,7 @@ function createApp(options = {}) {
   const productReportsRoot = path.join(uploadsRoot, 'reports', 'products');
   const trashLocationsRoot = path.join(uploadsRoot, 'trash', 'locations');
   const locationsPath = path.join(configRoot, 'locations.json');
+  const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
   ensureDir(weeksRoot);
   ensureDir(mastersRoot);
   ensureDir(stagingRoot);
@@ -1183,6 +1381,16 @@ function createApp(options = {}) {
 
   function publicLocation(location) {
     return { ...location, label: location.name, fields: fieldsForLocation(location.type) };
+  }
+
+  function readPurchaseProjectionPolicies() {
+    return readJson(purchaseProjectionPoliciesPath, { locations: {} });
+  }
+
+  function projectionToday() {
+    const configured = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
+    const now = configured ? new Date(`${configured}T12:00:00.000Z`) : new Date();
+    return configured || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
   }
 
   function transactionLocationRoot(locationId) {
@@ -1495,6 +1703,113 @@ function createApp(options = {}) {
     };
   }
 
+  function genericTransactionRowDate(row, header = []) {
+    const dates = [];
+    row.forEach((value, column) => {
+      const isDateColumn = /\b(fecha|date)\b/.test(normalizeHeader(header[column]));
+      const parsed = value instanceof Date || typeof value === 'string' || isDateColumn ? cellDate(value) : null;
+      if (parsed) dates.push(parsed);
+      if (typeof value === 'string') datesInText(value).forEach(date => dates.push(date));
+    });
+    return dates.sort()[0] || null;
+  }
+
+  function genericTransactionRowKey(row) {
+    const values = row.map(value => {
+      if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+      if (typeof value === 'string') return value.trim();
+      return value ?? '';
+    });
+    return crypto.createHash('sha256').update(JSON.stringify(values)).digest('hex');
+  }
+
+  function readGenericTransactionSheets(filePath) {
+    const workbook = XLSX.readFile(filePath, { cellDates: true });
+    return workbook.SheetNames.map(name => ({
+      name,
+      rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+        header: 1,
+        defval: null,
+        raw: true,
+        blankrows: false
+      })
+    }));
+  }
+
+  function mercadoPagoHistory(locationId, additionalExcludedRanges = []) {
+    const keys = new Set();
+    for (const stored of storedTransactionFiles(locationId, 'mercadopago')) {
+      for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+        const header = sheet.rows[0] || [];
+        for (const row of sheet.rows.slice(1)) {
+          const date = genericTransactionRowDate(row, header);
+          if (date && (dateIsExcluded(date, stored.excludedRanges) || dateIsExcluded(date, additionalExcludedRanges))) continue;
+          keys.add(genericTransactionRowKey(row));
+        }
+      }
+    }
+    return keys;
+  }
+
+  function prepareIncrementalMercadoPago(staged, locationId, stagingDirectory, additionalExcludedRanges = []) {
+    const source = path.join(stagingDirectory, staged.filename);
+    const sheets = readGenericTransactionSheets(source);
+    const historyKeys = mercadoPagoHistory(locationId, additionalExcludedRanges);
+    const acceptedKeys = new Set();
+    const acceptedDates = [];
+    let uploadedRows = 0;
+    let duplicateTransactions = 0;
+    const filteredSheets = sheets.map(sheet => {
+      const header = sheet.rows[0] || [];
+      const rows = sheet.rows.slice(1).filter(row => {
+        uploadedRows += 1;
+        const key = genericTransactionRowKey(row);
+        if (historyKeys.has(key) || acceptedKeys.has(key)) {
+          duplicateTransactions += 1;
+          return false;
+        }
+        acceptedKeys.add(key);
+        const date = genericTransactionRowDate(row, header);
+        if (date) acceptedDates.push(date);
+        return true;
+      });
+      return { name: sheet.name, rows: [header, ...rows], dataRows: rows.length };
+    });
+    if (!acceptedKeys.size) {
+      fs.rmSync(source, { force: true });
+      return {
+        staged: null,
+        stats: { uploadedRows, newRows: 0, newTransactions: 0, duplicateTransactions }
+      };
+    }
+    const workbook = XLSX.utils.book_new();
+    filteredSheets.forEach(sheet => {
+      if (!sheet.dataRows) return;
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheet.rows), sheet.name.slice(0, 31) || 'MercadoPago');
+    });
+    const incrementalFilename = `${path.parse(staged.filename).name}_solo_nuevas.xlsx`;
+    const incrementalPath = path.join(stagingDirectory, incrementalFilename);
+    XLSX.writeFile(workbook, incrementalPath);
+    fs.rmSync(source, { force: true });
+    acceptedDates.sort();
+    return {
+      staged: {
+        ...staged,
+        filename: incrementalFilename,
+        size: fs.statSync(incrementalPath).size,
+        detectedRange: acceptedDates.length ? { from: acceptedDates[0], to: acceptedDates.at(-1) } : staged.detectedRange,
+        transactionCount: acceptedKeys.size,
+        rowCount: acceptedKeys.size
+      },
+      stats: {
+        uploadedRows,
+        newRows: acceptedKeys.size,
+        newTransactions: acceptedKeys.size,
+        duplicateTransactions
+      }
+    };
+  }
+
   app.disable('x-powered-by');
   app.use(express.json());
   app.use('/uploads/weeks', express.static(weeksRoot, { fallthrough: false, dotfiles: 'deny' }));
@@ -1505,6 +1820,7 @@ function createApp(options = {}) {
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
+  app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.get('/api/locations', (req, res) => {
@@ -1650,14 +1966,50 @@ function createApp(options = {}) {
     }
   });
 
+  function kardexPurchaseRows(location) {
+    const parsed = mergedKardexData(location.id, 'kardex');
+    const rows = [];
+    for (const group of parsed.groups) {
+      for (const product of parsed.products) {
+        const quantity = kardexMetricValue(product, group, metric => metric.startsWith('buy -'));
+        if (Math.abs(quantity) <= 0.0000001) continue;
+        const unitCost = kardexMetricValue(product, group, metric => metric === 'costo');
+        rows.push({
+          date: group.date,
+          locationId: location.id,
+          locationName: location.name,
+          supplierKey: 'kardex-buy',
+          supplier: 'Ingresos BUY según Kardex',
+          supplierTaxId: '',
+          documentType: 'Kardex BUY',
+          document: 'Kardex',
+          line: product.code,
+          code: product.code,
+          product: product.name,
+          quantity,
+          unit: product.unit,
+          listedUnitPrice: unitCost,
+          negotiatedUnitPrice: 0,
+          effectiveUnitPrice: unitCost,
+          netAmount: quantity * unitCost,
+          discount: 0,
+          totalAmount: quantity * unitCost,
+          sourceType: 'kardex-buy'
+        });
+      }
+    }
+    return rows;
+  }
+
   function buildPurchasesPayload(query = {}) {
-    const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const activeLocations = readLocations().locations.filter(location => location.status === 'active');
+    const activeStores = activeLocations.filter(location => location.type === 'store');
     const requestedLocation = query.location || 'all';
     const selectedLocations = requestedLocation === 'all'
       ? activeStores
-      : activeStores.filter(location => location.id === requestedLocation);
+      : activeLocations.filter(location => location.id === requestedLocation);
     if (requestedLocation !== 'all' && !selectedLocations.length) {
-      const error = new Error('Selecciona una cafetería válida.');
+      const error = new Error('Selecciona una ubicación válida.');
       error.status = 400;
       throw error;
     }
@@ -1666,6 +2018,16 @@ function createApp(options = {}) {
     const unique = new Map();
     let sourceFileCount = 0;
     for (const location of selectedLocations) {
+      if (location.type === 'warehouse') {
+        if (latestWeeklyFile(location.id, 'kardex')) {
+          sourceFileCount += 1;
+          for (const purchase of kardexPurchaseRows(location)) {
+            const key = [location.id, purchase.date, purchase.code, purchase.quantity].join('|');
+            if (!unique.has(key)) unique.set(key, purchase);
+          }
+        }
+        continue;
+      }
       for (const stored of storedWeeklyFiles(location.id, 'purchases')) {
         sourceFileCount += 1;
         for (const row of readPurchaseRows(stored.filePath)) {
@@ -1679,6 +2041,32 @@ function createApp(options = {}) {
       }
     }
     const allRows = [...unique.values()];
+    const catalogMasterByDate = new Map();
+    const conversionsByFile = new Map();
+    allRows.forEach(row => {
+      if (!catalogMasterByDate.has(row.date)) catalogMasterByDate.set(row.date, latestMasterFile('master-catalog', row.date));
+      const master = catalogMasterByDate.get(row.date);
+      if (!master) {
+        row.purchaseUnit = row.unit;
+        row.baseUnit = null;
+        row.unitsPerPurchaseUnit = null;
+        row.baseUnitCost = null;
+        return;
+      }
+      if (!conversionsByFile.has(master.filePath)) {
+        conversionsByFile.set(master.filePath, parsePurchaseUnitConversions(master.filePath));
+      }
+      const catalogItem = conversionsByFile.get(master.filePath).get(row.code)
+        || conversionsByFile.get(master.filePath).get(String(row.code).toUpperCase());
+      const conversion = catalogItem?.conversions.get(normalizedUnit(row.unit));
+      const sameAsBase = catalogItem && normalizedUnit(row.unit) === normalizedUnit(catalogItem.baseUnit);
+      row.purchaseUnit = row.unit;
+      row.baseUnit = conversion?.baseUnit || catalogItem?.baseUnit || null;
+      row.unitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit ?? (sameAsBase ? 1 : null);
+      row.baseUnitCost = row.unitsPerPurchaseUnit
+        ? row.listedUnitPrice / row.unitsPerPurchaseUnit
+        : null;
+    });
     const dates = allRows.map(row => row.date).sort();
     const availablePeriod = dates.length ? { from: dates[0], to: dates.at(-1) } : null;
     const dateFrom = query.dateFrom || availablePeriod?.from || null;
@@ -1699,6 +2087,12 @@ function createApp(options = {}) {
       error.status = 400;
       throw error;
     }
+    const requestedProduct = String(query.product || '').trim();
+    const productOptions = [...new Map(allRows.map(row => [row.code || normalizeHeader(row.product), {
+      key: row.code || normalizeHeader(row.product),
+      code: row.code,
+      name: row.product
+    }])).values()].sort((left, right) => left.name.localeCompare(right.name, 'es'));
 
     const previousPrices = new Map();
     allRows.sort((left, right) => left.date.localeCompare(right.date)
@@ -1715,18 +2109,20 @@ function createApp(options = {}) {
 
     const rows = allRows.filter(row => (!dateFrom || row.date >= dateFrom)
       && (!dateTo || row.date <= dateTo)
-      && (requestedSupplier === 'all' || row.supplierKey === requestedSupplier));
+      && (requestedSupplier === 'all' || row.supplierKey === requestedSupplier)
+      && (!requestedProduct || normalizeHeader(`${row.code} ${row.product}`).includes(normalizeHeader(requestedProduct))));
     rows.sort((left, right) => left.supplier.localeCompare(right.supplier, 'es')
       || right.date.localeCompare(left.date)
       || left.product.localeCompare(right.product, 'es')
       || left.document.localeCompare(right.document, 'es', { numeric: true }));
     return {
       scope: requestedLocation === 'all'
-        ? { location: 'all', label: 'Todas las cafeterías' }
-        : { location: requestedLocation, label: selectedLocations[0].name },
-      locations: activeStores.map(publicLocation),
+        ? { location: 'all', label: 'Todas las cafeterías', type: 'stores' }
+        : { location: requestedLocation, label: selectedLocations[0].name, type: selectedLocations[0].type },
+      locations: activeLocations.map(publicLocation),
       suppliers,
-      filters: { location: requestedLocation, supplier: requestedSupplier, dateFrom, dateTo },
+      products: productOptions,
+      filters: { location: requestedLocation, supplier: requestedSupplier, product: requestedProduct, dateFrom, dateTo },
       availablePeriod,
       sourceFileCount,
       summary: {
@@ -1746,6 +2142,198 @@ function createApp(options = {}) {
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudieron procesar las compras.' });
     }
+  });
+
+  function projectionPurchaseReferences(locationId) {
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const supplierMaster = latestMasterFile('master-suppliers', projectionToday());
+    const supplierDirectory = supplierNamesByTaxId(supplierMaster?.filePath);
+    const suppliers = new Map([...supplierDirectory].map(([key, name]) => [key, { key, name, taxId: key }]));
+    const local = new Map();
+    const global = new Map();
+    const bySupplier = new Map();
+    for (const store of stores) {
+      for (const stored of storedWeeklyFiles(store.id, 'purchases')) {
+        for (const sourceRow of readPurchaseRows(stored.filePath)) {
+          const row = purchaseRecord(sourceRow, store, supplierDirectory);
+          if (!row || !row.code || dateIsExcluded(row.date, stored.excludedRanges)) continue;
+          suppliers.set(row.supplierKey, { key: row.supplierKey, name: row.supplier, taxId: row.supplierTaxId });
+          const key = row.code.toUpperCase();
+          if (!global.has(key) || global.get(key).date < row.date) global.set(key, row);
+          if (store.id === locationId && (!local.has(key) || local.get(key).date < row.date)) local.set(key, row);
+          const supplierItemKey = `${key}|${row.supplierKey}`;
+          if (!bySupplier.has(supplierItemKey) || bySupplier.get(supplierItemKey).date < row.date) {
+            bySupplier.set(supplierItemKey, row);
+          }
+        }
+      }
+    }
+    return { local, global, bySupplier, suppliers };
+  }
+
+  function buildPurchaseProjection(locationId) {
+    const location = activeLocation(locationId);
+    if (!location) {
+      const error = new Error('Selecciona una cafetería o bodega válida.');
+      error.status = 400;
+      throw error;
+    }
+    const parsed = mergedKardexData(location.id, 'kardex');
+    if (!parsed?.groups.length) {
+      const error = new Error('La ubicación no tiene un Kardex disponible para proyectar compras.');
+      error.status = 404;
+      throw error;
+    }
+    const today = projectionToday();
+    const periodFrom = addDays(today, -29);
+    const groups = parsed.groups.filter(group => group.date <= today);
+    const latestGroup = groups.at(-1);
+    if (!latestGroup) {
+      const error = new Error('El Kardex no contiene fechas utilizables para la proyección.');
+      error.status = 422;
+      throw error;
+    }
+    const consumptionGroups = groups.filter(group => group.date >= periodFrom);
+    const policies = readPurchaseProjectionPolicies().locations?.[location.id]?.items || {};
+    const references = projectionPurchaseReferences(location.id);
+    const catalogMaster = latestMasterFile('master-catalog', today);
+    const conversions = catalogMaster ? parsePurchaseUnitConversions(catalogMaster.filePath) : new Map();
+    const supplierOptions = new Map(references.suppliers);
+    supplierOptions.set('unassigned', { key: 'unassigned', name: 'Proveedor no asignado', taxId: '' });
+    const items = parsed.products.filter(product => product.code || product.name).map(product => {
+      const key = (product.code || normalizeHeader(product.name)).toUpperCase();
+      const policy = policies[key] || {};
+      const minDays = Number.isFinite(Number(policy.minDays)) ? Number(policy.minDays) : 7;
+      const maxDays = Number.isFinite(Number(policy.maxDays)) ? Number(policy.maxDays) : 14;
+      const managed = policy.managed === true;
+      const metricMatcher = metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
+        || metric.startsWith('mov-out -') || metric.startsWith('trn-out -');
+      const consumption30 = consumptionGroups.reduce((sum, group) =>
+        sum + kardexMetricTotal(product, group, metricMatcher), 0);
+      const averageDailyConsumption = consumption30 / 30;
+      const hasFinal = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
+      const currentInventory = kardexMetricValue(product, latestGroup,
+        metric => metric.startsWith(hasFinal ? 'if -' : 'ii -'));
+      const supplierSpecificPurchase = policy.supplierKey
+        ? references.bySupplier.get(`${key}|${policy.supplierKey}`)
+        : null;
+      const latestPurchase = supplierSpecificPurchase || references.local.get(key) || references.global.get(key) || null;
+      const catalogItem = conversions.get(key);
+      let conversion = latestPurchase ? catalogItem?.conversions.get(normalizedUnit(latestPurchase.unit)) : null;
+      if (!conversion && catalogItem) {
+        conversion = [...catalogItem.conversions.values()].find(item =>
+          normalizedUnit(item.purchaseUnit) !== normalizedUnit(catalogItem.baseUnit))
+          || [...catalogItem.conversions.values()][0]
+          || null;
+      }
+      const purchaseUnit = latestPurchase?.unit || conversion?.purchaseUnit || product.unit;
+      const rawUnitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit
+        ?? (normalizedUnit(purchaseUnit) === normalizedUnit(product.unit) ? 1 : null);
+      const unitsPerPurchaseUnit = rawUnitsPerPurchaseUnit === null
+        ? null
+        : convertQuantityUnit(rawUnitsPerPurchaseUnit, conversion?.baseUnit || product.unit, product.unit);
+      const inferredSupplier = latestPurchase
+        ? { key: latestPurchase.supplierKey, name: latestPurchase.supplier, taxId: latestPurchase.supplierTaxId }
+        : supplierOptions.get('unassigned');
+      const configuredSupplier = policy.supplierKey ? supplierOptions.get(policy.supplierKey) : null;
+      const supplier = configuredSupplier || inferredSupplier || supplierOptions.get('unassigned');
+      const minimumStock = averageDailyConsumption * minDays;
+      const maximumStock = averageDailyConsumption * maxDays;
+      const needsPurchase = averageDailyConsumption > 0 && currentInventory <= minimumStock;
+      const suggestedInternalQuantity = needsPurchase ? Math.max(0, maximumStock - currentInventory) : 0;
+      const suggestedPurchaseUnits = suggestedInternalQuantity > 0 && unitsPerPurchaseUnit > 0
+        ? Math.ceil(suggestedInternalQuantity / unitsPerPurchaseUnit)
+        : null;
+      const projectedInternalQuantity = suggestedPurchaseUnits === null
+        ? suggestedInternalQuantity
+        : suggestedPurchaseUnits * unitsPerPurchaseUnit;
+      const estimatedPurchaseUnitCost = latestPurchase
+        ? latestPurchase.effectiveUnitPrice || latestPurchase.listedUnitPrice || 0
+        : null;
+      return {
+        key,
+        code: product.code,
+        name: product.name,
+        internalUnit: product.unit,
+        currentInventory,
+        currentInventoryBasis: hasFinal ? 'Inventario Final' : 'Inventario Inicial',
+        consumption30,
+        averageDailyConsumption,
+        currentCoverageDays: averageDailyConsumption > 0 ? currentInventory / averageDailyConsumption : null,
+        minDays,
+        maxDays,
+        managed,
+        minimumStock,
+        maximumStock,
+        supplierKey: supplier.key,
+        supplier: supplier.name,
+        supplierTaxId: supplier.taxId || '',
+        supplierInferred: !configuredSupplier && Boolean(latestPurchase),
+        supplierReferenceLocation: latestPurchase?.locationName || null,
+        supplierPurchaseReferenceMatched: !policy.supplierKey || Boolean(supplierSpecificPurchase),
+        purchaseUnit,
+        unitsPerPurchaseUnit,
+        suggestedInternalQuantity,
+        suggestedPurchaseUnits,
+        projectedInternalQuantity,
+        estimatedPurchaseUnitCost,
+        estimatedTotal: suggestedPurchaseUnits === null || estimatedPurchaseUnitCost === null
+          ? null
+          : suggestedPurchaseUnits * estimatedPurchaseUnitCost,
+        needsPurchase,
+        conversionAvailable: unitsPerPurchaseUnit !== null && unitsPerPurchaseUnit > 0
+      };
+    }).sort((left, right) => left.supplier.localeCompare(right.supplier, 'es') || left.name.localeCompare(right.name, 'es'));
+    return {
+      location: publicLocation(location),
+      period: { from: periodFrom, to: today, dataThrough: latestGroup.date, days: 30 },
+      consumptionCriteria: location.type === 'warehouse'
+        ? 'Transferencias y transformaciones salientes del Kardex'
+        : 'Consumo por ventas, transferencias y transformaciones salientes del Kardex',
+      suppliers: [...supplierOptions.values()].sort((left, right) => left.name.localeCompare(right.name, 'es')),
+      items,
+      summary: {
+        itemCount: items.length,
+        managedItemCount: items.filter(item => item.managed).length,
+        purchaseItemCount: items.filter(item => item.managed && item.needsPurchase).length,
+        estimatedTotal: items.filter(item => item.managed).reduce((sum, item) => sum + (item.estimatedTotal || 0), 0),
+        missingConversionCount: items.filter(item => item.managed && item.needsPurchase && !item.conversionAvailable).length,
+        missingCostCount: items.filter(item => item.managed && item.needsPurchase && item.estimatedPurchaseUnitCost === null).length,
+        unassignedSupplierCount: items.filter(item => item.managed && item.needsPurchase && item.supplierKey === 'unassigned').length
+      }
+    };
+  }
+
+  app.get('/api/purchase-projections', (req, res) => {
+    try {
+      return res.json(buildPurchaseProjection(String(req.query.location || '')));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo calcular la proyección de compras.' });
+    }
+  });
+
+  app.put('/api/purchase-projections/policies', (req, res) => {
+    const location = activeLocation(String(req.body?.location || ''));
+    if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
+    const requested = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!requested.length) return res.status(400).json({ error: 'No se recibieron criterios para guardar.' });
+    const registry = readPurchaseProjectionPolicies();
+    registry.locations ||= {};
+    registry.locations[location.id] ||= { items: {} };
+    for (const item of requested) {
+      const key = String(item.key || '').trim().toUpperCase();
+      const minDays = Number(item.minDays);
+      const maxDays = Number(item.maxDays);
+      const managed = item.managed === true;
+      const supplierKey = String(item.supplierKey || 'unassigned').trim();
+      if (!key || !Number.isFinite(minDays) || !Number.isFinite(maxDays)
+        || minDays < 0 || maxDays < minDays || maxDays > 365) {
+        return res.status(400).json({ error: 'Cada ítem debe tener días mínimos y máximos válidos; el máximo no puede ser menor que el mínimo.' });
+      }
+      registry.locations[location.id].items[key] = { minDays, maxDays, supplierKey, managed, updatedAt: new Date().toISOString() };
+    }
+    writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
+    return res.json({ ok: true, saved: requested.length });
   });
 
   function buildProductsPayload(requestedLocation = 'all') {
@@ -2175,6 +2763,374 @@ function createApp(options = {}) {
     }
   });
 
+  function previousMonthPeriod(todayKey) {
+    const [year, month, day] = todayKey.split('-').map(Number);
+    const start = new Date(Date.UTC(year, month - 2, 1));
+    const lastDay = new Date(Date.UTC(year, month - 1, 0)).getUTCDate();
+    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), Math.min(day, lastDay)));
+    return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+  }
+
+  function percentageChange(current, previous) {
+    return previous ? ((current / previous) - 1) * 100 : null;
+  }
+
+  function periodSalesMetric(orderFacts, current, previous) {
+    const sum = period => orderFacts
+      .filter(fact => fact.date >= period.from && fact.date <= period.to)
+      .reduce((total, fact) => total + fact.net, 0);
+    const currentValue = sum(current);
+    const previousValue = sum(previous);
+    return {
+      ...current,
+      netSales: currentValue,
+      previous: { ...previous, netSales: previousValue },
+      changePercent: percentageChange(currentValue, previousValue)
+    };
+  }
+
+  function mercadoPagoCardKey(row) {
+    const initial = String(rowValue(row, ['CARD_INITIAL_NUMBER']) ?? '').replace(/\D/g, '');
+    const last = String(rowValue(row, ['LAST_FOUR_DIGITS']) ?? '').replace(/\D/g, '').padStart(4, '0');
+    return initial && last ? `${initial}|${last}` : null;
+  }
+
+  function mercadoPagoDateTime(row) {
+    const value = rowValue(row, ['TRANSACTION_DATE']);
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+    const text = String(value || '').trim();
+    const localTimestamp = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+    if (localTimestamp) return `${localTimestamp[1]}T${localTimestamp[2]}`;
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    const date = cellDate(value);
+    return date ? `${date}T00:00:00.000Z` : null;
+  }
+
+  function recurringPeriodMetric(facts, current, previous) {
+    const summarize = period => {
+      const selected = facts.filter(fact => fact.date >= period.from && fact.date <= period.to);
+      const totalSales = selected.reduce((sum, fact) => sum + fact.amount, 0);
+      const recurring = selected.filter(fact => fact.recurring);
+      const recurringSales = recurring.reduce((sum, fact) => sum + fact.amount, 0);
+      return {
+        ...period,
+        transactions: selected.length,
+        sales: totalSales,
+        recurringTransactions: recurring.length,
+        recurringSales,
+        recurringTransactionPercent: selected.length ? recurring.length / selected.length * 100 : 0,
+        recurringSalesPercent: totalSales ? recurringSales / totalSales * 100 : 0
+      };
+    };
+    const value = summarize(current);
+    const prior = summarize(previous);
+    return {
+      ...value,
+      previous: prior,
+      salesChangePercent: percentageChange(value.sales, prior.sales),
+      transactionChangePercent: percentageChange(value.transactions, prior.transactions),
+      recurringTransactionPercentChange: value.recurringTransactionPercent - prior.recurringTransactionPercent,
+      recurringSalesPercentChange: value.recurringSalesPercent - prior.recurringSalesPercent
+    };
+  }
+
+  function buildSalesDashboard(requestedLocation = 'all') {
+    const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
+    const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
+    const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const selectedStore = requestedLocation === 'all' ? null : activeStores.find(location => location.id === requestedLocation);
+    if (requestedLocation !== 'all' && !selectedStore) {
+      const error = new Error('Selecciona una cafetería válida.');
+      error.status = 400;
+      throw error;
+    }
+    const stores = selectedStore ? [selectedStore] : activeStores;
+    const weekStart = mondayContaining(todayKey);
+    const monthStart = `${todayKey.slice(0, 7)}-01`;
+    const periods = {
+      day: {
+        label: 'Hoy', current: { from: todayKey, to: todayKey },
+        previous: { from: addDays(todayKey, -7), to: addDays(todayKey, -7), label: 'Mismo día semana anterior' }
+      },
+      yesterday: {
+        label: 'Día anterior', current: { from: addDays(todayKey, -1), to: addDays(todayKey, -1) },
+        previous: { from: addDays(todayKey, -8), to: addDays(todayKey, -8), label: 'Mismo día semana anterior' }
+      },
+      week: {
+        label: 'Semana', current: { from: weekStart, to: todayKey },
+        previous: { from: addDays(weekStart, -7), to: addDays(todayKey, -7), label: 'Mismo tramo semana anterior' }
+      },
+      month: {
+        label: 'Mes', current: { from: monthStart, to: todayKey },
+        previous: { ...previousMonthPeriod(todayKey), label: 'Mismo tramo mes anterior' }
+      }
+    };
+    const hierarchyMaster = latestMasterFile('product-hierarchy', todayKey);
+    let hierarchyLookup = null;
+    if (hierarchyMaster) {
+      try { hierarchyLookup = parseProductHierarchies(hierarchyMaster.filePath); } catch { hierarchyLookup = null; }
+    }
+    const orderMap = new Map();
+    const productFacts = [];
+    const seenProductRows = new Set();
+    const warnings = [];
+    let salesFilesRead = 0;
+    for (const location of stores) {
+      for (const stored of storedSalesFiles(location.id)) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+            if (!date || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const orderKey = `${location.id}:${salesTransactionKey(row)}`;
+            if (!orderMap.has(orderKey)) {
+              const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+              if (gross !== null) {
+                const discounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
+                orderMap.set(orderKey, { locationId: location.id, date, net: (gross + discounts) / 1.19 });
+              }
+            }
+            const canonicalRow = Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right));
+            const productRowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonicalRow)).digest('hex')}`;
+            if (seenProductRows.has(productRowKey)) continue;
+            seenProductRows.add(productRowKey);
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim();
+            const name = repairMojibake(rowValue(row, ['Nombre', 'Producto']));
+            const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
+            const grossLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar', 'Precio Lista'])) || 0;
+            const lineDiscount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            const lineCost = numericValue(rowValue(row, ['Costo'])) || 0;
+            const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim();
+            const hierarchyNode = hierarchyLookup?.hierarchyMap.get(hierarchyId);
+            const hierarchyPath = hierarchyNode ? hierarchyLookup.pathFor(hierarchyNode.id) : [];
+            const fallbackHierarchy = repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos']))
+              || 'Sin jerarquía';
+            const resolvedHierarchyPath = hierarchyPath.length ? hierarchyPath : [fallbackHierarchy];
+            const hierarchy = resolvedHierarchyPath.join(' / ');
+            if (code || name) productFacts.push({
+              locationId: location.id, date, code, name: name || code, quantity,
+              net: (grossLine + lineDiscount) / 1.19, cost: lineCost, hierarchy, hierarchyPath: resolvedHierarchyPath
+            });
+          }
+          salesFilesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    const orderFacts = [...orderMap.values()];
+    const salesMetrics = Object.fromEntries(Object.entries(periods).map(([key, period]) => [
+      key, periodSalesMetric(orderFacts, { ...period.current, label: period.label }, period.previous)
+    ]));
+    const locations = stores.map(location => {
+      const facts = orderFacts.filter(fact => fact.locationId === location.id);
+      return {
+        id: location.id,
+        name: location.name,
+        day: periodSalesMetric(facts, periods.day.current, periods.day.previous).netSales,
+        yesterday: periodSalesMetric(facts, periods.yesterday.current, periods.yesterday.previous).netSales,
+        week: periodSalesMetric(facts, periods.week.current, periods.week.previous).netSales,
+        month: periodSalesMetric(facts, periods.month.current, periods.month.previous).netSales
+      };
+    });
+    const productInsights = {};
+    for (const key of ['day', 'week', 'month']) {
+      const period = periods[key].current;
+      const selected = productFacts.filter(fact => fact.date >= period.from && fact.date <= period.to);
+      const products = new Map();
+      const hierarchies = new Map();
+      selected.forEach(fact => {
+        const productKey = fact.code || normalizeHeader(fact.name);
+        const product = products.get(productKey) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0 };
+        product.quantity += fact.quantity;
+        product.netSales += fact.net;
+        products.set(productKey, product);
+        hierarchies.set(fact.hierarchy, (hierarchies.get(fact.hierarchy) || 0) + fact.net);
+      });
+      const totalHierarchySales = [...hierarchies.values()].reduce((sum, value) => sum + value, 0);
+      const hierarchyRoot = { name: 'Todas las jerarquías', path: [], netSales: 0, children: new Map(), products: new Map() };
+      const addProductToNode = (node, fact) => {
+        const productKey = fact.code || normalizeHeader(fact.name);
+        const product = node.products.get(productKey) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0 };
+        product.quantity += fact.quantity;
+        product.netSales += fact.net;
+        product.totalCost += fact.cost;
+        node.products.set(productKey, product);
+      };
+      selected.forEach(fact => {
+        hierarchyRoot.netSales += fact.net;
+        addProductToNode(hierarchyRoot, fact);
+        let node = hierarchyRoot;
+        fact.hierarchyPath.forEach((name, index) => {
+          if (!node.children.has(name)) {
+            node.children.set(name, { name, path: fact.hierarchyPath.slice(0, index + 1), netSales: 0, children: new Map(), products: new Map() });
+          }
+          node = node.children.get(name);
+          node.netSales += fact.net;
+          addProductToNode(node, fact);
+        });
+      });
+      const serializeHierarchyNode = node => ({
+        name: node.name,
+        path: node.path,
+        netSales: node.netSales,
+        children: [...node.children.values()]
+          .sort((left, right) => right.netSales - left.netSales)
+          .map(serializeHierarchyNode),
+        products: [...node.products.values()]
+          .map(product => ({
+            ...product,
+            contributionMarginPercent: product.netSales
+              ? (product.netSales - product.totalCost) / product.netSales * 100
+              : null
+          }))
+          .sort((left, right) => right.netSales - left.netSales || right.quantity - left.quantity)
+      });
+      productInsights[key] = {
+        period,
+        topProducts: [...products.values()].sort((left, right) => right.quantity - left.quantity || right.netSales - left.netSales).slice(0, 10),
+        hierarchies: [...hierarchies].map(([name, netSales]) => ({
+          name, netSales, percent: totalHierarchySales ? netSales / totalHierarchySales * 100 : 0
+        })).sort((left, right) => right.netSales - left.netSales),
+        hierarchyTree: serializeHierarchyNode(hierarchyRoot)
+      };
+    }
+    const mercadoPagoFacts = [];
+    const seenMercadoPago = new Set();
+    let mercadoPagoFilesRead = 0;
+    for (const location of stores) {
+      for (const stored of storedTransactionFiles(location.id, 'mercadopago')) {
+        try {
+          for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+            const header = sheet.rows[0] || [];
+            for (const values of sheet.rows.slice(1)) {
+              const row = Object.fromEntries(header.map((name, index) => [String(name || `column-${index}`), values[index]]));
+              const transactionType = String(rowValue(row, ['TRANSACTION_TYPE']) || '').trim().toUpperCase();
+              if (transactionType && transactionType !== 'SETTLEMENT') continue;
+              const dateTime = mercadoPagoDateTime(row);
+              const date = dateTime?.slice(0, 10);
+              if (!date || dateIsExcluded(date, stored.excludedRanges)) continue;
+              const sourceId = String(rowValue(row, ['SOURCE_ID']) ?? '').trim();
+              const uniqueId = `${location.id}:${sourceId || genericTransactionRowKey(values)}`;
+              if (seenMercadoPago.has(uniqueId)) continue;
+              seenMercadoPago.add(uniqueId);
+              mercadoPagoFacts.push({
+                locationId: location.id,
+                date,
+                dateTime,
+                amount: numericValue(rowValue(row, ['TRANSACTION_AMOUNT'])) || 0,
+                customerKey: mercadoPagoCardKey(row),
+                recurring: false
+              });
+            }
+          }
+          mercadoPagoFilesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer MercadoPago: ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    mercadoPagoFacts.sort((left, right) => left.dateTime.localeCompare(right.dateTime));
+    const customerDates = new Map();
+    mercadoPagoFacts.forEach(fact => {
+      if (!fact.customerKey) return;
+      const previousVisits = customerDates.get(fact.customerKey) || [];
+      fact.recurring = previousVisits.length > 0;
+      previousVisits.push(fact.dateTime);
+      customerDates.set(fact.customerKey, previousVisits);
+    });
+    const emptyFrequency = () => ({
+      moreThanThreeWeekly: 0, moreThanWeekly: 0, moreThanEvery15Days: 0, moreThanMonthly: 0, occasional: 0
+    });
+    const frequencyKey = visits => {
+      if (visits.length < 2) return null;
+      const gaps = visits.slice(1).map((value, index) => (new Date(value) - new Date(visits[index])) / 86400000);
+      const averageGapDays = gaps.reduce((sum, value) => sum + value, 0) / gaps.length;
+      if (averageGapDays < 7 / 3) return 'moreThanThreeWeekly';
+      if (averageGapDays < 7) return 'moreThanWeekly';
+      if (averageGapDays < 15) return 'moreThanEvery15Days';
+      if (averageGapDays < 30) return 'moreThanMonthly';
+      return 'occasional';
+    };
+    const frequency = emptyFrequency();
+    customerDates.forEach(visits => {
+      const key = frequencyKey(visits);
+      if (key) frequency[key] += 1;
+    });
+    const historySummary = period => {
+      const selected = mercadoPagoFacts.filter(fact => fact.date >= period.from && fact.date <= period.to);
+      const identifiedCards = new Set(selected.map(fact => fact.customerKey).filter(Boolean));
+      const recurrentCards = new Set(selected.filter(fact => fact.recurring && fact.customerKey).map(fact => fact.customerKey));
+      const totalSales = selected.reduce((sum, fact) => sum + fact.amount, 0);
+      const recurringSales = selected.filter(fact => fact.recurring).reduce((sum, fact) => sum + fact.amount, 0);
+      const periodFrequency = emptyFrequency();
+      recurrentCards.forEach(customerKey => {
+        const visitsThroughPeriod = (customerDates.get(customerKey) || []).filter(value => value.slice(0, 10) <= period.to);
+        const key = frequencyKey(visitsThroughPeriod);
+        if (key) periodFrequency[key] += 1;
+      });
+      return {
+        ...period,
+        transactions: selected.length,
+        totalSales,
+        recurringSales,
+        recurringSalesPercent: totalSales ? recurringSales / totalSales * 100 : 0,
+        identifiedCards: identifiedCards.size,
+        recurrentCustomers: recurrentCards.size,
+        frequency: periodFrequency
+      };
+    };
+    const monthHistory = [];
+    const [todayYear, todayMonth] = todayKey.split('-').map(Number);
+    for (let offset = -5; offset <= 0; offset += 1) {
+      const start = new Date(Date.UTC(todayYear, todayMonth - 1 + offset, 1));
+      const next = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+      const from = start.toISOString().slice(0, 10);
+      const naturalTo = addDays(next.toISOString().slice(0, 10), -1);
+      monthHistory.push(historySummary({ from, to: offset === 0 ? todayKey : naturalTo }));
+    }
+    const weekHistory = [];
+    const currentWeekStart = mondayContaining(todayKey);
+    for (let offset = -7; offset <= 0; offset += 1) {
+      const from = addDays(currentWeekStart, offset * 7);
+      const naturalTo = addDays(from, 6);
+      weekHistory.push(historySummary({ from, to: offset === 0 ? todayKey : naturalTo }));
+    }
+    return {
+      date: todayKey,
+      scope: selectedStore
+        ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
+        : { type: 'all', location: null, label: 'Todas las cafeterías' },
+      sales: { metrics: salesMetrics, locations, productInsights, filesRead: salesFilesRead },
+      mercadoPago: {
+        metrics: Object.fromEntries(['day', 'week', 'month'].map(key => [key,
+          recurringPeriodMetric(mercadoPagoFacts, periods[key].current, periods[key].previous)
+        ])),
+        customers: {
+          identified: customerDates.size,
+          recurrent: [...customerDates.values()].filter(visits => visits.length > 1).length,
+          frequency
+        },
+        history: { months: monthHistory, weeks: weekHistory },
+        transactionsRead: mercadoPagoFacts.length,
+        filesRead: mercadoPagoFilesRead,
+        keyDefinition: 'CARD_INITIAL_NUMBER + LAST_FOUR_DIGITS'
+      },
+      warnings
+    };
+  }
+
+  app.get('/api/sales/dashboard', (req, res) => {
+    try {
+      return res.json(buildSalesDashboard(String(req.query.location || 'all')));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el panel de ventas.' });
+    }
+  });
+
   app.get('/api/reports/weekly-sales', (req, res) => {
     const dailySales = {};
     const transactionsByDate = {};
@@ -2224,8 +3180,9 @@ function createApp(options = {}) {
       const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
       const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
       const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+      const includeToday = String(req.query.includeToday || '').toLowerCase() === 'true';
       return res.json({
-        ...buildSalesReport(dailySales, todayKey),
+        ...buildSalesReport(dailySales, todayKey, includeToday),
         intraday: buildIntradayReport(dailySales, transactionsByDate, todayKey),
         scope: selectedStore
           ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
@@ -2310,8 +3267,18 @@ function createApp(options = {}) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
         return res.status(400).json({ error: `${selectedLocation.name} no admite archivos de ${invalidField.fieldname}.` });
       }
+      const structureValidations = files.map(validateUploadStructure);
+      const mismatch = structureValidations.find(validation => !validation.ok);
+      if (mismatch) {
+        fs.rmSync(stagingDirectory, { recursive: true, force: true });
+        return res.status(422).json({
+          code: 'FILE_STRUCTURE_MISMATCH',
+          error: mismatch.error,
+          mismatch
+        });
+      }
       try {
-        const inspectedFiles = files.map(file => {
+        const inspectedFiles = files.map((file, index) => {
           const detectedRange = detectFileDateRange(file);
           const existingSources = storedFieldFiles(locationId, file.fieldname).flatMap(stored => {
             const existingRange = stored.record.confirmedRange || stored.record.detectedRange;
@@ -2326,7 +3293,8 @@ function createApp(options = {}) {
             detectedRange,
             existingRange: combinedDateRange(existingSources.map(source => ({ detectedRange: source.existingRange }))),
             overlapRange: combinedDateRange(existingSources.map(source => ({ detectedRange: source.overlap }))),
-            existingSources
+            existingSources,
+            structure: structureValidations[index]
           };
         });
         const manifest = {
@@ -2391,6 +3359,16 @@ function createApp(options = {}) {
             overlapAction === 'replace' ? [incomingRange] : []
           );
           imports.sales = prepared.stats;
+          stagedFile = prepared.staged;
+          if (!stagedFile) continue;
+        } else if (staged.field === 'mercadopago') {
+          const prepared = prepareIncrementalMercadoPago(
+            staged,
+            manifest.location,
+            stagingDirectory,
+            overlapAction === 'replace' ? [incomingRange] : []
+          );
+          imports.mercadopago = prepared.stats;
           stagedFile = prepared.staged;
           if (!stagedFile) continue;
         }
@@ -2702,6 +3680,16 @@ function createApp(options = {}) {
       }
       const files = uploadedFiles(req);
       if (files.length === 0) return res.status(400).json({ error: 'Select at least one master file to upload.' });
+      const structureValidations = files.map(validateUploadStructure);
+      const mismatch = structureValidations.find(validation => !validation.ok);
+      if (mismatch) {
+        removeFiles(files);
+        return res.status(422).json({
+          code: 'FILE_STRUCTURE_MISMATCH',
+          error: mismatch.error,
+          mismatch
+        });
+      }
       try {
         const saved = {};
         for (const [field, fieldFiles] of Object.entries(req.files)) {
@@ -2816,4 +3804,4 @@ if (require.main === module) {
   createApp().listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
 }
 
-module.exports = { createApp, isValidWeekKey, detectFileDateRange, DEFAULT_LOCATIONS };
+module.exports = { createApp, isValidWeekKey, detectFileDateRange, detectUploadStructure, validateUploadStructure, DEFAULT_LOCATIONS };

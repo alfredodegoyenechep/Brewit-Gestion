@@ -800,6 +800,193 @@ body {
   color: #2869a8;
 }
 
+@media print {
+  @page {
+    size: landscape;
+    margin: 10mm;
+  }
+
+  body.printing-inventory-report {
+    display: block;
+    background: white;
+  }
+
+  body.printing-inventory-report .sidebar,
+  body.printing-inventory-report .main-content > section:not(#inventory-workspace),
+  body.printing-inventory-report #inventory-workspace > *:not(.inventory-print-target) {
+    display: none !important;
+  }
+
+  body.printing-inventory-report .main-content,
+  body.printing-inventory-report #inventory-workspace,
+  body.printing-inventory-report .inventory-print-target {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-inventory-report .inventory-print-target .inventory-source-actions,
+  body.printing-inventory-report .inventory-print-target button {
+    display: none !important;
+  }
+
+  body.printing-inventory-report .inventory-results-table-wrap,
+  body.printing-inventory-report .consumption-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body.printing-inventory-report table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+    font-size: 7px !important;
+  }
+
+  body.printing-inventory-report th,
+  body.printing-inventory-report td {
+    max-width: none !important;
+    padding: 3px 4px !important;
+    white-space: normal !important;
+  }
+
+  body.printing-inventory-report .consumption-report-card,
+  body.printing-inventory-report .inventory-results-table-wrap {
+    break-inside: avoid;
+  }
+
+  body.printing-purchases-report {
+    display: block;
+    background: white;
+  }
+
+  body.printing-purchases-report .sidebar,
+  body.printing-purchases-report .main-content > section:not(#purchases-workspace) {
+    display: none !important;
+  }
+
+  body.printing-purchases-report .main-content,
+  body.printing-purchases-report #purchases-workspace,
+  body.printing-purchases-report .purchases-print-target {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-purchases-report .purchases-controls,
+  body.printing-purchases-report .purchases-report-actions {
+    display: none !important;
+  }
+
+  body.printing-purchases-report .purchases-workspace-head {
+    display: block !important;
+  }
+
+  body.printing-purchases-report .purchases-table-wrap,
+  body.printing-purchases-report .purchase-supplier-group {
+    overflow: visible !important;
+  }
+
+  body.printing-purchases-report .purchase-supplier-group {
+    margin-bottom: 8mm;
+    break-inside: auto;
+  }
+
+  body.printing-purchases-report .purchase-supplier-heading {
+    break-after: avoid;
+  }
+
+  body.printing-purchases-report .purchases-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+    font-size: 6px !important;
+  }
+
+  body.printing-purchases-report .purchases-table th,
+  body.printing-purchases-report .purchases-table td {
+    max-width: none !important;
+    padding: 2px 3px !important;
+    white-space: normal !important;
+  }
+
+  body.printing-purchase-order .sidebar,
+  body.printing-purchase-order .main-content > section:not(#purchase-projection-workspace),
+  body.printing-purchase-order #purchase-projection-workspace > *:not(#purchase-order-document) {
+    display: none !important;
+  }
+
+  body.printing-purchase-order,
+  body.printing-purchase-order .main-content,
+  body.printing-purchase-order #purchase-projection-workspace,
+  body.printing-purchase-order #purchase-order-document {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+  }
+
+  body.printing-purchase-order .purchase-order-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 10mm;
+  }
+
+  body.printing-purchase-order .purchase-order-heading h2 {
+    margin: 4px 0;
+    font-size: 24px;
+  }
+
+  body.printing-purchase-order .purchase-order-heading p {
+    margin: 0;
+  }
+
+  body.printing-purchase-order table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9px;
+  }
+
+  body.printing-purchase-order th,
+  body.printing-purchase-order td {
+    padding: 5px 6px;
+    border: 1px solid #d8cec1;
+    text-align: right;
+  }
+
+  body.printing-purchase-order th:nth-child(-n+2),
+  body.printing-purchase-order td:nth-child(-n+2) {
+    text-align: left;
+  }
+
+  body.printing-purchase-order tfoot td {
+    font-weight: 800;
+  }
+
+  body.printing-purchase-order .purchase-order-note {
+    margin-top: 8mm;
+    color: #665d54;
+    font-size: 9px;
+  }
+}
+
 .report-heading {
   display: flex;
   align-items: flex-start;
@@ -832,6 +1019,61 @@ body {
   background: var(--bg-soft);
   color: var(--text);
   font-weight: 700;
+}
+
+.report-refresh-stack {
+  display: grid;
+  justify-items: stretch;
+  gap: 7px;
+}
+
+.report-cutoff-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.report-cutoff-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-track {
+  display: inline-flex;
+  width: 32px;
+  height: 18px;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: #d8cfc3;
+  transition: background .18s ease;
+}
+
+.toggle-track span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(54, 38, 26, .25);
+  transition: transform .18s ease;
+}
+
+.report-cutoff-toggle input:checked + .toggle-track {
+  background: var(--coffee);
+}
+
+.report-cutoff-toggle input:checked + .toggle-track span {
+  transform: translateX(14px);
+}
+
+.report-cutoff-toggle input:focus-visible + .toggle-track {
+  outline: 2px solid #e28a00;
+  outline-offset: 2px;
 }
 
 .report-summary-grid {
@@ -1142,11 +1384,168 @@ body {
   gap: 22px;
 }
 
-.purchases-controls {
+.purchase-projection-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 22px;
+}
+
+.purchase-projection-controls {
   display: grid;
-  grid-template-columns: repeat(4, minmax(145px, 1fr)) auto;
+  grid-template-columns: minmax(170px, 1fr) minmax(190px, 1fr) auto auto;
   align-items: end;
   gap: 10px;
+}
+
+.purchase-projection-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.purchase-projection-controls select {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+}
+
+.purchase-projection-controls .projection-checkbox {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  white-space: nowrap;
+}
+
+.projection-toggle-filters {
+  display: grid;
+  align-self: end;
+  gap: 5px;
+  padding-bottom: 2px;
+}
+
+.purchase-projection-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.purchase-projection-table-wrap {
+  width: 100%;
+  margin-top: 14px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+}
+
+.purchase-projection-table {
+  width: 100%;
+  min-width: 1900px;
+  border-collapse: collapse;
+  background: white;
+  font-size: 11px;
+}
+
+.purchase-projection-table th,
+.purchase-projection-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.purchase-projection-table th {
+  color: var(--text-soft);
+  background: #fcfaf6;
+  font-size: 10px;
+}
+
+.purchase-projection-table th:nth-child(-n+5),
+.purchase-projection-table td:nth-child(-n+5) {
+  text-align: left;
+}
+
+.purchase-projection-table td:nth-child(3) {
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.purchase-projection-table th:first-child,
+.purchase-projection-table td:first-child {
+  text-align: center;
+}
+
+.purchase-projection-table select,
+.purchase-projection-table input {
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  font: inherit;
+}
+
+.purchase-projection-table .projection-managed-input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--clay);
+}
+
+.purchase-projection-table select {
+  width: 190px;
+}
+
+.purchase-projection-table input {
+  width: 58px;
+  text-align: right;
+}
+
+.purchase-projection-table td small {
+  display: block;
+  max-width: 190px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
+.purchase-projection-table .projection-needs-purchase td {
+  background: #fff9f0;
+}
+
+.purchase-projection-table td.projection-coverage-low {
+  color: var(--red);
+  font-weight: 900;
+}
+
+.purchase-projection-table .projection-empty {
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.purchase-order-document {
+  display: none;
+}
+
+.purchases-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(135px, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.purchases-report-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .purchases-controls label {
@@ -1211,7 +1610,7 @@ body {
 
 .purchases-table {
   width: 100%;
-  min-width: 1500px;
+  min-width: 1700px;
   border-collapse: collapse;
   background: white;
   font-size: 12px;
@@ -1234,7 +1633,9 @@ body {
 .purchases-table th:nth-child(-n+5),
 .purchases-table td:nth-child(-n+5),
 .purchases-table th:nth-child(7),
-.purchases-table td:nth-child(7) {
+.purchases-table td:nth-child(7),
+.purchases-table th:nth-child(9),
+.purchases-table td:nth-child(9) {
   text-align: left;
 }
 
@@ -1258,6 +1659,11 @@ body {
 .purchase-price-decrease {
   color: var(--green);
   font-weight: 900;
+}
+
+.purchases-table .purchase-muted-column {
+  background: #f5f3ef;
+  color: var(--text-muted);
 }
 
 .product-inactive-badge {
@@ -1596,6 +2002,7 @@ body {
 
 .detected-file {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 14px;
   padding: 10px 12px;
@@ -1611,6 +2018,12 @@ body {
 
 .detection-warning {
   color: var(--red);
+}
+
+.structure-validation-ok {
+  flex-basis: 100%;
+  color: var(--green);
+  font-weight: 800;
 }
 
 .transaction-overlap-notice {
@@ -2041,6 +2454,464 @@ button:disabled {
   margin-top: 20px;
 }
 
+.sales-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.sales-dashboard-heading,
+.sales-insight-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.sales-dashboard-heading h2 {
+  margin: 6px 0 4px;
+  font-size: 30px;
+}
+
+.sales-dashboard-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.sales-dashboard-controls label,
+.sales-insight-heading label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sales-dashboard-controls select,
+.sales-insight-heading select {
+  min-width: 220px;
+}
+
+.sales-dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.sales-kpi-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.sales-kpi-card.primary {
+  border-color: var(--coffee-dark);
+  background: var(--coffee-dark);
+  color: #fff;
+}
+
+.sales-kpi-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.sales-kpi-card.primary .sales-kpi-label,
+.sales-kpi-card.primary .sales-kpi-range,
+.sales-kpi-card.primary .sales-kpi-prior {
+  color: #d8c9b2;
+}
+
+.sales-kpi-value {
+  margin-top: 18px;
+  font-size: 30px;
+  font-weight: 900;
+}
+
+.sales-kpi-range,
+.sales-kpi-prior {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.sales-kpi-comparison {
+  margin-top: 14px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sales-kpi-comparison.positive { color: var(--green); }
+.sales-kpi-comparison.negative { color: var(--red); }
+.sales-kpi-comparison.neutral { color: var(--text-muted); }
+
+.sales-location-panel h3,
+.sales-insight-heading h3,
+.sales-insights-grid h3,
+.mercadopago-panel h3 {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.sales-basis-note {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.sales-table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
+.sales-dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sales-dashboard-table th,
+.sales-dashboard-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+}
+
+.sales-dashboard-table thead th {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.sales-dashboard-table .numeric-cell,
+.sales-dashboard-table thead th:not(:first-child) {
+  text-align: right;
+}
+
+.sales-dashboard-table tfoot {
+  background: var(--coffee-soft);
+  font-weight: 900;
+}
+
+.sales-insight-heading {
+  margin-top: 8px;
+}
+
+.sales-insights-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.sales-ranked-list,
+.sales-share-list {
+  margin-top: 18px;
+}
+
+.sales-ranked-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.sales-rank-number {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--coffee-soft);
+  color: var(--coffee);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sales-ranked-name,
+.sales-ranked-values {
+  display: grid;
+  gap: 3px;
+}
+
+.sales-ranked-name small,
+.sales-ranked-values small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.sales-ranked-values {
+  text-align: right;
+}
+
+.sales-share-row {
+  padding: 9px 0;
+}
+
+.hierarchy-panel-head {
+  align-items: flex-start;
+}
+
+.sales-hierarchy-context {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.hierarchy-back-button {
+  flex: 0 0 auto;
+}
+
+.sales-share-navigation {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sales-share-navigation:hover {
+  padding-right: 8px;
+  padding-left: 8px;
+  background: var(--coffee-soft-2);
+}
+
+.sales-share-navigation:focus-visible {
+  outline: 2px solid #e28a00;
+  outline-offset: 2px;
+}
+
+.hierarchy-product-row .sales-share-head span {
+  white-space: normal;
+}
+
+.hierarchy-product-list {
+  max-height: 620px;
+  padding-right: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.hierarchy-product-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.hierarchy-product-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cdbba5;
+}
+
+.product-margin.positive { color: var(--green); }
+.product-margin.negative { color: var(--red); }
+.product-margin.neutral { color: var(--text-muted); }
+
+.sales-product-financials {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.sales-share-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 11px;
+}
+
+.sales-share-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sales-share-head strong {
+  flex: 0 0 auto;
+}
+
+.sales-share-track {
+  height: 8px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--coffee-soft);
+}
+
+.sales-share-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--clay), var(--coffee));
+}
+
+.empty-state {
+  padding: 24px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mercadopago-panel {
+  margin-top: 4px;
+}
+
+.mercadopago-head {
+  align-items: flex-start;
+}
+
+.mercadopago-head p {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.mercadopago-customer-summary {
+  display: flex;
+  gap: 10px;
+}
+
+.mercadopago-customer-summary > div {
+  display: grid;
+  min-width: 130px;
+  gap: 3px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #e6f2ff;
+  color: #1f6da8;
+}
+
+.mercadopago-customer-summary strong {
+  font-size: 20px;
+}
+
+.mercadopago-customer-summary span {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.mercadopago-table td:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.frequency-heading {
+  margin-top: 24px;
+}
+
+.frequency-heading h4 {
+  margin: 5px 0 0;
+}
+
+.frequency-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.frequency-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: #fffdf9;
+}
+
+.frequency-card strong {
+  font-size: 24px;
+}
+
+.frequency-card span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.mercadopago-history-heading {
+  margin-top: 30px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.mercadopago-history-heading h4,
+.mercadopago-history-card h4 {
+  margin: 5px 0 0;
+  font-size: 18px;
+}
+
+.mercadopago-history-heading p {
+  margin: 7px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.mercadopago-history-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.mercadopago-history-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: #fffdf9;
+}
+
+.recurring-history-table {
+  min-width: 1040px;
+  font-size: 10px;
+}
+
+.recurring-history-table th,
+.recurring-history-table td {
+  padding: 9px 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.recurring-history-table th:first-child,
+.recurring-history-table td:first-child {
+  text-align: left;
+}
+
+.recurring-percent-cell {
+  min-width: 128px;
+}
+
+.recurring-percent-cell strong,
+.recurring-percent-track {
+  display: block;
+}
+
+.recurring-percent-track {
+  height: 6px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--coffee-soft);
+}
+
+.recurring-percent-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2f79b7;
+}
+
 .product-list {
   margin-top: 26px;
 }
@@ -2139,9 +3010,14 @@ button:disabled {
 @media (max-width: 900px) {
   .report-heading,
   .report-actions,
+  .sales-dashboard-heading,
+  .sales-insight-heading,
+  .sales-dashboard-controls,
+  .mercadopago-head,
   .inventory-workspace-head,
   .products-workspace-head,
-  .purchases-workspace-head {
+  .purchases-workspace-head,
+  .purchase-projection-head {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2151,6 +3027,10 @@ button:disabled {
   }
 
   .purchases-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .purchase-projection-controls {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -2236,8 +3116,15 @@ button:disabled {
 
   .summary-grid,
   .content-layout,
-  .lower-grid {
+  .lower-grid,
+  .sales-dashboard-metrics,
+  .sales-insights-grid,
+  .frequency-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mercadopago-customer-summary {
+    flex-wrap: wrap;
   }
 
   .intraday-heading,

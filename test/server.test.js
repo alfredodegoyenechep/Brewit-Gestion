@@ -64,12 +64,16 @@ async function confirmTransactions(baseUrl, manifest, overlapAction = 'keep', ra
 test('serves the app and exposes the three upload locations', async t => {
   const baseUrl = await startTestServer(t);
   const page = await fetch(`${baseUrl}/`);
+  const excelLibrary = await fetch(`${baseUrl}/vendor/xlsx.full.min.js`);
   const locations = await fetch(`${baseUrl}/api/locations`).then(response => response.json());
 
   assert.equal(page.status, 200);
+  assert.equal(excelLibrary.status, 200);
+  assert.match(excelLibrary.headers.get('content-type'), /javascript/);
+  assert.ok((await excelLibrary.arrayBuffer()).byteLength > 0);
   assert.match(await page.text(), /Cargar Archivos/);
   assert.deepEqual(Object.keys(locations), ['store-1', 'store-2', 'main-warehouse']);
-  assert.deepEqual(locations['store-1'].fields, ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales']);
+  assert.deepEqual(locations['store-1'].fields, ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'mercadopago']);
   assert.deepEqual(locations['main-warehouse'].fields, ['kardex']);
 });
 
@@ -91,6 +95,41 @@ test('rejects invalid locations and week paths before staging files', async t =>
 
   assert.equal(invalidLocation.status, 400);
   assert.equal(invalidWeek.status, 400);
+});
+
+test('rejects transaction and master files whose structure does not match the selected category', async t => {
+  const baseUrl = await startTestServer(t);
+  const purchaseContents = [
+    ['Fecha emisión', 'Documento', 'Proveedor/Para', 'PRODUCTO', 'Cod', 'Q.Rec', 'Um.Rec', 'Costo'],
+    ['2026-08-04', '100', 'Proveedor', 'Insumo', 'I1', 1, 'UN', 100]
+  ].map(row => row.join('\t')).join('\n');
+  const wrongTransaction = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', contents: purchaseContents, filename: 'compras.xls'
+  }]);
+  assert.equal(wrongTransaction.status, 422);
+  const transactionError = await wrongTransaction.json();
+  assert.equal(transactionError.code, 'FILE_STRUCTURE_MISMATCH');
+  assert.equal(transactionError.mismatch.expected, 'sales');
+  assert.equal(transactionError.mismatch.detected, 'purchases');
+  assert.match(transactionError.error, /Transacciones de venta.*Compras/i);
+
+  const recipeContents = [
+    ['Id Producto', 'Id Ingrediente', 'Cantidad Ingrediente', 'Unidad Medida'],
+    ['P1', 'I1', 1, 'UN']
+  ].map(row => row.join('\t')).join('\n');
+  const wrongMaster = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{ field: 'master-suppliers', contents: recipeContents, filename: 'recetas.txt' }], {
+      'master-suppliers-from': '2026-08-01'
+    })
+  });
+  assert.equal(wrongMaster.status, 422);
+  const masterError = await wrongMaster.json();
+  assert.equal(masterError.code, 'FILE_STRUCTURE_MISMATCH');
+  assert.equal(masterError.mismatch.expected, 'master-suppliers');
+  assert.equal(masterError.mismatch.detected, 'master-recipes');
+  assert.match(masterError.error, /Maestro Proveedores.*Maestro de recetas/i);
+  assert.deepEqual(await fetch(`${baseUrl}/api/masters`).then(response => response.json()), {});
 });
 
 test('migrates legacy Sunday week folders to their Monday week key', async t => {
@@ -125,12 +164,13 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
     ['old-7', '2026-07-30', 119, 0], ['old-8', '2026-08-06', 119, 0],
     ['month-high', '2026-08-01', 1190, 0],
     ['monday', '2026-08-10', 119, 0], ['tuesday', '2026-08-11', 238, 0],
-    ['wednesday', '2026-08-12', 357, 0], ['yesterday', '2026-08-13', 357, -119]
+    ['wednesday', '2026-08-12', 357, 0], ['yesterday', '2026-08-13', 357, -119],
+    ['today', '2026-08-14', 476, 0]
   ];
   const sales = rows.map(row => row.join('\t')).join('\n');
   const inspection = await inspect(baseUrl, 'store-1', '2026-08-10', [{ field: 'sales', contents: sales, filename: 'sales.csv' }])
     .then(response => response.json());
-  assert.equal((await confirm(baseUrl, inspection, { from: '2026-06-18', to: '2026-08-13' })).status, 200);
+  assert.equal((await confirm(baseUrl, inspection, { from: '2026-06-18', to: '2026-08-14' })).status, 200);
 
   const report = await fetch(`${baseUrl}/api/reports/weekly-sales`).then(response => response.json());
   assert.equal(report.basis, 'gross-plus-signed-discounts-divided-by-1.19');
@@ -145,6 +185,16 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(report.week.netSales), 800);
   assert.equal(report.month.from, '2026-08-01');
   assert.equal(Math.round(report.month.netSales), 1900);
+
+  const includingToday = await fetch(`${baseUrl}/api/reports/weekly-sales?includeToday=true`).then(response => response.json());
+  assert.equal(includingToday.includeToday, true);
+  assert.equal(includingToday.cutoff, 'today');
+  assert.equal(includingToday.previousDay.date, '2026-08-14');
+  assert.equal(Math.round(includingToday.previousDay.netSales), 400);
+  assert.equal(includingToday.week.to, '2026-08-14');
+  assert.equal(Math.round(includingToday.week.netSales), 1200);
+  assert.equal(includingToday.month.to, '2026-08-14');
+  assert.equal(Math.round(includingToday.month.netSales), 2300);
 });
 
 test('does not compare a missing previous sales day as if it were a zero-sale day', async t => {
@@ -301,7 +351,7 @@ test('organizes products by hierarchy and calculates rolling sales by cafeteria'
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
-  const baseUrl = await startTestServer(t);
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
   const supplierMaster = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
     body: fileForm([{
@@ -311,15 +361,31 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
     }], { 'master-suppliers-from': '2026-08-01' })
   });
   assert.equal(supplierMaster.status, 200);
+  const catalogWorkbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalogWorkbook, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'ce', 'ub', 'conv.0.umed', 'conv.0.umedb', 'conv.0.cnum', 'conv.0.cden', 'conv.1.umed', 'conv.1.umedb', 'conv.1.cnum', 'conv.1.cden'],
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base', 'Conversion - Unidad Medida a Definir', 'Conversion - Unidad Medida Base', 'Conversion - Numerador', 'Conversion - Denominador', 'Conversion - Unidad Medida a Definir', 'Conversion - Unidad Medida Base', 'Conversion - Numerador', 'Conversion - Denominador'],
+    ['I1', 'Insumo Uno', 10, 'UN', 'UN', 'UN', 1, 1, 'CAJ', 'UN', 12, 1],
+    ['I2', 'Insumo Dos', 500, 'kg', 'kg', 'kg', 1, 1, null, null, null, null]
+  ]), 'Ingr');
+  const catalogMaster = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog',
+      contents: XLSX.write(catalogWorkbook, { type: 'buffer', bookType: 'xlsx' }),
+      filename: 'catalogo.xlsx'
+    }], { 'master-catalog-from': '2026-08-01' })
+  });
+  assert.equal(catalogMaster.status, 200);
   const headers = ['Fecha emisión', 'Tipo Documento', 'Documento', 'Proveedor/Para', 'Número identificador fiscal', 'Lin', 'Cod', 'PRODUCTO', 'Q.Rec', 'Um.Rec', 'Q.Fac', 'Um.Fac', 'Costo', 'Costo negociado', 'Monto neto', 'Descuento', 'Monto total'];
   const fixtures = {
     'store-1': [
-      ['2026-08-04', 'Factura', '10', 'Alias Uno', '111', '1', 'I1', 'Insumo Uno', 1, 'UN', 1, 'UN', 100, 0, 100, 0, 100],
-      ['2026-08-06', 'Factura', '11', 'Alias Uno', '111', '1', 'I1', 'Insumo Uno', 2, 'UN', 2, 'UN', 120, 0, 240, 0, 240],
+      ['2026-08-04', 'Factura', '10', 'Alias Uno', '111', '1', 'I1', 'Insumo Uno', 1, 'CAJ', 1, 'CAJ', 100, 0, 100, 0, 100],
+      ['2026-08-06', 'Factura', '11', 'Alias Uno', '111', '1', 'I1', 'Insumo Uno', 2, 'CAJ', 2, 'CAJ', 120, 0, 240, 0, 240],
       ['2026-08-06', 'Factura', '12', 'Proveedor Dos', '222', '1', 'I2', 'Insumo Dos', 1, 'KG', 1, 'KG', 500, 0, 500, 50, 450]
     ],
     'store-2': [
-      ['2026-08-05', 'Factura', '20', 'Alias Uno', '111', '1', 'I1', 'Insumo Uno', 1, 'UN', 1, 'UN', 130, 0, 130, 0, 130]
+      ['2026-08-05', 'Factura', '20', 'Alias Uno', '111', '1', 'I1', 'Insumo Uno', 1, 'CAJ', 1, 'CAJ', 130, 0, 130, 0, 130]
     ]
   };
   for (const [location, rows] of Object.entries(fixtures)) {
@@ -338,13 +404,87 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   const changed = all.rows.find(row => row.document === '11');
   assert.equal(changed.previousEffectiveUnitPrice, 100);
   assert.equal(Math.round(changed.priceChangePercent), 20);
+  assert.equal(changed.purchaseUnit, 'CAJ');
+  assert.equal(changed.unitsPerPurchaseUnit, 12);
+  assert.equal(changed.baseUnit, 'UN');
+  assert.equal(changed.baseUnitCost, 10);
+  const kilograms = all.rows.find(row => row.document === '12');
+  assert.equal(kilograms.purchaseUnit, 'KG');
+  assert.equal(kilograms.unitsPerPurchaseUnit, 1);
+  assert.equal(kilograms.baseUnit, 'kg');
+  assert.equal(kilograms.baseUnitCost, 500);
 
   const filtered = await fetch(`${baseUrl}/api/purchases?location=store-1&supplier=111&dateFrom=2026-08-05&dateTo=2026-08-06`)
     .then(response => response.json());
   assert.equal(filtered.rows.length, 1);
   assert.equal(filtered.rows[0].document, '11');
   assert.equal(filtered.summary.totalAmount, 240);
-  assert.equal((await fetch(`${baseUrl}/api/purchases?location=main-warehouse`)).status, 400);
+  const productFiltered = await fetch(`${baseUrl}/api/purchases?location=store-1&supplier=all&product=Insumo%20Dos`)
+    .then(response => response.json());
+  assert.equal(productFiltered.rows.length, 1);
+  assert.equal(productFiltered.rows[0].document, '12');
+
+  const warehouseKardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '', '', '2026-08-05', '', '', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'BUY - Compras', 'Costo', 'IF - Inventario Final', 'II - Inventario Inicial', 'TRL-OUT - Transferencias Locales Salientes', 'TRN-OUT - Transformaciones Salientes', 'Costo', 'IF - Inventario Final'],
+    ['I1', 'Insumo Uno', 'UN', 0, 3, 10, 3, 3, 3, 2, 10, 0]
+  ].map(row => row.join('\t')).join('\n');
+  const warehouseInspection = await inspect(baseUrl, 'main-warehouse', '2026-08-03', [{
+    field: 'kardex', contents: warehouseKardex, filename: 'bodega-kardex.xls'
+  }]).then(response => response.json());
+  assert.equal((await confirm(baseUrl, warehouseInspection)).status, 200);
+  const warehouse = await fetch(`${baseUrl}/api/purchases?location=main-warehouse&supplier=all&product=I1`)
+    .then(response => response.json());
+  assert.equal(warehouse.rows.length, 1);
+  assert.equal(warehouse.scope.type, 'warehouse');
+  assert.equal(warehouse.rows[0].locationId, 'main-warehouse');
+  assert.equal(warehouse.rows[0].supplier, 'Ingresos BUY según Kardex');
+  assert.equal(warehouse.rows[0].sourceType, 'kardex-buy');
+  assert.equal(warehouse.rows[0].quantity, 3);
+  assert.equal(warehouse.rows[0].listedUnitPrice, 10);
+  assert.equal(warehouse.rows[0].totalAmount, 30);
+
+  const projection = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`).then(response => response.json());
+  assert.equal(projection.location.id, 'main-warehouse');
+  assert.equal(projection.period.dataThrough, '2026-08-05');
+  assert.equal(projection.items.length, 1);
+  assert.equal(projection.items[0].consumption30, 5);
+  assert.equal(projection.items[0].currentInventory, 0);
+  assert.equal(projection.items[0].minDays, 7);
+  assert.equal(projection.items[0].maxDays, 14);
+  assert.equal(projection.items[0].managed, false);
+  assert.equal(projection.summary.managedItemCount, 0);
+  assert.equal(projection.items[0].suggestedPurchaseUnits, 1);
+  assert.equal(projection.items[0].purchaseUnit, 'CAJ');
+  assert.equal(projection.items[0].unitsPerPurchaseUnit, 12);
+  assert.equal(projection.items[0].supplier, 'Proveedor Uno');
+  assert.equal(projection.items[0].supplierInferred, true);
+  assert.equal(projection.summary.missingCostCount, 0);
+
+  const savePolicy = await fetch(`${baseUrl}/api/purchase-projections/policies`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'main-warehouse',
+      items: [{ key: 'I1', minDays: 10, maxDays: 20, supplierKey: '222', managed: true }]
+    })
+  });
+  assert.equal(savePolicy.status, 200);
+  const configuredProjection = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`).then(response => response.json());
+  assert.equal(configuredProjection.items[0].minDays, 10);
+  assert.equal(configuredProjection.items[0].maxDays, 20);
+  assert.equal(configuredProjection.items[0].managed, true);
+  assert.equal(configuredProjection.summary.managedItemCount, 1);
+  assert.equal(configuredProjection.summary.purchaseItemCount, 1);
+  assert.equal(configuredProjection.items[0].supplier, 'Proveedor Dos');
+  assert.equal(configuredProjection.items[0].supplierInferred, false);
+  assert.equal(configuredProjection.items[0].supplierPurchaseReferenceMatched, false);
+  const invalidPolicy = await fetch(`${baseUrl}/api/purchase-projections/policies`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'main-warehouse', items: [{ key: 'I1', minDays: 20, maxDays: 10 }] })
+  });
+  assert.equal(invalidPolicy.status, 400);
 });
 
 test('builds cumulative intraday blocks with weekday, month, and historical reference days', async t => {
@@ -879,11 +1019,128 @@ test('stores transactions without a week and confirms whether overlapping dates 
   assert.deepEqual(stored.files.sales.dataRange, { from: '2026-08-04', to: '2026-08-05' });
 });
 
+test('accepts MercadoPago files without a structural reference and avoids duplicate rows', async t => {
+  const baseUrl = await startTestServer(t);
+  const header = ['Fecha operación', 'Referencia MP', 'Monto acreditado'];
+  const firstRows = [
+    header,
+    ['2026-08-04', 'mp-1', 1000],
+    ['2026-08-05', 'mp-2', 2000]
+  ];
+  const firstInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'mercadopago', contents: firstRows.map(row => row.join('\t')).join('\n'), filename: 'mercadopago-original.csv'
+  }]).then(response => response.json());
+  assert.equal(firstInspection.files[0].structure.ok, true);
+  assert.equal(firstInspection.files[0].structure.permissive, true);
+  assert.match(firstInspection.files[0].structure.reason, /sin validación estructural/i);
+  const firstImport = await confirmTransactions(baseUrl, firstInspection).then(response => response.json());
+  assert.equal(firstImport.imports.mercadopago.newTransactions, 2);
+
+  const nextRows = [
+    header,
+    ['2026-08-05', 'mp-2', 2000],
+    ['2026-08-06', 'mp-3', 3000]
+  ];
+  const nextInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'mercadopago', contents: nextRows.map(row => row.join('\t')).join('\n'), filename: 'mercadopago-acumulado.csv'
+  }]).then(response => response.json());
+  assert.equal(nextInspection.hasOverlap, true);
+  const nextImport = await confirmTransactions(baseUrl, nextInspection, 'keep').then(response => response.json());
+  assert.equal(nextImport.imports.mercadopago.newTransactions, 1);
+  assert.equal(nextImport.imports.mercadopago.duplicateTransactions, 1);
+
+  const stored = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
+  assert.equal(stored.files.mercadopago.fileCount, 2);
+  assert.deepEqual(stored.files.mercadopago.dataRange, { from: '2026-08-04', to: '2026-08-06' });
+  const preview = await fetch(`${baseUrl}${stored.files.mercadopago.latest.previewUrl}`).then(response => response.json());
+  assert.equal(preview.sheets[0].rows.length, 2);
+  assert.match(preview.sheets[0].rows[1].join(' '), /mp-3/);
+
+  const replacementRows = [header, ['2026-08-06', 'mp-3-corregida', 3500]];
+  const replacementInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'mercadopago', contents: replacementRows.map(row => row.join('\t')).join('\n'), filename: 'mercadopago-corregido.csv'
+  }]).then(response => response.json());
+  assert.deepEqual(replacementInspection.files[0].overlapRange, { from: '2026-08-06', to: '2026-08-06' });
+  const replacement = await confirmTransactions(baseUrl, replacementInspection, 'replace').then(response => response.json());
+  assert.equal(replacement.imports.mercadopago.newTransactions, 1);
+  const afterReplacement = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
+  assert.equal(afterReplacement.files.mercadopago.latest.replacementEffects.length, 1);
+  assert.deepEqual(afterReplacement.files.mercadopago.latest.replacementEffects[0].range, { from: '2026-08-06', to: '2026-08-06' });
+});
+
+test('builds the sales dashboard and identifies recurring MercadoPago customers by card key', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const salesHeader = ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'Costo', 'AB.', 'Categorías de Productos/Platos'];
+  const salesRows = [
+    salesHeader,
+    ['order-prior', '2026-08-08', 119, 0, 'B1', 'Café', 1, 119, 0, 20, 'AB.1', 'Bebidas'],
+    ['order-yesterday', '2026-08-14', 238, 0, 'B1', 'Café', 1, 238, 0, 50, 'AB.1', 'Bebidas'],
+    ['order-today', '2026-08-15', 357, 0, 'B1', 'Café', 2, 357, 0, 100, 'AB.1', 'Bebidas']
+  ];
+  const salesInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', contents: salesRows.map(row => row.join('\t')).join('\n'), filename: 'ventas-dashboard.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, salesInspection)).status, 200);
+
+  const mpHeader = ['TRANSACTION_DATE', 'SOURCE_ID', 'TRANSACTION_TYPE', 'TRANSACTION_AMOUNT', 'CARD_INITIAL_NUMBER', 'LAST_FOUR_DIGITS'];
+  const mpRows = [
+    mpHeader,
+    ['2026-08-01T10:00:00.000-04:00', 'mp-0', 'SETTLEMENT', 100, 12345678, 42],
+    ['2026-08-08T10:00:00.000-04:00', 'mp-1', 'SETTLEMENT', 200, 12345678, 42],
+    ['2026-08-15T10:00:00.000-04:00', 'mp-2', 'SETTLEMENT', 300, 12345678, 42],
+    ['2026-08-15T11:00:00.000-04:00', 'mp-3', 'SETTLEMENT', 400, 87654321, 7]
+  ];
+  const mpInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'mercadopago', contents: mpRows.map(row => row.join('\t')).join('\n'), filename: 'mercadopago-dashboard.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, mpInspection, 'keep', { from: '2026-08-01', to: '2026-08-15' })).status, 200);
+
+  const dashboardResponse = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1`);
+  assert.equal(dashboardResponse.status, 200);
+  const dashboard = await dashboardResponse.json();
+  assert.equal(dashboard.sales.metrics.day.netSales, 300);
+  assert.equal(dashboard.sales.metrics.day.previous.netSales, 100);
+  assert.equal(Math.round(dashboard.sales.metrics.day.changePercent), 200);
+  assert.equal(dashboard.sales.locations[0].month, 600);
+  assert.equal(dashboard.sales.productInsights.day.topProducts[0].quantity, 2);
+  assert.equal(dashboard.sales.productInsights.day.hierarchies[0].name, 'Bebidas');
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].name, 'Bebidas');
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].name, 'Café');
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].quantity, 2);
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].totalCost, 100);
+  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 66.7);
+  assert.equal(dashboard.mercadoPago.metrics.day.transactions, 2);
+  assert.equal(dashboard.mercadoPago.metrics.day.sales, 700);
+  assert.equal(dashboard.mercadoPago.metrics.day.recurringTransactions, 1);
+  assert.equal(dashboard.mercadoPago.metrics.day.recurringSales, 300);
+  assert.equal(dashboard.mercadoPago.metrics.day.recurringTransactionPercent, 50);
+  assert.equal(dashboard.mercadoPago.customers.identified, 2);
+  assert.equal(dashboard.mercadoPago.customers.recurrent, 1);
+  assert.equal(dashboard.mercadoPago.customers.frequency.moreThanEvery15Days, 1);
+  assert.equal(dashboard.mercadoPago.history.months.length, 6);
+  assert.equal(dashboard.mercadoPago.history.weeks.length, 8);
+  const currentMonth = dashboard.mercadoPago.history.months.at(-1);
+  assert.deepEqual({ from: currentMonth.from, to: currentMonth.to }, { from: '2026-08-01', to: '2026-08-15' });
+  assert.equal(currentMonth.totalSales, 1000);
+  assert.equal(currentMonth.recurringSales, 500);
+  assert.equal(currentMonth.recurringSalesPercent, 50);
+  assert.equal(currentMonth.identifiedCards, 2);
+  assert.equal(currentMonth.recurrentCustomers, 1);
+  assert.equal(currentMonth.frequency.moreThanEvery15Days, 1);
+  const currentWeek = dashboard.mercadoPago.history.weeks.at(-1);
+  assert.deepEqual({ from: currentWeek.from, to: currentWeek.to }, { from: '2026-08-10', to: '2026-08-15' });
+  assert.equal(currentWeek.totalSales, 700);
+  assert.equal(currentWeek.recurringSales, 300);
+  assert.equal(Math.round(currentWeek.recurringSalesPercent * 10) / 10, 42.9);
+});
+
 test('warns on duplicate master start dates and replaces only after confirmation', async t => {
   const baseUrl = await startTestServer(t);
+  const oldCatalog = 'ID Producto **\tNombre Producto *\tCosto\nP1\tProducto anterior\t100';
+  const newCatalog = 'ID Producto **\tNombre Producto *\tCosto\nP1\tProducto nuevo\t120';
   const first = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
-    body: fileForm([{ field: 'master-catalog', contents: 'product,data', filename: 'catalog-old.xlsx' }], {
+    body: fileForm([{ field: 'master-catalog', contents: oldCatalog, filename: 'catalog-old.xlsx' }], {
       'master-catalog-from': '2026-08-09'
     })
   });
@@ -891,7 +1148,7 @@ test('warns on duplicate master start dates and replaces only after confirmation
   const oldRecord = (await first.json()).saved['master-catalog'];
 
   const duplicateForm = () => fileForm([{
-    field: 'master-catalog', contents: 'new product,data', filename: 'catalog-new.xlsx'
+    field: 'master-catalog', contents: newCatalog, filename: 'catalog-new.xlsx'
   }], { 'master-catalog-from': '2026-08-09' });
   const conflict = await fetch(`${baseUrl}/upload/master`, { method: 'POST', body: duplicateForm() });
   assert.equal(conflict.status, 409);
@@ -916,7 +1173,7 @@ test('warns on duplicate master start dates and replaces only after confirmation
   assert.equal(preview.status, 200);
   const previewBody = await preview.json();
   assert.equal(previewBody.originalName, 'catalog-new.xlsx');
-  assert.equal(previewBody.sheets[0].rows[0][0], 'new product');
+  assert.equal(previewBody.sheets[0].rows[0][0], 'ID Producto **');
 
   const deletion = await fetch(`${baseUrl}/api/masters/${encodeURIComponent(replacementVersion)}/master-catalog`, { method: 'DELETE' });
   assert.equal(deletion.status, 200);
@@ -925,7 +1182,7 @@ test('warns on duplicate master start dates and replaces only after confirmation
 
   const supplier = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
-    body: fileForm([{ field: 'master-suppliers', contents: 'supplier,data', filename: 'suppliers.xlsx' }], {
+    body: fileForm([{ field: 'master-suppliers', contents: 'Nombre*\tRUT/Fiscal ID*\nProveedor\t111', filename: 'suppliers.xlsx' }], {
       'master-suppliers-from': '2026-08-09'
     })
   });
@@ -938,6 +1195,12 @@ test('limits spreadsheet previews to 200 rows and 300 columns', async t => {
   const workbook = XLSX.utils.book_new();
   const matrix = Array.from({ length: 205 }, (_, row) =>
     Array.from({ length: 305 }, (_, column) => `R${row + 1}C${column + 1}`));
+  matrix[0][0] = 'pl';
+  matrix[0][1] = 'np';
+  matrix[0][2] = 'ce';
+  matrix[1][0] = 'ID Producto **';
+  matrix[1][1] = 'Nombre Producto *';
+  matrix[1][2] = 'Costo';
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(matrix), 'Amplia');
   const contents = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   await fetch(`${baseUrl}/upload/master`, {

@@ -1,4 +1,3 @@
-const dashboardSections = ['.summary-grid', '.content-layout', '.lower-grid'];
 let locationRegistry = {};
 const FIELD_LABELS = {
   kardex: 'Kardex / inventario',
@@ -6,7 +5,8 @@ const FIELD_LABELS = {
   marketing: 'Consumo de marketing',
   employees: 'Consumo de colaboradores',
   purchases: 'Compras',
-  sales: 'Ventas'
+  sales: 'Ventas',
+  mercadopago: 'Transacciones MercadoPago'
 };
 const MASTER_FIELD_LABELS = {
   'master-catalog': 'Maestro Productos / Ingredientes / Extras',
@@ -27,6 +27,9 @@ let pendingTrashLocation = null;
 let inventorySourceState = null;
 let productsViewState = null;
 let purchasesViewState = null;
+let purchaseProjectionState = null;
+let salesDashboardState = null;
+let salesHierarchyPath = [];
 let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
 
@@ -54,6 +57,13 @@ function setView(view) {
     loadWeeklySalesReport();
     return;
   }
+  if (view === 'sales') {
+    const sales = document.getElementById('sales-workspace');
+    sales.hidden = false;
+    sales.style.display = '';
+    loadSalesDashboard();
+    return;
+  }
   if (view === 'inventory') {
     const inventory = document.getElementById('inventory-workspace');
     inventory.hidden = false;
@@ -75,13 +85,13 @@ function setView(view) {
     loadPurchasesView();
     return;
   }
-  dashboardSections.forEach(selector => {
-    const section = document.querySelector(selector);
-    if (section) {
-      section.hidden = false;
-      section.style.display = '';
-    }
-  });
+  if (view === 'purchase-projection') {
+    const projection = document.getElementById('purchase-projection-workspace');
+    projection.hidden = false;
+    projection.style.display = '';
+    loadPurchaseProjection();
+    return;
+  }
 }
 
 function setUploadMode(mode) {
@@ -268,7 +278,7 @@ function updateLocationFields() {
     ? 'Crea o recupera una ubicación en Configuración para cargar archivos.'
     : isWarehouse
       ? 'Esta bodega solo requiere su Kardex de inventario.'
-      : 'Esta cafetería recibe Kardex, merma, consumos de marketing y colaboradores, compras y ventas.';
+      : 'Esta cafetería recibe Kardex, merma, consumos de marketing y colaboradores, compras, ventas y transacciones MercadoPago.';
   currentWeekFiles = {};
   clearWeeklySelections();
   clearInspection(true);
@@ -385,15 +395,19 @@ async function loadWeeklySalesReport() {
   const refreshButton = document.getElementById('refresh-weekly-report');
   const locationFilter = document.getElementById('report-location-filter');
   const selectedLocation = locationFilter.value || 'all';
+  const includeToday = document.getElementById('report-include-today').checked;
   refreshButton.disabled = true;
   setStatus(status, 'Calculando ventas netas…');
   try {
-    const report = await apiRequest(`/api/reports/weekly-sales?location=${encodeURIComponent(selectedLocation)}`);
-    if (selectedLocation !== locationFilter.value) return;
+    const report = await apiRequest(`/api/reports/weekly-sales?location=${encodeURIComponent(selectedLocation)}&includeToday=${includeToday}`);
+    if (selectedLocation !== locationFilter.value || includeToday !== document.getElementById('report-include-today').checked) return;
     document.getElementById('report-scope-description').textContent = report.scope.type === 'all'
       ? 'Venta neta sin IVA, consolidada para todas las cafeterías.'
       : `Venta neta sin IVA para ${report.scope.label}.`;
     document.getElementById('report-yesterday-date').textContent = formatReportDate(report.previousDay.date);
+    document.getElementById('report-reference-label').textContent = report.includeToday ? 'Venta de hoy' : 'Venta del día anterior';
+    document.getElementById('report-week-chip').textContent = report.includeToday ? 'Lun–hoy' : 'Lun–ayer';
+    document.getElementById('report-month-chip').textContent = report.includeToday ? 'Mes–hoy' : 'Mes–ayer';
     document.getElementById('report-yesterday-value').textContent = formatClp(report.previousDay.netSales);
     document.getElementById('report-general-rank').textContent = rankText('Ranking general', report.previousDay.generalRank);
     document.getElementById('report-weekday-rank').textContent = rankText('Ranking mismo día', report.previousDay.sameWeekdayRank);
@@ -434,6 +448,306 @@ function refreshReportLocationFilter() {
   select.value = options.some(option => option.value === previous) ? previous : 'all';
 }
 
+function refreshSalesDashboardLocationFilter() {
+  const select = document.getElementById('sales-dashboard-location');
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las cafeterías', 'all')];
+  for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
+    options.push(new Option(location.name, location.id));
+  }
+  select.replaceChildren(...options);
+  select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function dashboardChange(value, suffix = '') {
+  if (value === null || !Number.isFinite(value)) return 'Sin base de comparación';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}${suffix || '%'} vs. período anterior`;
+}
+
+function renderSalesDashboardMetrics(metrics) {
+  const container = document.getElementById('sales-dashboard-metrics');
+  const definitions = [
+    ['day', 'Venta de hoy'],
+    ['yesterday', 'Venta del día anterior'],
+    ['week', 'Venta de la semana'],
+    ['month', 'Venta del mes']
+  ];
+  container.replaceChildren(...definitions.map(([key, label], index) => {
+    const metric = metrics[key];
+    const card = document.createElement('article');
+    card.className = `sales-kpi-card${index === 0 ? ' primary' : ''}`;
+    const heading = document.createElement('div');
+    heading.className = 'sales-kpi-label';
+    heading.textContent = label;
+    const value = document.createElement('div');
+    value.className = 'sales-kpi-value';
+    value.textContent = formatClp(metric.netSales);
+    const range = document.createElement('div');
+    range.className = 'sales-kpi-range';
+    range.textContent = metric.from === metric.to
+      ? formatReportDate(metric.from)
+      : `${formatReportDate(metric.from)} – ${formatReportDate(metric.to)}`;
+    const comparison = document.createElement('div');
+    comparison.className = metric.changePercent === null ? 'sales-kpi-comparison neutral' : metric.changePercent >= 0 ? 'sales-kpi-comparison positive' : 'sales-kpi-comparison negative';
+    comparison.textContent = dashboardChange(metric.changePercent);
+    const prior = document.createElement('div');
+    prior.className = 'sales-kpi-prior';
+    prior.textContent = `${metric.previous.label}: ${formatClp(metric.previous.netSales)}`;
+    card.append(heading, value, range, comparison, prior);
+    return card;
+  }));
+}
+
+function renderSalesLocations(report) {
+  const body = document.getElementById('sales-location-body');
+  body.replaceChildren(...report.sales.locations.map(location => {
+    const row = document.createElement('tr');
+    [location.name, formatClp(location.day), formatClp(location.yesterday), formatClp(location.week), formatClp(location.month)]
+      .forEach((text, index) => {
+        const cell = document.createElement(index ? 'td' : 'th');
+        cell.textContent = text;
+        if (index) cell.className = 'numeric-cell';
+        row.appendChild(cell);
+      });
+    return row;
+  }));
+  const totals = report.sales.metrics;
+  const row = document.createElement('tr');
+  ['Total', formatClp(totals.day.netSales), formatClp(totals.yesterday.netSales), formatClp(totals.week.netSales), formatClp(totals.month.netSales)]
+    .forEach((text, index) => {
+      const cell = document.createElement(index ? 'td' : 'th');
+      cell.textContent = text;
+      if (index) cell.className = 'numeric-cell';
+      row.appendChild(cell);
+    });
+  document.getElementById('sales-location-foot').replaceChildren(row);
+}
+
+function renderSalesInsights() {
+  if (!salesDashboardState) return;
+  const key = document.getElementById('sales-insight-period').value;
+  const insight = salesDashboardState.sales.productInsights[key];
+  const productContainer = document.getElementById('sales-top-products');
+  if (!insight.topProducts.length) {
+    productContainer.textContent = 'No hay productos vendidos en este período.';
+    productContainer.className = 'sales-ranked-list empty-state';
+  } else {
+    productContainer.className = 'sales-ranked-list';
+    productContainer.replaceChildren(...insight.topProducts.map((product, index) => {
+      const row = document.createElement('div');
+      row.className = 'sales-ranked-row';
+      const rank = document.createElement('span');
+      rank.className = 'sales-rank-number';
+      rank.textContent = String(index + 1);
+      const name = document.createElement('div');
+      name.className = 'sales-ranked-name';
+      name.innerHTML = `<strong></strong><small></small>`;
+      name.querySelector('strong').textContent = product.name;
+      name.querySelector('small').textContent = product.code || 'Sin código';
+      const values = document.createElement('div');
+      values.className = 'sales-ranked-values';
+      values.innerHTML = `<strong></strong><small></small>`;
+      values.querySelector('strong').textContent = `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(product.quantity)} un.`;
+      values.querySelector('small').textContent = formatClp(product.netSales);
+      row.append(rank, name, values);
+      return row;
+    }));
+  }
+  const hierarchyContainer = document.getElementById('sales-hierarchy-share');
+  const tree = insight.hierarchyTree;
+  const findHierarchyNode = (node, path, depth = 0) => {
+    if (depth === path.length) return node;
+    const child = node.children.find(item => item.name === path[depth]);
+    return child ? findHierarchyNode(child, path, depth + 1) : node;
+  };
+  const currentNode = tree ? findHierarchyNode(tree, salesHierarchyPath) : null;
+  const backButton = document.getElementById('sales-hierarchy-back');
+  backButton.hidden = salesHierarchyPath.length === 0;
+  document.getElementById('sales-hierarchy-context').textContent = ['Todas las jerarquías', ...salesHierarchyPath].join(' › ');
+  if (!currentNode || !currentNode.netSales) {
+    document.getElementById('sales-hierarchy-title').textContent = 'Venta por jerarquía';
+    hierarchyContainer.textContent = 'No hay venta por jerarquía en este período.';
+    hierarchyContainer.className = 'sales-share-list empty-state';
+  } else if (currentNode.children.length) {
+    document.getElementById('sales-hierarchy-title').textContent = salesHierarchyPath.length ? 'Subjerarquías' : 'Venta por jerarquía';
+    hierarchyContainer.className = 'sales-share-list';
+    hierarchyContainer.replaceChildren(...currentNode.children.map(item => {
+      const percent = currentNode.netSales ? item.netSales / currentNode.netSales * 100 : 0;
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'sales-share-row sales-share-navigation';
+      row.setAttribute('aria-label', `Ver detalle de ${item.name}`);
+      const header = document.createElement('div');
+      header.className = 'sales-share-head';
+      const name = document.createElement('span');
+      name.textContent = item.name;
+      const value = document.createElement('strong');
+      value.textContent = `${percent.toFixed(1)}% · ${formatClp(item.netSales)}  ›`;
+      header.append(name, value);
+      const track = document.createElement('div');
+      track.className = 'sales-share-track';
+      const fill = document.createElement('span');
+      fill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+      track.appendChild(fill);
+      row.append(header, track);
+      row.addEventListener('click', () => {
+        salesHierarchyPath = [...item.path];
+        renderSalesInsights();
+      });
+      return row;
+    }));
+  } else {
+    document.getElementById('sales-hierarchy-title').textContent = 'Productos vendidos';
+    hierarchyContainer.className = 'sales-share-list hierarchy-product-list';
+    hierarchyContainer.replaceChildren(...currentNode.products.map((item, index) => {
+      const percent = currentNode.netSales ? item.netSales / currentNode.netSales * 100 : 0;
+      const row = document.createElement('div');
+      row.className = 'sales-share-row hierarchy-product-row';
+      const header = document.createElement('div');
+      header.className = 'sales-share-head';
+      const name = document.createElement('span');
+      name.textContent = `${index + 1}. ${item.name} · ${item.code || 'Sin código'} · ${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(item.quantity)} un.`;
+      const value = document.createElement('strong');
+      const margin = item.contributionMarginPercent;
+      value.className = 'sales-product-financials';
+      const participation = document.createElement('span');
+      participation.textContent = `${percent.toFixed(1)}% part. ·`;
+      const marginValue = document.createElement('span');
+      marginValue.className = margin === null ? 'product-margin neutral' : margin < 0 ? 'product-margin negative' : 'product-margin positive';
+      marginValue.textContent = `Margen ${margin === null ? '—' : `${margin.toFixed(1)}%`} ·`;
+      const salesValue = document.createElement('span');
+      salesValue.textContent = formatClp(item.netSales);
+      value.append(participation, marginValue, salesValue);
+      header.append(name, value);
+      const track = document.createElement('div');
+      track.className = 'sales-share-track';
+      const fill = document.createElement('span');
+      fill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+      track.appendChild(fill);
+      row.append(header, track);
+      return row;
+    }));
+  }
+}
+
+function renderMercadoPago(report) {
+  const customer = report.mercadoPago.customers;
+  const summary = document.getElementById('mercadopago-customer-summary');
+  summary.replaceChildren();
+  for (const [label, value] of [['Tarjetas identificadas', customer.identified], ['Clientes recurrentes', customer.recurrent]]) {
+    const item = document.createElement('div');
+    item.innerHTML = `<strong></strong><span></span>`;
+    item.querySelector('strong').textContent = new Intl.NumberFormat('es-CL').format(value);
+    item.querySelector('span').textContent = label;
+    summary.appendChild(item);
+  }
+  const labels = { day: 'Hoy', week: 'Semana', month: 'Mes' };
+  document.getElementById('mercadopago-period-body').replaceChildren(...Object.entries(report.mercadoPago.metrics).map(([key, metric]) => {
+    const row = document.createElement('tr');
+    const prior = `${formatClp(metric.previous.sales)} · ${metric.previous.transactions} trans. · ${metric.previous.recurringTransactionPercent.toFixed(1)}% recurrentes`;
+    const cells = [
+      labels[key],
+      `${formatClp(metric.sales)} (${dashboardChange(metric.salesChangePercent).replace(' vs. período anterior', '')})`,
+      `${metric.transactions} (${dashboardChange(metric.transactionChangePercent).replace(' vs. período anterior', '')})`,
+      `${metric.recurringTransactionPercent.toFixed(1)}% (${metric.recurringTransactionPercentChange >= 0 ? '+' : ''}${metric.recurringTransactionPercentChange.toFixed(1)} pp)`,
+      `${metric.recurringSalesPercent.toFixed(1)}% (${metric.recurringSalesPercentChange >= 0 ? '+' : ''}${metric.recurringSalesPercentChange.toFixed(1)} pp)`,
+      prior
+    ];
+    cells.forEach((text, index) => {
+      const cell = document.createElement(index ? 'td' : 'th');
+      cell.textContent = text;
+      row.appendChild(cell);
+    });
+    return row;
+  }));
+  const definitions = [
+    ['moreThanThreeWeekly', 'Más de 3 veces por semana'],
+    ['moreThanWeekly', 'Más de 1 vez por semana'],
+    ['moreThanEvery15Days', 'Más de 1 vez cada 15 días'],
+    ['moreThanMonthly', 'Más de 1 vez al mes'],
+    ['occasional', 'Recurrentes menos frecuentes']
+  ];
+  document.getElementById('mercadopago-frequency').replaceChildren(...definitions.map(([key, label]) => {
+    const card = document.createElement('div');
+    card.className = 'frequency-card';
+    const value = document.createElement('strong');
+    value.textContent = new Intl.NumberFormat('es-CL').format(customer.frequency[key]);
+    const caption = document.createElement('span');
+    caption.textContent = label;
+    card.append(value, caption);
+    return card;
+  }));
+  const monthLabel = period => new Intl.DateTimeFormat('es-CL', { month: 'short', year: 'numeric' })
+    .format(dateFromKey(period.from));
+  const shortDate = value => new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short' })
+    .format(dateFromKey(value));
+  const historyRow = (period, label) => {
+    const row = document.createElement('tr');
+    const heading = document.createElement('th');
+    heading.scope = 'row';
+    heading.textContent = label;
+    row.appendChild(heading);
+    const percentCell = document.createElement('td');
+    percentCell.className = 'recurring-percent-cell';
+    const percent = document.createElement('strong');
+    percent.textContent = `${period.recurringSalesPercent.toFixed(1)}%`;
+    const track = document.createElement('span');
+    track.className = 'recurring-percent-track';
+    const fill = document.createElement('span');
+    fill.style.width = `${Math.min(100, Math.max(0, period.recurringSalesPercent))}%`;
+    track.appendChild(fill);
+    percentCell.append(percent, track);
+    row.appendChild(percentCell);
+    const values = [
+      `${formatClp(period.recurringSales)} / ${formatClp(period.totalSales)}`,
+      period.identifiedCards,
+      period.recurrentCustomers,
+      period.frequency.moreThanThreeWeekly,
+      period.frequency.moreThanWeekly,
+      period.frequency.moreThanEvery15Days,
+      period.frequency.moreThanMonthly,
+      period.frequency.occasional
+    ];
+    values.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = typeof value === 'number' ? new Intl.NumberFormat('es-CL').format(value) : value;
+      row.appendChild(cell);
+    });
+    return row;
+  };
+  document.getElementById('mercadopago-month-history').replaceChildren(...report.mercadoPago.history.months.map(period =>
+    historyRow(period, monthLabel(period))));
+  document.getElementById('mercadopago-week-history').replaceChildren(...report.mercadoPago.history.weeks.map(period =>
+    historyRow(period, `${shortDate(period.from)} – ${shortDate(period.to)}`)));
+}
+
+async function loadSalesDashboard() {
+  const status = document.getElementById('sales-dashboard-status');
+  const button = document.getElementById('refresh-sales-dashboard');
+  const select = document.getElementById('sales-dashboard-location');
+  const location = select.value || 'all';
+  button.disabled = true;
+  setStatus(status, 'Calculando indicadores de ventas y recurrencia…');
+  try {
+    const report = await apiRequest(`/api/sales/dashboard?location=${encodeURIComponent(location)}`);
+    if (location !== select.value) return;
+    salesDashboardState = report;
+    salesHierarchyPath = [];
+    document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
+    renderSalesDashboardMetrics(report.sales.metrics);
+    renderSalesLocations(report);
+    renderSalesInsights();
+    renderMercadoPago(report);
+    const sourceText = `${report.sales.filesRead} archivo(s) de ventas y ${report.mercadoPago.filesRead} archivo(s) MercadoPago procesado(s).`;
+    setStatus(status, report.warnings.length ? `${sourceText} ${report.warnings.join(' ')}` : sourceText, report.warnings.length ? 'error' : 'success');
+  } catch (error) {
+    salesDashboardState = null;
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function refreshProductsLocationFilter() {
   const select = document.getElementById('products-location-filter');
   const previous = select.value || 'all';
@@ -449,15 +763,38 @@ function refreshPurchasesLocationFilter() {
   const select = document.getElementById('purchases-location-filter');
   const previous = select.value || 'all';
   const options = [new Option('Todas las cafeterías', 'all')];
-  for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
+  for (const location of Object.values(locationRegistry)
+    .sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name, 'es') : left.type === 'store' ? -1 : 1))) {
     options.push(new Option(location.name, location.id));
   }
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : 'all';
 }
 
+function refreshProjectionLocationFilter() {
+  const select = document.getElementById('projection-location-filter');
+  const previous = select.value;
+  const options = Object.values(locationRegistry)
+    .sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name, 'es') : left.type === 'store' ? -1 : 1))
+    .map(location => new Option(location.name, location.id));
+  select.replaceChildren(...options);
+  select.value = options.some(option => option.value === previous) ? previous : options[0]?.value || '';
+}
+
 function formatProductUnits(value) {
   return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(Number(value) || 0);
+}
+
+function formatWeeklyAverageUnits(value) {
+  return new Intl.NumberFormat('es-CL', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  }).format(Number(value) || 0);
+}
+
+function formatPurchaseConversion(value) {
+  if (value === null || value === undefined) return '—';
+  return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(Number(value));
 }
 
 function renderProductsView() {
@@ -520,7 +857,7 @@ function renderProductsView() {
         formatClp(product.netPrice),
         formatClp(product.cost),
         product.marginPercent === null ? '—' : `${product.marginPercent.toFixed(1)}%`,
-        formatProductUnits(product.averageWeeklyUnits8),
+        formatWeeklyAverageUnits(product.averageWeeklyUnits8),
         formatProductUnits(product.unitsLast7Days),
         product.unitsChangePercent === null
           ? '—'
@@ -581,12 +918,18 @@ async function loadProductsView() {
 function renderPurchasesView() {
   const summary = document.getElementById('purchases-summary');
   const container = document.getElementById('purchases-groups');
+  const printButton = document.getElementById('print-purchases-report');
+  const exportButton = document.getElementById('export-purchases-report');
   if (!purchasesViewState) {
     summary.replaceChildren();
     container.replaceChildren();
+    printButton.disabled = true;
+    exportButton.disabled = true;
     return;
   }
   const data = purchasesViewState;
+  printButton.disabled = data.rows.length === 0;
+  exportButton.disabled = data.rows.length === 0;
   const summaryTexts = [
     `${data.summary.lineCount} línea(s) de compra`,
     `${data.summary.supplierCount} proveedor(es)`,
@@ -627,13 +970,27 @@ function renderPurchasesView() {
     table.className = 'purchases-table';
     const columns = [
       { label: 'Fecha', value: row => formatReportDate(row.date) },
-      { label: 'Cafetería', value: row => row.locationName },
+      { label: 'Ubicación', value: row => row.locationName },
       { label: 'Documento', value: row => row.document || '—' },
       { label: 'Código', value: row => row.code || '—' },
       { label: 'Insumo', value: row => row.product || '—' },
       { label: 'Cantidad', value: row => formatProductUnits(row.quantity) },
-      { label: 'Unidad', value: row => row.unit || '—' },
-      { label: 'Costo unit. registrado', value: row => formatClp(row.listedUnitPrice) },
+      { label: 'UDC', headerTitle: 'Unidad de Compra', value: row => row.purchaseUnit || row.unit || '—' },
+      {
+        label: 'Unidades x UDC',
+        headerTitle: 'UDC significa Unidad de Compra',
+        value: row => formatPurchaseConversion(row.unitsPerPurchaseUnit),
+        cellTitle: row => row.baseUnit && row.unitsPerPurchaseUnit !== null
+          ? `1 ${row.purchaseUnit || row.unit} = ${formatPurchaseConversion(row.unitsPerPurchaseUnit)} ${row.baseUnit}`
+          : 'Conversión no disponible en el maestro vigente'
+      },
+      { label: 'Unidad de Medida', value: row => row.baseUnit || '—' },
+      { label: 'Costo UDC registrado', value: row => formatClp(row.listedUnitPrice) },
+      {
+        label: 'Costo Unitario',
+        value: row => row.baseUnitCost === null || row.baseUnitCost === undefined ? '—' : formatClp(row.baseUnitCost),
+        muted: true
+      },
       { label: 'Descuento', value: row => formatClp(row.discount) },
       { label: 'Precio unit. efectivo', value: row => formatClp(row.effectiveUnitPrice) },
       { label: 'Precio anterior', value: row => row.previousEffectiveUnitPrice === null ? '—' : formatClp(row.previousEffectiveUnitPrice) },
@@ -650,6 +1007,8 @@ function renderPurchasesView() {
     columns.forEach(column => {
       const cell = document.createElement('th');
       cell.textContent = column.label;
+      if (column.headerTitle) cell.title = column.headerTitle;
+      if (column.muted) cell.classList.add('purchase-muted-column');
       headRow.appendChild(cell);
     });
     const head = document.createElement('thead');
@@ -660,6 +1019,8 @@ function renderPurchasesView() {
       columns.forEach(column => {
         const cell = document.createElement('td');
         cell.textContent = column.value(item);
+        if (column.cellTitle) cell.title = column.cellTitle(item);
+        if (column.muted) cell.classList.add('purchase-muted-column');
         if (column.change && item.priceChangePercent !== null && Math.abs(item.priceChangePercent) >= 0.01) {
           cell.className = item.priceChangePercent > 0 ? 'purchase-price-increase' : 'purchase-price-decrease';
         }
@@ -685,9 +1046,11 @@ async function loadPurchasesView() {
   const button = document.getElementById('refresh-purchases');
   const location = document.getElementById('purchases-location-filter').value || 'all';
   const supplier = document.getElementById('purchases-supplier-filter').value || 'all';
+  const product = document.getElementById('purchases-product-filter').value.trim();
   const dateFrom = document.getElementById('purchases-date-from').value;
   const dateTo = document.getElementById('purchases-date-to').value;
   const params = new URLSearchParams({ location, supplier });
+  if (product) params.set('product', product);
   if (dateFrom) params.set('dateFrom', dateFrom);
   if (dateTo) params.set('dateTo', dateTo);
   button.disabled = true;
@@ -702,6 +1065,15 @@ async function loadPurchasesView() {
       ...data.suppliers.map(item => new Option(item.name, item.key))
     );
     supplierSelect.value = data.suppliers.some(item => item.key === supplier) ? supplier : 'all';
+    const productInput = document.getElementById('purchases-product-filter');
+    const productOptions = document.getElementById('purchases-product-options');
+    productOptions.replaceChildren(...data.products.map(item => {
+      const option = document.createElement('option');
+      option.value = item.code || item.name;
+      option.label = item.code ? item.name : '';
+      return option;
+    }));
+    productInput.value = data.filters.product || '';
     const fromInput = document.getElementById('purchases-date-from');
     const toInput = document.getElementById('purchases-date-to');
     fromInput.value = data.filters.dateFrom || '';
@@ -710,14 +1082,379 @@ async function loadPurchasesView() {
     fromInput.max = toInput.max = data.availablePeriod?.to || '';
     renderPurchasesView();
     setStatus(status, data.sourceFileCount
-      ? `${data.sourceFileCount} archivo(s) procesado(s) para ${data.scope.label}.`
-      : 'No hay archivos de compras cargados para la selección.', data.sourceFileCount ? 'success' : 'muted');
+      ? data.scope.type === 'warehouse'
+        ? `${data.sourceFileCount} Kardex procesado(s) para ${data.scope.label}. Se muestran ingresos BUY; el Kardex no identifica proveedor ni documento de compra.`
+        : `${data.sourceFileCount} archivo(s) procesado(s) para ${data.scope.label}.`
+      : 'No hay información de compras disponible para la selección.', data.sourceFileCount ? 'success' : 'muted');
   } catch (error) {
     purchasesViewState = null;
     renderPurchasesView();
     setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
+  }
+}
+
+function purchasesReportFilename(extension) {
+  const from = purchasesViewState?.filters.dateFrom || 'inicio';
+  const to = purchasesViewState?.filters.dateTo || 'fin';
+  return `historial-compras-${from}-${to}.${extension}`;
+}
+
+function printPurchasesReport() {
+  if (!purchasesViewState?.rows.length) return;
+  const section = document.getElementById('purchases-workspace');
+  const previousTitle = document.title;
+  document.title = `Historial de compras - ${purchasesViewState.scope.label}`;
+  document.body.classList.add('printing-purchases-report');
+  section.classList.add('purchases-print-target');
+  try {
+    window.print();
+  } finally {
+    section.classList.remove('purchases-print-target');
+    document.body.classList.remove('printing-purchases-report');
+    document.title = previousTitle;
+  }
+}
+
+function exportPurchasesReport() {
+  const data = purchasesViewState;
+  const status = document.getElementById('purchases-status');
+  if (!data?.rows.length) return;
+  if (!window.XLSX) return setStatus(status, 'No fue posible cargar el generador de archivos Excel.', 'error');
+  try {
+    const locationSelect = document.getElementById('purchases-location-filter');
+    const supplierSelect = document.getElementById('purchases-supplier-filter');
+    const information = XLSX.utils.aoa_to_sheet([
+      ['Reporte', 'Historial de compras e insumos'],
+      ['Ubicación', locationSelect.selectedOptions[0]?.textContent || data.scope.label],
+      ['Fecha inicial', data.filters.dateFrom || 'Sin límite'],
+      ['Fecha final', data.filters.dateTo || 'Sin límite'],
+      ['Proveedor', supplierSelect.selectedOptions[0]?.textContent || 'Todos los proveedores'],
+      ['Producto / ingrediente', data.filters.product || 'Todos'],
+      ['Fuente', data.scope.type === 'warehouse'
+        ? 'Movimientos BUY según Kardex; proveedor y documento no disponibles'
+        : 'Archivos de compras cargados para la ubicación'],
+      ['Líneas', data.summary.lineCount],
+      ['Monto total', data.summary.totalAmount],
+      ['Exportado', new Date().toLocaleString('es-CL')]
+    ]);
+    const headers = [
+      'Fecha', 'Ubicación', 'Proveedor', 'RUT proveedor', 'Tipo documento', 'Documento', 'Línea',
+      'Código', 'Insumo', 'Cantidad', 'UDC', 'Unidades x UDC', 'Unidad de Medida',
+      'Costo UDC registrado', 'Costo Unitario', 'Descuento', 'Precio unit. efectivo',
+      'Precio anterior', 'Cambio %', 'Monto neto', 'Monto total', 'Fuente'
+    ];
+    const values = data.rows.map(row => [
+      row.date, row.locationName, row.supplier, row.supplierTaxId || '', row.documentType || '',
+      row.document || '', row.line || '', row.code || '', row.product || '', row.quantity,
+      row.purchaseUnit || row.unit || '', row.unitsPerPurchaseUnit, row.baseUnit || '',
+      row.listedUnitPrice, row.baseUnitCost, row.discount, row.effectiveUnitPrice,
+      row.previousEffectiveUnitPrice, row.priceChangePercent, row.netAmount, row.totalAmount,
+      row.sourceType === 'kardex-buy' ? 'Kardex BUY' : 'Archivo de compras'
+    ]);
+    const purchasesSheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
+    purchasesSheet['!autofilter'] = { ref: `A1:V${values.length + 1}` };
+    purchasesSheet['!cols'] = headers.map((header, index) => ({
+      wch: index === 8 ? 45 : Math.min(Math.max(header.length + 2, 12), 24)
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, information, 'Información');
+    XLSX.utils.book_append_sheet(workbook, purchasesSheet, 'Compras');
+    XLSX.writeFile(workbook, purchasesReportFilename('xlsx'), { compression: true });
+    setStatus(status, 'Historial de compras exportado a Excel correctamente.', 'success');
+  } catch (error) {
+    setStatus(status, `No fue posible exportar el historial: ${error.message}`, 'error');
+  }
+}
+
+function formatProjectionQuantity(value) {
+  if (value === null || value === undefined) return '—';
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 4 }).format(Number(value));
+}
+
+function formatProjectionMetric(value) {
+  if (value === null || value === undefined) return '—';
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value));
+}
+
+function filteredPurchaseProjectionItems() {
+  if (!purchaseProjectionState) return [];
+  const supplier = document.getElementById('projection-supplier-filter').value || 'all';
+  const onlyRequired = document.getElementById('projection-only-required').checked;
+  const onlyManaged = document.getElementById('projection-only-managed').checked;
+  return purchaseProjectionState.items.filter(item =>
+    (supplier === 'all' || item.supplierKey === supplier)
+    && (!onlyRequired || item.needsPurchase)
+    && (!onlyManaged || item.managed));
+}
+
+function updatePurchaseOrderButton() {
+  const supplier = document.getElementById('projection-supplier-filter').value || 'all';
+  const eligible = purchaseProjectionState?.items.some(item =>
+    item.managed && item.supplierKey === supplier && item.needsPurchase
+    && item.suggestedPurchaseUnits > 0 && item.conversionAvailable);
+  document.getElementById('print-purchase-order').disabled = supplier === 'all' || supplier === 'unassigned' || !eligible;
+}
+
+function renderPurchaseProjection() {
+  const body = document.getElementById('purchase-projection-body');
+  const summary = document.getElementById('purchase-projection-summary');
+  const saveButton = document.getElementById('save-projection-policies');
+  if (!purchaseProjectionState) {
+    body.replaceChildren();
+    summary.replaceChildren();
+    saveButton.disabled = true;
+    updatePurchaseOrderButton();
+    return;
+  }
+  const data = purchaseProjectionState;
+  const visibleItems = filteredPurchaseProjectionItems();
+  const managedItems = data.items.filter(item => item.managed);
+  const managedPurchaseItems = managedItems.filter(item => item.needsPurchase);
+  const summaryTexts = [
+    `${managedItems.length} ítem(s) administrados`,
+    `${data.summary.itemCount} ítem(s) disponibles`,
+    `${managedPurchaseItems.length} ítem(s) por comprar`,
+    `Compra estimada: ${formatClp(managedItems.reduce((sum, item) => sum + (item.estimatedTotal || 0), 0))}`,
+    `${managedPurchaseItems.filter(item => !item.conversionAvailable).length} sin conversión UDC`,
+    `${managedPurchaseItems.filter(item => item.estimatedPurchaseUnitCost === null).length} sin costo histórico`,
+    `${managedPurchaseItems.filter(item => item.supplierKey === 'unassigned').length} sin proveedor`
+  ];
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+  body.replaceChildren(...visibleItems.map(item => {
+    const row = document.createElement('tr');
+    row.dataset.key = item.key;
+    if (item.needsPurchase) row.classList.add('projection-needs-purchase');
+    const managedCell = document.createElement('td');
+    const managedInput = document.createElement('input');
+    managedInput.type = 'checkbox';
+    managedInput.className = 'projection-managed-input';
+    managedInput.checked = item.managed;
+    managedInput.setAttribute('aria-label', `Administrar ${item.name}`);
+    managedCell.appendChild(managedInput);
+    row.appendChild(managedCell);
+    const values = [item.code || '—', item.name || '—'];
+    values.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      cell.title = value;
+      row.appendChild(cell);
+    });
+    const supplierCell = document.createElement('td');
+    const supplierSelect = document.createElement('select');
+    supplierSelect.className = 'projection-supplier-input';
+    supplierSelect.setAttribute('aria-label', `Proveedor de ${item.name}`);
+    supplierSelect.replaceChildren(...data.suppliers.map(supplier => new Option(supplier.name, supplier.key)));
+    supplierSelect.value = data.suppliers.some(supplier => supplier.key === item.supplierKey) ? item.supplierKey : 'unassigned';
+    supplierCell.appendChild(supplierSelect);
+    if (item.supplierInferred) {
+      const note = document.createElement('small');
+      note.textContent = `Sugerido por última compra${item.supplierReferenceLocation ? ` en ${item.supplierReferenceLocation}` : ''}`;
+      supplierCell.appendChild(note);
+    } else if (!item.supplierPurchaseReferenceMatched) {
+      const note = document.createElement('small');
+      note.textContent = 'Sin compra histórica de este proveedor; confirmar UDC y precio.';
+      supplierCell.appendChild(note);
+    }
+    row.appendChild(supplierCell);
+    const plainValues = [
+      { value: item.internalUnit || '—' },
+      { value: formatProjectionMetric(item.currentInventory) },
+      { value: formatProjectionMetric(item.consumption30) },
+      { value: formatProjectionMetric(item.averageDailyConsumption) },
+      {
+        value: item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionMetric(item.currentCoverageDays)} días`,
+        lowCoverage: item.currentCoverageDays !== null && item.currentCoverageDays < item.minDays
+      }
+    ];
+    plainValues.forEach(entry => {
+      const cell = document.createElement('td');
+      cell.textContent = entry.value;
+      if (entry.lowCoverage) cell.classList.add('projection-coverage-low');
+      row.appendChild(cell);
+    });
+    for (const [field, value] of [['minDays', item.minDays], ['maxDays', item.maxDays]]) {
+      const cell = document.createElement('td');
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '0';
+      input.max = '365';
+      input.step = '1';
+      input.value = String(value);
+      input.className = `projection-${field === 'minDays' ? 'min' : 'max'}-input`;
+      input.setAttribute('aria-label', `${field === 'minDays' ? 'Días mínimos' : 'Días máximos'} de ${item.name}`);
+      cell.appendChild(input);
+      row.appendChild(cell);
+    }
+    const resultValues = [
+      item.needsPurchase ? `${formatProjectionQuantity(item.suggestedInternalQuantity)} ${item.internalUnit}` : 'No comprar',
+      item.purchaseUnit || '—',
+      item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión',
+      item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits),
+      item.estimatedPurchaseUnitCost === null ? '—' : formatClp(item.estimatedPurchaseUnitCost),
+      item.estimatedTotal === null ? '—' : formatClp(item.estimatedTotal)
+    ];
+    resultValues.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    return row;
+  }));
+  if (!visibleItems.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 17;
+    cell.className = 'projection-empty';
+    cell.textContent = 'No hay ítems para los filtros seleccionados.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+  saveButton.disabled = data.items.length === 0;
+  updatePurchaseOrderButton();
+}
+
+async function loadPurchaseProjection() {
+  const status = document.getElementById('purchase-projection-status');
+  const button = document.getElementById('refresh-purchase-projection');
+  const location = document.getElementById('projection-location-filter').value;
+  if (!location) return;
+  button.disabled = true;
+  setStatus(status, 'Calculando inventario, consumos y necesidades de compra…');
+  try {
+    const data = await apiRequest(`/api/purchase-projections?location=${encodeURIComponent(location)}`);
+    if (location !== document.getElementById('projection-location-filter').value) return;
+    purchaseProjectionState = data;
+    const supplierSelect = document.getElementById('projection-supplier-filter');
+    const previousSupplier = supplierSelect.value || 'all';
+    supplierSelect.replaceChildren(
+      new Option('Todos los proveedores', 'all'),
+      ...data.suppliers.map(supplier => new Option(supplier.name, supplier.key))
+    );
+    supplierSelect.value = data.suppliers.some(supplier => supplier.key === previousSupplier) ? previousSupplier : 'all';
+    renderPurchaseProjection();
+    const stale = data.period.dataThrough < data.period.to
+      ? ` El último inventario disponible corresponde al ${formatReportDate(data.period.dataThrough)}.`
+      : '';
+    setStatus(status,
+      `Consumo considerado: ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. ${data.consumptionCriteria}.${stale}`,
+      stale ? 'muted' : 'success');
+  } catch (error) {
+    purchaseProjectionState = null;
+    renderPurchaseProjection();
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function savePurchaseProjectionPolicies() {
+  if (!purchaseProjectionState) return;
+  const status = document.getElementById('purchase-projection-status');
+  const button = document.getElementById('save-projection-policies');
+  const rows = new Map([...document.querySelectorAll('#purchase-projection-body tr[data-key]')]
+    .map(row => [row.dataset.key, row]));
+  for (const item of purchaseProjectionState.items) {
+    const row = rows.get(item.key);
+    if (!row) continue;
+    item.minDays = Number(row.querySelector('.projection-min-input').value);
+    item.maxDays = Number(row.querySelector('.projection-max-input').value);
+    item.supplierKey = row.querySelector('.projection-supplier-input').value;
+    item.managed = row.querySelector('.projection-managed-input').checked;
+  }
+  const invalid = purchaseProjectionState.items.find(item =>
+    !Number.isFinite(item.minDays) || !Number.isFinite(item.maxDays)
+    || item.minDays < 0 || item.maxDays < item.minDays || item.maxDays > 365);
+  if (invalid) return setStatus(status, `Revisa los días mínimos y máximos de ${invalid.name}.`, 'error');
+  button.disabled = true;
+  try {
+    await apiRequest('/api/purchase-projections/policies', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location: purchaseProjectionState.location.id,
+        items: purchaseProjectionState.items.map(item => ({
+          key: item.key, minDays: item.minDays, maxDays: item.maxDays,
+          supplierKey: item.supplierKey, managed: item.managed
+        }))
+      })
+    });
+    setStatus(status, 'Criterios de inventario y proveedores guardados correctamente.', 'success');
+    await loadPurchaseProjection();
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function printPurchaseOrder() {
+  const data = purchaseProjectionState;
+  const supplierKey = document.getElementById('projection-supplier-filter').value;
+  if (!data || ['all', 'unassigned'].includes(supplierKey)) return;
+  const supplier = data.suppliers.find(item => item.key === supplierKey);
+  const items = data.items.filter(item => item.managed && item.supplierKey === supplierKey
+    && item.needsPurchase && item.suggestedPurchaseUnits > 0 && item.conversionAvailable);
+  if (!supplier || !items.length) return;
+  const documentSection = document.getElementById('purchase-order-document');
+  const heading = document.createElement('div');
+  heading.className = 'purchase-order-heading';
+  const headingMain = document.createElement('div');
+  const eyebrow = document.createElement('div');
+  eyebrow.className = 'panel-eyebrow';
+  eyebrow.textContent = 'Orden de compra sugerida';
+  const supplierName = document.createElement('h2');
+  supplierName.textContent = supplier.name;
+  const supplierDetail = document.createElement('p');
+  supplierDetail.textContent = `${supplier.taxId ? `RUT ${supplier.taxId} · ` : ''}${data.location.name}`;
+  headingMain.append(eyebrow, supplierName, supplierDetail);
+  const headingMeta = document.createElement('div');
+  const orderDate = document.createElement('strong');
+  orderDate.textContent = isoLocalDate(new Date());
+  headingMeta.append(orderDate, document.createElement('br'), document.createTextNode('Basada en proyección de 30 días'));
+  heading.append(headingMain, headingMeta);
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDC</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDC estimado</th><th>Total estimado</th></tr></thead>';
+  const body = document.createElement('tbody');
+  items.forEach(item => {
+    const row = document.createElement('tr');
+    [
+      item.code || '', item.name, formatProjectionQuantity(item.suggestedPurchaseUnits), item.purchaseUnit,
+      `${formatProjectionQuantity(item.projectedInternalQuantity)} ${item.internalUnit}`,
+      item.estimatedPurchaseUnitCost === null ? '—' : formatClp(item.estimatedPurchaseUnitCost),
+      item.estimatedTotal === null ? '—' : formatClp(item.estimatedTotal)
+    ].forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  const footer = document.createElement('tfoot');
+  const totalRow = document.createElement('tr');
+  totalRow.innerHTML = `<td colspan="6">TOTAL ESTIMADO</td><td>${formatClp(items.reduce((sum, item) => sum + (item.estimatedTotal || 0), 0))}</td>`;
+  footer.appendChild(totalRow);
+  table.append(body, footer);
+  const note = document.createElement('p');
+  note.className = 'purchase-order-note';
+  note.textContent = 'Documento sugerido. Verificar disponibilidad, precios, impuestos y condiciones comerciales antes de enviarlo al proveedor.';
+  documentSection.replaceChildren(heading, table, note);
+  documentSection.hidden = false;
+  const previousTitle = document.title;
+  document.title = `Orden de compra - ${supplier.name}`;
+  document.body.classList.add('printing-purchase-order');
+  try {
+    window.print();
+  } finally {
+    document.body.classList.remove('printing-purchase-order');
+    documentSection.hidden = true;
+    document.title = previousTitle;
   }
 }
 
@@ -1563,8 +2300,10 @@ async function refreshLocationConfiguration() {
     const data = await apiRequest('/api/config/locations');
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
+    refreshSalesDashboardLocationFilter();
     refreshProductsLocationFilter();
     refreshPurchasesLocationFilter();
+    refreshProjectionLocationFilter();
     refreshInventoryLocationFilter();
     const select = document.getElementById('location-select');
     const previous = select.value;
@@ -1693,6 +2432,14 @@ function showInspection(manifest) {
     range.textContent = formatDetectedRange(file.detectedRange);
     if (!file.detectedRange) range.className = 'detection-warning';
     row.append(name, range);
+    if (file.structure?.ok) {
+      const structure = document.createElement('span');
+      structure.className = file.structure.permissive ? 'detection-warning' : 'structure-validation-ok';
+      structure.textContent = file.structure.permissive
+        ? file.structure.reason
+        : 'Estructura verificada para la categoría seleccionada.';
+      row.appendChild(structure);
+    }
     if (file.overlapRange) {
       const overlap = document.createElement('span');
       overlap.className = 'detection-warning';
@@ -1848,6 +2595,88 @@ async function openSpreadsheetPreview(endpoint, fallbackTitle, ids = {}) {
   }
 }
 
+function inventoryReportTitle(section) {
+  return section.querySelector('.inventory-results-head h3')?.textContent?.trim() || 'Informe de inventario';
+}
+
+function inventoryReportFilename(title, extension) {
+  const slug = title.normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `${slug || 'informe-inventario'}-${isoLocalDate(new Date())}.${extension}`;
+}
+
+function printInventoryReport(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section || section.hidden) return;
+  const previousTitle = document.title;
+  document.title = inventoryReportTitle(section);
+  document.body.classList.add('printing-inventory-report');
+  section.classList.add('inventory-print-target');
+  try {
+    window.print();
+  } finally {
+    section.classList.remove('inventory-print-target');
+    document.body.classList.remove('printing-inventory-report');
+    document.title = previousTitle;
+  }
+}
+
+function excelSheetLabel(table, index) {
+  if (table.id === 'inventory-results-table') return 'Kardex consolidado';
+  if (table.id === 'inventory-waste-table' || table.id === 'waste-summary-table') return 'Merma';
+  const card = table.closest('.consumption-report-card');
+  const reportName = card?.querySelector('h4')?.textContent?.trim() || `Reporte ${index + 1}`;
+  const part = table.closest('.consumption-report-part')?.querySelector('h5')?.textContent || '';
+  const detail = /^1\./.test(part) ? 'Productos' : /^2\./.test(part) ? 'Ingredientes' : '';
+  return `${reportName} ${detail}`.trim();
+}
+
+function uniqueExcelSheetName(label, usedNames) {
+  const clean = label.replace(/[\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim() || 'Reporte';
+  let name = clean.slice(0, 31);
+  let suffix = 2;
+  while (usedNames.has(name)) {
+    const marker = ` ${suffix++}`;
+    name = `${clean.slice(0, 31 - marker.length)}${marker}`;
+  }
+  usedNames.add(name);
+  return name;
+}
+
+function exportInventoryReport(sectionId) {
+  const section = document.getElementById(sectionId);
+  const status = document.getElementById('inventory-source-status');
+  if (!section || section.hidden) return;
+  if (!window.XLSX) return setStatus(status, 'No fue posible cargar el generador de archivos Excel.', 'error');
+  try {
+    const title = inventoryReportTitle(section);
+    const workbook = XLSX.utils.book_new();
+    const locationSelect = document.getElementById('inventory-location-select');
+    const location = locationSelect.selectedOptions[0]?.textContent || '';
+    const period = section.querySelector('.inventory-results-head .panel-description')?.textContent?.trim() || '';
+    const information = XLSX.utils.aoa_to_sheet([
+      ['Reporte', title],
+      ['Ubicación', location],
+      ['Período / criterios', period],
+      ['Exportado', new Date().toLocaleString('es-CL')]
+    ]);
+    XLSX.utils.book_append_sheet(workbook, information, 'Información');
+    const usedNames = new Set(['Información']);
+    const tables = [...section.querySelectorAll('table')].filter(table => !table.closest('[hidden]'));
+    tables.forEach((table, index) => {
+      const sheet = XLSX.utils.table_to_sheet(table, { raw: true });
+      XLSX.utils.book_append_sheet(workbook, sheet, uniqueExcelSheetName(excelSheetLabel(table, index), usedNames));
+    });
+    XLSX.writeFile(workbook, inventoryReportFilename(title, 'xlsx'), { compression: true });
+    setStatus(status, 'Reporte exportado a Excel correctamente.', 'success');
+  } catch (error) {
+    setStatus(status, `No fue posible exportar el reporte: ${error.message}`, 'error');
+  }
+}
+
 function showDeleteConfirmation(row, version, field, record) {
   row.querySelector('.delete-confirmation')?.remove();
   const confirmation = document.createElement('div');
@@ -1936,7 +2765,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     link.addEventListener('click', event => {
       event.preventDefault();
       document.querySelectorAll('.nav-link').forEach(item => item.classList.toggle('active', item === link));
-      setView(link.dataset.view || 'general');
+      setView(link.dataset.view || 'report');
     });
   });
   document.querySelectorAll('.upload-mode').forEach(button => {
@@ -1952,6 +2781,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeFileUploadControls();
   renderMasterList();
   await refreshLocationConfiguration().catch(() => {});
+  setView(document.querySelector('.nav-link.active')?.dataset.view || 'report');
 
   document.getElementById('location-select').addEventListener('change', updateLocationFields);
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => {
@@ -2012,11 +2842,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       clearInspection();
       await loadTransactionFiles();
       await loadLatestSalesTransaction(savedLocation);
+      const importMessages = [];
       if (result.imports?.sales) {
         const imported = result.imports.sales;
-        setStatus(status, imported.newTransactions
+        importMessages.push(imported.newTransactions
           ? `${imported.newTransactions} transacción(es) nueva(s) guardada(s); ${imported.duplicateTransactions} ya existente(s) omitida(s).`
-          : `Archivo procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} ya existía(n).`, 'success');
+          : `Ventas procesadas sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} ya existía(n).`);
+      }
+      if (result.imports?.mercadopago) {
+        const imported = result.imports.mercadopago;
+        importMessages.push(imported.newTransactions
+          ? `${imported.newTransactions} transacción(es) MercadoPago nueva(s) guardada(s); ${imported.duplicateTransactions} fila(s) repetida(s) omitida(s).`
+          : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
+      }
+      if (importMessages.length) {
+        setStatus(status, importMessages.join(' '), 'success');
       } else {
         setStatus(status, overlapAction === 'replace'
           ? `Se reemplazaron los días coincidentes y se conservaron los datos fuera del rango para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`
@@ -2049,6 +2889,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('refresh-weekly-report').addEventListener('click', loadWeeklySalesReport);
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
+  document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
+  document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
+  document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
+  document.getElementById('sales-insight-period').addEventListener('change', () => {
+    salesHierarchyPath = [];
+    renderSalesInsights();
+  });
+  document.getElementById('sales-hierarchy-back').addEventListener('click', () => {
+    salesHierarchyPath = salesHierarchyPath.slice(0, -1);
+    renderSalesInsights();
+  });
   document.getElementById('products-location-filter').addEventListener('change', () => {
     document.getElementById('products-comparison').hidden = true;
     loadProductsView();
@@ -2057,14 +2908,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('refresh-products').addEventListener('click', loadProductsView);
   document.getElementById('purchases-location-filter').addEventListener('change', () => {
     document.getElementById('purchases-supplier-filter').value = 'all';
+    document.getElementById('purchases-product-filter').value = '';
     document.getElementById('purchases-date-from').value = '';
     document.getElementById('purchases-date-to').value = '';
     loadPurchasesView();
   });
   document.getElementById('purchases-supplier-filter').addEventListener('change', loadPurchasesView);
+  document.getElementById('purchases-product-filter').addEventListener('change', loadPurchasesView);
   document.getElementById('purchases-date-from').addEventListener('change', loadPurchasesView);
   document.getElementById('purchases-date-to').addEventListener('change', loadPurchasesView);
   document.getElementById('refresh-purchases').addEventListener('click', loadPurchasesView);
+  document.getElementById('print-purchases-report').addEventListener('click', printPurchasesReport);
+  document.getElementById('export-purchases-report').addEventListener('click', exportPurchasesReport);
+  document.getElementById('projection-location-filter').addEventListener('change', () => {
+    document.getElementById('projection-supplier-filter').value = 'all';
+    loadPurchaseProjection();
+  });
+  document.getElementById('projection-supplier-filter').addEventListener('change', renderPurchaseProjection);
+  document.getElementById('projection-only-required').addEventListener('change', renderPurchaseProjection);
+  document.getElementById('projection-only-managed').addEventListener('change', renderPurchaseProjection);
+  document.getElementById('refresh-purchase-projection').addEventListener('click', loadPurchaseProjection);
+  document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
+  document.getElementById('print-purchase-order').addEventListener('click', printPurchaseOrder);
+  document.getElementById('purchase-projection-body').addEventListener('input', event => {
+    const row = event.target.closest('tr[data-key]');
+    const item = purchaseProjectionState?.items.find(candidate => candidate.key === row?.dataset.key);
+    if (!item) return;
+    if (event.target.matches('.projection-min-input')) item.minDays = Number(event.target.value);
+    if (event.target.matches('.projection-max-input')) item.maxDays = Number(event.target.value);
+    if (event.target.matches('.projection-managed-input')) {
+      item.managed = event.target.checked;
+      renderPurchaseProjection();
+    }
+  });
+  document.getElementById('purchase-projection-body').addEventListener('change', event => {
+    if (!event.target.matches('.projection-supplier-input')) return;
+    const row = event.target.closest('tr[data-key]');
+    const item = purchaseProjectionState?.items.find(candidate => candidate.key === row?.dataset.key);
+    if (item) item.supplierKey = event.target.value;
+  });
   document.getElementById('save-products-report').addEventListener('click', () => saveProductsReport(false));
   document.getElementById('products-saved-report').addEventListener('change', event => {
     document.getElementById('compare-products-report').disabled = !event.currentTarget.value;
@@ -2093,6 +2975,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('close-consumption-summary').addEventListener('click', () => {
     document.getElementById('consumption-summary-results').hidden = true;
+  });
+  document.querySelectorAll('.inventory-print-report').forEach(button => {
+    button.addEventListener('click', () => printInventoryReport(button.dataset.reportTarget));
+  });
+  document.querySelectorAll('.inventory-export-report').forEach(button => {
+    button.addEventListener('click', () => exportInventoryReport(button.dataset.reportTarget));
   });
   document.getElementById('close-inventory-preview').addEventListener('click', () => {
     document.getElementById('inventory-preview-dialog').close();

@@ -14,23 +14,16 @@
 
     <nav class="navigation">
       <div class="nav-label">Workspace</div>
-      <a href="#" class="nav-link active" data-view="general">
-        <svg class="nav-icon" viewBox="0 0 24 24">
-          <path d="M3 13h8l3-7 3 7h5" />
-          <path d="M3 19h18" />
-        </svg>
-        General
-      </a>
-      <a href="#" class="nav-link" data-view="report">
+      <a href="#" class="nav-link active" data-view="report">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M3 21h18" />
           <path d="M7 14v-7" />
           <path d="M12 18v-11" />
           <path d="M17 11v-4" />
         </svg>
-        Reporte Semanal
+        Resumen General Ventas
       </a>
-      <a href="#" class="nav-link" data-view="general">
+      <a href="#" class="nav-link" data-view="sales">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M8 2v4M16 2v4M3 10h18" />
@@ -58,6 +51,13 @@
           <path d="M9 16h6M9 12h6M9 8h3" />
         </svg>
         Compras
+      </a>
+      <a href="#" class="nav-link" data-view="purchase-projection">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M4 19V9M10 19V5M16 19v-7M3 19h18" />
+          <path d="m15 5 2-2 2 2M17 3v6" />
+        </svg>
+        Proyección de Compras
       </a>
       <a href="#" class="nav-link" data-view="uploads">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -88,60 +88,130 @@
   </aside>
 
   <main class="main-content">
-    <section class="summary-grid">
-      <article class="summary-card highlight">
-        <div class="summary-head">
-          <span class="label">Today’s Revenue</span>
-          <span class="chip positive">+12.4%</span>
+    <section id="sales-workspace" class="sales-workspace" style="display:none;">
+      <div class="sales-dashboard-heading">
+        <div>
+          <div class="panel-eyebrow">Ventas</div>
+          <h2>Panel de indicadores comerciales</h2>
+          <p id="sales-dashboard-description" class="panel-description">Venta neta sin IVA y comportamiento de clientes MercadoPago.</p>
         </div>
-        <div class="value">$2,406.40</div>
-        <div class="trend-row">
-          <span class="trend-up">↑ $410.22 vs yesterday</span>
-          <span class="subtle">Live sales</span>
+        <div class="sales-dashboard-controls">
+          <label for="sales-dashboard-location">Cafetería
+            <select id="sales-dashboard-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <button id="refresh-sales-dashboard" class="icon-button" type="button">Actualizar</button>
         </div>
-      </article>
+      </div>
+      <div id="sales-dashboard-status" class="form-status" aria-live="polite"></div>
 
-      <article class="summary-card">
-        <div class="summary-head">
-          <span class="label">Orders</span>
-          <span class="chip neutral">24h</span>
-        </div>
-        <div class="value">126</div>
-        <div class="trend-row">
-          <span class="trend-up">↑ 18 active</span>
-          <span class="subtle">6 waiting</span>
-        </div>
-      </article>
+      <div id="sales-dashboard-metrics" class="sales-dashboard-metrics"></div>
 
-      <article class="summary-card">
-        <div class="summary-head">
-          <span class="label">Guests served</span>
-          <span class="chip">Live</span>
+      <section class="panel sales-location-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-eyebrow">Por ubicación</div>
+            <h3>Ventas por cafetería</h3>
+          </div>
+          <span class="sales-basis-note">Venta neta sin IVA</span>
         </div>
-        <div class="value">324</div>
-        <div class="trend-row">
-          <span class="trend-up">↑ 42 today</span>
-          <span class="subtle">Peak 2 PM</span>
+        <div class="sales-table-wrap">
+          <table class="sales-dashboard-table">
+            <thead><tr><th>Cafetería</th><th>Hoy</th><th>Día anterior</th><th>Semana</th><th>Mes</th></tr></thead>
+            <tbody id="sales-location-body"></tbody>
+            <tfoot id="sales-location-foot"></tfoot>
+          </table>
         </div>
-      </article>
+      </section>
 
-      <article class="summary-card">
-        <div class="summary-head">
-          <span class="label">Inventory health</span>
-          <span class="chip warning">Low beans</span>
+      <div class="sales-insight-heading">
+        <div>
+          <div class="panel-eyebrow">Composición de ventas</div>
+          <h3>Productos y jerarquías</h3>
         </div>
-        <div class="value">82%</div>
-        <div class="trend-row">
-          <span class="trend-down">↓ 2 products low</span>
-          <span class="subtle">Restock alert</span>
+        <label for="sales-insight-period">Período
+          <select id="sales-insight-period">
+            <option value="day">Hoy</option>
+            <option value="week" selected>Semana</option>
+            <option value="month">Mes</option>
+          </select>
+        </label>
+      </div>
+      <div class="sales-insights-grid">
+        <section class="panel">
+          <div class="panel-head"><div><div class="panel-eyebrow">Ranking</div><h3>Productos más vendidos</h3></div></div>
+          <div id="sales-top-products" class="sales-ranked-list"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head hierarchy-panel-head">
+            <div>
+              <div class="panel-eyebrow">Participación</div>
+              <h3 id="sales-hierarchy-title">Venta por jerarquía</h3>
+              <div id="sales-hierarchy-context" class="sales-hierarchy-context">Todas las jerarquías</div>
+            </div>
+            <button id="sales-hierarchy-back" class="icon-button small hierarchy-back-button" type="button" hidden>← Volver</button>
+          </div>
+          <div id="sales-hierarchy-share" class="sales-share-list"></div>
+        </section>
+      </div>
+
+      <section class="panel mercadopago-panel">
+        <div class="panel-head mercadopago-head">
+          <div>
+            <div class="panel-eyebrow">MercadoPago</div>
+            <h3>Clientes recurrentes</h3>
+            <p>Cliente identificado mediante CARD_INITIAL_NUMBER + LAST_FOUR_DIGITS. Una transacción es recurrente cuando la tarjeta ya registra una compra anterior.</p>
+          </div>
+          <div id="mercadopago-customer-summary" class="mercadopago-customer-summary"></div>
         </div>
-      </article>
+        <div class="sales-table-wrap">
+          <table class="sales-dashboard-table mercadopago-table">
+            <thead>
+              <tr><th>Período</th><th>Venta MP</th><th>Transacciones</th><th>% trans. recurrentes</th><th>% venta recurrente</th><th>Período anterior</th></tr>
+            </thead>
+            <tbody id="mercadopago-period-body"></tbody>
+          </table>
+        </div>
+        <div class="frequency-heading"><div><div class="panel-eyebrow">Frecuencia promedio</div><h4>Clientes recurrentes por frecuencia de visita</h4></div></div>
+        <div id="mercadopago-frequency" class="frequency-grid"></div>
+
+        <div class="mercadopago-history-heading">
+          <div class="panel-eyebrow">Evolución histórica</div>
+          <h4>Participación de clientes recurrentes</h4>
+          <p>La frecuencia clasifica a los clientes recurrentes activos en cada período según su comportamiento acumulado hasta ese cierre.</p>
+        </div>
+        <div class="mercadopago-history-grid">
+          <section class="mercadopago-history-card">
+            <div class="panel-eyebrow">Últimos 6 meses</div>
+            <h4>Venta recurrente por mes</h4>
+            <div class="sales-table-wrap">
+              <table class="sales-dashboard-table recurring-history-table">
+                <thead>
+                  <tr><th>Mes</th><th>% venta recurrente</th><th>Venta rec. / total</th><th>Tarjetas</th><th>Recurrentes</th><th>&gt;3/sem.</th><th>&gt;1/sem.</th><th>&gt;1/15 días</th><th>&gt;1/mes</th><th>Menor frec.</th></tr>
+                </thead>
+                <tbody id="mercadopago-month-history"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="mercadopago-history-card">
+            <div class="panel-eyebrow">Últimas 8 semanas</div>
+            <h4>Venta recurrente por semana</h4>
+            <div class="sales-table-wrap">
+              <table class="sales-dashboard-table recurring-history-table">
+                <thead>
+                  <tr><th>Semana</th><th>% venta recurrente</th><th>Venta rec. / total</th><th>Tarjetas</th><th>Recurrentes</th><th>&gt;3/sem.</th><th>&gt;1/sem.</th><th>&gt;1/15 días</th><th>&gt;1/mes</th><th>Menor frec.</th></tr>
+                </thead>
+                <tbody id="mercadopago-week-history"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
     </section>
 
     <section id="weekly-report" style="display:none;">
       <div class="report-heading">
         <div>
-          <div class="panel-eyebrow">Reporte Semanal</div>
+          <div class="panel-eyebrow">Resumen General Ventas</div>
           <h2>Resumen de ventas</h2>
           <p id="report-scope-description" class="panel-description">Venta neta sin IVA, consolidada para todas las cafeterías.</p>
         </div>
@@ -150,7 +220,14 @@
           <select id="report-location-filter">
             <option value="all">Todas las cafeterías</option>
           </select>
-          <button id="refresh-weekly-report" class="icon-button" type="button">Actualizar</button>
+          <div class="report-refresh-stack">
+            <button id="refresh-weekly-report" class="icon-button" type="button">Actualizar</button>
+            <label class="report-cutoff-toggle" for="report-include-today">
+              <input id="report-include-today" type="checkbox" />
+              <span class="toggle-track" aria-hidden="true"><span></span></span>
+              <span>Incluir venta de hoy</span>
+            </label>
+          </div>
         </div>
       </div>
       <div id="report-status" class="form-status" aria-live="polite"></div>
@@ -158,7 +235,7 @@
       <div class="summary-grid report-summary-grid">
         <article class="summary-card highlight">
           <div class="summary-head">
-            <span class="label">Venta del día anterior</span>
+            <span id="report-reference-label" class="label">Venta del día anterior</span>
             <span id="report-yesterday-date" class="chip neutral">—</span>
           </div>
           <div id="report-yesterday-value" class="value">$0</div>
@@ -172,7 +249,7 @@
         <article class="summary-card">
           <div class="summary-head">
             <span class="label">Venta de la semana</span>
-            <span class="chip">Lun–ayer</span>
+            <span id="report-week-chip" class="chip">Lun–ayer</span>
           </div>
           <div id="report-week-value" class="value">$0</div>
           <div id="report-week-range" class="report-period">—</div>
@@ -181,7 +258,7 @@
         <article class="summary-card">
           <div class="summary-head">
             <span class="label">Venta del mes</span>
-            <span class="chip">Mes–ayer</span>
+            <span id="report-month-chip" class="chip">Mes–ayer</span>
           </div>
           <div id="report-month-value" class="value">$0</div>
           <div id="report-month-range" class="report-period">—</div>
@@ -300,7 +377,7 @@
           <p class="panel-description">Revisa cada compra y compara el precio efectivo con la compra anterior del mismo insumo.</p>
         </div>
         <div class="purchases-controls">
-          <label for="purchases-location-filter">Cafetería
+          <label for="purchases-location-filter">Ubicación
             <select id="purchases-location-filter"><option value="all">Todas las cafeterías</option></select>
           </label>
           <label for="purchases-date-from">Fecha inicial
@@ -312,12 +389,70 @@
           <label for="purchases-supplier-filter">Proveedor
             <select id="purchases-supplier-filter"><option value="all">Todos los proveedores</option></select>
           </label>
+          <label for="purchases-product-filter">Producto / ingrediente
+            <input id="purchases-product-filter" type="search" list="purchases-product-options" placeholder="Código o nombre" autocomplete="off" />
+            <datalist id="purchases-product-options"></datalist>
+          </label>
           <button id="refresh-purchases" class="icon-button" type="button">Actualizar</button>
+          <div class="purchases-report-actions">
+            <button id="print-purchases-report" class="icon-button" type="button" disabled>Imprimir / PDF</button>
+            <button id="export-purchases-report" class="icon-button" type="button" disabled>Exportar Excel</button>
+          </div>
         </div>
       </div>
       <div id="purchases-status" class="form-status" aria-live="polite"></div>
       <div id="purchases-summary" class="products-summary"></div>
       <div id="purchases-groups" class="purchases-groups"></div>
+    </section>
+
+    <section id="purchase-projection-workspace" class="panel purchase-projection-workspace" style="display:none;">
+      <div class="purchase-projection-head">
+        <div>
+          <div class="panel-eyebrow">Abastecimiento</div>
+          <h2>Proyección de compras</h2>
+          <p class="panel-description">Calcula la reposición necesaria usando el consumo de los últimos 30 días y el inventario más reciente.</p>
+        </div>
+        <div class="purchase-projection-controls">
+          <label for="projection-location-filter">Ubicación
+            <select id="projection-location-filter"></select>
+          </label>
+          <label for="projection-supplier-filter">Proveedor
+            <select id="projection-supplier-filter"><option value="all">Todos los proveedores</option></select>
+          </label>
+          <div class="projection-toggle-filters">
+            <label class="projection-checkbox" for="projection-only-required">
+              <input id="projection-only-required" type="checkbox" checked />
+              Solo necesidades de compra
+            </label>
+            <label class="projection-checkbox" for="projection-only-managed">
+              <input id="projection-only-managed" type="checkbox" />
+              Solo ítems administrados
+            </label>
+          </div>
+          <button id="refresh-purchase-projection" class="icon-button" type="button">Actualizar</button>
+        </div>
+      </div>
+      <div id="purchase-projection-status" class="form-status" aria-live="polite"></div>
+      <div id="purchase-projection-summary" class="products-summary"></div>
+      <div class="purchase-projection-actions">
+        <button id="save-projection-policies" class="icon-button" type="button" disabled>Guardar criterios</button>
+        <button id="print-purchase-order" class="primary-button" type="button" disabled>Generar orden de compra PDF</button>
+      </div>
+      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. Las UDC se redondean hacia arriba.</p>
+      <div class="purchase-projection-table-wrap">
+        <table class="purchase-projection-table">
+          <thead>
+            <tr>
+              <th>Administrar</th><th>Código</th><th>Producto / ingrediente</th><th>Proveedor</th><th>Unidad interna</th>
+              <th>Inventario actual</th><th>Consumo y TRN-OUT 30 días</th><th>Promedio diario</th><th>Cobertura actual</th>
+              <th>Días mín.</th><th>Días máx.</th><th>Sugerencia interna</th><th>UDC</th>
+              <th>Unidades x UDC</th><th>UDC sugeridas</th><th>Costo UDC estimado</th><th>Total estimado</th>
+            </tr>
+          </thead>
+          <tbody id="purchase-projection-body"></tbody>
+        </table>
+      </div>
+      <section id="purchase-order-document" class="purchase-order-document" hidden></section>
     </section>
 
     <section id="inventory-workspace" class="panel" style="display:none;">
@@ -414,6 +549,8 @@
           </div>
           <div class="inventory-source-actions">
             <span id="waste-summary-item-count" class="chip neutral"></span>
+            <button class="icon-button small inventory-print-report" data-report-target="waste-summary-results" type="button">Imprimir / PDF</button>
+            <button class="icon-button small inventory-export-report" data-report-target="waste-summary-results" type="button">Exportar Excel</button>
             <button id="close-waste-summary" class="icon-button small" type="button">Cerrar</button>
           </div>
         </div>
@@ -429,7 +566,11 @@
             <h3 id="consumption-summary-title">Consumo</h3>
             <p id="consumption-summary-period" class="panel-description"></p>
           </div>
-          <button id="close-consumption-summary" class="icon-button small" type="button">Cerrar</button>
+          <div class="inventory-source-actions">
+            <button class="icon-button small inventory-print-report" data-report-target="consumption-summary-results" type="button">Imprimir / PDF</button>
+            <button class="icon-button small inventory-export-report" data-report-target="consumption-summary-results" type="button">Exportar Excel</button>
+            <button id="close-consumption-summary" class="icon-button small" type="button">Cerrar</button>
+          </div>
         </div>
         <div id="standalone-consumption-report" class="inventory-consumption-reports"></div>
       </section>
@@ -441,7 +582,11 @@
             <h3>Consolidado de inventario</h3>
             <p id="inventory-report-period" class="panel-description"></p>
           </div>
-          <span id="inventory-report-item-count" class="chip neutral"></span>
+          <div class="inventory-source-actions">
+            <span id="inventory-report-item-count" class="chip neutral"></span>
+            <button class="icon-button small inventory-print-report" data-report-target="inventory-report-results" type="button">Imprimir / PDF</button>
+            <button class="icon-button small inventory-export-report" data-report-target="inventory-report-results" type="button">Exportar Excel</button>
+          </div>
         </div>
         <div id="inventory-consumption-reports" class="inventory-consumption-reports"></div>
         <section id="inventory-waste-report" class="consumption-report-card" hidden>
@@ -543,6 +688,10 @@
             <label for="file-sales">Transacciones de venta</label>
             <input type="file" id="file-sales" name="sales" accept=".csv,.xls,.xlsx,.txt" />
             <span id="latest-sales-transaction" class="latest-sales-transaction" aria-live="polite">Última transacción: consultando…</span>
+          </div>
+          <div class="file-row store-only" data-weekly-field="mercadopago">
+            <label for="file-mercadopago">Transacciones MercadoPago</label>
+            <input type="file" id="file-mercadopago" name="mercadopago" accept=".csv,.xls,.xlsx,.txt" />
           </div>
           <div class="form-actions">
             <button id="inspect-week-btn" class="primary" type="submit">Detectar fechas y revisar</button>
@@ -712,157 +861,9 @@
       </dialog>
     </section>
 
-    <section class="content-layout">
-      <section class="panel wide-panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-eyebrow">Sales Overview</div>
-            <h2>Revenue Tracking</h2>
-          </div>
-          <div class="segmented">
-            <button class="segmented-button active">Week</button>
-            <button class="segmented-button">Month</button>
-            <button class="segmented-button">Year</button>
-          </div>
-        </div>
-        <div class="chart-area">
-          <div class="chart-empty">
-            <div class="chart-bars">
-              <div class="bar" style="height: 24%"></div>
-              <div class="bar" style="height: 58%"></div>
-              <div class="bar" style="height: 38%"></div>
-              <div class="bar" style="height: 88%"></div>
-              <div class="bar" style="height: 50%"></div>
-              <div class="bar" style="height: 71%"></div>
-              <div class="bar" style="height: 63%"></div>
-              <div class="bar" style="height: 88%"></div>
-              <div class="bar" style="height: 48%"></div>
-              <div class="bar" style="height: 72%"></div>
-              <div class="bar" style="height: 46%"></div>
-              <div class="bar" style="height: 62%"></div>
-            </div>
-          </div>
-        </div>
-        <div class="chart-labels">
-          <span>Mon</span>
-          <span>Tue</span>
-          <span>Wed</span>
-          <span>Thu</span>
-          <span>Fri</span>
-          <span>Sat</span>
-          <span>Sun</span>
-        </div>
-      </section>
-
-      <aside class="panel activity-panel">
-        <div class="panel-head compact">
-          <div>
-            <div class="panel-eyebrow">Service Queue</div>
-            <h2>Live Orders</h2>
-          </div>
-          <button class="icon-button small">Refresh</button>
-        </div>
-        <div class="activity-list">
-          <article class="activity-row">
-            <div class="status-dot ready"></div>
-            <div>
-              <div class="order-title">#1004 - Cappuccino</div>
-              <div class="order-meta">Table 03 • 2 min ago</div>
-            </div>
-            <span class="badge ready-badge">Ready</span>
-          </article>
-          <article class="activity-row">
-            <div class="status-dot prep"></div>
-            <div>
-              <div class="order-title">#1005 - Cold Brew</div>
-              <div class="order-meta">Pickup • 4 min ago</div>
-            </div>
-            <span class="badge prep-badge">Prep</span>
-          </article>
-          <article class="activity-row">
-            <div class="status-dot waiting"></div>
-            <div>
-              <div class="order-title">#1006 - Breakfast Set</div>
-              <div class="order-meta">Table 11 • 8 min ago</div>
-            </div>
-            <span class="badge waiting-badge">Queued</span>
-          </article>
-        </div>
-      </aside>
-    </section>
-
-    <section class="lower-grid">
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-eyebrow">Popular Products</div>
-            <h2>Top Menu Items</h2>
-          </div>
-          <button class="icon-button">View menu</button>
-        </div>
-        <div class="product-list">
-          <article class="product-row">
-            <div class="product-icon coffee">☕</div>
-            <div>
-              <div class="product-name">Signature Cappuccino</div>
-              <div class="product-subtitle">Espresso • 14 oz</div>
-            </div>
-            <div class="product-stats">48 sold</div>
-          </article>
-          <article class="product-row">
-            <div class="product-icon ib">🥐</div>
-            <div>
-              <div class="product-name">Butter Croissant</div>
-              <div class="product-subtitle">Bakery • Fresh batch</div>
-            </div>
-            <div class="product-stats">34 sold</div>
-          </article>
-          <article class="product-row">
-            <div class="product-icon cold">🥤</div>
-            <div>
-              <div class="product-name">Brewit Cold Brew</div>
-              <div class="product-subtitle">Slow steep • 12 oz</div>
-            </div>
-            <div class="product-stats">27 sold</div>
-          </article>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-eyebrow">Inventory Status</div>
-            <h2>Supply Monitor</h2>
-          </div>
-          <button class="icon-button">Restock</button>
-        </div>
-        <div class="inventory-list">
-          <div class="inventory-row">
-            <span class="inventory-label">Arabica Beans</span>
-            <div class="progress-wrap">
-              <div class="progress"><div style="width: 72%"></div></div>
-            </div>
-            <span class="inventory-number">72%</span>
-          </div>
-          <div class="inventory-row">
-            <span class="inventory-label">Milk</span>
-            <div class="progress-wrap">
-              <div class="progress"><div style="width: 58%"></div></div>
-            </div>
-            <span class="inventory-number">Low</span>
-          </div>
-          <div class="inventory-row">
-            <span class="inventory-label">Pastries</span>
-            <div class="progress-wrap">
-              <div class="progress"><div style="width: 91%"></div></div>
-            </div>
-            <span class="inventory-number">91%</span>
-          </div>
-        </div>
-      </section>
-    </section>
   </main>
 
+  <script src="/vendor/xlsx.full.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
