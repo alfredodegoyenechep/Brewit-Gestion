@@ -1,0 +1,1121 @@
+Id Producto	Nombre Producto*	Id Ingrediente	Nombre Ingrediente*	Cantidad Ingrediente	Unidad Medida	Tasa Rendimiento	Visible Clientes**	Id Jerarquia Toteat**
+B1000	Expresso Doble (Exp)	PAC001	Vaso Caliente Expreso	1	UN	97	1	
+B1000	Expresso Doble (Exp)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1010	Americano (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1010	Americano (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1010	Americano (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,03	kg	97	1	
+B1020	Americano (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1020	Americano (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1020	Americano (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1030	Cappuccino (GR)	LAC001	Leche Semidescr Sin Lactosa	275	mL	97	1	
+B1030	Cappuccino (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1030	Cappuccino (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1030	Cappuccino (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1040	Cappuccino (CL)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1040	Cappuccino (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1040	Cappuccino (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1040	Cappuccino (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,012	kg	97	1	
+B1050	Flat White (GR)	LAC001	Leche Semidescr Sin Lactosa	275	mL	97	1	
+B1050	Flat White (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1050	Flat White (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1050	Flat White (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1060	Flat White (CL)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1060	Flat White (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1060	Flat White (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1060	Flat White (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,012	kg	97	1	
+B1070	Cortado (Cor)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1070	Cortado (Cor)	PAC002	Vaso Caliente 8 oz	1	UN	97	1	
+B1070	Cortado (Cor)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1070	Cortado (Cor)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1080	Latte clásico (GR)	LAC001	Leche Semidescr Sin Lactosa	400	mL	97	1	
+B1080	Latte clásico (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1080	Latte clásico (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1080	Latte clásico (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1090	Latte clásico (CL)	LAC001	Leche Semidescr Sin Lactosa	290	mL	97	1	
+B1090	Latte clásico (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1090	Latte clásico (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1090	Latte clásico (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,012	kg	97	1	
+B1100	Latte Vainilla (GR)	LAC001	Leche Semidescr Sin Lactosa	360	mL	97	1	
+B1100	Latte Vainilla (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B1100	Latte Vainilla (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1100	Latte Vainilla (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1100	Latte Vainilla (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,018	kg	97	1	
+B1110	Latte Vainilla (CL)	LAC001	Leche Semidescr Sin Lactosa	280	mL	97	1	
+B1110	Latte Vainilla (CL)	SSR005	syrup vainilla	12	mL	97	1	
+B1110	Latte Vainilla (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1110	Latte Vainilla (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1110	Latte Vainilla (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1120	Latte Avellana (GR)	LAC001	Leche Semidescr Sin Lactosa	360	mL	97	1	
+B1120	Latte Avellana (GR)	SSR003	syrup avellana	18	mL	97	1	
+B1120	Latte Avellana (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1120	Latte Avellana (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1120	Latte Avellana (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1130	Latte Avellana (CL)	LAC001	Leche Semidescr Sin Lactosa	280	mL	97	1	
+B1130	Latte Avellana (CL)	SSR003	syrup avellana	12	mL	97	1	
+B1130	Latte Avellana (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1130	Latte Avellana (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1130	Latte Avellana (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1140	Latte Vainilla sin Azúcar (GR)	LAC001	Leche Semidescr Sin Lactosa	360	mL	97	1	
+B1140	Latte Vainilla sin Azúcar (GR)	SSR018	syrup vainilla sin azucar	24	mL	97	1	
+B1140	Latte Vainilla sin Azúcar (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1140	Latte Vainilla sin Azúcar (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1140	Latte Vainilla sin Azúcar (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1150	Latte Vainilla sin Azúcar (CL)	LAC001	Leche Semidescr Sin Lactosa	280	mL	97	1	
+B1150	Latte Vainilla sin Azúcar (CL)	SSR018	syrup vainilla sin azucar	16	mL	97	1	
+B1150	Latte Vainilla sin Azúcar (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1150	Latte Vainilla sin Azúcar (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1150	Latte Vainilla sin Azúcar (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1160	Latte Dulce de Leche (GR)	LAC001	Leche Semidescr Sin Lactosa	340	mL	97	1	
+B1160	Latte Dulce de Leche (GR)	SSR019	Salsa dulce de leche	60	g	97	1	
+B1160	Latte Dulce de Leche (GR)	SSR014	Salsa caramelo	10	g	97	1	
+B1160	Latte Dulce de Leche (GR)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1160	Latte Dulce de Leche (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1160	Latte Dulce de Leche (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1160	Latte Dulce de Leche (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1170	Latte Dulce de Leche (CL)	LAC001	Leche Semidescr Sin Lactosa	250	mL	97	1	
+B1170	Latte Dulce de Leche (CL)	SSR019	Salsa dulce de leche	40	g	97	1	
+B1170	Latte Dulce de Leche (CL)	SSR014	Salsa caramelo	10	g	97	1	
+B1170	Latte Dulce de Leche (CL)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1170	Latte Dulce de Leche (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1170	Latte Dulce de Leche (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1170	Latte Dulce de Leche (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1180	Caramel Macchiato (GR)	LAC001	Leche Semidescr Sin Lactosa	340	mL	97	1	
+B1180	Caramel Macchiato (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B1180	Caramel Macchiato (GR)	SSR014	Salsa caramelo	10	g	97	1	
+B1180	Caramel Macchiato (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1180	Caramel Macchiato (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1180	Caramel Macchiato (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1190	Caramel Macchiato (CL)	LAC001	Leche Semidescr Sin Lactosa	250	mL	97	1	
+B1190	Caramel Macchiato (CL)	SSR005	syrup vainilla	12	mL	95	1	
+B1190	Caramel Macchiato (CL)	SSR014	Salsa caramelo	10	g	97	1	
+B1190	Caramel Macchiato (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1190	Caramel Macchiato (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1190	Caramel Macchiato (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1200	Mocha (GR)	LAC001	Leche Semidescr Sin Lactosa	340	mL	97	1	
+B1200	Mocha (GR)	SSR008	salsa chocolate	57	g	97	1	
+B1200	Mocha (GR)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1200	Mocha (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1200	Mocha (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1200	Mocha (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1210	Mocha (CL)	LAC001	Leche Semidescr Sin Lactosa	250	mL	97	1	
+B1210	Mocha (CL)	SSR008	salsa chocolate	38	g	97	1	
+B1210	Mocha (CL)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1210	Mocha (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1210	Mocha (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1210	Mocha (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1220	Mocha Avellana (GR)	LAC001	Leche Semidescr Sin Lactosa	340	mL	97	1	
+B1220	Mocha Avellana (GR)	SSR003	syrup avellana	12	mL	97	1	
+B1220	Mocha Avellana (GR)	SSR008	salsa chocolate	57	g	97	1	
+B1220	Mocha Avellana (GR)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1220	Mocha Avellana (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1220	Mocha Avellana (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1220	Mocha Avellana (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1230	Mocha Avellana (CL)	LAC001	Leche Semidescr Sin Lactosa	250	mL	97	1	
+B1230	Mocha Avellana (CL)	SSR003	syrup avellana	6	mL	97	1	
+B1230	Mocha Avellana (CL)	SSR008	salsa chocolate	38	g	97	1	
+B1230	Mocha Avellana (CL)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1230	Mocha Avellana (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1230	Mocha Avellana (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1230	Mocha Avellana (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1240	Mocha Blanco (GR)	LAC001	Leche Semidescr Sin Lactosa	340	mL	97	1	
+B1240	Mocha Blanco (GR)	SSR009	salsa chocolate blanco	57	g	97	1	
+B1240	Mocha Blanco (GR)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1240	Mocha Blanco (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1240	Mocha Blanco (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1240	Mocha Blanco (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1250	Mocha Blanco (CL)	LAC001	Leche Semidescr Sin Lactosa	250	mL	97	1	
+B1250	Mocha Blanco (CL)	SSR009	salsa chocolate blanco	38	g	97	1	
+B1250	Mocha Blanco (CL)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1250	Mocha Blanco (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1250	Mocha Blanco (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1250	Mocha Blanco (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1260	Chocolate caliente (GR)	LAC001	Leche Semidescr Sin Lactosa	350	mL	97	1	
+B1260	Chocolate caliente (GR)	SSR005	syrup vainilla	12	mL	97	1	
+B1260	Chocolate caliente (GR)	SSR008	salsa chocolate	57	g	97	1	
+B1260	Chocolate caliente (GR)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1260	Chocolate caliente (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B1260	Chocolate caliente (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1270	Chocolate caliente (CL)	LAC001	Leche Semidescr Sin Lactosa	270	mL	97	1	
+B1270	Chocolate caliente (CL)	SSR005	syrup vainilla	6	mL	97	1	
+B1270	Chocolate caliente (CL)	SSR008	salsa chocolate	38	g	97	1	
+B1270	Chocolate caliente (CL)	SUB014	CREMA CHANTILLY  SIFON	13	g	90	1	
+B1270	Chocolate caliente (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B1270	Chocolate caliente (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1280	Affogato (C)	HEL001	Helado Vainilla	100	g	97	1	
+B1280	Affogato (C)	PAC002	Vaso Caliente 8 oz	1	UN	97	1	
+B1280	Affogato (C)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B1280	Affogato (C)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1290	Chill Watermelon Açai Lemon (GR)	SSR013	salsa limon	38	g	97	1	
+B1290	Chill Watermelon Açai Lemon (GR)	SSR002	Base Refresher Watermelon Cucumber	120	mL	97	1	
+B1290	Chill Watermelon Açai Lemon (GR)	SSR020	Salsa Acai	30	g	97	1	
+B1290	Chill Watermelon Açai Lemon (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1290	Chill Watermelon Açai Lemon (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1290	Chill Watermelon Açai Lemon (GR)	CCB004	Limon Rodaja (1) Deshidratada	1,25	g	90	1	
+B1300	Chill Watermelon Açai Lemon (CL)	SSR013	salsa limon	19	g	97	1	
+B1300	Chill Watermelon Açai Lemon (CL)	SSR002	Base Refresher Watermelon Cucumber	90	mL	97	1	
+B1300	Chill Watermelon Açai Lemon (CL)	SSR020	Salsa Acai	20	g	97	1	
+B1300	Chill Watermelon Açai Lemon (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1300	Chill Watermelon Açai Lemon (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1300	Chill Watermelon Açai Lemon (CL)	CCB004	Limon Rodaja (1) Deshidratada	1,25	g	90	1	
+B1310	Chill Watermelon Açai Lemon (XTR)	SSR013	salsa limon	57	g	97	1	
+B1310	Chill Watermelon Açai Lemon (XTR)	SSR002	Base Refresher Watermelon Cucumber	150	mL	97	1	
+B1310	Chill Watermelon Açai Lemon (XTR)	SSR020	Salsa Acai	40	g	97	1	
+B1310	Chill Watermelon Açai Lemon (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1310	Chill Watermelon Açai Lemon (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1310	Chill Watermelon Açai Lemon (XTR)	CCB004	Limon Rodaja (1) Deshidratada	1,25	g	90	1	
+B1320	Chill Watermelon Lemonade (GR)	SSR013	salsa limon	38	g	97	1	
+B1320	Chill Watermelon Lemonade (GR)	SSR002	Base Refresher Watermelon Cucumber	120	mL	97	1	
+B1320	Chill Watermelon Lemonade (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1320	Chill Watermelon Lemonade (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1320	Chill Watermelon Lemonade (GR)	CCB004	Limon Rodaja (1) Deshidratada	1,25	g	90	1	
+B1330	Chill Watermelon Lemonade (CL)	SSR013	salsa limon	19	g	97	1	
+B1330	Chill Watermelon Lemonade (CL)	SSR002	Base Refresher Watermelon Cucumber	90	mL	97	1	
+B1330	Chill Watermelon Lemonade (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1330	Chill Watermelon Lemonade (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1330	Chill Watermelon Lemonade (CL)	CCB004	Limon Rodaja (1) Deshidratada	1,25	g	90	1	
+B1340	Chill Watermelon Lemonade (XTR)	SSR013	salsa limon	57	g	97	1	
+B1340	Chill Watermelon Lemonade (XTR)	SSR002	Base Refresher Watermelon Cucumber	160	mL	97	1	
+B1340	Chill Watermelon Lemonade (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1340	Chill Watermelon Lemonade (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1340	Chill Watermelon Lemonade (XTR)	CCB004	Limon Rodaja (1) Deshidratada	1,25	g	90	1	
+B1350	Chill Mango Lemonade (GR)	SSR013	salsa limon	40	g	97	1	
+B1350	Chill Mango Lemonade (GR)	SSR001	Base Refresher Peach Mango	90	mL	97	1	
+B1350	Chill Mango Lemonade (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1350	Chill Mango Lemonade (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1360	Chill Mango Lemonade (CL)	SSR013	salsa limon	20	g	97	1	
+B1360	Chill Mango Lemonade (CL)	SSR001	Base Refresher Peach Mango	60	mL	97	1	
+B1360	Chill Mango Lemonade (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1360	Chill Mango Lemonade (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1370	Chill Mango Lemonade (XTR)	SSR013	salsa limon	60	g	97	1	
+B1370	Chill Mango Lemonade (XTR)	SSR001	Base Refresher Peach Mango	120	mL	97	1	
+B1370	Chill Mango Lemonade (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1370	Chill Mango Lemonade (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1380	Frappé Café Clásico (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1380	Frappé Café Clásico (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1380	Frappé Café Clásico (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1380	Frappé Café Clásico (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1380	Frappé Café Clásico (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1390	Frappé Café Clásico (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1390	Frappé Café Clásico (CL)	SSR015	Syrup Goma	20	mL	95	1	
+B1390	Frappé Café Clásico (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1390	Frappé Café Clásico (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1390	Frappé Café Clásico (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1400	Frappé Café Clásico (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1400	Frappé Café Clásico (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1400	Frappé Café Clásico (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1400	Frappé Café Clásico (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1400	Frappé Café Clásico (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	100	1	
+B1410	Frappé Café Vainilla (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1410	Frappé Café Vainilla (GR)	SSR005	syrup vainilla	30	mL	97	1	
+B1410	Frappé Café Vainilla (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1410	Frappé Café Vainilla (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1410	Frappé Café Vainilla (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1410	Frappé Café Vainilla (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1420	Frappé Café Vainilla (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1420	Frappé Café Vainilla (CL)	SSR005	syrup vainilla	20	mL	97	1	
+B1420	Frappé Café Vainilla (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1420	Frappé Café Vainilla (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1420	Frappé Café Vainilla (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1420	Frappé Café Vainilla (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1430	Frappé Café Vainilla (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1430	Frappé Café Vainilla (XTR)	SSR005	syrup vainilla	40	mL	97	1	
+B1430	Frappé Café Vainilla (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1430	Frappé Café Vainilla (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1430	Frappé Café Vainilla (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1430	Frappé Café Vainilla (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1440	Frappé Caramel (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1440	Frappé Caramel (GR)	SSR006	syrup caramelo	18	mL	97	1	
+B1440	Frappé Caramel (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1440	Frappé Caramel (GR)	SSR014	Salsa caramelo	10	g	97	1	
+B1440	Frappé Caramel (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1440	Frappé Caramel (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1440	Frappé Caramel (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1440	Frappé Caramel (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1450	Frappé Caramel (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1450	Frappé Caramel (CL)	SSR006	syrup caramelo	12	mL	97	1	
+B1450	Frappé Caramel (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1450	Frappé Caramel (CL)	SSR014	Salsa caramelo	10	g	97	1	
+B1450	Frappé Caramel (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1450	Frappé Caramel (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1450	Frappé Caramel (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1450	Frappé Caramel (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1460	Frappé Caramel (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1460	Frappé Caramel (XTR)	SSR006	syrup caramelo	24	mL	97	1	
+B1460	Frappé Caramel (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1460	Frappé Caramel (XTR)	SSR014	Salsa caramelo	10	g	97	1	
+B1460	Frappé Caramel (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1460	Frappé Caramel (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1460	Frappé Caramel (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1460	Frappé Caramel (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	SSR017	syrup caramelo sin azucar	24	mL	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	SSR014	Salsa caramelo	10	g	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1470	Frappé Caramel sin azúcar (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1470	Frappé Caramel sin azúcar (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	SSR017	syrup caramelo sin azucar	16	mL	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	SSR014	Salsa caramelo	10	g	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1480	Frappé Caramel sin azúcar (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1480	Frappé Caramel sin azúcar (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	SSR017	syrup caramelo sin azucar	32	mL	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	SSR014	Salsa caramelo	10	g	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1490	Frappé Caramel sin azúcar (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1490	Frappé Caramel sin azúcar (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1500	Frappé Mocha (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1500	Frappé Mocha (GR)	SSR008	salsa chocolate	67	g	97	1	
+B1500	Frappé Mocha (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1500	Frappé Mocha (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1500	Frappé Mocha (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1500	Frappé Mocha (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1500	Frappé Mocha (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1510	Frappé Mocha (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1510	Frappé Mocha (CL)	SSR008	salsa chocolate	48	g	97	1	
+B1510	Frappé Mocha (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1510	Frappé Mocha (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1510	Frappé Mocha (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1510	Frappé Mocha (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1510	Frappé Mocha (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1520	Frappé Mocha (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1520	Frappé Mocha (XTR)	SSR008	salsa chocolate	86	g	97	1	
+B1520	Frappé Mocha (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1520	Frappé Mocha (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1520	Frappé Mocha (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1520	Frappé Mocha (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1520	Frappé Mocha (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1530	Frappé Mocha Blanco (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1530	Frappé Mocha Blanco (GR)	SSR009	salsa chocolate blanco	57	g	97	1	
+B1530	Frappé Mocha Blanco (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1530	Frappé Mocha Blanco (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1530	Frappé Mocha Blanco (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1530	Frappé Mocha Blanco (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1530	Frappé Mocha Blanco (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1540	Frappé Mocha Blanco (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1540	Frappé Mocha Blanco (CL)	SSR009	salsa chocolate blanco	40	g	97	1	
+B1540	Frappé Mocha Blanco (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1540	Frappé Mocha Blanco (CL)	SUB014	CREMA CHANTILLY  SIFON	15	g	97	1	
+B1540	Frappé Mocha Blanco (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1540	Frappé Mocha Blanco (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1540	Frappé Mocha Blanco (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1550	Frappé Mocha Blanco (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1550	Frappé Mocha Blanco (XTR)	SSR009	salsa chocolate blanco	76	g	97	1	
+B1550	Frappé Mocha Blanco (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1550	Frappé Mocha Blanco (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1550	Frappé Mocha Blanco (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1550	Frappé Mocha Blanco (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1550	Frappé Mocha Blanco (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1560	Frappé Dulce de Leche (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1560	Frappé Dulce de Leche (GR)	SSR019	Salsa dulce de leche	70	g	97	1	
+B1560	Frappé Dulce de Leche (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1560	Frappé Dulce de Leche (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1560	Frappé Dulce de Leche (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1560	Frappé Dulce de Leche (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1560	Frappé Dulce de Leche (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1570	Frappé Dulce de Leche (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1570	Frappé Dulce de Leche (CL)	SSR019	Salsa dulce de leche	50	g	97	1	
+B1570	Frappé Dulce de Leche (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1570	Frappé Dulce de Leche (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1570	Frappé Dulce de Leche (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1570	Frappé Dulce de Leche (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1570	Frappé Dulce de Leche (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1580	Frappé Dulce de Leche (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1580	Frappé Dulce de Leche (XTR)	SSR019	Salsa dulce de leche	90	g	97	1	
+B1580	Frappé Dulce de Leche (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1580	Frappé Dulce de Leche (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1580	Frappé Dulce de Leche (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1580	Frappé Dulce de Leche (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1580	Frappé Dulce de Leche (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1590	Frappé Mocha con Chips (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1590	Frappé Mocha con Chips (GR)	SSR008	salsa chocolate	67	g	97	1	
+B1590	Frappé Mocha con Chips (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1590	Frappé Mocha con Chips (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1590	Frappé Mocha con Chips (GR)	CCB002	Chips Chocolate	20	g	97	1	
+B1590	Frappé Mocha con Chips (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1590	Frappé Mocha con Chips (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1590	Frappé Mocha con Chips (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1600	Frappé Mocha con Chips (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1600	Frappé Mocha con Chips (CL)	SSR008	salsa chocolate	48	g	97	1	
+B1600	Frappé Mocha con Chips (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1600	Frappé Mocha con Chips (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1600	Frappé Mocha con Chips (CL)	CCB002	Chips Chocolate	10	g	97	1	
+B1600	Frappé Mocha con Chips (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1600	Frappé Mocha con Chips (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1600	Frappé Mocha con Chips (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1610	Frappé Mocha con Chips (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1610	Frappé Mocha con Chips (XTR)	SSR008	salsa chocolate	76	g	97	1	
+B1610	Frappé Mocha con Chips (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1610	Frappé Mocha con Chips (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1610	Frappé Mocha con Chips (XTR)	CCB002	Chips Chocolate	30	g	97	1	
+B1610	Frappé Mocha con Chips (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1610	Frappé Mocha con Chips (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1610	Frappé Mocha con Chips (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1620	Frappé Cookies & Cream (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1620	Frappé Cookies & Cream (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B1620	Frappé Cookies & Cream (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1620	Frappé Cookies & Cream (GR)	SUB014	CREMA CHANTILLY  SIFON	45	g	90	1	
+B1620	Frappé Cookies & Cream (GR)	CCB003	Crumble Cookies	16	g	97	1	
+B1620	Frappé Cookies & Cream (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1620	Frappé Cookies & Cream (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1630	Frappé Cookies & Cream (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1630	Frappé Cookies & Cream (CL)	SSR005	syrup vainilla	12	mL	97	1	
+B1630	Frappé Cookies & Cream (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1630	Frappé Cookies & Cream (CL)	SUB014	CREMA CHANTILLY  SIFON	35	g	90	1	
+B1630	Frappé Cookies & Cream (CL)	CCB003	Crumble Cookies	12	g	97	1	
+B1630	Frappé Cookies & Cream (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1630	Frappé Cookies & Cream (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1640	Frappé Cookies & Cream (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1640	Frappé Cookies & Cream (XTR)	SSR005	syrup vainilla	24	mL	97	1	
+B1640	Frappé Cookies & Cream (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1640	Frappé Cookies & Cream (XTR)	SUB014	CREMA CHANTILLY  SIFON	55	g	90	1	
+B1640	Frappé Cookies & Cream (XTR)	CCB003	Crumble Cookies	20	g	97	1	
+B1640	Frappé Cookies & Cream (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1640	Frappé Cookies & Cream (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1650	Frappé Vainilla Crema (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1650	Frappé Vainilla Crema (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B1650	Frappé Vainilla Crema (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1650	Frappé Vainilla Crema (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1650	Frappé Vainilla Crema (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1650	Frappé Vainilla Crema (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1660	Frappé Vainilla Crema (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1660	Frappé Vainilla Crema (CL)	SSR005	syrup vainilla	12	mL	97	1	
+B1660	Frappé Vainilla Crema (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1660	Frappé Vainilla Crema (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1660	Frappé Vainilla Crema (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1660	Frappé Vainilla Crema (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1670	Frappé Vainilla Crema (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1670	Frappé Vainilla Crema (XTR)	SSR005	syrup vainilla	24	mL	97	1	
+B1670	Frappé Vainilla Crema (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1670	Frappé Vainilla Crema (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1670	Frappé Vainilla Crema (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1670	Frappé Vainilla Crema (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1680	Frappé Choc Chips Crema (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1680	Frappé Choc Chips Crema (GR)	SSR008	salsa chocolate	57	g	97	1	
+B1680	Frappé Choc Chips Crema (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1680	Frappé Choc Chips Crema (GR)	CCB002	Chips Chocolate	30	g	97	1	
+B1680	Frappé Choc Chips Crema (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1680	Frappé Choc Chips Crema (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1680	Frappé Choc Chips Crema (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1690	Frappé Choc Chips Crema (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1690	Frappé Choc Chips Crema (CL)	SSR008	salsa chocolate	38	g	97	1	
+B1690	Frappé Choc Chips Crema (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1690	Frappé Choc Chips Crema (CL)	CCB002	Chips Chocolate	20	g	97	1	
+B1690	Frappé Choc Chips Crema (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1690	Frappé Choc Chips Crema (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1690	Frappé Choc Chips Crema (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1700	Frappé Choc Chips Crema (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1700	Frappé Choc Chips Crema (XTR)	SSR008	salsa chocolate	76	g	97	1	
+B1700	Frappé Choc Chips Crema (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B1700	Frappé Choc Chips Crema (XTR)	CCB002	Chips Chocolate	40	g	97	1	
+B1700	Frappé Choc Chips Crema (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1700	Frappé Choc Chips Crema (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1700	Frappé Choc Chips Crema (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1710	Frappé Dulce de Leche Crema (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1710	Frappé Dulce de Leche Crema (GR)	SSR019	Salsa dulce de leche	60	g	97	1	
+B1710	Frappé Dulce de Leche Crema (GR)	SUB014	CREMA CHANTILLY  SIFON	51	g	90	1	
+B1710	Frappé Dulce de Leche Crema (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1710	Frappé Dulce de Leche Crema (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1710	Frappé Dulce de Leche Crema (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1720	Frappé Dulce de Leche Crema (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1720	Frappé Dulce de Leche Crema (CL)	SSR019	Salsa dulce de leche	40	g	97	1	
+B1720	Frappé Dulce de Leche Crema (CL)	SUB014	CREMA CHANTILLY  SIFON	41	g	90	1	
+B1720	Frappé Dulce de Leche Crema (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1720	Frappé Dulce de Leche Crema (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1720	Frappé Dulce de Leche Crema (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1730	Frappé Dulce de Leche Crema (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1730	Frappé Dulce de Leche Crema (XTR)	SSR019	Salsa dulce de leche	80	g	97	1	
+B1730	Frappé Dulce de Leche Crema (XTR)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B1730	Frappé Dulce de Leche Crema (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1730	Frappé Dulce de Leche Crema (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1730	Frappé Dulce de Leche Crema (XTR)	SSR015	Syrup Goma	30	mL	97	1	
+B1740	Frappé Matcha Crema (sin café) (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1740	Frappé Matcha Crema (sin café) (GR)	CAF008	Matcha Ceremonial	3	g	92	1	
+B1740	Frappé Matcha Crema (sin café) (GR)	SSR015	Syrup Goma	30	mL	95	1	
+B1740	Frappé Matcha Crema (sin café) (GR)	SUB014	CREMA CHANTILLY  SIFON	51	g	90	1	
+B1740	Frappé Matcha Crema (sin café) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1740	Frappé Matcha Crema (sin café) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1750	Frappé Matcha Crema (sin café) (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1750	Frappé Matcha Crema (sin café) (CL)	CAF008	Matcha Ceremonial	2	g	92	1	
+B1750	Frappé Matcha Crema (sin café) (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1750	Frappé Matcha Crema (sin café) (CL)	SUB014	CREMA CHANTILLY  SIFON	41	g	90	1	
+B1750	Frappé Matcha Crema (sin café) (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1750	Frappé Matcha Crema (sin café) (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1760	Frappé Matcha Crema (sin café) (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1760	Frappé Matcha Crema (sin café) (XTR)	CAF008	Matcha Ceremonial	4	g	92	1	
+B1760	Frappé Matcha Crema (sin café) (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1760	Frappé Matcha Crema (sin café) (XTR)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B1760	Frappé Matcha Crema (sin café) (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1760	Frappé Matcha Crema (sin café) (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1770	Granizado Mango - Fruit (Base Te Infusion) (GR)	SSR011	salsa mango	76	g	97	1	
+B1770	Granizado Mango - Fruit (Base Te Infusion) (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1770	Granizado Mango - Fruit (Base Te Infusion) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1770	Granizado Mango - Fruit (Base Te Infusion) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1780	Granizado Mango - Fruit (Base Te Infusion) (CL)	SSR011	salsa mango	57	g	97	1	
+B1780	Granizado Mango - Fruit (Base Te Infusion) (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1780	Granizado Mango - Fruit (Base Te Infusion) (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1780	Granizado Mango - Fruit (Base Te Infusion) (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1790	Granizado Mango - Fruit (Base Te Infusion) (XTR)	SSR011	salsa mango	95	g	97	1	
+B1790	Granizado Mango - Fruit (Base Te Infusion) (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1790	Granizado Mango - Fruit (Base Te Infusion) (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1790	Granizado Mango - Fruit (Base Te Infusion) (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1800	Granizado Blueberry (GR)	SSR012	salsa blueberries	76	g	97	1	
+B1800	Granizado Blueberry (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B1800	Granizado Blueberry (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1800	Granizado Blueberry (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1810	Granizado Blueberry (CL)	SSR012	salsa blueberries	57	g	97	1	
+B1810	Granizado Blueberry (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B1810	Granizado Blueberry (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1810	Granizado Blueberry (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1820	Granizado Blueberry (XTR)	SSR012	salsa blueberries	95	g	97	1	
+B1820	Granizado Blueberry (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B1820	Granizado Blueberry (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1820	Granizado Blueberry (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1830	Iced Americano (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1830	Iced Americano (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1830	Iced Americano (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	30	g	97	1	
+B1840	Iced Americano (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1840	Iced Americano (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1840	Iced Americano (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1850	Iced Americano (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1850	Iced Americano (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1850	Iced Americano (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	36	g	97	1	
+B1860	Iced Latte (GR)	LAC001	Leche Semidescr Sin Lactosa	170	mL	97	1	
+B1860	Iced Latte (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1860	Iced Latte (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1860	Iced Latte (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1870	Iced Latte (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1870	Iced Latte (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1870	Iced Latte (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1870	Iced Latte (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1880	Iced Latte (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1880	Iced Latte (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1880	Iced Latte (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1880	Iced Latte (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1890	Iced Vainilla Latte (GR)	LAC001	Leche Semidescr Sin Lactosa	220	mL	97	1	
+B1890	Iced Vainilla Latte (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B1890	Iced Vainilla Latte (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1890	Iced Vainilla Latte (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1890	Iced Vainilla Latte (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1900	Iced Vainilla Latte (CL)	LAC001	Leche Semidescr Sin Lactosa	170	mL	97	1	
+B1900	Iced Vainilla Latte (CL)	SSR005	syrup vainilla	12	mL	97	1	
+B1900	Iced Vainilla Latte (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1900	Iced Vainilla Latte (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1900	Iced Vainilla Latte (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1910	Iced Vainilla Latte (XTR)	LAC001	Leche Semidescr Sin Lactosa	290	mL	97	1	
+B1910	Iced Vainilla Latte (XTR)	SSR005	syrup vainilla	24	mL	97	1	
+B1910	Iced Vainilla Latte (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1910	Iced Vainilla Latte (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1910	Iced Vainilla Latte (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1920	Iced Vainilla Latte sin azucar (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1920	Iced Vainilla Latte sin azucar (GR)	SSR018	syrup vainilla sin azucar	24	mL	97	1	
+B1920	Iced Vainilla Latte sin azucar (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1920	Iced Vainilla Latte sin azucar (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1920	Iced Vainilla Latte sin azucar (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1930	Iced Vainilla Latte sin azucar (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1930	Iced Vainilla Latte sin azucar (CL)	SSR018	syrup vainilla sin azucar	16	mL	97	1	
+B1930	Iced Vainilla Latte sin azucar (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1930	Iced Vainilla Latte sin azucar (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1930	Iced Vainilla Latte sin azucar (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1940	Iced Vainilla Latte sin azucar (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1940	Iced Vainilla Latte sin azucar (XTR)	SSR018	syrup vainilla sin azucar	32	mL	97	1	
+B1940	Iced Vainilla Latte sin azucar (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1940	Iced Vainilla Latte sin azucar (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1940	Iced Vainilla Latte sin azucar (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1950	Iced Latte Dulce de Leche (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1950	Iced Latte Dulce de Leche (GR)	SSR019	Salsa dulce de leche	60	g	97	1	
+B1950	Iced Latte Dulce de Leche (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1950	Iced Latte Dulce de Leche (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1950	Iced Latte Dulce de Leche (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1960	Iced Latte Dulce de Leche (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1960	Iced Latte Dulce de Leche (CL)	SSR019	Salsa dulce de leche	40	g	97	1	
+B1960	Iced Latte Dulce de Leche (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1960	Iced Latte Dulce de Leche (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1960	Iced Latte Dulce de Leche (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B1970	Iced Latte Dulce de Leche (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B1970	Iced Latte Dulce de Leche (XTR)	SSR019	Salsa dulce de leche	80	g	97	1	
+B1970	Iced Latte Dulce de Leche (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B1970	Iced Latte Dulce de Leche (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1970	Iced Latte Dulce de Leche (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1980	Iced Caramel Macchiato (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B1980	Iced Caramel Macchiato (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B1980	Iced Caramel Macchiato (GR)	SSR014	Salsa caramelo	10	g	97	1	
+B1980	Iced Caramel Macchiato (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B1980	Iced Caramel Macchiato (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1980	Iced Caramel Macchiato (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B1990	Iced Caramel Macchiato (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B1990	Iced Caramel Macchiato (CL)	SSR005	syrup vainilla	12	mL	97	1	
+B1990	Iced Caramel Macchiato (CL)	SSR014	Salsa caramelo	10	g	97	1	
+B1990	Iced Caramel Macchiato (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B1990	Iced Caramel Macchiato (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B1990	Iced Caramel Macchiato (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B2000	Iced Caramel Macchiato (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2000	Iced Caramel Macchiato (XTR)	SSR005	syrup vainilla	24	mL	97	1	
+B2000	Iced Caramel Macchiato (XTR)	SSR014	Salsa caramelo	10	g	97	1	
+B2000	Iced Caramel Macchiato (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2000	Iced Caramel Macchiato (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2000	Iced Caramel Macchiato (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2010	Iced Mocha (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2010	Iced Mocha (GR)	SSR008	salsa chocolate	57	g	97	1	
+B2010	Iced Mocha (GR)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B2010	Iced Mocha (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2010	Iced Mocha (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2010	Iced Mocha (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2020	Iced Mocha (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2020	Iced Mocha (CL)	SSR008	salsa chocolate	38	g	97	1	
+B2020	Iced Mocha (CL)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B2020	Iced Mocha (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2020	Iced Mocha (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2020	Iced Mocha (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B2030	Iced Mocha (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2030	Iced Mocha (XTR)	SSR008	salsa chocolate	76	g	97	1	
+B2030	Iced Mocha (XTR)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B2030	Iced Mocha (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2030	Iced Mocha (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2030	Iced Mocha (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2040	Iced Mocha Blanco (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2040	Iced Mocha Blanco (GR)	SSR009	salsa chocolate blanco	57	g	97	1	
+B2040	Iced Mocha Blanco (GR)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B2040	Iced Mocha Blanco (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2040	Iced Mocha Blanco (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2040	Iced Mocha Blanco (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2050	Iced Mocha Blanco (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2050	Iced Mocha Blanco (CL)	SSR009	salsa chocolate blanco	38	g	97	1	
+B2050	Iced Mocha Blanco (CL)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B2050	Iced Mocha Blanco (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2050	Iced Mocha Blanco (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2050	Iced Mocha Blanco (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B2060	Iced Mocha Blanco (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2060	Iced Mocha Blanco (XTR)	SSR009	salsa chocolate blanco	76	g	97	1	
+B2060	Iced Mocha Blanco (XTR)	SUB014	CREMA CHANTILLY  SIFON	61	g	90	1	
+B2060	Iced Mocha Blanco (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2060	Iced Mocha Blanco (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2060	Iced Mocha Blanco (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2070	Chai Latte (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	400	mL	97	1	
+B2070	Chai Latte (hot) (GR)	CAF009	Chai Adeleoriginals	30	g	97	1	
+B2070	Chai Latte (hot) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B2070	Chai Latte (hot) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2080	Chai Latte (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	300	mL	97	1	
+B2080	Chai Latte (hot) (CL)	CAF009	Chai Adeleoriginals	20	g	97	1	
+B2080	Chai Latte (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B2080	Chai Latte (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2090	Iced Chai Latte (GR)	LAC001	Leche Semidescr Sin Lactosa	300	mL	97	1	
+B2090	Iced Chai Latte (GR)	CAF009	Chai Adeleoriginals	30	g	97	1	
+B2090	Iced Chai Latte (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2090	Iced Chai Latte (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2100	Iced Chai Latte (CL)	LAC001	Leche Semidescr Sin Lactosa	240	mL	97	1	
+B2100	Iced Chai Latte (CL)	CAF009	Chai Adeleoriginals	20	g	97	1	
+B2100	Iced Chai Latte (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2100	Iced Chai Latte (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2110	Iced Chai Latte (XTR)	LAC001	Leche Semidescr Sin Lactosa	360	mL	97	1	
+B2110	Iced Chai Latte (XTR)	CAF009	Chai Adeleoriginals	40	g	97	1	
+B2110	Iced Chai Latte (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2110	Iced Chai Latte (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2120	Matcha Latte (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	400	mL	97	1	
+B2120	Matcha Latte (hot) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2120	Matcha Latte (hot) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B2120	Matcha Latte (hot) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2130	Matcha Latte (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	300	mL	97	1	
+B2130	Matcha Latte (hot) (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2130	Matcha Latte (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B2130	Matcha Latte (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2140	Iced Matcha Latte (GR)	LAC001	Leche Semidescr Sin Lactosa	280	mL	97	1	
+B2140	Iced Matcha Latte (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2140	Iced Matcha Latte (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2140	Iced Matcha Latte (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2150	Iced Matcha Latte (CL)	LAC001	Leche Semidescr Sin Lactosa	220	mL	97	1	
+B2150	Iced Matcha Latte (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2150	Iced Matcha Latte (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2150	Iced Matcha Latte (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2160	Iced Matcha Latte (XTR)	LAC001	Leche Semidescr Sin Lactosa	360	mL	97	1	
+B2160	Iced Matcha Latte (XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B2160	Iced Matcha Latte (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2160	Iced Matcha Latte (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2170	Iced Matcha Lemonade (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2170	Iced Matcha Lemonade (GR)	SSR013	salsa limon	38	g	97	1	
+B2170	Iced Matcha Lemonade (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2170	Iced Matcha Lemonade (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2180	Iced Matcha Lemonade (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2180	Iced Matcha Lemonade (CL)	SSR013	salsa limon	19	g	97	1	
+B2180	Iced Matcha Lemonade (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2180	Iced Matcha Lemonade (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2190	Iced Matcha Lemonade (XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B2190	Iced Matcha Lemonade (XTR)	SSR013	salsa limon	57	g	97	1	
+B2190	Iced Matcha Lemonade (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2190	Iced Matcha Lemonade (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2200	Strawberry Matcha (Iced) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2200	Strawberry Matcha (Iced) (GR)	SSR010	salsa frutilla	57	g	97	1	
+B2200	Strawberry Matcha (Iced) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2200	Strawberry Matcha (Iced) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2200	Strawberry Matcha (Iced) (GR)	LAC001	Leche Semidescr Sin Lactosa	220	mL	97	1	
+B2210	Strawberry Matcha (Iced) (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2210	Strawberry Matcha (Iced) (CL)	SSR010	salsa frutilla	38	g	97	1	
+B2210	Strawberry Matcha (Iced) (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2210	Strawberry Matcha (Iced) (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2210	Strawberry Matcha (Iced) (CL)	LAC001	Leche Semidescr Sin Lactosa	180	mL	97	1	
+B2220	Strawberry Matcha (Iced) (XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B2220	Strawberry Matcha (Iced) (XTR)	SSR010	salsa frutilla	76	g	97	1	
+B2220	Strawberry Matcha (Iced) (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2220	Strawberry Matcha (Iced) (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2220	Strawberry Matcha (Iced) (XTR)	LAC001	Leche Semidescr Sin Lactosa	280	mL	97	1	
+B2230	Matcha Vainilla (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	400	mL	97	1	
+B2230	Matcha Vainilla (hot) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2230	Matcha Vainilla (hot) (GR)	SSR005	syrup vainilla	12	mL	97	1	
+B2230	Matcha Vainilla (hot) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2230	Matcha Vainilla (hot) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2240	Matcha Vainilla (iced) (GR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2240	Matcha Vainilla (iced) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2240	Matcha Vainilla (iced) (GR)	SSR005	syrup vainilla	12	mL	97	1	
+B2240	Matcha Vainilla (iced) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2240	Matcha Vainilla (iced) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2250	Matcha Vainilla (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	300	mL	97	1	
+B2250	Matcha Vainilla (hot) (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2250	Matcha Vainilla (hot) (CL)	SSR005	syrup vainilla	6	mL	97	1	
+B2250	Matcha Vainilla (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B2250	Matcha Vainilla (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2260	Matcha Vainilla (ice) (CL)	LAC001	Leche Semidescr Sin Lactosa	150	mL	97	1	
+B2260	Matcha Vainilla (ice) (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2260	Matcha Vainilla (ice) (CL)	SSR005	syrup vainilla	10	mL	97	1	
+B2260	Matcha Vainilla (ice) (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2260	Matcha Vainilla (ice) (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2270	Matcha Vainilla (iced) (XTR)	LAC001	Leche Semidescr Sin Lactosa	240	mL	97	1	
+B2270	Matcha Vainilla (iced) (XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B2270	Matcha Vainilla (iced) (XTR)	SSR005	syrup vainilla	18	mL	97	1	
+B2270	Matcha Vainilla (iced) (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2270	Matcha Vainilla (iced) (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2280	Matcha Dulce de Leche (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	325	mL	97	1	
+B2280	Matcha Dulce de Leche (hot) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2280	Matcha Dulce de Leche (hot) (GR)	SSR019	Salsa dulce de leche	60	g	97	1	
+B2280	Matcha Dulce de Leche (hot) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2280	Matcha Dulce de Leche (hot) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2290	Matcha Dulce de Leche (Ice) (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2290	Matcha Dulce de Leche (Ice) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B2290	Matcha Dulce de Leche (Ice) (GR)	SSR019	Salsa dulce de leche	60	g	97	1	
+B2290	Matcha Dulce de Leche (Ice) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2290	Matcha Dulce de Leche (Ice) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2300	Matcha Dulce de Leche (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	254	mL	97	1	
+B2300	Matcha Dulce de Leche (hot) (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2300	Matcha Dulce de Leche (hot) (CL)	SSR019	Salsa dulce de leche	40	g	97	1	
+B2300	Matcha Dulce de Leche (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B2300	Matcha Dulce de Leche (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2310	Matcha Dulce de Leche (Ice)(CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2310	Matcha Dulce de Leche (Ice)(CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B2310	Matcha Dulce de Leche (Ice)(CL)	SSR019	Salsa dulce de leche	40	g	97	1	
+B2310	Matcha Dulce de Leche (Ice)(CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2310	Matcha Dulce de Leche (Ice)(CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2320	Matcha Dulce de Leche (Ice)(XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2320	Matcha Dulce de Leche (Ice)(XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B2320	Matcha Dulce de Leche (Ice)(XTR)	SSR019	Salsa dulce de leche	80	g	97	1	
+B2320	Matcha Dulce de Leche (Ice)(XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2320	Matcha Dulce de Leche (Ice)(XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2330	Caramel Latte Protein (25g) (GR)	LAC002	Leche Semidescr Sin Lact Proteina 75gr	220	mL	97	1	
+B2330	Caramel Latte Protein (25g) (GR)	LAC005	Proteina Whey Polvo	12	g	97	1	
+B2330	Caramel Latte Protein (25g) (GR)	SSR014	Salsa caramelo	38	g	97	1	
+B2330	Caramel Latte Protein (25g) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2330	Caramel Latte Protein (25g) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2330	Caramel Latte Protein (25g) (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2340	Caramel Latte Protein (23g) Avena (GR)	LAC003	Leche Vegetal Avena	200	mL	97	1	
+B2340	Caramel Latte Protein (23g) Avena (GR)	LAC005	Proteina Whey Polvo	30	g	97	1	
+B2340	Caramel Latte Protein (23g) Avena (GR)	SSR014	Salsa caramelo	38	g	97	1	
+B2340	Caramel Latte Protein (23g) Avena (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2340	Caramel Latte Protein (23g) Avena (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2340	Caramel Latte Protein (23g) Avena (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2350	Dark Mocha Protein Latte (25g) (GR)	LAC002	Leche Semidescr Sin Lact Proteina 75gr	220	mL	97	1	
+B2350	Dark Mocha Protein Latte (25g) (GR)	LAC005	Proteina Whey Polvo	12	g	97	1	
+B2350	Dark Mocha Protein Latte (25g) (GR)	SSR008	salsa chocolate	38	g	97	1	
+B2350	Dark Mocha Protein Latte (25g) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2350	Dark Mocha Protein Latte (25g) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2350	Dark Mocha Protein Latte (25g) (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	LAC003	Leche Vegetal Avena	200	mL	97	1	
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	LAC005	Proteina Whey Polvo	30	g	97	1	
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	SSR008	salsa chocolate	38	g	97	1	
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	CAF008	Matcha Ceremonial	3	g	92	1	
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	LAC002	Leche Semidescr Sin Lact Proteina 75gr	220	mL	97	1	
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	LAC005	Proteina Whey Polvo	12	g	97	1	
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	CAF008	Matcha Ceremonial	3	g	92	1	
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	LAC003	Leche Vegetal Avena	200	mL	97	1	
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	LAC005	Proteina Whey Polvo	30	g	97	1	
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	SSR005	syrup vainilla	18	mL	97	1	
+B2390	Matcha Cherry Protein (25g) (GR)	CAF008	Matcha Ceremonial	3	g	92	1	
+B2390	Matcha Cherry Protein (25g) (GR)	LAC002	Leche Semidescr Sin Lact Proteina 75gr	220	mL	97	1	
+B2390	Matcha Cherry Protein (25g) (GR)	LAC005	Proteina Whey Polvo	12	g	97	1	
+B2390	Matcha Cherry Protein (25g) (GR)	SSR004	syrup cherry	10	mL	97	1	
+B2390	Matcha Cherry Protein (25g) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2390	Matcha Cherry Protein (25g) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2400	Matcha Cherry Protein (23g) Avena (GR)	CAF008	Matcha Ceremonial	3	g	92	1	
+B2400	Matcha Cherry Protein (23g) Avena (GR)	LAC003	Leche Vegetal Avena	200	mL	97	1	
+B2400	Matcha Cherry Protein (23g) Avena (GR)	LAC005	Proteina Whey Polvo	30	g	97	1	
+B2400	Matcha Cherry Protein (23g) Avena (GR)	SSR004	syrup cherry	10	mL	97	1	
+B2400	Matcha Cherry Protein (23g) Avena (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2400	Matcha Cherry Protein (23g) Avena (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2410	Caramel Chips Frappé (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2410	Caramel Chips Frappé (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B2410	Caramel Chips Frappé (GR)	CCB002	Chips Chocolate	30	g	97	1	
+B2410	Caramel Chips Frappé (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2410	Caramel Chips Frappé (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2410	Caramel Chips Frappé (GR)	SSR006	syrup caramelo	18	mL	97	1	
+B2410	Caramel Chips Frappé (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2420	Caramel Chips Frappé (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2420	Caramel Chips Frappé (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B2420	Caramel Chips Frappé (CL)	CCB002	Chips Chocolate	20	g	97	1	
+B2420	Caramel Chips Frappé (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2420	Caramel Chips Frappé (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2420	Caramel Chips Frappé (CL)	SSR006	syrup caramelo	12	mL	97	1	
+B2420	Caramel Chips Frappé (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B2430	Caramel Chips Frappé (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2430	Caramel Chips Frappé (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B2430	Caramel Chips Frappé (XTR)	CCB002	Chips Chocolate	40	g	97	1	
+B2430	Caramel Chips Frappé (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2430	Caramel Chips Frappé (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2430	Caramel Chips Frappé (XTR)	SSR006	syrup caramelo	24	mL	97	1	
+B2430	Caramel Chips Frappé (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2470	Iced Fuit Té verde (XTR)	SSR013	salsa limon	57	g	97	1	
+B2470	Iced Fuit Té verde (XTR)	SSR015	Syrup Goma	30	mL	97	1	
+B2470	Iced Fuit Té verde (XTR)	CAF012	Te_Verde	15	g	95	1	
+B2470	Iced Fuit Té verde (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2470	Iced Fuit Té verde (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2480	Iced Fuit Té verde (GR)	SSR013	salsa limon	38	g	97	1	
+B2480	Iced Fuit Té verde (GR)	SSR015	Syrup Goma	20	mL	97	1	
+B2480	Iced Fuit Té verde (GR)	CAF012	Te_Verde	12	g	95	1	
+B2480	Iced Fuit Té verde (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2480	Iced Fuit Té verde (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2490	Iced Fuit Té verde (CL)	SSR013	salsa limon	19	g	97	1	
+B2490	Iced Fuit Té verde (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B2490	Iced Fuit Té verde (CL)	CAF012	Te_Verde	9	g	95	1	
+B2490	Iced Fuit Té verde (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2490	Iced Fuit Té verde (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2500	Hibiscus Berry (XTR)	SSR013	salsa limon	57	g	97	1	
+B2500	Hibiscus Berry (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B2500	Hibiscus Berry (XTR)	CAF011	Te_Hibiscus	15	g	95	1	
+B2500	Hibiscus Berry (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2500	Hibiscus Berry (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2510	Hibiscus Berry (GR)	SSR013	salsa limon	38	g	97	1	
+B2510	Hibiscus Berry (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B2510	Hibiscus Berry (GR)	CAF011	Te_Hibiscus	12	g	95	1	
+B2510	Hibiscus Berry (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B2510	Hibiscus Berry (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2520	Hibiscus Berry (CL)	SSR013	salsa limon	19	g	97	1	
+B2520	Hibiscus Berry (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B2520	Hibiscus Berry (CL)	CAF011	Te_Hibiscus	9	g	95	1	
+B2520	Hibiscus Berry (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B2520	Hibiscus Berry (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2530	Smoothie Yoghurt BlueBerries (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2530	Smoothie Yoghurt BlueBerries (GR)	SSR012	salsa blueberries	57	g	97	1	
+B2530	Smoothie Yoghurt BlueBerries (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B2530	Smoothie Yoghurt BlueBerries (GR)	LAC007	Base Yoghurt	28	g	97	1	
+B2530	Smoothie Yoghurt BlueBerries (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2530	Smoothie Yoghurt BlueBerries (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2540	Smoothie Yoghurt BlueBerries (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2540	Smoothie Yoghurt BlueBerries (CL)	SSR012	salsa blueberries	38	g	97	1	
+B2540	Smoothie Yoghurt BlueBerries (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B2540	Smoothie Yoghurt BlueBerries (CL)	LAC007	Base Yoghurt	21	g	97	1	
+B2540	Smoothie Yoghurt BlueBerries (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2540	Smoothie Yoghurt BlueBerries (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2550	Smoothie Yoghurt BlueBerries (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2550	Smoothie Yoghurt BlueBerries (XTR)	SSR012	salsa blueberries	76	g	97	1	
+B2550	Smoothie Yoghurt BlueBerries (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B2550	Smoothie Yoghurt BlueBerries (XTR)	LAC007	Base Yoghurt	35	g	97	1	
+B2550	Smoothie Yoghurt BlueBerries (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2550	Smoothie Yoghurt BlueBerries (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2560	Smoothie Yoghurt Frutilla (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2560	Smoothie Yoghurt Frutilla (GR)	SSR010	salsa frutilla	57	g	97	1	
+B2560	Smoothie Yoghurt Frutilla (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B2560	Smoothie Yoghurt Frutilla (GR)	LAC007	Base Yoghurt	28	g	97	1	
+B2560	Smoothie Yoghurt Frutilla (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2560	Smoothie Yoghurt Frutilla (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2570	Smoothie Yoghurt Frutilla (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2570	Smoothie Yoghurt Frutilla (CL)	SSR010	salsa frutilla	38	g	97	1	
+B2570	Smoothie Yoghurt Frutilla (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B2570	Smoothie Yoghurt Frutilla (CL)	LAC007	Base Yoghurt	21	g	97	1	
+B2570	Smoothie Yoghurt Frutilla (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2570	Smoothie Yoghurt Frutilla (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2580	Smoothie Yoghurt Frutilla (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2580	Smoothie Yoghurt Frutilla (XTR)	SSR010	salsa frutilla	76	g	97	1	
+B2580	Smoothie Yoghurt Frutilla (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B2580	Smoothie Yoghurt Frutilla (XTR)	LAC007	Base Yoghurt	35	g	97	1	
+B2580	Smoothie Yoghurt Frutilla (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2580	Smoothie Yoghurt Frutilla (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	SSR010	salsa frutilla	57	g	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	SSR011	salsa mango	38	g	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	LAC007	Base Yoghurt	28	g	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	SSR010	salsa frutilla	38	g	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	SSR011	salsa mango	19	g	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	SSR015	Syrup Goma	30	mL	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	LAC007	Base Yoghurt	21	g	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	SSR010	salsa frutilla	76	g	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	SSR011	salsa mango	57	g	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	LAC007	Base Yoghurt	35	g	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2620	Cinnamon Roll	BOL001	Cinammon Roll	1	UN	100	1	
+B2630	Rejilla Frutilla / Durazno (2 un)	BOL002	Rejilla Frutilla	2	UN	100	1	
+B2640	Hojaldre de Chocolate	BOL003	Hojaldre de Chocolate	1	UN	100	1	
+B2650	Muffin Arándanos	BOL006	Muffin Arandanos	1	UN	100	1	
+B2660	Muffin Dulce de Leche	BOL004	Muffin Dulce de Leche	1	UN	100	1	
+B2670	Muffin Chocolate	BOL005	Muffin Chocolate	1	UN	100	1	
+B2680	Galleta Red Velvet	BOL008	Galleta Red Velvet	1	UN	100	1	
+B2690	Galleta Chocolate	BOL007	Galleta Chocolate	1	UN	100	1	
+B2710	Medialuna Dulce (1 un)	BOL010	Media Luna Dulce (Molino cañuela)	1	UN	100	1	
+B2750	Brownie Oreo	BOL009	Brownie Oreo	1	UN	100	1	
+B2770	Sandwich Croissant Pechuga Pavo Ahumado / Queso Mantecoso	SAN014	Queso Mantecoso Quilque laminado Soprole	60	g	95	1	
+B2770	Sandwich Croissant Pechuga Pavo Ahumado / Queso Mantecoso	SAN007	Jamon Pechuga Pavo Ahumada	56	g	95	1	
+B2770	Sandwich Croissant Pechuga Pavo Ahumado / Queso Mantecoso	SAN002	Pan Croissant	1	UN	95	1	
+B2780	Sandwich Miga Ave Palta	SAN009	Pechuga de Pollo Desmechada	90	g	95	1	
+B2780	Sandwich Miga Ave Palta	SAN019	Palta	80	g	65	1	
+B2780	Sandwich Miga Ave Palta	SAN021	Pan Molde Blanc Vollkorn 13x13	0,056	UN	95	1	
+B2790	Sandwich Croissant Jamon Pierna / Queso Mantecoso	SAN002	Pan Croissant	1	UN	95	1	
+B2790	Sandwich Croissant Jamon Pierna / Queso Mantecoso	SAN014	Queso Mantecoso Quilque laminado Soprole	65	g	95	1	
+B2790	Sandwich Croissant Jamon Pierna / Queso Mantecoso	SAN006	Jamon Pierna	55	g	95	1	
+B2800	Sandwich Miga Ave Pimenton	SAN010	Ave Pimenton	100	g	95	1	
+B2800	Sandwich Miga Ave Pimenton	SAN021	Pan Molde Blanc Vollkorn 13x13	0,056	UN	95	1	
+B2810	Sandwich Croissant Salmon Ahumado Palta	SAN008	Salmon Ahumado	65	g	95	1	
+B2810	Sandwich Croissant Salmon Ahumado Palta	SAN002	Pan Croissant	1	UN	95	1	
+B2810	Sandwich Croissant Salmon Ahumado Palta	SAN019	Palta	65	g	65	1	
+B2810	Sandwich Croissant Salmon Ahumado Palta	SAN011	Rucula	5	g	75	1	
+B2810	Sandwich Croissant Salmon Ahumado Palta	SAN016	Queso Crema	3	g	90	1	
+B2820	Sandwich Baguette Serrano / Gruyere / Rucula	SAN005	Jamon Serrrano	55	g	95	1	
+B2820	Sandwich Baguette Serrano / Gruyere / Rucula	SAN015	Queso Gruyere	24	g	95	1	
+B2820	Sandwich Baguette Serrano / Gruyere / Rucula	SAN011	Rucula	7	g	75	1	
+B2820	Sandwich Baguette Serrano / Gruyere / Rucula	SAN018	Mantequilla Untable	3	g	90	1	
+B2820	Sandwich Baguette Serrano / Gruyere / Rucula	SAN020	Pan Baguette BID Food	1	UN	95	1	
+B2830	Brewit Blend 702 Grano (Bean)	CAF001	Café Kombat	0,152	kg	100	1	
+B2830	Brewit Blend 702 Grano (Bean)	CAF002	Café Magno	0,076	kg	100	1	
+B2840	Brewit Blend 702 Molido (Ground)	CAF001	Café Kombat	0,152	kg	100	1	
+B2840	Brewit Blend 702 Molido (Ground)	CAF002	Café Magno	0,076	kg	100	1	
+B2850	Brewit Blend 715 Grano (Bean)	CAF001	Café Kombat	0,114	kg	100	1	
+B2850	Brewit Blend 715 Grano (Bean)	CAF002	Café Magno	0,114	kg	100	1	
+B2860	Brewit Blend 715 Molido (Ground)	CAF001	Café Kombat	0,114	kg	97	1	
+B2860	Brewit Blend 715 Molido (Ground)	CAF002	Café Magno	0,114	kg	97	1	
+B2870	Brewit Botella Muney	IAM004	Brewit Botella Muney	1	UN	100	1	
+B2880	Brewit Mug Térmico	IAM006	Brewit Mug Termico Pampu	1	UN	100	1	
+B2890	Brewit Jockey Flex	IAM005	Brewit Jockey Flex	1	UN	100	1	
+B2900	Sandwich Baguette Jamon Pierna / Queso Mantecoso	SAN014	Queso Mantecoso Quilque laminado Soprole	60	g	95	1	
+B2900	Sandwich Baguette Jamon Pierna / Queso Mantecoso	SAN006	Jamon Pierna	55	g	95	1	
+B2900	Sandwich Baguette Jamon Pierna / Queso Mantecoso	SAN020	Pan Baguette BID Food	1	UN	95	1	
+B2910	Sandwich Miga Integral Queso Mantecoso Palta Rucula	SAN014	Queso Mantecoso Quilque laminado Soprole	122	g	95	1	
+B2910	Sandwich Miga Integral Queso Mantecoso Palta Rucula	SAN019	Palta	60	g	60	1	
+B2910	Sandwich Miga Integral Queso Mantecoso Palta Rucula	SAN011	Rucula	7	g	75	1	
+B2910	Sandwich Miga Integral Queso Mantecoso Palta Rucula	SAN022	Pan Molde Integral Vollkorn 13 x 13	0,056	UN	95	1	
+B2920	Sandwich Baguette Salmon Ahumado / Queso Crema	SAN008	Salmon Ahumado	65	g	95	1	
+B2920	Sandwich Baguette Salmon Ahumado / Queso Crema	SAN019	Palta	80	g	75	1	
+B2920	Sandwich Baguette Salmon Ahumado / Queso Crema	SAN016	Queso Crema	3	g	90	1	
+B2920	Sandwich Baguette Salmon Ahumado / Queso Crema	SAN020	Pan Baguette BID Food	1	UN	95	1	
+B2930	Croissant Crema Chocolate Avellanas	BOL011	Croissant Crema Chocolate y Avellanas	1	UN	100	1	
+B2940	Latte Frambuesa (GR)	LAC001	Leche Semidescr Sin Lactosa	360	mL	97	1	
+B2940	Latte Frambuesa (GR)	SSR007	syrup frambuesa	30	mL	97	1	
+B2940	Latte Frambuesa (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B2940	Latte Frambuesa (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2940	Latte Frambuesa (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B2950	Latte Frambuesa (CL)	LAC001	Leche Semidescr Sin Lactosa	280	mL	97	1	
+B2950	Latte Frambuesa (CL)	SSR007	syrup frambuesa	20	mL	97	1	
+B2950	Latte Frambuesa (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B2950	Latte Frambuesa (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B2950	Latte Frambuesa (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B2960	Frappé Strawberry Creme (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B2960	Frappé Strawberry Creme (GR)	SSR010	salsa frutilla	57	g	97	1	
+B2960	Frappé Strawberry Creme (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B2960	Frappé Strawberry Creme (GR)	SUB014	CREMA CHANTILLY  SIFON	30	g	90	1	
+B2960	Frappé Strawberry Creme (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B2960	Frappé Strawberry Creme (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2970	Frappé Strawberry Creme (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B2970	Frappé Strawberry Creme (CL)	SSR010	salsa frutilla	38	g	97	1	
+B2970	Frappé Strawberry Creme (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B2970	Frappé Strawberry Creme (CL)	SUB014	CREMA CHANTILLY  SIFON	20	g	90	1	
+B2970	Frappé Strawberry Creme (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B2970	Frappé Strawberry Creme (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B2980	Frappé Strawberry Creme (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B2980	Frappé Strawberry Creme (XTR)	SSR010	salsa frutilla	76	g	97	1	
+B2980	Frappé Strawberry Creme (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B2980	Frappé Strawberry Creme (XTR)	SUB014	CREMA CHANTILLY  SIFON	40	g	90	1	
+B2980	Frappé Strawberry Creme (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B2980	Frappé Strawberry Creme (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3000	Pellegrino Con Gas	RET001	Agua Pellegrino 500 ml con gas	1	UN	100	1	
+B3010	Boike Agua con Gas	RET002	Agua Mineral Boike 500 ml con gas	1	UN	100	1	
+B3020	Boike Agua sin Gas	RET003	Agua Mineral Boike 500 ml sin gas	1	UN	100	1	
+B3030	Jugo Naranja Botella 320 ml	JUG001	Jugo Naranja Sofruco	340	mL	96	1	
+B3030	Jugo Naranja Botella 320 ml	PAC013	Botella Vidrio 350 ml	1	UN	100	1	
+B3030	Jugo Naranja Botella 320 ml	JUG005	Etiqueta Jugo Naranja	1	UN	100	1	
+B3040	Jugo Frambuesa Botella 320 ml	JUG002	Jugo Frambuesa Sofruco	320	mL	100	1	
+B3040	Jugo Frambuesa Botella 320 ml	PAC013	Botella Vidrio 350 ml	1	UN	100	1	
+B3040	Jugo Frambuesa Botella 320 ml	JUG006	Etiqueta Jugo Frambuesa	1	UN	100	1	
+B3050	Jugo Mango/Maracuya 320 ml	JUG004	pulpa guayarauco mango	50	g	100	1	
+B3050	Jugo Mango/Maracuya 320 ml	JUG003	pulpa guayarauco maracuya	50	g	100	1	
+B3050	Jugo Mango/Maracuya 320 ml	PAC013	Botella Vidrio 350 ml	1	UN	100	1	
+B3050	Jugo Mango/Maracuya 320 ml	JUG007	Etiqueta Jugo Mango Maracuya	1	UN	100	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	SSR019	Salsa dulce de leche	60	g	97	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	SSR015	Syrup Goma	30	mL	97	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	CCB003	Crumble Cookies	30	g	97	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3060	Frappe Dulce de Leche Crunch (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	SSR019	Salsa dulce de leche	40	g	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	SSR015	Syrup Goma	20	mL	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	CCB003	Crumble Cookies	20	g	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3070	Frappe Dulce de Leche Crunch (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	SSR019	Salsa dulce de leche	80	g	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	SSR015	Syrup Goma	40	mL	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	SUB014	CREMA CHANTILLY  SIFON	21	g	90	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	CCB003	Crumble Cookies	40	g	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3080	Frappe Dulce de Leche Crunch (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B3120	ACQUA PANNA (sin gas)	RET007	Agua PANNA 500 ml sin gas	1	UN	100	1	
+B3130	Pellegrino Naranja Tuna 330ml	RET008	Pellegrino Naranja Tuna 330ml	1	UN	100	1	
+B3140	Pellegrino Naranja Granada 330ml	RET009	Pellegrino Naranja Granada 330ml	1	UN	100	1	
+B3150	Cafe V60 filtrado (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B3150	Cafe V60 filtrado (CL)	CAF013	Filtro V60	1	UN	97	1	
+B3150	Cafe V60 filtrado (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	95	1	
+B3160	Te Ceylan hoja (Te Negro) (CL)	CAF014	Te Ceylan	3	g	95	1	
+B3160	Te Ceylan hoja (Te Negro) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B3160	Te Ceylan hoja (Te Negro) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3170	Te Ceylan hoja (Te negro) (GR)	CAF014	Te Ceylan	4	g	95	1	
+B3170	Te Ceylan hoja (Te negro) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B3170	Te Ceylan hoja (Te negro) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3180	Te Verde (hot) (CL)	CAF012	Te_Verde	3	g	95	1	
+B3180	Te Verde (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B3180	Te Verde (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3190	Te Verde (hot) (GR)	CAF012	Te_Verde	4	g	95	1	
+B3190	Te Verde (hot) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B3190	Te Verde (hot) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3200	Chill Mango Pitaya (CL)	SSR001	Base Refresher Peach Mango	90	mL	97	1	
+B3200	Chill Mango Pitaya (CL)	SSR013	salsa limon	19	g	97	1	
+B3200	Chill Mango Pitaya (CL)	SSR021	Salsa Pitaya	19	g	97	1	
+B3200	Chill Mango Pitaya (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B3200	Chill Mango Pitaya (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3210	Chill Mango Pitaya (GR)	SSR001	Base Refresher Peach Mango	120	mL	97	1	
+B3210	Chill Mango Pitaya (GR)	SSR013	salsa limon	19	g	97	1	
+B3210	Chill Mango Pitaya (GR)	SSR021	Salsa Pitaya	30	g	97	1	
+B3210	Chill Mango Pitaya (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B3220	Chill Mango Pitaya (XTR)	SSR001	Base Refresher Peach Mango	150	mL	97	1	
+B3220	Chill Mango Pitaya (XTR)	SSR021	Salsa Pitaya	40	g	97	1	
+B3220	Chill Mango Pitaya (XTR)	SSR013	salsa limon	57	g	97	1	
+B3220	Chill Mango Pitaya (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B3220	Chill Mango Pitaya (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3230	Americano Go 8oz	PAC002	Vaso Caliente 8 oz	1	UN	95	1	
+B3230	Americano Go 8oz	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	95	1	
+B3230	Americano Go 8oz	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	0,009	kg	95	1	
+B3240	Te Negro Go 8oz	CAF014	Te Ceylan	0,002	kg	95	1	
+B3240	Te Negro Go 8oz	PAC002	Vaso Caliente 8 oz	1	UN	95	1	
+B3240	Te Negro Go 8oz	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	95	1	
+B3250	Mini Muffin Arandanos (2 un)	BOL012	Muffin Arandanos MINI	2	UN	100	1	
+B3260	Blueberry Matcha (iced) (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B3260	Blueberry Matcha (iced) (GR)	SSR012	salsa blueberries	57	g	97	1	
+B3260	Blueberry Matcha (iced) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B3260	Blueberry Matcha (iced) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3270	Blueberry Matcha (iced) (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B3270	Blueberry Matcha (iced) (CL)	SSR012	salsa blueberries	38	g	97	1	
+B3270	Blueberry Matcha (iced) (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B3270	Blueberry Matcha (iced) (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3280	Blueberry Matcha (iced) (XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B3280	Blueberry Matcha (iced) (XTR)	SSR012	salsa blueberries	76	g	97	1	
+B3280	Blueberry Matcha (iced) (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B3280	Blueberry Matcha (iced) (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3290	Latte Frambuesa (iced) (CL)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+B3290	Latte Frambuesa (iced) (CL)	LAC001	Leche Semidescr Sin Lactosa	120	mL	97	1	
+B3290	Latte Frambuesa (iced) (CL)	SSR007	syrup frambuesa	12	mL	97	1	
+B3290	Latte Frambuesa (iced) (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B3290	Latte Frambuesa (iced) (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3300	Latte Frambuesa (iced) (GR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B3300	Latte Frambuesa (iced) (GR)	LAC001	Leche Semidescr Sin Lactosa	160	mL	97	1	
+B3300	Latte Frambuesa (iced) (GR)	SSR007	syrup frambuesa	18	mL	97	1	
+B3300	Latte Frambuesa (iced) (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B3300	Latte Frambuesa (iced) (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3310	Latte Frambuesa (iced) (XTR)	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+B3310	Latte Frambuesa (iced) (XTR)	LAC001	Leche Semidescr Sin Lactosa	200	mL	97	1	
+B3310	Latte Frambuesa (iced) (XTR)	SSR007	syrup frambuesa	24	mL	97	1	
+B3310	Latte Frambuesa (iced) (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B3310	Latte Frambuesa (iced) (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3320	Iced Matcha Mango Limonade (CL)	CAF008	Matcha Ceremonial	2,1	g	92	1	
+B3320	Iced Matcha Mango Limonade (CL)	SSR013	salsa limon	19	g	97	1	
+B3320	Iced Matcha Mango Limonade (CL)	SSR011	salsa mango	40	g	97	1	
+B3320	Iced Matcha Mango Limonade (CL)	PAC005	Vaso Transparente 12 oz	1	UN	97	1	
+B3320	Iced Matcha Mango Limonade (CL)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3330	Iced Matcha Mango Limonade (GR)	CAF008	Matcha Ceremonial	2,5	g	92	1	
+B3330	Iced Matcha Mango Limonade (GR)	SSR013	salsa limon	19	g	97	1	
+B3330	Iced Matcha Mango Limonade (GR)	SSR011	salsa mango	40	g	97	1	
+B3330	Iced Matcha Mango Limonade (GR)	PAC006	Vaso Transparente 16 oz	1	UN	97	1	
+B3330	Iced Matcha Mango Limonade (GR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3340	Iced Matcha Mango Limonade (XTR)	CAF008	Matcha Ceremonial	3,5	g	92	1	
+B3340	Iced Matcha Mango Limonade (XTR)	SSR013	salsa limon	19	g	97	1	
+B3340	Iced Matcha Mango Limonade (XTR)	SSR011	salsa mango	57	g	97	1	
+B3340	Iced Matcha Mango Limonade (XTR)	PAC007	Vaso Transparente 20 oz	1	UN	97	1	
+B3340	Iced Matcha Mango Limonade (XTR)	PAC009	Tapa Plana/Domo Vaso Transparente 12-20 oz	1	UN	97	1	
+B3350	Mini Trenza Chocolate (2 un)	BOL013	Mini Trenza Chocolate	2	UN	97	1	
+B3360	Volcan de Chocolate	BOL014	Volcan de Chocolate	1	UN	97	1	
+B3370	Strawberry Matcha (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	254	mL	97	1	
+B3370	Strawberry Matcha (hot) (CL)	CAF008	Matcha Ceremonial	2,1	g	95	1	
+B3370	Strawberry Matcha (hot) (CL)	SSR010	salsa frutilla	40	g	97	1	
+B3370	Strawberry Matcha (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B3370	Strawberry Matcha (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3380	Strawberry Matcha (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	325	mL	97	1	
+B3380	Strawberry Matcha (hot) (GR)	CAF008	Matcha Ceremonial	2,5	g	95	1	
+B3380	Strawberry Matcha (hot) (GR)	SSR010	salsa frutilla	60	g	97	1	
+B3380	Strawberry Matcha (hot) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B3380	Strawberry Matcha (hot) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3400	Blueberry Matcha (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	254	mL	97	1	
+B3400	Blueberry Matcha (hot) (CL)	CAF008	Matcha Ceremonial	2,1	g	95	1	
+B3400	Blueberry Matcha (hot) (CL)	SSR012	salsa blueberries	40	g	97	1	
+B3400	Blueberry Matcha (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B3400	Blueberry Matcha (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3410	Blueberry Matcha (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	325	mL	97	1	
+B3410	Blueberry Matcha (hot) (GR)	CAF008	Matcha Ceremonial	2,5	g	95	1	
+B3410	Blueberry Matcha (hot) (GR)	SSR012	salsa blueberries	60	g	97	1	
+B3410	Blueberry Matcha (hot) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B3410	Blueberry Matcha (hot) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3430	Mango Matcha (hot) (CL)	LAC001	Leche Semidescr Sin Lactosa	254	mL	97	1	
+B3430	Mango Matcha (hot) (CL)	CAF008	Matcha Ceremonial	2,1	g	95	1	
+B3430	Mango Matcha (hot) (CL)	SSR011	salsa mango	40	g	97	1	
+B3430	Mango Matcha (hot) (CL)	PAC003	Vaso Caliente 12 oz	1	UN	97	1	
+B3430	Mango Matcha (hot) (CL)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3440	Mango Matcha (hot) (GR)	LAC001	Leche Semidescr Sin Lactosa	325	mL	97	1	
+B3440	Mango Matcha (hot) (GR)	CAF008	Matcha Ceremonial	2,5	g	95	1	
+B3440	Mango Matcha (hot) (GR)	SSR011	salsa mango	60	g	97	1	
+B3440	Mango Matcha (hot) (GR)	PAC004	Vaso Caliente 16 oz	1	UN	97	1	
+B3440	Mango Matcha (hot) (GR)	PAC008	Tapa Plana Vaso Caliente 8-16 oz	1	UN	97	1	
+B3450	Coffee Break 6 Classic + 6 Medialuna	PAC024	Coffee Break Caja Kraft	1	UN	100	1	
+BX1010	Leche Vegetal Avena	LAC003	Leche Vegetal Avena	0,33	L	100	1	
+BX1020	Leche Vegetal Almendra	LAC004	Leche Vegetal Almendra	0,33	L	100	1	
+BX1030	Leche Proteina	LAC002	Leche Semidescr Sin Lact Proteina 75gr	0,33	L	100	1	
+BX1040	Crema Adicional	SUB014	CREMA CHANTILLY  SIFON	20	g	90	1	
+BX1290	Shot SImple Cafe	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	12	g	97	1	
+BX1300	Shot Doble Cafe	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	18	g	97	1	
+BX1310	Extra Matcha	CAF008	Matcha Ceremonial	2,5	g	95	1	
+BX1320	Extra Chai	CAF009	Chai Adeleoriginals	20	g	95	1	
+BX1500	Proteina Powder Whey	LAC005	Proteina Whey Polvo	30	g	100	1	
+SUB001	SUB BLEND 702 GRANO	SUB005	SUB BLEND 702 GRANO 1KG INTERNO	227	g	100	1	
+SUB005	SUB BLEND 702 GRANO 1KG INTERNO	CAF001	Café Kombat	667	g	100	1	
+SUB005	SUB BLEND 702 GRANO 1KG INTERNO	CAF002	Café Magno	333	g	100	1	
+SUB014	CREMA CHANTILLY  SIFON	LAC006	Crema Larga Vida	330	mL	97	1	
+SUB014	CREMA CHANTILLY  SIFON	SSR015	Syrup Goma	30	mL	97	1	
+SUB014	CREMA CHANTILLY  SIFON	LAC009	Nitrogeno Capsula	1	UN	95	1	

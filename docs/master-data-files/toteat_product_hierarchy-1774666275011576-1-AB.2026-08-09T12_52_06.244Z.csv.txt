@@ -1,0 +1,23 @@
+ ID Jerarquia	ID Nodo **	Nombre Jerarquía Producto *	ID nodo padre	Visible a Clientes *	Fotos	Orden
+AB.	0	Todos los Productos		0		20
+AB.010	10	Barra Cafe	AB.	1		10
+AB.010020	20	Café Caliente	AB.010	1		10
+AB.010030	30	Café Especial	AB.010	1		70
+AB.010040	40	Chill	AB.010	1		100
+AB.010050	50	Frappé Café	AB.010	1		80
+AB.010060	60	Frappé Crema	AB.010	1		90
+AB.010070	70	Granizado	AB.010	1		110
+AB.010080	80	Iced Coffee	AB.010	1		20
+AB.010090	90	Matcha & Chai	AB.010	1		30
+AB.010100	100	Protein	AB.010	1		50
+AB.010110	110	Signature	AB.010	1		60
+AB.010120	120	Té Verde & Infusion	AB.010	1		40
+AB.010130	130	Smoothie Yoghurt	AB.010	1		120
+AB.140	140	Bolleria, Sandwich, Bebidas - Retail	AB.	1		20
+AB.140150	150	Bolleria	AB.140	1		10
+AB.140160	160	Sandwich	AB.140	1		20
+AB.170	170	Cafe Bolsa - Merch	AB.	1		30
+AB.170180	180	Cafe Bolsa	AB.170	1		10
+AB.170190	190	Merch	AB.170	1		20
+AB.200	200	Bebidas Envasadas	AB.	1		40
+AB.210	210	Coffee Break Box	AB.	1		50

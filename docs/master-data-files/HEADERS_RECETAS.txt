@@ -1,0 +1,245 @@
+Id Producto	Nombre Producto*	Cantidad a Producir	Unidad de Medida	Porciones/UM	Cantidad Minima	Instrucciones**	SoloTransformaciones
+B1000	Expresso Doble (Exp)	1	UN	1	1		0
+B1010	Americano (GR)	1	UN	1	1		0
+B1020	Americano (CL)	1	UN	1	1		0
+B1030	Cappuccino (GR)	1	UN	1	1		0
+B1040	Cappuccino (CL)	1	UN	1	1		0
+B1050	Flat White (GR)	1	UN	1	1		0
+B1060	Flat White (CL)	1	UN	1	1		0
+B1070	Cortado (Cor)	1	UN	1	1		0
+B1080	Latte clásico (GR)	1	UN	1	1		0
+B1090	Latte clásico (CL)	1	UN	1	1		0
+B1100	Latte Vainilla (GR)	1	UN	1	1		0
+B1110	Latte Vainilla (CL)	1	UN	1	1		0
+B1120	Latte Avellana (GR)	1	UN	1	1		0
+B1130	Latte Avellana (CL)	1	UN	1	1		0
+B1140	Latte Vainilla sin Azúcar (GR)	1	UN	1	1		0
+B1150	Latte Vainilla sin Azúcar (CL)	1	UN	1	1		0
+B1160	Latte Dulce de Leche (GR)	1	UN	1	1		0
+B1170	Latte Dulce de Leche (CL)	1	UN	1	1		0
+B1180	Caramel Macchiato (GR)	1	UN	1	1		0
+B1190	Caramel Macchiato (CL)	1	UN	1	1		0
+B1200	Mocha (GR)	1	UN	1	1		0
+B1210	Mocha (CL)	1	UN	1	1		0
+B1220	Mocha Avellana (GR)	1	UN	1	1		0
+B1230	Mocha Avellana (CL)	1	UN	1	1		0
+B1240	Mocha Blanco (GR)	1	UN	1	1		0
+B1250	Mocha Blanco (CL)	1	UN	1	1		0
+B1260	Chocolate caliente (GR)	1	UN	1	1		0
+B1270	Chocolate caliente (CL)	1	UN	1	1		0
+B1280	Affogato (C)	1	UN	1	1		0
+B1290	Chill Watermelon Açai Lemon (GR)	1	UN	1	1		0
+B1300	Chill Watermelon Açai Lemon (CL)	1	UN	1	1		0
+B1310	Chill Watermelon Açai Lemon (XTR)	1	UN	1	1		0
+B1320	Chill Watermelon Lemonade (GR)	1	UN	1	1		0
+B1330	Chill Watermelon Lemonade (CL)	1	UN	1	1		0
+B1340	Chill Watermelon Lemonade (XTR)	1	UN	1	1		0
+B1350	Chill Mango Lemonade (GR)	1	UN	1	1		0
+B1360	Chill Mango Lemonade (CL)	1	UN	1	1		0
+B1370	Chill Mango Lemonade (XTR)	1	UN	1	1		0
+B1380	Frappé Café Clásico (GR)	1	UN	1	1		0
+B1390	Frappé Café Clásico (CL)	1	UN	1	1		0
+B1400	Frappé Café Clásico (XTR)	1	UN	1	1		0
+B1410	Frappé Café Vainilla (GR)	1	UN	1	1		0
+B1420	Frappé Café Vainilla (CL)	1	UN	1	1		0
+B1430	Frappé Café Vainilla (XTR)	1	UN	1	1		0
+B1440	Frappé Caramel (GR)	1	UN	1	1		0
+B1450	Frappé Caramel (CL)	1	UN	1	1		0
+B1460	Frappé Caramel (XTR)	1	UN	1	1		0
+B1470	Frappé Caramel sin azúcar (GR)	1	UN	1	1		0
+B1480	Frappé Caramel sin azúcar (CL)	1	UN	1	1		0
+B1490	Frappé Caramel sin azúcar (XTR)	1	UN	1	1		0
+B1500	Frappé Mocha (GR)	1	UN	1	1		0
+B1510	Frappé Mocha (CL)	1	UN	1	1		0
+B1520	Frappé Mocha (XTR)	1	UN	1	1		0
+B1530	Frappé Mocha Blanco (GR)	1	UN	1	1		0
+B1540	Frappé Mocha Blanco (CL)	1	UN	1	1		0
+B1550	Frappé Mocha Blanco (XTR)	1	UN	1	1		0
+B1560	Frappé Dulce de Leche (GR)	1	UN	1	1		0
+B1570	Frappé Dulce de Leche (CL)	1	UN	1	1		0
+B1580	Frappé Dulce de Leche (XTR)	1	UN	1	1		0
+B1590	Frappé Mocha con Chips (GR)	1	UN	1	1		0
+B1600	Frappé Mocha con Chips (CL)	1	UN	1	1		0
+B1610	Frappé Mocha con Chips (XTR)	1	UN	1	1		0
+B1620	Frappé Cookies & Cream (GR)	1	UN	1	1		0
+B1630	Frappé Cookies & Cream (CL)	1	UN	1	1		0
+B1640	Frappé Cookies & Cream (XTR)	1	UN	1	1		0
+B1650	Frappé Vainilla Crema (GR)	1	UN	1	1		0
+B1660	Frappé Vainilla Crema (CL)	1	UN	1	1		0
+B1670	Frappé Vainilla Crema (XTR)	1	UN	1	1		0
+B1680	Frappé Choc Chips Crema (GR)	1	UN	1	1		0
+B1690	Frappé Choc Chips Crema (CL)	1	UN	1	1		0
+B1700	Frappé Choc Chips Crema (XTR)	1	UN	1	1		0
+B1710	Frappé Dulce de Leche Crema (GR)	1	UN	1	1		0
+B1720	Frappé Dulce de Leche Crema (CL)	1	UN	1	1		0
+B1730	Frappé Dulce de Leche Crema (XTR)	1	UN	1	1		0
+B1740	Frappé Matcha Crema (sin café) (GR)	1	UN	1	1		0
+B1750	Frappé Matcha Crema (sin café) (CL)	1	UN	1	1		0
+B1760	Frappé Matcha Crema (sin café) (XTR)	1	UN	1	1		0
+B1770	Granizado Mango - Fruit (Base Te Infusion) (GR)	1	UN	1	1		0
+B1780	Granizado Mango - Fruit (Base Te Infusion) (CL)	1	UN	1	1		0
+B1790	Granizado Mango - Fruit (Base Te Infusion) (XTR)	1	UN	1	1		0
+B1800	Granizado Blueberry (GR)	1	UN	1	1		0
+B1810	Granizado Blueberry (CL)	1	UN	1	1		0
+B1820	Granizado Blueberry (XTR)	1	UN	1	1		0
+B1830	Iced Americano (GR)	1	UN	1	1		0
+B1840	Iced Americano (CL)	1	UN	1	1		0
+B1850	Iced Americano (XTR)	1	UN	1	1		0
+B1860	Iced Latte (GR)	1	UN	1	1		0
+B1870	Iced Latte (CL)	1	UN	1	1		0
+B1880	Iced Latte (XTR)	1	UN	1	1		0
+B1890	Iced Vainilla Latte (GR)	1	UN	1	1		0
+B1900	Iced Vainilla Latte (CL)	1	UN	1	1		0
+B1910	Iced Vainilla Latte (XTR)	1	UN	1	1		0
+B1920	Iced Vainilla Latte sin azucar (GR)	1	UN	1	1		0
+B1930	Iced Vainilla Latte sin azucar (CL)	1	UN	1	1		0
+B1940	Iced Vainilla Latte sin azucar (XTR)	1	UN	1	1		0
+B1950	Iced Latte Dulce de Leche (GR)	1	UN	1	1		0
+B1960	Iced Latte Dulce de Leche (CL)	1	UN	1	1		0
+B1970	Iced Latte Dulce de Leche (XTR)	1	UN	1	1		0
+B1980	Iced Caramel Macchiato (GR)	1	UN	1	1		0
+B1990	Iced Caramel Macchiato (CL)	1	UN	1	1		0
+B2000	Iced Caramel Macchiato (XTR)	1	UN	1	1		0
+B2010	Iced Mocha (GR)	1	UN	1	1		0
+B2020	Iced Mocha (CL)	1	UN	1	1		0
+B2030	Iced Mocha (XTR)	1	UN	1	1		0
+B2040	Iced Mocha Blanco (GR)	1	UN	1	1		0
+B2050	Iced Mocha Blanco (CL)	1	UN	1	1		0
+B2060	Iced Mocha Blanco (XTR)	1	UN	1	1		0
+B2070	Chai Latte (hot) (GR)	1	UN	1	1		0
+B2080	Chai Latte (hot) (CL)	1	UN	1	1		0
+B2090	Iced Chai Latte (GR)	1	UN	1	1		0
+B2100	Iced Chai Latte (CL)	1	UN	1	1		0
+B2110	Iced Chai Latte (XTR)	1	UN	1	1		0
+B2120	Matcha Latte (hot) (GR)	1	UN	1	1		0
+B2130	Matcha Latte (hot) (CL)	1	UN	1	1		0
+B2140	Iced Matcha Latte (GR)	1	UN	1	1		0
+B2150	Iced Matcha Latte (CL)	1	UN	1	1		0
+B2160	Iced Matcha Latte (XTR)	1	UN	1	1		0
+B2170	Iced Matcha Lemonade (GR)	1	UN	1	1		0
+B2180	Iced Matcha Lemonade (CL)	1	UN	1	1		0
+B2190	Iced Matcha Lemonade (XTR)	1	UN	1	1		0
+B2200	Strawberry Matcha (Iced) (GR)	1	UN	1	1		0
+B2210	Strawberry Matcha (Iced) (CL)	1	UN	1	1		0
+B2220	Strawberry Matcha (Iced) (XTR)	1	UN	1	1		0
+B2230	Matcha Vainilla (hot) (GR)	1	UN	1	1		0
+B2240	Matcha Vainilla (iced) (GR)	1	UN	1	1		0
+B2250	Matcha Vainilla (hot) (CL)	1	UN	1	1		0
+B2260	Matcha Vainilla (ice) (CL)	1	UN	1	1		0
+B2270	Matcha Vainilla (iced) (XTR)	1	UN	1	1		0
+B2280	Matcha Dulce de Leche (hot) (GR)	1	UN	1	1		0
+B2290	Matcha Dulce de Leche (Ice) (GR)	1	UN	1	1		0
+B2300	Matcha Dulce de Leche (hot) (CL)	1	UN	1	1		0
+B2310	Matcha Dulce de Leche (Ice)(CL)	1	UN	1	1		0
+B2320	Matcha Dulce de Leche (Ice)(XTR)	1	UN	1	1		0
+B2330	Caramel Latte Protein (25g) (GR)	1	UN	1	1		0
+B2340	Caramel Latte Protein (23g) Avena (GR)	1	UN	1	1		0
+B2350	Dark Mocha Protein Latte (25g) (GR)	1	UN	1	1		0
+B2360	Dark Mocha Protein Latte (23g) Avena (GR)	1	UN	1	1		0
+B2370	Matcha Vanilla Glow Protein (25g) (GR)	1	UN	1	1		0
+B2380	Matcha Vanilla Glow Protein (23g) Avena (GR)	1	UN	1	1		0
+B2390	Matcha Cherry Protein (25g) (GR)	1	UN	1	1		0
+B2400	Matcha Cherry Protein (23g) Avena (GR)	1	UN	1	1		0
+B2410	Caramel Chips Frappé (GR)	1	UN	1	1		0
+B2420	Caramel Chips Frappé (CL)	1	UN	1	1		0
+B2430	Caramel Chips Frappé (XTR)	1	UN	1	1		0
+B2470	Iced Fuit Té verde (XTR)	1	UN	1	1		0
+B2480	Iced Fuit Té verde (GR)	1	UN	1	1		0
+B2490	Iced Fuit Té verde (CL)	1	UN	1	1		0
+B2500	Hibiscus Berry (XTR)	1	UN	1	1		0
+B2510	Hibiscus Berry (GR)	1	UN	1	1		0
+B2520	Hibiscus Berry (CL)	1	UN	1	1		0
+B2530	Smoothie Yoghurt BlueBerries (GR)	1	UN	1	1		0
+B2540	Smoothie Yoghurt BlueBerries (CL)	1	UN	1	1		0
+B2550	Smoothie Yoghurt BlueBerries (XTR)	1	UN	1	1		0
+B2560	Smoothie Yoghurt Frutilla (GR)	1	UN	1	1		0
+B2570	Smoothie Yoghurt Frutilla (CL)	1	UN	1	1		0
+B2580	Smoothie Yoghurt Frutilla (XTR)	1	UN	1	1		0
+B2590	Smoothie Yoghurt Mango–Frutilla (GR)	1	UN	1	1		0
+B2600	Smoothie Yoghurt Mango–Frutilla (CL)	1	UN	1	1		0
+B2610	Smoothie Yoghurt Mango–Frutilla (XTR)	1	UN	1	1		0
+B2620	Cinnamon Roll	1	UN	1	1		0
+B2630	Rejilla Frutilla / Durazno (2 un)	1	UN	1	1		0
+B2640	Hojaldre de Chocolate	1	UN	1	1		0
+B2650	Muffin Arándanos	1	UN	1	1		0
+B2660	Muffin Dulce de Leche	1	UN	1	1		0
+B2670	Muffin Chocolate	1	UN	1	1		0
+B2680	Galleta Red Velvet	1	UN	1	1		0
+B2690	Galleta Chocolate	1	UN	1	1		0
+B2710	Medialuna Dulce (1 un)	1	UN	1	1		0
+B2750	Brownie Oreo	1	UN	1	1		0
+B2770	Sandwich Croissant Pechuga Pavo Ahumado / Queso Mantecoso	1	UN	1	1		0
+B2780	Sandwich Miga Ave Palta	1	UN	1	1		0
+B2790	Sandwich Croissant Jamon Pierna / Queso Mantecoso	1	UN	1	1		0
+B2800	Sandwich Miga Ave Pimenton	1	UN	1	1		0
+B2810	Sandwich Croissant Salmon Ahumado Palta	1	UN	1	1		0
+B2820	Sandwich Baguette Serrano / Gruyere / Rucula	1	UN	1	1		0
+B2830	Brewit Blend 702 Grano (Bean)	1	UN	1	1		0
+B2840	Brewit Blend 702 Molido (Ground)	1	UN	1	1		0
+B2850	Brewit Blend 715 Grano (Bean)	1	UN	1	1		0
+B2860	Brewit Blend 715 Molido (Ground)	1	UN	1	1		0
+B2870	Brewit Botella Muney	1	UN	1	1		0
+B2880	Brewit Mug Térmico	1	UN	1	1		0
+B2890	Brewit Jockey Flex	1	UN	1	1		0
+B2900	Sandwich Baguette Jamon Pierna / Queso Mantecoso	1	UN	1	1		0
+B2910	Sandwich Miga Integral Queso Mantecoso Palta Rucula	1	UN	1	1		0
+B2920	Sandwich Baguette Salmon Ahumado / Queso Crema	1	UN	1	1		0
+B2930	Croissant Crema Chocolate Avellanas	1	UN	1	1		0
+B2940	Latte Frambuesa (GR)	1	UN	1	1		0
+B2950	Latte Frambuesa (CL)	1	UN	1	1		0
+B2960	Frappé Strawberry Creme (GR)	1	UN	1	1		0
+B2970	Frappé Strawberry Creme (CL)	1	UN	1	1		0
+B2980	Frappé Strawberry Creme (XTR)	1	UN	1	1		0
+B3000	Pellegrino Con Gas	1	UN	1	1		0
+B3010	Boike Agua con Gas	1	UN	1	1		0
+B3020	Boike Agua sin Gas	1	UN	1	1		0
+B3030	Jugo Naranja Botella 320 ml	1	UN	1	1		0
+B3040	Jugo Frambuesa Botella 320 ml	1	UN	1	1		0
+B3050	Jugo Mango/Maracuya 320 ml	1	UN	1	1		0
+B3060	Frappe Dulce de Leche Crunch (GR)	1	UN	1	1		0
+B3070	Frappe Dulce de Leche Crunch (CL)	1	UN	1	1		0
+B3080	Frappe Dulce de Leche Crunch (XTR)	1	UN	1	1		0
+B3120	ACQUA PANNA (sin gas)	1	UN	1	1		0
+B3130	Pellegrino Naranja Tuna 330ml	1	UN	1	1		0
+B3140	Pellegrino Naranja Granada 330ml	1	UN	1	1		0
+B3150	Cafe V60 filtrado (CL)	1	UN	1	1		0
+B3160	Te Ceylan hoja (Te Negro) (CL)	1	UN	1	1		0
+B3170	Te Ceylan hoja (Te negro) (GR)	1	UN	1	1		0
+B3180	Te Verde (hot) (CL)	1	UN	1	1		0
+B3190	Te Verde (hot) (GR)	1	UN	1	1		0
+B3200	Chill Mango Pitaya (CL)	1	UN	1	1		0
+B3210	Chill Mango Pitaya (GR)	1	UN	1	1		0
+B3220	Chill Mango Pitaya (XTR)	1	UN	1	1		0
+B3230	Americano Go 8oz	1	UN	1	1		0
+B3240	Te Negro Go 8oz	1	UN	1	1		0
+B3250	Mini Muffin Arandanos (2 un)	1	UN	1	1		0
+B3260	Blueberry Matcha (iced) (GR)	1	UN	1	1		0
+B3270	Blueberry Matcha (iced) (CL)	1	UN	1	1		0
+B3280	Blueberry Matcha (iced) (XTR)	1	UN	1	1		0
+B3290	Latte Frambuesa (iced) (CL)	1	UN	1	1		0
+B3300	Latte Frambuesa (iced) (GR)	1	UN	1	1		0
+B3310	Latte Frambuesa (iced) (XTR)	1	UN	1	1		0
+B3320	Iced Matcha Mango Limonade (CL)	1	UN	1	1		0
+B3330	Iced Matcha Mango Limonade (GR)	1	UN	1	1		0
+B3340	Iced Matcha Mango Limonade (XTR)	1	UN	1	1		0
+B3350	Mini Trenza Chocolate (2 un)	1	UN	1	1		0
+B3360	Volcan de Chocolate	1	UN	1	1		0
+B3370	Strawberry Matcha (hot) (CL)	1	UN	1	1		0
+B3380	Strawberry Matcha (hot) (GR)	1	UN	1	1		0
+B3400	Blueberry Matcha (hot) (CL)	1	UN	1	1		0
+B3410	Blueberry Matcha (hot) (GR)	1	UN	1	1		0
+B3430	Mango Matcha (hot) (CL)	1	UN	1	1		0
+B3440	Mango Matcha (hot) (GR)	1	UN	1	1		0
+B3450	Coffee Break 6 Classic + 6 Medialuna	1	UN	1	1		0
+BX1010	Leche Vegetal Avena	1	UN	1	1		0
+BX1020	Leche Vegetal Almendra	1	UN	1	1		0
+BX1030	Leche Proteina	1	UN	1	1		0
+BX1040	Crema Adicional	1	UN	1	1		0
+BX1290	Shot SImple Cafe	1	UN	1	1		0
+BX1300	Shot Doble Cafe	1	UN	1	1		0
+BX1310	Extra Matcha	1	UN	1	1		0
+BX1320	Extra Chai	1	UN	1	1		0
+BX1500	Proteina Powder Whey	1	UN	1	1		0
+SUB001	SUB BLEND 702 GRANO	1	kg	1	1	Mezclar 2 Kg de K con 1 Kg de M	0
+SUB005	SUB BLEND 702 GRANO 1KG INTERNO	1	kg	1	1		0
+SUB014	CREMA CHANTILLY  SIFON	0,36	kg	2,78	1		0

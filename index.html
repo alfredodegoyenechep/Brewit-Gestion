@@ -9,59 +9,70 @@
 <body>
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-icon">
-        <span></span>
-      </div>
-      <div>
-        <div class="brand-kicker">BREWIT</div>
-        <div class="brand-title">Gestion</div>
-      </div>
+      <img class="brand-logo" src="docs/brewit-final-01.jpg" alt="Brewit coffee logo" />
     </div>
 
     <nav class="navigation">
       <div class="nav-label">Workspace</div>
-      <a href="#" class="nav-link active">
+      <a href="#" class="nav-link active" data-view="general">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M3 13h8l3-7 3 7h5" />
           <path d="M3 19h18" />
         </svg>
-        Overview
+        General
       </a>
-      <a href="#" class="nav-link">
+      <a href="#" class="nav-link" data-view="report">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M3 21h18" />
+          <path d="M7 14v-7" />
+          <path d="M12 18v-11" />
+          <path d="M17 11v-4" />
+        </svg>
+        Reporte Semanal
+      </a>
+      <a href="#" class="nav-link" data-view="general">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M8 2v4M16 2v4M3 10h18" />
         </svg>
-        Orders
+        Ventas
       </a>
-      <a href="#" class="nav-link">
+      <a href="#" class="nav-link" data-view="products">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M6 11h12M6 7h12M6 15h12M6 19h7" />
         </svg>
-        Menu
+        Productos
       </a>
-      <a href="#" class="nav-link">
+      <a href="#" class="nav-link" data-view="inventory">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M3 21h18" />
           <path d="M4 21V10" />
           <path d="M20 21V10" />
           <path d="M4 10l8-7 8 7" />
         </svg>
-        Inventory
+        Inventario
       </a>
-      <a href="#" class="nav-link">
+      <a href="#" class="nav-link" data-view="purchases">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M9 16h6M9 12h6M9 8h3" />
         </svg>
-        Reports
+        Compras
       </a>
-      <a href="#" class="nav-link">
+      <a href="#" class="nav-link" data-view="uploads">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M12 3v12" />
+          <path d="m7 10 5 5 5-5" />
+          <path d="M4 19h16" />
+        </svg>
+        Cargar Archivos
+      </a>
+      <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
           <path d="M19.4 15a7.7 7.7 0 0 0 .1-1 7.7 7.7 0 0 0-.1-1l2.1-1.7-2-3.4-2.6 1a7 7 0 0 0-1.8-1L14.5 2h-5l-.7 2.9a7 7 0 0 0-1.8 1l-2.6-1-2 3.4 2.1 1.7a7.7 7.7 0 0 0-.1 1 7.7 7.7 0 0 0 .1 1l-2.1 1.7 2 3.4 2.6-1a7 7 0 0 0 1.8 1l.7 2.9h5l.7-2.9a7 7 0 0 0 1.8-1l2.6 1 2-3.4Z" />
         </svg>
-        Settings
+        Configuracion
       </a>
     </nav>
 
@@ -73,22 +84,10 @@
           <div class="user-role">Admin Console</div>
         </div>
       </div>
-      <button class="primary small">+ New Order</button>
     </div>
   </aside>
 
   <main class="main-content">
-    <header class="topbar">
-      <div>
-        <div class="page-kicker">Brewit-Gestion</div>
-        <h1>Good morning, Mira</h1>
-      </div>
-      <div class="topbar-actions">
-        <button class="icon-button">Today, Aug 09</button>
-        <button class="primary">Create Order</button>
-      </div>
-    </header>
-
     <section class="summary-grid">
       <article class="summary-card highlight">
         <div class="summary-head">
@@ -137,6 +136,580 @@
           <span class="subtle">Restock alert</span>
         </div>
       </article>
+    </section>
+
+    <section id="weekly-report" style="display:none;">
+      <div class="report-heading">
+        <div>
+          <div class="panel-eyebrow">Reporte Semanal</div>
+          <h2>Resumen de ventas</h2>
+          <p id="report-scope-description" class="panel-description">Venta neta sin IVA, consolidada para todas las cafeterías.</p>
+        </div>
+        <div class="report-actions">
+          <label for="report-location-filter">Cafetería</label>
+          <select id="report-location-filter">
+            <option value="all">Todas las cafeterías</option>
+          </select>
+          <button id="refresh-weekly-report" class="icon-button" type="button">Actualizar</button>
+        </div>
+      </div>
+      <div id="report-status" class="form-status" aria-live="polite"></div>
+
+      <div class="summary-grid report-summary-grid">
+        <article class="summary-card highlight">
+          <div class="summary-head">
+            <span class="label">Venta del día anterior</span>
+            <span id="report-yesterday-date" class="chip neutral">—</span>
+          </div>
+          <div id="report-yesterday-value" class="value">$0</div>
+          <div class="report-card-details">
+            <span id="report-general-rank">Ranking general: —</span>
+            <span id="report-weekday-rank">Ranking mismo día: —</span>
+            <span id="report-average-comparison">Vs. promedio 8 semanas: —</span>
+          </div>
+        </article>
+
+        <article class="summary-card">
+          <div class="summary-head">
+            <span class="label">Venta de la semana</span>
+            <span class="chip">Lun–ayer</span>
+          </div>
+          <div id="report-week-value" class="value">$0</div>
+          <div id="report-week-range" class="report-period">—</div>
+        </article>
+
+        <article class="summary-card">
+          <div class="summary-head">
+            <span class="label">Venta del mes</span>
+            <span class="chip">Mes–ayer</span>
+          </div>
+          <div id="report-month-value" class="value">$0</div>
+          <div id="report-month-range" class="report-period">—</div>
+        </article>
+
+        <article class="summary-card">
+          <div class="summary-head">
+            <span class="label">Promedio mismo día</span>
+            <span class="chip neutral">8 semanas</span>
+          </div>
+          <div id="report-weekday-average" class="value">$0</div>
+          <div id="report-weekday-label" class="report-period">—</div>
+        </article>
+      </div>
+
+      <section class="intraday-panel">
+        <div class="intraday-heading">
+          <div>
+            <div class="panel-eyebrow">Seguimiento intradía</div>
+            <h3>Venta acumulada de hoy</h3>
+            <p class="panel-description">Comparación acumulada hasta el cierre de cada tramo horario.</p>
+          </div>
+          <div class="intraday-indicators" aria-label="Indicadores de venta acumulada de hoy">
+            <article class="intraday-indicator-card">
+              <span>Ranking general</span>
+              <strong id="intraday-general-rank">—</strong>
+              <small id="intraday-general-detail">Sin ventas de hoy</small>
+            </article>
+            <article class="intraday-indicator-card">
+              <span>Ranking mismo día</span>
+              <strong id="intraday-weekday-rank">—</strong>
+              <small id="intraday-weekday-detail">Sin referencia</small>
+            </article>
+            <article class="intraday-indicator-card">
+              <span>Vs. promedio 8 semanas</span>
+              <strong id="intraday-average-comparison">—</strong>
+              <small id="intraday-average-detail">Sin referencia</small>
+            </article>
+          </div>
+        </div>
+        <div class="intraday-table-wrap">
+          <table class="intraday-table">
+            <thead>
+              <tr>
+                <th>Tramo</th>
+                <th><strong>Hoy</strong><span id="intraday-today-date">—</span></th>
+                <th><strong id="intraday-weekday-title">Mejor mismo día</strong><span id="intraday-weekday-date">—</span></th>
+                <th><strong>Mejor día del mes</strong><span id="intraday-month-date">—</span></th>
+                <th><strong>Mejor día histórico</strong><span id="intraday-historical-date">—</span></th>
+              </tr>
+            </thead>
+            <tbody id="intraday-sales-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="products-workspace" class="panel products-workspace" style="display:none;">
+      <div class="products-workspace-head">
+        <div>
+          <div class="panel-eyebrow">Productos</div>
+          <h2>Catálogo y desempeño de productos</h2>
+          <p class="panel-description">Precio neto = precio de venta ÷ 1,19. Margen = (precio neto − costo) ÷ precio neto.</p>
+        </div>
+        <div class="products-controls">
+          <label for="products-location-filter">Cafetería
+            <select id="products-location-filter"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="products-search">Buscar producto
+            <input id="products-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+          </label>
+          <button id="refresh-products" class="icon-button" type="button">Actualizar</button>
+        </div>
+      </div>
+      <div id="products-status" class="form-status" aria-live="polite"></div>
+      <div class="products-report-actions">
+        <button id="save-products-report" class="primary" type="button">Guardar reporte de hoy</button>
+        <label for="products-saved-report">Comparar con reporte guardado
+          <select id="products-saved-report"><option value="">No hay reportes guardados</option></select>
+        </label>
+        <button id="compare-products-report" class="icon-button" type="button" disabled>Comparar cambios</button>
+      </div>
+      <div id="products-summary" class="products-summary"></div>
+      <div id="products-hierarchy-list" class="products-hierarchy-list"></div>
+      <section id="products-comparison" class="products-comparison" hidden>
+        <div class="products-comparison-head">
+          <div>
+            <div class="panel-eyebrow">Control de cambios</div>
+            <h3 id="products-comparison-title">Comparación de productos</h3>
+            <p id="products-comparison-description" class="panel-description"></p>
+          </div>
+          <button id="close-products-comparison" class="icon-button small" type="button">Cerrar</button>
+        </div>
+        <div id="products-comparison-summary" class="products-summary"></div>
+        <div class="products-comparison-table-wrap">
+          <table class="products-comparison-table">
+            <thead>
+              <tr>
+                <th>Código</th><th>Producto</th><th>Estado</th>
+                <th>Precio anterior</th><th>Precio actual</th><th>Cambio precio</th>
+                <th>Costo anterior</th><th>Costo actual</th><th>Cambio costo</th>
+                <th>Margen anterior</th><th>Margen actual</th><th>Cambio margen</th>
+              </tr>
+            </thead>
+            <tbody id="products-comparison-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="purchases-workspace" class="panel purchases-workspace" style="display:none;">
+      <div class="purchases-workspace-head">
+        <div>
+          <div class="panel-eyebrow">Compras</div>
+          <h2>Historial de compras e insumos</h2>
+          <p class="panel-description">Revisa cada compra y compara el precio efectivo con la compra anterior del mismo insumo.</p>
+        </div>
+        <div class="purchases-controls">
+          <label for="purchases-location-filter">Cafetería
+            <select id="purchases-location-filter"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="purchases-date-from">Fecha inicial
+            <input id="purchases-date-from" type="date" />
+          </label>
+          <label for="purchases-date-to">Fecha final
+            <input id="purchases-date-to" type="date" />
+          </label>
+          <label for="purchases-supplier-filter">Proveedor
+            <select id="purchases-supplier-filter"><option value="all">Todos los proveedores</option></select>
+          </label>
+          <button id="refresh-purchases" class="icon-button" type="button">Actualizar</button>
+        </div>
+      </div>
+      <div id="purchases-status" class="form-status" aria-live="polite"></div>
+      <div id="purchases-summary" class="products-summary"></div>
+      <div id="purchases-groups" class="purchases-groups"></div>
+    </section>
+
+    <section id="inventory-workspace" class="panel" style="display:none;">
+      <div class="inventory-workspace-head">
+        <div>
+          <div class="panel-eyebrow">Inventario</div>
+          <h2>Fuentes para el informe de inventario</h2>
+          <p class="panel-description">Selecciona una ubicación activa y revisa si sus archivos más recientes están listos.</p>
+        </div>
+        <div class="inventory-filters">
+          <label class="inventory-location-control" for="inventory-location-select">
+            <span>Ubicación</span>
+            <select id="inventory-location-select"></select>
+          </label>
+        </div>
+      </div>
+      <div id="inventory-source-status" class="form-status" aria-live="polite"></div>
+      <div id="inventory-source-list" class="inventory-source-list"></div>
+      <div class="inventory-report-actions">
+        <button id="inventory-upload-files" class="icon-button" type="button">Cargar archivos actualizados</button>
+        <button id="process-inventory-report" class="primary" type="button" disabled>Procesar informe de inventario</button>
+      </div>
+      <p id="inventory-process-note" class="panel-description">Primero deben estar disponibles todos los archivos requeridos.</p>
+
+      <dialog id="inventory-process-dialog" class="inventory-criteria-dialog">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Criterios del informe</div>
+            <h3>Confirma los datos de inventario</h3>
+            <p class="panel-description">Los saldos y el período de movimientos se seleccionan de forma independiente.</p>
+          </div>
+          <button id="close-inventory-process-dialog" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="inventory-criteria-grid">
+          <fieldset>
+            <legend>Dato Inventario Inicial</legend>
+            <label>Fecha<input id="inventory-initial-date" type="date" required /></label>
+            <label>Usar
+              <select id="inventory-initial-basis">
+                <option value="initial">Inventario Inicial</option>
+                <option value="final">Inventario Final</option>
+              </select>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Dato Inventario Final</legend>
+            <label>Fecha<input id="inventory-final-date" type="date" required /></label>
+            <label>Usar
+              <select id="inventory-final-basis">
+                <option value="initial">Inventario Inicial</option>
+                <option value="final">Inventario Final</option>
+              </select>
+            </label>
+          </fieldset>
+          <fieldset class="inventory-movement-period">
+            <legend>Fechas de movimientos del inventario</legend>
+            <label>Fecha inicial<input id="inventory-movement-from" type="date" required /></label>
+            <label>Fecha final<input id="inventory-movement-to" type="date" required /></label>
+          </fieldset>
+        </div>
+        <div id="inventory-process-dialog-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-inventory-process" class="primary" type="button">Confirmar y procesar</button>
+          <button id="cancel-inventory-process" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+
+      <dialog id="source-summary-dialog" class="inventory-criteria-dialog">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Período del resumen</div>
+            <h3 id="source-summary-dialog-title">Ver resumen</h3>
+            <p class="panel-description">Ambas fechas se incluyen en el cálculo.</p>
+          </div>
+          <button id="close-source-summary-dialog" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="inventory-summary-period">
+          <label>Fecha inicial<input id="source-summary-date-from" type="date" required /></label>
+          <label>Fecha final<input id="source-summary-date-to" type="date" required /></label>
+        </div>
+        <div id="source-summary-dialog-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-source-summary" class="primary" type="button">Generar resumen</button>
+          <button id="cancel-source-summary" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+
+      <section id="waste-summary-results" class="inventory-report-results" hidden>
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Resumen de merma</div>
+            <h3>Adiciones por ítem</h3>
+            <p id="waste-summary-period" class="panel-description"></p>
+          </div>
+          <div class="inventory-source-actions">
+            <span id="waste-summary-item-count" class="chip neutral"></span>
+            <button id="close-waste-summary" class="icon-button small" type="button">Cerrar</button>
+          </div>
+        </div>
+        <div class="inventory-results-table-wrap">
+          <table id="waste-summary-table" class="inventory-results-table"></table>
+        </div>
+      </section>
+
+      <section id="consumption-summary-results" class="inventory-report-results" hidden>
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Resumen de consumo</div>
+            <h3 id="consumption-summary-title">Consumo</h3>
+            <p id="consumption-summary-period" class="panel-description"></p>
+          </div>
+          <button id="close-consumption-summary" class="icon-button small" type="button">Cerrar</button>
+        </div>
+        <div id="standalone-consumption-report" class="inventory-consumption-reports"></div>
+      </section>
+
+      <section id="inventory-report-results" class="inventory-report-results" hidden>
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Informe procesado</div>
+            <h3>Consolidado de inventario</h3>
+            <p id="inventory-report-period" class="panel-description"></p>
+          </div>
+          <span id="inventory-report-item-count" class="chip neutral"></span>
+        </div>
+        <div id="inventory-consumption-reports" class="inventory-consumption-reports"></div>
+        <section id="inventory-waste-report" class="consumption-report-card" hidden>
+          <h4>Resumen de Merma</h4>
+          <p id="inventory-waste-period" class="panel-description"></p>
+          <div class="inventory-results-table-wrap">
+            <table id="inventory-waste-table" class="inventory-results-table"></table>
+          </div>
+        </section>
+        <h4 class="inventory-kardex-heading">Consolidado del Kardex</h4>
+        <div class="inventory-results-table-wrap">
+          <table id="inventory-results-table" class="inventory-results-table"></table>
+        </div>
+      </section>
+
+      <dialog id="inventory-preview-dialog" class="preview-dialog">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Vista previa</div>
+            <h3 id="inventory-preview-title"></h3>
+          </div>
+          <button id="close-inventory-preview" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div id="inventory-preview-content" class="preview-content"></div>
+      </dialog>
+
+      <dialog id="inventory-preview-range-dialog" class="inventory-criteria-dialog">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Período de previsualización</div>
+            <h3 id="inventory-preview-range-title">Previsualizar archivo</h3>
+            <p class="panel-description">Se mostrarán solamente las columnas correspondientes al rango indicado.</p>
+          </div>
+          <button id="close-inventory-preview-range" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="inventory-summary-period">
+          <label>Fecha inicial<input id="inventory-preview-date-from" type="date" required /></label>
+          <label>Fecha final<input id="inventory-preview-date-to" type="date" required /></label>
+        </div>
+        <div id="inventory-preview-range-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-inventory-preview" class="primary" type="button">Previsualizar</button>
+          <button id="cancel-inventory-preview-range" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+    </section>
+
+    <section id="file-loader" class="panel" style="display:none;">
+      <div class="panel-head">
+        <div>
+          <div class="panel-eyebrow">Datos de Brewit</div>
+          <h2>Cargar archivos</h2>
+          <p class="panel-description">Incorpora transacciones por ubicación o actualiza archivos maestros compartidos.</p>
+        </div>
+      </div>
+
+      <div class="upload-mode-switch" role="tablist" aria-label="Tipo de carga">
+        <button class="upload-mode active" type="button" data-upload-mode="weekly" role="tab" aria-selected="true">Transacciones</button>
+        <button class="upload-mode" type="button" data-upload-mode="masters" role="tab" aria-selected="false">Archivos maestros</button>
+      </div>
+
+      <div id="weekly-upload-pane" class="upload-pane">
+        <form id="weekly-upload-form">
+          <div class="upload-context-grid">
+            <label>
+              <span>Ubicación</span>
+              <select id="location-select" name="location">
+                <option value="store-1">Tienda 1</option>
+                <option value="store-2">Tienda 2</option>
+                <option value="main-warehouse">Bodega principal</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="location-note" id="location-note"></div>
+          <div id="week-status" class="form-status" aria-live="polite"></div>
+
+          <div class="file-row" data-weekly-field="kardex">
+            <label for="file-kardex">Kardex / tarjeta de inventario</label>
+            <input type="file" id="file-kardex" name="kardex" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="waste">
+            <label for="file-waste">Merma</label>
+            <input type="file" id="file-waste" name="waste" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="marketing">
+            <label for="file-marketing">Consumo de marketing</label>
+            <input type="file" id="file-marketing" name="marketing" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="employees">
+            <label for="file-employees">Consumo de colaboradores</label>
+            <input type="file" id="file-employees" name="employees" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="purchases">
+            <label for="file-purchases">Compras</label>
+            <input type="file" id="file-purchases" name="purchases" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="sales">
+            <label for="file-sales">Transacciones de venta</label>
+            <input type="file" id="file-sales" name="sales" accept=".csv,.xls,.xlsx,.txt" />
+            <span id="latest-sales-transaction" class="latest-sales-transaction" aria-live="polite">Última transacción: consultando…</span>
+          </div>
+          <div class="form-actions">
+            <button id="inspect-week-btn" class="primary" type="submit">Detectar fechas y revisar</button>
+          </div>
+        </form>
+
+        <section id="date-confirmation" class="confirmation-card" hidden>
+          <div>
+            <div class="panel-eyebrow">Confirmación requerida</div>
+            <h3>Revisa las fechas detectadas</h3>
+            <p id="transaction-confirmation-copy">Confirma que este rango corresponde a todos los archivos antes de guardarlos.</p>
+          </div>
+          <div id="detected-files-list" class="detected-files-list"></div>
+          <div class="confirmation-dates">
+            <label>Desde <input type="date" id="confirmed-date-from" /></label>
+            <label>Hasta <input type="date" id="confirmed-date-to" /></label>
+          </div>
+          <label class="confirmation-check">
+            <input type="checkbox" id="dates-confirmed" />
+            Confirmo que estas fechas son válidas para los archivos seleccionados.
+          </label>
+          <div id="transaction-overlap-notice" class="transaction-overlap-notice" hidden></div>
+          <div class="conflict-actions">
+            <button id="keep-transactions-btn" class="primary" type="button">Mantener existentes y agregar nuevos</button>
+            <button id="replace-transactions-btn" class="delete-button" type="button" hidden>Reemplazar días coincidentes</button>
+          </div>
+        </section>
+
+      </div>
+
+      <div id="master-upload-pane" class="upload-pane" hidden>
+        <div class="pane-heading">
+          <h3>Archivos maestros compartidos</h3>
+          <p>Estos archivos aplican a las dos tiendas y a la bodega principal.</p>
+        </div>
+        <form id="master-upload-form">
+          <div id="master-status" class="form-status" aria-live="polite"></div>
+          <div class="file-row">
+            <label for="master-catalog">Maestro Productos / Ingredientes / Extras</label>
+            <input type="file" id="master-catalog" name="master-catalog" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="master-catalog-from">Válido desde</label>
+            <input type="date" id="master-catalog-from" name="master-catalog-from" />
+            <span class="latest-valid-date" data-master-field="master-catalog">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="product-hierarchy">Jerarquía Productos</label>
+            <input type="file" id="product-hierarchy" name="product-hierarchy" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="product-hierarchy-from">Válido desde</label>
+            <input type="date" id="product-hierarchy-from" name="product-hierarchy-from" />
+            <span class="latest-valid-date" data-master-field="product-hierarchy">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="ingredient-hierarchy">Jerarquía Ingredientes</label>
+            <input type="file" id="ingredient-hierarchy" name="ingredient-hierarchy" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="ingredient-hierarchy-from">Válido desde</label>
+            <input type="date" id="ingredient-hierarchy-from" name="ingredient-hierarchy-from" />
+            <span class="latest-valid-date" data-master-field="ingredient-hierarchy">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="extras-hierarchy">Jerarquía Extras</label>
+            <input type="file" id="extras-hierarchy" name="extras-hierarchy" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="extras-hierarchy-from">Válido desde</label>
+            <input type="date" id="extras-hierarchy-from" name="extras-hierarchy-from" />
+            <span class="latest-valid-date" data-master-field="extras-hierarchy">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="master-recipes">Maestro de recetas</label>
+            <input type="file" id="master-recipes" name="master-recipes" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="master-recipes-from">Válido desde</label>
+            <input type="date" id="master-recipes-from" name="master-recipes-from" />
+            <span class="latest-valid-date" data-master-field="master-recipes">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="master-suppliers">Maestro Proveedores</label>
+            <input type="file" id="master-suppliers" name="master-suppliers" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="master-suppliers-from">Válido desde</label>
+            <input type="date" id="master-suppliers-from" name="master-suppliers-from" />
+            <span class="latest-valid-date" data-master-field="master-suppliers">Última vigencia: —</span>
+          </div>
+          <div style="margin-top:12px;">
+            <button id="upload-master-btn" class="primary" type="submit">Guardar archivos maestros</button>
+          </div>
+        </form>
+        <section id="master-conflict" class="master-conflict" hidden aria-live="assertive">
+          <h3>Ya existe un archivo con la misma fecha</h3>
+          <p id="master-conflict-message"></p>
+          <div class="conflict-actions">
+            <button id="replace-master-btn" class="primary" type="button">Reemplazar</button>
+            <button id="cancel-master-btn" class="icon-button" type="button">Cancelar</button>
+          </div>
+        </section>
+        <div id="master-versions" class="upload-history">
+          <h3>Versiones guardadas</h3>
+          <div id="master-list"></div>
+        </div>
+      </div>
+
+      <dialog id="master-preview-dialog" class="preview-dialog">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Vista previa</div>
+            <h3 id="master-preview-title"></h3>
+          </div>
+          <button id="close-master-preview" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div id="master-preview-content" class="preview-content"></div>
+      </dialog>
+    </section>
+
+    <section id="location-settings" class="panel" style="display:none;">
+      <div class="panel-head">
+        <div>
+          <div class="panel-eyebrow">Configuración</div>
+          <h2>Ubicaciones</h2>
+          <p class="panel-description">Crea, renombra, envía a la papelera o recupera tiendas y bodegas.</p>
+        </div>
+      </div>
+
+      <form id="create-location-form" class="create-location-form">
+        <label>
+          <span>Nombre de la ubicación</span>
+          <input id="new-location-name" name="name" type="text" minlength="2" maxlength="80" required placeholder="Ej. Brewit Providencia" />
+        </label>
+        <label>
+          <span>Tipo</span>
+          <select id="new-location-type" name="type">
+            <option value="store">Cafetería</option>
+            <option value="warehouse">Bodega</option>
+          </select>
+        </label>
+        <button class="primary" type="submit">Crear ubicación</button>
+      </form>
+      <div id="location-status" class="form-status" aria-live="polite"></div>
+
+      <div class="location-management-section">
+        <h3>Ubicaciones activas</h3>
+        <div id="active-locations-list" class="location-list"></div>
+      </div>
+
+      <div class="location-management-section trash-section">
+        <h3>Papelera</h3>
+        <p class="panel-description">Las ubicaciones en la papelera y sus archivos nunca se eliminan permanentemente.</p>
+        <div id="trashed-locations-list" class="location-list"></div>
+      </div>
+
+      <dialog id="location-trash-dialog" class="location-trash-dialog">
+        <div id="location-trash-step-one">
+          <div class="warning-step">Advertencia 1 de 2</div>
+          <h3>Enviar ubicación a la papelera</h3>
+          <p>La ubicación dejará de aparecer en las cargas semanales. Todos sus archivos se moverán a la papelera y podrán recuperarse después.</p>
+          <div class="conflict-actions">
+            <button id="continue-location-trash" class="delete-button" type="button">Continuar</button>
+            <button class="icon-button cancel-location-trash" type="button">Cancelar</button>
+          </div>
+        </div>
+        <div id="location-trash-step-two" hidden>
+          <div class="warning-step">Advertencia 2 de 2</div>
+          <h3>Confirma el nombre exacto</h3>
+          <p id="location-trash-confirmation-copy"></p>
+          <label for="location-trash-confirmation-name">Nombre exacto de la ubicación</label>
+          <input id="location-trash-confirmation-name" type="text" autocomplete="off" />
+          <div class="conflict-actions">
+            <button id="confirm-location-trash" class="delete-button" type="button" disabled>Enviar a la papelera</button>
+            <button class="icon-button cancel-location-trash" type="button">Cancelar</button>
+          </div>
+        </div>
+      </dialog>
     </section>
 
     <section class="content-layout">

@@ -1,0 +1,16 @@
+ ID Jerarquia	ID Nodo **	Nombre Jerarquía Producto *	ID nodo padre	Visible a Clientes *	Min	Max	Multi	Orden
+BA.	0	Todos los Extras, Complementos y Agregados		0	0	0	0	20
+BA.001	1	Barra Caliente	BA.	0	0	0	0	130
+BA.002	2	Barra Fria	BA.	0	0	0	0	140
+BA.010	10	Tipo de Leche	BA.	1	0	0	0	10
+BA.020	20	Crema	BA.	1	0	0	0	20
+BA.030	30	Syrup-Salsas-Goma	BA.	1	0	0	0	30
+BA.040	40	Perlas	BA.	1	0	0	0	40
+BA.050	50	Chips Chocolate	BA.	1	0	0	0	50
+BA.060	60	Frutos Disecados	BA.	1	0	0	0	60
+BA.070	70	Helado	BA.	1	0	0	0	70
+BA.080	80	Cafe/Matcha/Chai	BA.	1	0	0	0	80
+BA.090	90	Sustitucion Syrup/Salsa	BA.	1	0	0	0	90
+BA.100	100	Sustitucion de Te	BA.	1	0	0	0	100
+BA.110	110	Proteina Whey Powder	BA.	1	0	0	0	120
+BA.999	999	Elaborados	BA.	1	0	0	0	110
