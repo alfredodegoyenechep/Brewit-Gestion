@@ -36,6 +36,13 @@
         </svg>
         Productos
       </a>
+      <a href="#" class="nav-link" data-view="ingredients">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M12 3c4 3 6 6 6 10a6 6 0 0 1-12 0c0-4 2-7 6-10Z" />
+          <path d="M9 15c2-1 4-3 5-6" />
+        </svg>
+        Ingredientes
+      </a>
       <a href="#" class="nav-link" data-view="inventory">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M3 21h18" />
@@ -369,6 +376,59 @@
       </section>
     </section>
 
+    <section id="ingredients-workspace" class="panel ingredients-workspace" style="display:none;">
+      <div class="ingredients-workspace-head">
+        <div>
+          <div class="panel-eyebrow">Ingredientes</div>
+          <h2>Costos, uso y composición de ingredientes</h2>
+          <p class="panel-description">El consumo en cafeterías se calcula desde las ventas, recetas y rendimiento. En bodega se consideran las salidas del Kardex.</p>
+        </div>
+        <div class="ingredients-controls">
+          <label for="ingredients-location-filter">Ubicación
+            <select id="ingredients-location-filter"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="ingredients-date-from">Fecha inicial
+            <input id="ingredients-date-from" type="date" />
+          </label>
+          <label for="ingredients-date-to">Fecha final
+            <input id="ingredients-date-to" type="date" />
+          </label>
+          <label for="ingredients-supplier-filter">Proveedor
+            <select id="ingredients-supplier-filter"><option value="all">Todos los proveedores</option></select>
+          </label>
+          <label for="ingredients-search">Buscar ingrediente
+            <input id="ingredients-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+          </label>
+          <label class="ingredients-change-filter" for="ingredients-only-changed">
+            <input id="ingredients-only-changed" type="checkbox" /> Solo con variación de costo
+          </label>
+          <button id="refresh-ingredients" class="icon-button" type="button">Actualizar</button>
+        </div>
+      </div>
+      <div id="ingredients-status" class="form-status" aria-live="polite"></div>
+      <div id="ingredients-summary" class="products-summary"></div>
+      <section class="ingredient-ranking-panel">
+        <div class="panel-head">
+          <div><div class="panel-eyebrow">Ranking del período</div><h3>Ingredientes con mayor costo de consumo</h3></div>
+        </div>
+        <div id="ingredients-cost-ranking" class="ingredient-ranking-list"></div>
+      </section>
+      <div class="ingredients-table-wrap">
+        <table class="ingredients-table">
+          <thead>
+            <tr>
+              <th data-sort-key="code">Código</th><th data-sort-key="name">Ingrediente</th>
+              <th data-sort-key="supplier">Proveedor</th><th data-sort-key="unit">Unidad</th>
+              <th data-sort-key="unitCost">Costo maestro</th><th data-sort-key="latestPurchaseCost">Último costo compra</th>
+              <th data-sort-key="costChangePercent">Variación costo</th><th data-sort-key="usageQuantity">Consumo período</th>
+              <th data-sort-key="usageCost">Costo consumido</th><th data-sort-key="products.length">Productos que lo usan</th>
+            </tr>
+          </thead>
+          <tbody id="ingredients-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="purchases-workspace" class="panel purchases-workspace" style="display:none;">
       <div class="purchases-workspace-head">
         <div>
@@ -443,10 +503,10 @@
         <table class="purchase-projection-table">
           <thead>
             <tr>
-              <th>Administrar</th><th>Código</th><th>Producto / ingrediente</th><th>Proveedor</th><th>Unidad interna</th>
-              <th>Inventario actual</th><th>Consumo y TRN-OUT 30 días</th><th>Promedio diario</th><th>Cobertura actual</th>
-              <th>Días mín.</th><th>Días máx.</th><th>Sugerencia interna</th><th>UDC</th>
-              <th>Unidades x UDC</th><th>UDC sugeridas</th><th>Costo UDC estimado</th><th>Total estimado</th>
+              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit">Unidad interna</th>
+              <th data-sort-key="currentInventory">Inventario actual</th><th data-sort-key="consumption30">Consumo y TRN-OUT 30 días</th><th data-sort-key="averageDailyConsumption">Promedio diario</th><th data-sort-key="currentCoverageDays">Cobertura actual</th>
+              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th data-sort-key="suggestedInternalQuantity">Sugerencia interna</th><th data-sort-key="purchaseUnit">UDC</th>
+              <th data-sort-key="unitsPerPurchaseUnit">Unidades x UDC</th><th data-sort-key="suggestedPurchaseUnits">UDC sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost">Costo UDC estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
             </tr>
           </thead>
           <tbody id="purchase-projection-body"></tbody>

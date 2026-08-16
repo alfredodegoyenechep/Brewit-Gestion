@@ -350,6 +350,79 @@ test('organizes products by hierarchy and calculates rolling sales by cafeteria'
   assert.equal(comparison.changes[0].after.price, 3300);
 });
 
+test('builds ingredient costs, recipe usage, suppliers, and cost variation for a selected period', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'pv', 'ce', 'ub'],
+    ['ID Producto **', 'Nombre Producto *', 'Precio Base', 'Costo', 'Medida Base'],
+    ['P1', 'Producto Uno', 2000, 8, 'UN']
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'ce', 'ub'],
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['I1', 'Ingrediente Uno', 4, 'kg']
+  ]), 'Ingr');
+  const masters = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo.xlsx'
+    }, {
+      field: 'master-recipes',
+      contents: 'Id Producto\tNombre Producto*\tId Ingrediente\tNombre Ingrediente*\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento\nP1\tProducto Uno\tI1\tIngrediente Uno\t0,5\tkg\t80',
+      filename: 'recetas.txt'
+    }, {
+      field: 'master-suppliers', contents: 'Nombre*\tRUT/Fiscal ID*\nProveedor Uno\t111', filename: 'proveedores.txt'
+    }], {
+      'master-catalog-from': '2026-08-01', 'master-recipes-from': '2026-08-01', 'master-suppliers-from': '2026-08-01'
+    })
+  });
+  assert.equal(masters.status, 200);
+  const sales = 'ID de orden\tFecha de creacion\tPago total\tDescuentos\tID Producto\tNombre\tCantidad\tPrecio a Pagar\tDescuento\no1\t2026-08-10\t2000\t0\tP1\tProducto Uno\t4\t2000\t0';
+  const purchases = [
+    'Fecha emisión\tTipo Documento\tDocumento\tProveedor/Para\tNúmero identificador fiscal\tLin\tCod\tPRODUCTO\tQ.Rec\tUm.Rec\tCosto\tMonto neto\tDescuento\tMonto total',
+    '2026-08-01\tFactura\t1\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t5\t5\t0\t5',
+    '2026-08-15\tFactura\t2\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t6\t6\t0\t6'
+  ].join('\n');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'sales', contents: sales, filename: 'ventas.csv' },
+    { field: 'purchases', contents: purchases, filename: 'compras.csv' }
+  ]).then(response => response.json());
+  assert.ok(inspection.token, JSON.stringify(inspection));
+  assert.equal((await confirmTransactions(baseUrl, inspection, 'keep', { from: '2026-08-01', to: '2026-08-15' })).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`);
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  assert.equal(report.items.length, 1);
+  assert.equal(report.items[0].supplier, 'Proveedor Uno');
+  assert.equal(report.items[0].products.length, 1);
+  assert.equal(report.items[0].products[0].yieldRate, 80);
+  assert.equal(report.items[0].products[0].effectiveQuantity, 0.625);
+  assert.equal(report.items[0].usageQuantity, 2.5);
+  assert.equal(report.items[0].usageCost, 10);
+  assert.equal(report.items[0].latestPurchaseCost, 6);
+  assert.equal(Math.round(report.items[0].costChangePercent), 20);
+  assert.equal(report.summary.totalUsageCost, 10);
+
+  const warehouseKardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-10', '', '', '', '2026-08-11', '', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'TRN-OUT - Transformaciones Salientes', 'IF - Inventario Final', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'TRN-OUT - Transformaciones Salientes', 'IF - Inventario Final'],
+    ['I1', 'Ingrediente Uno', 'kg', 10, 2, 1, 7, 7, 0, 0, 7]
+  ].map(row => row.join('\t')).join('\n');
+  const warehouseInspection = await inspectTransactions(baseUrl, 'main-warehouse', [
+    { field: 'kardex', contents: warehouseKardex, filename: 'kardex-bodega.csv' }
+  ]).then(response => response.json());
+  assert.ok(warehouseInspection.token, JSON.stringify(warehouseInspection));
+  assert.equal((await confirmTransactions(baseUrl, warehouseInspection, 'keep', { from: '2026-08-10', to: '2026-08-10' })).status, 200);
+  const warehouseResponse = await fetch(`${baseUrl}/api/ingredients?location=main-warehouse&dateFrom=2026-08-01&dateTo=2026-08-15`);
+  const warehouse = await warehouseResponse.json();
+  assert.equal(warehouseResponse.status, 200, JSON.stringify(warehouse));
+  assert.equal(warehouse.scope.type, 'warehouse');
+  assert.equal(warehouse.items[0].usageQuantity, 3);
+  assert.equal(warehouse.items[0].usageCost, 12);
+});
+
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
   const supplierMaster = await fetch(`${baseUrl}/upload/master`, {
@@ -1109,6 +1182,8 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].quantity, 2);
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].totalCost, 100);
   assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 66.7);
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].totalCost, 100);
+  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].contributionMarginPercent * 10) / 10, 66.7);
   assert.equal(dashboard.mercadoPago.metrics.day.transactions, 2);
   assert.equal(dashboard.mercadoPago.metrics.day.sales, 700);
   assert.equal(dashboard.mercadoPago.metrics.day.recurringTransactions, 1);

@@ -1013,6 +1013,36 @@ function parseProductCatalog(filePath) {
   });
 }
 
+function parseIngredientsCatalog(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  const sheetNames = workbook.SheetNames.filter(name => /^ingr|ingred/i.test(name));
+  if (!sheetNames.length) throw new Error('El maestro no contiene una hoja de ingredientes.');
+  const ingredients = new Map();
+  for (const sheetName of sheetNames) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true, blankrows: false });
+    const headerIndex = rows.slice(0, 5).findIndex(row => findHeaderColumn(row, ['ID Producto **', 'ID Producto']) >= 0);
+    if (headerIndex < 0) continue;
+    const headers = rows[headerIndex];
+    const codeColumn = findHeaderColumn(headers, ['ID Producto **', 'ID Producto']);
+    const nameColumn = findHeaderColumn(headers, ['Nombre Producto *', 'Nombre Producto']);
+    const costColumn = findHeaderColumn(headers, ['Costo']);
+    const unitColumn = findHeaderColumn(headers, ['Medida Base', 'Unidad Base', 'Unidad de Reportes']);
+    const activeColumn = findHeaderColumn(headers, ['Activo']);
+    for (const row of rows.slice(headerIndex + 1)) {
+      const code = String(row[codeColumn] ?? '').trim();
+      if (!code) continue;
+      ingredients.set(code.toUpperCase(), {
+        code,
+        name: repairMojibake(row[nameColumn]) || code,
+        unit: String(row[unitColumn] ?? '').trim(),
+        unitCost: numericValue(row[costColumn]) || 0,
+        active: activeColumn < 0 || Boolean(numericValue(row[activeColumn]))
+      });
+    }
+  }
+  return ingredients;
+}
+
 function parseProductHierarchies(filePath) {
   const workbook = XLSX.readFile(filePath, { cellDates: true });
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
@@ -2483,6 +2513,177 @@ function createApp(options = {}) {
     }
   });
 
+  function buildIngredientsPayload(query = {}) {
+    const today = projectionToday();
+    const dateTo = String(query.dateTo || today);
+    const dateFrom = String(query.dateFrom || addDays(dateTo, -29));
+    if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo) {
+      const error = new Error('Selecciona un período válido para analizar los ingredientes.');
+      error.status = 400;
+      throw error;
+    }
+    const allLocations = readLocations().locations.filter(location => location.status === 'active');
+    const stores = allLocations.filter(location => location.type === 'store');
+    const requestedLocation = String(query.location || 'all');
+    const selectedLocation = requestedLocation === 'all'
+      ? null
+      : allLocations.find(location => location.id === requestedLocation);
+    if (requestedLocation !== 'all' && !selectedLocation) {
+      const error = new Error('Selecciona una ubicación válida.');
+      error.status = 400;
+      throw error;
+    }
+    const catalogMaster = latestMasterFile('master-catalog', dateTo);
+    const recipesMaster = latestMasterFile('master-recipes', dateTo);
+    if (!catalogMaster || !recipesMaster) {
+      const error = new Error('Se requiere un maestro de ingredientes y un maestro de recetas vigentes para el período.');
+      error.status = 404;
+      throw error;
+    }
+    const ingredientCatalog = parseIngredientsCatalog(catalogMaster.filePath);
+    const fullCatalog = parseIngredientCatalog(catalogMaster.filePath);
+    const products = new Map(parseProductCatalog(catalogMaster.filePath).map(product => [product.code, product]));
+    const recipes = parseRecipes(recipesMaster.filePath);
+    const usedBy = new Map();
+    for (const [productCode, lines] of recipes) {
+      for (const line of lines) {
+        const yieldFactor = line.yieldRate > 0 ? line.yieldRate / 100 : 1;
+        const canonical = canonicalConsumptionUnit(line.unit);
+        const detail = {
+          code: productCode,
+          name: products.get(productCode)?.name || productCode,
+          recipeQuantity: line.quantity,
+          recipeUnit: line.unit,
+          yieldRate: line.yieldRate,
+          effectiveQuantity: line.quantity / yieldFactor * canonical.factor,
+          effectiveUnit: canonical.unit
+        };
+        const key = line.ingredientId.toUpperCase();
+        if (!usedBy.has(key)) usedBy.set(key, []);
+        usedBy.get(key).push(detail);
+      }
+    }
+
+    const usageByIngredient = new Map();
+    const selectedStores = selectedLocation?.type === 'store' ? [selectedLocation] : selectedLocation ? [] : stores;
+    if (selectedStores.length) {
+      const productQuantities = new Map();
+      const seenRows = new Set();
+      for (const location of selectedStores) {
+        for (const stored of storedSalesFiles(location.id)) {
+          for (const row of readSalesRows(stored.filePath)) {
+            const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+            if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right)))).digest('hex')}`;
+            if (seenRows.has(rowKey)) continue;
+            seenRows.add(rowKey);
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim();
+            const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
+            if (code && quantity) productQuantities.set(code, (productQuantities.get(code) || 0) + quantity);
+          }
+        }
+      }
+      const consumption = buildIngredientConsumption(
+        [...productQuantities].map(([code, quantity]) => ({ code, name: products.get(code)?.name || code, quantity })),
+        recipes,
+        fullCatalog
+      );
+      for (const item of consumption.items) {
+        const key = item.code.toUpperCase();
+        const current = usageByIngredient.get(key) || { quantity: 0, totalCost: 0, unit: item.unit };
+        const converted = convertQuantityUnit(item.quantity, item.unit, current.unit);
+        current.quantity += converted ?? item.quantity;
+        current.totalCost += item.totalCost;
+        usageByIngredient.set(key, current);
+      }
+    } else if (selectedLocation?.type === 'warehouse') {
+      const parsed = mergedKardexData(selectedLocation.id, 'kardex');
+      const groups = parsed.groups.filter(group => group.date >= dateFrom && group.date <= dateTo);
+      const matcher = metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
+        || metric.startsWith('mov-out -') || metric.startsWith('trn-out -');
+      for (const product of parsed.products) {
+        const key = String(product.code || '').toUpperCase();
+        if (!ingredientCatalog.has(key)) continue;
+        const rawQuantity = groups.reduce((sum, group) => sum + kardexMetricTotal(product, group, matcher), 0);
+        const catalogItem = ingredientCatalog.get(key);
+        const canonical = canonicalConsumptionUnit(product.unit || catalogItem.unit);
+        const quantity = rawQuantity * canonical.factor;
+        const unitCost = unitCostForRecipeUnit(catalogItem, canonical.unit) || 0;
+        usageByIngredient.set(key, { quantity, unit: canonical.unit, totalCost: quantity * unitCost });
+      }
+    }
+
+    let purchaseRows = [];
+    try { purchaseRows = buildPurchasesPayload({ location: requestedLocation, supplier: 'all' }).rows; } catch { purchaseRows = []; }
+    const purchasesByIngredient = new Map();
+    for (const row of purchaseRows) {
+      const key = String(row.code || '').toUpperCase();
+      if (!ingredientCatalog.has(key)) continue;
+      if (!purchasesByIngredient.has(key)) purchasesByIngredient.set(key, []);
+      purchasesByIngredient.get(key).push(row);
+    }
+    const items = [...ingredientCatalog].map(([key, ingredient]) => {
+      const history = (purchasesByIngredient.get(key) || [])
+        .filter(row => row.date <= dateTo)
+        .sort((left, right) => left.date.localeCompare(right.date));
+      const latest = history.at(-1) || null;
+      const periodHistory = history.filter(row => row.date >= dateFrom && row.date <= dateTo);
+      const purchaseCost = row => {
+        const rawCost = row.baseUnitCost ?? row.effectiveUnitPrice;
+        const sourceUnit = row.baseUnit || row.unit;
+        return unitCostForRecipeUnit({ unitCost: rawCost, unit: sourceUnit }, ingredient.unit);
+      };
+      const firstCost = periodHistory.length ? purchaseCost(periodHistory[0]) : null;
+      const lastCost = periodHistory.length ? purchaseCost(periodHistory.at(-1)) : null;
+      const usage = usageByIngredient.get(key) || { quantity: 0, unit: canonicalConsumptionUnit(ingredient.unit).unit, totalCost: 0 };
+      const catalogCostForUsage = unitCostForRecipeUnit(ingredient, usage.unit) || 0;
+      const usageCost = usage.quantity * catalogCostForUsage;
+      return {
+        ...ingredient,
+        supplierKey: latest?.supplierKey || 'unassigned',
+        supplier: latest?.supplier || 'Proveedor no identificado',
+        latestPurchaseDate: latest?.date || null,
+        latestPurchaseCost: latest ? purchaseCost(latest) : null,
+        firstPeriodCost: firstCost,
+        lastPeriodCost: lastCost,
+        costChangePercent: firstCost && lastCost ? ((lastCost / firstCost) - 1) * 100 : null,
+        purchaseCount: periodHistory.length,
+        usageQuantity: usage.quantity,
+        usageUnit: usage.unit,
+        usageCost,
+        products: (usedBy.get(key) || []).sort((left, right) => left.name.localeCompare(right.name, 'es'))
+      };
+    });
+    const suppliers = [...new Map(items.map(item => [item.supplierKey, { key: item.supplierKey, name: item.supplier }])).values()]
+      .sort((left, right) => left.name.localeCompare(right.name, 'es'));
+    return {
+      date: today,
+      period: { from: dateFrom, to: dateTo },
+      scope: selectedLocation
+        ? { location: selectedLocation.id, label: selectedLocation.name, type: selectedLocation.type }
+        : { location: 'all', label: 'Todas las cafeterías', type: 'stores' },
+      locations: allLocations.map(publicLocation),
+      suppliers,
+      items,
+      summary: {
+        ingredientCount: items.length,
+        usedIngredientCount: items.filter(item => item.usageQuantity > 0).length,
+        totalUsageCost: items.reduce((sum, item) => sum + item.usageCost, 0),
+        changedCostCount: items.filter(item => item.costChangePercent !== null && Math.abs(item.costChangePercent) >= 0.01).length
+      }
+    };
+  }
+
+  app.get('/api/ingredients', (req, res) => {
+    try {
+      return res.json(buildIngredientsPayload(req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la vista de ingredientes.' });
+    }
+  });
+
   app.get('/api/products/reports', (req, res) => {
     const requestedLocation = String(req.query.location || 'all');
     if (requestedLocation !== 'all') {
@@ -2951,7 +3152,7 @@ function createApp(options = {}) {
         hierarchies.set(fact.hierarchy, (hierarchies.get(fact.hierarchy) || 0) + fact.net);
       });
       const totalHierarchySales = [...hierarchies.values()].reduce((sum, value) => sum + value, 0);
-      const hierarchyRoot = { name: 'Todas las jerarquías', path: [], netSales: 0, children: new Map(), products: new Map() };
+      const hierarchyRoot = { name: 'Todas las jerarquías', path: [], netSales: 0, totalCost: 0, children: new Map(), products: new Map() };
       const addProductToNode = (node, fact) => {
         const productKey = fact.code || normalizeHeader(fact.name);
         const product = node.products.get(productKey) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0 };
@@ -2962,14 +3163,16 @@ function createApp(options = {}) {
       };
       selected.forEach(fact => {
         hierarchyRoot.netSales += fact.net;
+        hierarchyRoot.totalCost += fact.cost;
         addProductToNode(hierarchyRoot, fact);
         let node = hierarchyRoot;
         fact.hierarchyPath.forEach((name, index) => {
           if (!node.children.has(name)) {
-            node.children.set(name, { name, path: fact.hierarchyPath.slice(0, index + 1), netSales: 0, children: new Map(), products: new Map() });
+            node.children.set(name, { name, path: fact.hierarchyPath.slice(0, index + 1), netSales: 0, totalCost: 0, children: new Map(), products: new Map() });
           }
           node = node.children.get(name);
           node.netSales += fact.net;
+          node.totalCost += fact.cost;
           addProductToNode(node, fact);
         });
       });
@@ -2977,6 +3180,10 @@ function createApp(options = {}) {
         name: node.name,
         path: node.path,
         netSales: node.netSales,
+        totalCost: node.totalCost,
+        contributionMarginPercent: node.netSales
+          ? (node.netSales - node.totalCost) / node.netSales * 100
+          : null,
         children: [...node.children.values()]
           .sort((left, right) => right.netSales - left.netSales)
           .map(serializeHierarchyNode),

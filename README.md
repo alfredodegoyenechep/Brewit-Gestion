@@ -109,6 +109,16 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Productos reads every product from the latest applicable shared catalog and organizes it by the complete product hierarchy path.
 - The view can aggregate all active cafeterias or filter a single cafeteria, and includes a code/name search without hiding products that have no sales.
 - Each product shows gross base selling price, net selling price calculated as `selling price / 1.19`, catalog cost, margin calculated as `(net selling price - cost) / net selling price`, average weekly units over the latest rolling 56 days divided by eight (always displayed with one decimal), units sold in the latest rolling seven days including today, and the percentage change of those seven days against the eight-week weekly average.
+- Every main product-table header is sortable in ascending or descending order without losing the hierarchy grouping.
+
+## Ingredients workspace
+
+- Ingredientes combines the applicable ingredient catalog, recipes, purchase history, suppliers, and operational activity for a user-selected inclusive period (the latest 30 days by default).
+- The view supports all cafeterias together, each cafeteria, or the main warehouse; it can filter by supplier, search by ingredient code/name, and isolate ingredients whose purchase cost changed during the selected period.
+- Cafeteria usage is calculated from sold product quantities expanded through each recipe, including recipe yield. Main-warehouse usage instead reads actual `USO`, `TRL-OUT`, `MOV-OUT`, and `TRN-OUT` Kardex movements because the warehouse has no direct sales.
+- Each ingredient shows its catalog cost, most recent comparable purchase cost as of the selected closing date, first-to-last cost change within the period, consumed quantity, valued consumption, supplier, and every product recipe that uses it. Recipe details show stated quantity, unit, yield, and yield-adjusted effective quantity.
+- A top-ten ranking orders ingredients by valued consumption for the selected scope and period. All main-table columns support ascending/descending sorting.
+- Proyección de Compras likewise supports ascending/descending sorting from every table header while preserving editable management, supplier, and min/max settings.
 - Inactive catalog products remain visible and are labeled as inactive.
 - Product views can be saved as dated snapshots for the selected cafeteria scope. One snapshot is retained per date and scope, with explicit confirmation before replacement.
 - A saved snapshot can be compared with the current catalog to report added or removed products and changes in gross/net selling price, cost, and net margin.

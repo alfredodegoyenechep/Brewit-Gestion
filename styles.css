@@ -1384,6 +1384,159 @@ body {
   gap: 22px;
 }
 
+.ingredients-workspace-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 22px;
+}
+
+.ingredients-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr)) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.ingredients-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ingredients-controls select,
+.ingredients-controls input[type='date'],
+.ingredients-controls input[type='search'] {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+}
+
+.ingredients-controls .ingredients-change-filter {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.ingredient-ranking-panel {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: #fffdf9;
+}
+
+.ingredient-ranking-panel h3 { margin: 4px 0 0; }
+
+.ingredient-ranking-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin-top: 12px;
+}
+
+.ingredient-ranking-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 12px;
+  font-size: 11px;
+}
+
+.ingredient-ranking-row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingredient-ranking-track {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--coffee-soft);
+}
+
+.ingredient-ranking-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--clay), var(--coffee));
+}
+
+.ingredients-table-wrap {
+  width: 100%;
+  margin-top: 16px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+}
+
+.ingredients-table {
+  width: 100%;
+  min-width: 1250px;
+  border-collapse: collapse;
+  background: white;
+  font-size: 11px;
+}
+
+.ingredients-table th,
+.ingredients-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ingredients-table th {
+  color: var(--text-soft);
+  background: #fcfaf6;
+  font-size: 10px;
+}
+
+.ingredients-table th:nth-child(-n+4),
+.ingredients-table td:nth-child(-n+4) { text-align: left; }
+
+.ingredient-detail-button {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--coffee);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ingredient-detail-button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.ingredients-table td.ingredient-cost-up { color: var(--red); font-weight: 900; }
+.ingredients-table td.ingredient-cost-down { color: var(--green); font-weight: 900; }
+
+.ingredient-products-detail > td {
+  padding: 12px 24px;
+  background: #fbf6ef;
+}
+
+.ingredient-products-detail table { width: 100%; border-collapse: collapse; }
+.ingredient-products-detail th,
+.ingredient-products-detail td { background: transparent; text-align: left; }
+
+.ingredients-empty {
+  padding: 24px !important;
+  color: var(--text-muted);
+  text-align: center !important;
+}
+
 .purchase-projection-head {
   display: flex;
   align-items: flex-start;
@@ -1465,6 +1618,16 @@ body {
   color: var(--text-soft);
   background: #fcfaf6;
   font-size: 10px;
+}
+
+.sortable-table-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable-table-header:hover {
+  color: var(--coffee);
+  background: var(--coffee-soft-2);
 }
 
 .purchase-projection-table th:nth-child(-n+5),
@@ -2716,6 +2879,10 @@ button:disabled {
 .product-margin.negative { color: var(--red); }
 .product-margin.neutral { color: var(--text-muted); }
 
+.sales-share-head strong.positive { color: var(--green); }
+.sales-share-head strong.negative { color: var(--red); }
+.sales-share-head strong.neutral { color: var(--text-muted); }
+
 .sales-product-financials {
   display: inline-flex;
   flex-wrap: wrap;
@@ -2763,7 +2930,12 @@ button:disabled {
 
 .mercadopago-panel {
   margin-top: 4px;
+  font-size: 13px;
 }
+
+.mercadopago-panel .panel-eyebrow { font-size: 11px; }
+.mercadopago-panel .sales-dashboard-table { font-size: 13px; }
+.mercadopago-panel .sales-dashboard-table thead th { font-size: 11px; }
 
 .mercadopago-head {
   align-items: flex-start;
@@ -2773,7 +2945,7 @@ button:disabled {
   max-width: 760px;
   margin: 8px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mercadopago-customer-summary {
@@ -2792,11 +2964,11 @@ button:disabled {
 }
 
 .mercadopago-customer-summary strong {
-  font-size: 20px;
+  font-size: 21px;
 }
 
 .mercadopago-customer-summary span {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -2830,12 +3002,12 @@ button:disabled {
 }
 
 .frequency-card strong {
-  font-size: 24px;
+  font-size: 25px;
 }
 
 .frequency-card span {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -2848,13 +3020,13 @@ button:disabled {
 .mercadopago-history-heading h4,
 .mercadopago-history-card h4 {
   margin: 5px 0 0;
-  font-size: 18px;
+  font-size: 19px;
 }
 
 .mercadopago-history-heading p {
   margin: 7px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .mercadopago-history-grid {
@@ -2873,7 +3045,7 @@ button:disabled {
 
 .recurring-history-table {
   min-width: 1040px;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .recurring-history-table th,
@@ -3016,6 +3188,7 @@ button:disabled {
   .mercadopago-head,
   .inventory-workspace-head,
   .products-workspace-head,
+  .ingredients-workspace-head,
   .purchases-workspace-head,
   .purchase-projection-head {
     align-items: stretch;
@@ -3023,6 +3196,14 @@ button:disabled {
   }
 
   .products-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .ingredients-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ingredient-ranking-list {
     grid-template-columns: 1fr;
   }
 

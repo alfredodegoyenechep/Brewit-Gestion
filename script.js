@@ -26,12 +26,17 @@ let currentWeekFiles = {};
 let pendingTrashLocation = null;
 let inventorySourceState = null;
 let productsViewState = null;
+let ingredientsViewState = null;
 let purchasesViewState = null;
 let purchaseProjectionState = null;
 let salesDashboardState = null;
 let salesHierarchyPath = [];
 let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
+let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
+let ingredientsSort = { key: 'usageCost', direction: 'desc' };
+let purchaseProjectionSort = { key: 'supplier', direction: 'asc' };
+const expandedIngredients = new Set();
 
 function setView(view) {
   document.querySelectorAll('.main-content > section').forEach(section => {
@@ -76,6 +81,13 @@ function setView(view) {
     products.hidden = false;
     products.style.display = '';
     loadProductsView();
+    return;
+  }
+  if (view === 'ingredients') {
+    const ingredients = document.getElementById('ingredients-workspace');
+    ingredients.hidden = false;
+    ingredients.style.display = '';
+    loadIngredientsView();
     return;
   }
   if (view === 'purchases') {
@@ -582,7 +594,9 @@ function renderSalesInsights() {
       const name = document.createElement('span');
       name.textContent = item.name;
       const value = document.createElement('strong');
-      value.textContent = `${percent.toFixed(1)}% · ${formatClp(item.netSales)}  ›`;
+      const margin = item.contributionMarginPercent;
+      value.textContent = `${percent.toFixed(1)}% part. · Margen ${margin === null ? '—' : `${margin.toFixed(1)}%`} · ${formatClp(item.netSales)}  ›`;
+      value.classList.add(margin === null ? 'neutral' : margin < 0 ? 'negative' : 'positive');
       header.append(name, value);
       const track = document.createElement('div');
       track.className = 'sales-share-track';
@@ -759,6 +773,18 @@ function refreshProductsLocationFilter() {
   select.value = options.some(option => option.value === previous) ? previous : 'all';
 }
 
+function refreshIngredientsLocationFilter() {
+  const select = document.getElementById('ingredients-location-filter');
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las cafeterías', 'all')];
+  for (const location of Object.values(locationRegistry)
+    .sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name, 'es') : left.type === 'store' ? -1 : 1))) {
+    options.push(new Option(location.name, location.id));
+  }
+  select.replaceChildren(...options);
+  select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
 function refreshPurchasesLocationFilter() {
   const select = document.getElementById('purchases-location-filter');
   const previous = select.value || 'all';
@@ -795,6 +821,38 @@ function formatWeeklyAverageUnits(value) {
 function formatPurchaseConversion(value) {
   if (value === null || value === undefined) return '—';
   return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(Number(value));
+}
+
+function valueAtPath(item, key) {
+  return key.split('.').reduce((value, part) => value?.[part], item);
+}
+
+function sortRows(items, sort) {
+  const multiplier = sort.direction === 'asc' ? 1 : -1;
+  return [...items].sort((left, right) => {
+    const leftValue = valueAtPath(left, sort.key);
+    const rightValue = valueAtPath(right, sort.key);
+    if (leftValue === null || leftValue === undefined) return rightValue === null || rightValue === undefined ? 0 : 1;
+    if (rightValue === null || rightValue === undefined) return -1;
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') return (leftValue - rightValue) * multiplier;
+    if (typeof leftValue === 'boolean' && typeof rightValue === 'boolean') return (Number(leftValue) - Number(rightValue)) * multiplier;
+    return String(leftValue).localeCompare(String(rightValue), 'es', { numeric: true, sensitivity: 'base' }) * multiplier;
+  });
+}
+
+function applySort(sortState, key, defaultDirection = 'asc') {
+  if (sortState.key === key) sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+  else {
+    sortState.key = key;
+    sortState.direction = defaultDirection;
+  }
+}
+
+function markSortableHeader(cell, key, sortState, label) {
+  cell.dataset.sortKey = key;
+  cell.classList.add('sortable-table-header');
+  cell.textContent = `${label}${sortState.key === key ? (sortState.direction === 'asc' ? ' ▲' : ' ▼') : ''}`;
+  cell.setAttribute('aria-sort', sortState.key === key ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none');
 }
 
 function renderProductsView() {
@@ -837,17 +895,21 @@ function renderProductsView() {
     wrap.className = 'products-table-wrap';
     const table = document.createElement('table');
     table.className = 'products-table';
-    const headers = ['Código', 'Producto', 'Precio venta', 'Precio venta neto', 'Costo', 'Margen', 'Prom. semanal 8 sem.', 'Últimos 7 días', 'Cambio vs. prom. 8 sem.'];
+    const headers = [
+      ['code', 'Código'], ['name', 'Producto'], ['price', 'Precio venta'], ['netPrice', 'Precio venta neto'],
+      ['cost', 'Costo'], ['marginPercent', 'Margen'], ['averageWeeklyUnits8', 'Prom. semanal 8 sem.'],
+      ['unitsLast7Days', 'Últimos 7 días'], ['unitsChangePercent', 'Cambio vs. prom. 8 sem.']
+    ];
     const headRow = document.createElement('tr');
-    for (const label of headers) {
+    for (const [key, label] of headers) {
       const cell = document.createElement('th');
-      cell.textContent = label;
+      markSortableHeader(cell, key, productsSort, label);
       headRow.appendChild(cell);
     }
     const head = document.createElement('thead');
     head.appendChild(headRow);
     const body = document.createElement('tbody');
-    for (const product of group.products) {
+    for (const product of sortRows(group.products, productsSort)) {
       const row = document.createElement('tr');
       if (!product.active) row.className = 'inactive-product';
       const values = [
@@ -889,6 +951,154 @@ function renderProductsView() {
     empty.className = 'form-status muted';
     empty.textContent = 'No hay productos que coincidan con la búsqueda.';
     container.appendChild(empty);
+  }
+}
+
+function renderIngredientsView() {
+  const body = document.getElementById('ingredients-table-body');
+  const summary = document.getElementById('ingredients-summary');
+  const ranking = document.getElementById('ingredients-cost-ranking');
+  if (!ingredientsViewState) {
+    body.replaceChildren();
+    summary.replaceChildren();
+    ranking.replaceChildren();
+    return;
+  }
+  const supplier = document.getElementById('ingredients-supplier-filter').value || 'all';
+  const query = document.getElementById('ingredients-search').value.trim().toLocaleLowerCase('es');
+  const onlyChanged = document.getElementById('ingredients-only-changed').checked;
+  const items = ingredientsViewState.items.filter(item =>
+    (supplier === 'all' || item.supplierKey === supplier)
+    && (!query || `${item.code} ${item.name}`.toLocaleLowerCase('es').includes(query))
+    && (!onlyChanged || (item.costChangePercent !== null && Math.abs(item.costChangePercent) >= 0.01)));
+  summary.replaceChildren(...[
+    `${items.length} de ${ingredientsViewState.summary.ingredientCount} ingredientes`,
+    `${items.filter(item => item.usageQuantity > 0).length} con consumo`,
+    `Costo consumido: ${formatClp(items.reduce((sum, item) => sum + item.usageCost, 0))}`,
+    `${items.filter(item => item.costChangePercent !== null && Math.abs(item.costChangePercent) >= 0.01).length} con variación de costo`
+  ].map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+  const ranked = [...items].filter(item => item.usageCost > 0).sort((left, right) => right.usageCost - left.usageCost).slice(0, 10);
+  const rankingTotal = items.reduce((sum, item) => sum + item.usageCost, 0);
+  ranking.replaceChildren(...ranked.map((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'ingredient-ranking-row';
+    const label = document.createElement('span');
+    label.textContent = `${index + 1}. ${item.name}`;
+    const value = document.createElement('strong');
+    value.textContent = `${rankingTotal ? (item.usageCost / rankingTotal * 100).toFixed(1) : '0,0'}% · ${formatClp(item.usageCost)}`;
+    const track = document.createElement('span');
+    track.className = 'ingredient-ranking-track';
+    const fill = document.createElement('span');
+    fill.style.width = `${rankingTotal ? Math.min(100, item.usageCost / rankingTotal * 100) : 0}%`;
+    track.appendChild(fill);
+    row.append(label, value, track);
+    return row;
+  }));
+  if (!ranked.length) {
+    const empty = document.createElement('p');
+    empty.className = 'form-status muted';
+    empty.textContent = 'No hay consumo valorizado para los filtros y período seleccionados.';
+    ranking.appendChild(empty);
+  }
+  document.querySelectorAll('.ingredients-table thead th[data-sort-key]').forEach(cell => {
+    markSortableHeader(cell, cell.dataset.sortKey, ingredientsSort, cell.textContent.replace(/ [▲▼]$/, ''));
+  });
+  const rows = [];
+  for (const item of sortRows(items, ingredientsSort)) {
+    const row = document.createElement('tr');
+    row.dataset.code = item.code;
+    const productCount = item.products.length;
+    const values = [
+      item.code, item.name, item.supplier, item.unit || '—', formatClp(item.unitCost),
+      item.latestPurchaseCost === null ? '—' : formatClp(item.latestPurchaseCost),
+      item.costChangePercent === null ? '—' : `${item.costChangePercent >= 0 ? '+' : ''}${item.costChangePercent.toFixed(1)}%`,
+      `${formatProductUnits(item.usageQuantity)} ${item.usageUnit || item.unit}`, formatClp(item.usageCost)
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      if (index === 6 && item.costChangePercent !== null) cell.className = item.costChangePercent > 0 ? 'ingredient-cost-up' : item.costChangePercent < 0 ? 'ingredient-cost-down' : '';
+      row.appendChild(cell);
+    });
+    const detailCell = document.createElement('td');
+    const detailButton = document.createElement('button');
+    detailButton.type = 'button';
+    detailButton.className = 'ingredient-detail-button';
+    detailButton.dataset.ingredientCode = item.code;
+    detailButton.disabled = productCount === 0;
+    detailButton.textContent = productCount ? `${productCount} producto(s) ${expandedIngredients.has(item.code) ? '▲' : '▼'}` : 'Sin recetas';
+    detailCell.appendChild(detailButton);
+    row.appendChild(detailCell);
+    rows.push(row);
+    if (expandedIngredients.has(item.code)) {
+      const detailRow = document.createElement('tr');
+      detailRow.className = 'ingredient-products-detail';
+      const detail = document.createElement('td');
+      detail.colSpan = 10;
+      const table = document.createElement('table');
+      table.innerHTML = '<thead><tr><th>Producto</th><th>Código</th><th>Cantidad receta</th><th>Rendimiento</th><th>Cantidad efectiva</th></tr></thead>';
+      const detailBody = document.createElement('tbody');
+      item.products.forEach(product => {
+        const productRow = document.createElement('tr');
+        [product.name, product.code, `${formatProductUnits(product.recipeQuantity)} ${product.recipeUnit}`, `${product.yieldRate.toFixed(1)}%`, `${formatProductUnits(product.effectiveQuantity)} ${product.effectiveUnit}`]
+          .forEach(value => {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            productRow.appendChild(cell);
+          });
+        detailBody.appendChild(productRow);
+      });
+      table.appendChild(detailBody);
+      detail.appendChild(table);
+      detailRow.appendChild(detail);
+      rows.push(detailRow);
+    }
+  }
+  body.replaceChildren(...rows);
+  if (!items.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 10;
+    cell.className = 'ingredients-empty';
+    cell.textContent = 'No hay ingredientes para los filtros seleccionados.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+}
+
+async function loadIngredientsView() {
+  const status = document.getElementById('ingredients-status');
+  const button = document.getElementById('refresh-ingredients');
+  const location = document.getElementById('ingredients-location-filter').value || 'all';
+  const dateFrom = document.getElementById('ingredients-date-from').value;
+  const dateTo = document.getElementById('ingredients-date-to').value;
+  const params = new URLSearchParams({ location });
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  button.disabled = true;
+  setStatus(status, 'Calculando uso, costos, proveedores y recetas…');
+  try {
+    const data = await apiRequest(`/api/ingredients?${params}`);
+    ingredientsViewState = data;
+    document.getElementById('ingredients-date-from').value = data.period.from;
+    document.getElementById('ingredients-date-to').value = data.period.to;
+    const supplierSelect = document.getElementById('ingredients-supplier-filter');
+    const previous = supplierSelect.value || 'all';
+    supplierSelect.replaceChildren(new Option('Todos los proveedores', 'all'), ...data.suppliers.map(item => new Option(item.name, item.key)));
+    supplierSelect.value = data.suppliers.some(item => item.key === previous) ? previous : 'all';
+    renderIngredientsView();
+    setStatus(status, `Período ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} para ${data.scope.label}.`, 'success');
+  } catch (error) {
+    ingredientsViewState = null;
+    renderIngredientsView();
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1183,10 +1393,10 @@ function filteredPurchaseProjectionItems() {
   const supplier = document.getElementById('projection-supplier-filter').value || 'all';
   const onlyRequired = document.getElementById('projection-only-required').checked;
   const onlyManaged = document.getElementById('projection-only-managed').checked;
-  return purchaseProjectionState.items.filter(item =>
+  return sortRows(purchaseProjectionState.items.filter(item =>
     (supplier === 'all' || item.supplierKey === supplier)
     && (!onlyRequired || item.needsPurchase)
-    && (!onlyManaged || item.managed));
+    && (!onlyManaged || item.managed)), purchaseProjectionSort);
 }
 
 function updatePurchaseOrderButton() {
@@ -1209,6 +1419,9 @@ function renderPurchaseProjection() {
     return;
   }
   const data = purchaseProjectionState;
+  document.querySelectorAll('.purchase-projection-table thead th[data-sort-key]').forEach(cell => {
+    markSortableHeader(cell, cell.dataset.sortKey, purchaseProjectionSort, cell.textContent.replace(/ [▲▼]$/, ''));
+  });
   const visibleItems = filteredPurchaseProjectionItems();
   const managedItems = data.items.filter(item => item.managed);
   const managedPurchaseItems = managedItems.filter(item => item.needsPurchase);
@@ -2302,6 +2515,7 @@ async function refreshLocationConfiguration() {
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
     refreshProductsLocationFilter();
+    refreshIngredientsLocationFilter();
     refreshPurchasesLocationFilter();
     refreshProjectionLocationFilter();
     refreshInventoryLocationFilter();
@@ -2906,6 +3120,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('products-search').addEventListener('input', renderProductsView);
   document.getElementById('refresh-products').addEventListener('click', loadProductsView);
+  document.getElementById('products-hierarchy-list').addEventListener('click', event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header) return;
+    applySort(productsSort, header.dataset.sortKey, ['price', 'netPrice', 'cost', 'marginPercent', 'averageWeeklyUnits8', 'unitsLast7Days', 'unitsChangePercent'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+    renderProductsView();
+  });
+  document.getElementById('ingredients-location-filter').addEventListener('change', () => {
+    document.getElementById('ingredients-supplier-filter').value = 'all';
+    loadIngredientsView();
+  });
+  document.getElementById('ingredients-date-from').addEventListener('change', loadIngredientsView);
+  document.getElementById('ingredients-date-to').addEventListener('change', loadIngredientsView);
+  document.getElementById('ingredients-supplier-filter').addEventListener('change', renderIngredientsView);
+  document.getElementById('ingredients-search').addEventListener('input', renderIngredientsView);
+  document.getElementById('ingredients-only-changed').addEventListener('change', renderIngredientsView);
+  document.getElementById('refresh-ingredients').addEventListener('click', loadIngredientsView);
+  document.querySelector('.ingredients-table thead').addEventListener('click', event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header) return;
+    applySort(ingredientsSort, header.dataset.sortKey, ['unitCost', 'latestPurchaseCost', 'costChangePercent', 'usageQuantity', 'usageCost', 'products.length'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+    renderIngredientsView();
+  });
+  document.getElementById('ingredients-table-body').addEventListener('click', event => {
+    const button = event.target.closest('.ingredient-detail-button');
+    if (!button) return;
+    if (expandedIngredients.has(button.dataset.ingredientCode)) expandedIngredients.delete(button.dataset.ingredientCode);
+    else expandedIngredients.add(button.dataset.ingredientCode);
+    renderIngredientsView();
+  });
   document.getElementById('purchases-location-filter').addEventListener('change', () => {
     document.getElementById('purchases-supplier-filter').value = 'all';
     document.getElementById('purchases-product-filter').value = '';
@@ -2928,6 +3171,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('projection-only-required').addEventListener('change', renderPurchaseProjection);
   document.getElementById('projection-only-managed').addEventListener('change', renderPurchaseProjection);
   document.getElementById('refresh-purchase-projection').addEventListener('click', loadPurchaseProjection);
+  document.querySelector('.purchase-projection-table thead').addEventListener('click', event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header) return;
+    applySort(purchaseProjectionSort, header.dataset.sortKey,
+      ['managed', 'currentInventory', 'consumption30', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+    renderPurchaseProjection();
+  });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
   document.getElementById('print-purchase-order').addEventListener('click', printPurchaseOrder);
   document.getElementById('purchase-projection-body').addEventListener('input', event => {
