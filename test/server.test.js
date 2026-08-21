@@ -187,22 +187,26 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(report.month.netSales), 1900);
   assert.equal(report.statistics.months.length, 14);
   assert.deepEqual(report.statistics.months[0], {
-    key: '2026-08', from: '2026-08-01', to: '2026-08-13', netSales: 1900
+    key: '2026-08', from: '2026-08-01', to: '2026-08-13', netSales: 1900, variationPercent: 280
   });
   assert.equal(report.statistics.weeks.length, 14);
   assert.deepEqual(report.statistics.weeks[0], {
-    from: '2026-08-10', to: '2026-08-13', netSales: 800
+    from: '2026-08-10', to: '2026-08-13', netSales: 800, variationPercent: 700
   });
   assert.equal(report.statistics.days.length, 14);
   assert.deepEqual(report.statistics.days.slice(0, 2), [
-    { date: '2026-08-13', netSales: 200 },
-    { date: '2026-08-12', netSales: 300 }
+    { date: '2026-08-13', netSales: 200, variationPercent: 100 },
+    { date: '2026-08-12', netSales: 300, variationPercent: 100 }
   ]);
   assert.equal(report.statistics.equivalentDays.length, 14);
   assert.deepEqual(report.statistics.equivalentDays.slice(0, 2), [
-    { date: '2026-08-13', netSales: 200 },
-    { date: '2026-08-06', netSales: 100 }
+    { date: '2026-08-13', netSales: 200, variationPercent: 100 },
+    { date: '2026-08-06', netSales: 100, variationPercent: 0 }
   ]);
+  assert.equal(report.statistics.months.at(-1).variationPercent, null);
+  assert.equal(report.statistics.weeks.at(-1).variationPercent, null);
+  assert.equal(report.statistics.days.at(-1).variationPercent, null);
+  assert.equal(report.statistics.equivalentDays.at(-1).variationPercent, null);
 
   const includingToday = await fetch(`${baseUrl}/api/reports/weekly-sales?includeToday=true`).then(response => response.json());
   assert.equal(includingToday.includeToday, true);
@@ -215,7 +219,9 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(includingToday.month.netSales), 2300);
   assert.equal(Math.round(includingToday.statistics.months[0].netSales), 2300);
   assert.equal(Math.round(includingToday.statistics.weeks[0].netSales), 1200);
-  assert.deepEqual(includingToday.statistics.days[0], { date: '2026-08-14', netSales: 400 });
+  assert.deepEqual(includingToday.statistics.days[0], {
+    date: '2026-08-14', netSales: 400, variationPercent: 100
+  });
 });
 
 test('does not compare a missing previous sales day as if it were a zero-sale day', async t => {
@@ -442,6 +448,103 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(warehouse.scope.type, 'warehouse');
   assert.equal(warehouse.items[0].usageQuantity, 3);
   assert.equal(warehouse.items[0].usageCost, 12);
+});
+
+test('reports product sales by selected recipe ingredients and extras hierarchies without duplicating totals', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'st', 'je', 'ce'],
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Extras *', 'Costo'],
+    ['P1', 'Bebida Caliente', 1, 'BA.001', 500],
+    ['P2', 'Bebida Fría', 1, 'BA.002', 400]
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'st', 'ji', 'ub', 'ce'],
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Ingredientes *', 'Medida Base', 'Costo'],
+    ['I1', 'Vaso 12 oz', 1, 'IC.100', 'UN', 100],
+    ['I2', 'Matcha', 1, 'IC.010', 'kg', 10000]
+  ]), 'Ingr');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'st', 'je', 'ub', 'ce'],
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Extras *', 'Unidad Base', 'Costo'],
+    ['SUB005', 'Blend interno', 1, 'BA.999', 'kg', 20000],
+    ['EX001', 'Extra no usado en recetas', 1, 'BA.020', 'UN', 100]
+  ]), 'Extr');
+  const masters = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo.xlsx'
+    }, {
+      field: 'master-recipes',
+      contents: [
+        'Id Producto\tNombre Producto*\tId Ingrediente\tNombre Ingrediente*\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento',
+        'P1\tBebida Caliente\tI1\tVaso 12 oz\t0,5\tUN\t80',
+        'P1\tBebida Caliente\tSUB005\tBlend interno\t0,2\tkg\t80',
+        'P2\tBebida Fría\tI2\tMatcha\t0,1\tkg\t100'
+      ].join('\n'), filename: 'recetas.txt'
+    }, {
+      field: 'ingredient-hierarchy', contents: [
+        'ID Jerarquia\tID Nodo **\tNombre Jerarquía *\tID nodo padre\tOrden',
+        'IC.\t0\tTodos los ingredientes\t\t0',
+        'IC.010\t10\tCafé y Matcha\tIC.\t1',
+        'IC.100\t100\tPackaging\tIC.\t2'
+      ].join('\n'), filename: 'ingredientes.txt'
+    }, {
+      field: 'extras-hierarchy', contents: [
+        'ID Jerarquia\tID Nodo **\tNombre Jerarquía Producto *\tID nodo padre\tOrden',
+        'BA.\t0\tTodas las preparaciones\t\t0',
+        'BA.001\t1\tBarra Caliente\tBA.\t1',
+        'BA.002\t2\tBarra Fría\tBA.\t2',
+        'BA.999\t999\tElaborados\tBA.\t3'
+      ].join('\n'), filename: 'extras.txt'
+    }], {
+      'master-catalog-from': '2026-08-01',
+      'master-recipes-from': '2026-08-01',
+      'ingredient-hierarchy-from': '2026-08-01',
+      'extras-hierarchy-from': '2026-08-01'
+    })
+  });
+  assert.equal(masters.status, 200, await masters.text());
+  const sales = [
+    ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'Costo'],
+    ['o1', '2026-08-10', 2380, 0, 'P1', 'Bebida Caliente', 4, 2380, 0, 800],
+    ['o2', '2026-08-10', 1190, 0, 'P2', 'Bebida Fría', 2, 1190, 0, 300]
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'sales', contents: sales, filename: 'ventas.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection, 'keep', { from: '2026-08-10', to: '2026-08-10' })).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/sales-by-ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15&selections=ingredient:I1,ingredient:SUB005,extra:BA.001`);
+  assert.equal(response.status, 200);
+  const report = await response.json();
+  assert.equal(report.options.ingredients.find(item => item.code === 'I1').hierarchyPath[0], 'Packaging');
+  assert.equal(report.options.extras.find(item => item.id === 'BA.001').name, 'Barra Caliente');
+  const subOption = report.options.ingredients.find(item => item.code === 'SUB005');
+  assert.equal(subOption.source, 'recipe-extra');
+  assert.deepEqual(subOption.hierarchyPath, ['Extras con receta', 'Elaborados']);
+  assert.equal(report.options.ingredients.some(item => item.code === 'EX001'), false);
+  assert.equal(report.groups.length, 3);
+  const ingredient = report.groups.find(group => group.key === 'ingredient:I1');
+  assert.equal(ingredient.products[0].code, 'P1');
+  assert.equal(ingredient.totals.productUnits, 4);
+  assert.equal(ingredient.totals.ingredientQuantity, 2.5);
+  assert.equal(Math.round(ingredient.totals.netSales), 2000);
+  assert.equal(ingredient.totals.totalCost, 800);
+  assert.equal(Math.round(ingredient.totals.contributionMarginPercent), 60);
+  assert.equal(ingredient.products[0].totalCost, 800);
+  assert.equal(Math.round(ingredient.shareOfPeriodSales * 10) / 10, 66.7);
+  const sub = report.groups.find(group => group.key === 'ingredient:SUB005');
+  assert.equal(sub.source, 'recipe-extra');
+  assert.equal(sub.totals.ingredientQuantity, 1);
+  assert.equal(sub.products[0].code, 'P1');
+  assert.equal(report.groups.find(group => group.key === 'extra:BA.001').products[0].code, 'P1');
+  assert.equal(report.totals.uniqueProducts, 1);
+  assert.equal(report.totals.productUnits, 4);
+  assert.equal(Math.round(report.totals.netSales), 2000);
+  assert.equal(report.totals.totalCost, 800);
+  assert.equal(Math.round(report.totals.contributionMarginPercent), 60);
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {

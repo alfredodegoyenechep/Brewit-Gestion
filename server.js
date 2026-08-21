@@ -1048,6 +1048,86 @@ function parseIngredientsCatalog(filePath) {
   return ingredients;
 }
 
+function parseSalesAnalysisCatalog(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  const products = new Map();
+  const ingredients = new Map();
+  const recipeExtras = new Map();
+  for (const sheetName of workbook.SheetNames) {
+    const isProductSheet = /^prod|producto/i.test(sheetName);
+    const isIngredientSheet = /^ingr|ingred/i.test(sheetName);
+    const isExtraSheet = /^extr|extra/i.test(sheetName);
+    if (!isProductSheet && !isIngredientSheet && !isExtraSheet) continue;
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true, blankrows: false });
+    const headerIndex = rows.slice(0, 5).findIndex(row => findHeaderColumn(row, ['ID Producto **', 'ID Producto']) >= 0);
+    if (headerIndex < 0) continue;
+    const headers = rows[headerIndex];
+    const codeColumn = findHeaderColumn(headers, ['ID Producto **', 'ID Producto']);
+    const nameColumn = findHeaderColumn(headers, ['Nombre Producto *', 'Nombre Producto']);
+    const activeColumn = findHeaderColumn(headers, ['Activo']);
+    const unitColumn = findHeaderColumn(headers, ['Medida Base', 'Unidad Base', 'Unidad de Reportes']);
+    const ingredientHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Ingredientes *', 'Jerarquía de Ingredientes']);
+    const extrasHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Extras *', 'Jerarquía de Extras']);
+    for (const row of rows.slice(headerIndex + 1)) {
+      const code = String(row[codeColumn] ?? '').trim();
+      if (!code || (activeColumn >= 0 && !Boolean(numericValue(row[activeColumn])))) continue;
+      const item = {
+        code,
+        name: repairMojibake(row[nameColumn]) || code,
+        unit: String(row[unitColumn] ?? '').trim(),
+        hierarchyIds: String(row[isIngredientSheet ? ingredientHierarchyColumn : extrasHierarchyColumn] ?? '')
+          .split(',').map(value => value.trim()).filter(Boolean)
+      };
+      if (isIngredientSheet) ingredients.set(code.toUpperCase(), item);
+      else if (isExtraSheet) recipeExtras.set(code.toUpperCase(), item);
+      else products.set(code.toUpperCase(), item);
+    }
+  }
+  return { products, ingredients, recipeExtras };
+}
+
+function parseNamedHierarchies(filePath, nameHeaders) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
+  const hierarchyMap = new Map();
+  for (const row of rows) {
+    const id = String(rowValue(row, ['ID Jerarquia', 'ID Jerarquía']) ?? '').trim();
+    if (!id) continue;
+    hierarchyMap.set(id, {
+      id,
+      name: repairMojibake(rowValue(row, nameHeaders)) || id,
+      parentId: String(rowValue(row, ['ID nodo padre']) ?? '').trim() || null,
+      order: numericValue(rowValue(row, ['Orden'])) || 0
+    });
+  }
+  const pathFor = id => {
+    const result = [];
+    const visited = new Set();
+    let current = hierarchyMap.get(id);
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.parentId) result.unshift(current.name);
+      current = current.parentId ? hierarchyMap.get(current.parentId) : null;
+    }
+    return result;
+  };
+  const descendantIds = id => new Set([...hierarchyMap.values()]
+    .filter(candidate => candidate.id === id || pathForIds(candidate.id).includes(id))
+    .map(candidate => candidate.id));
+  const pathForIds = id => {
+    const result = [];
+    const visited = new Set();
+    let current = hierarchyMap.get(id);
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      result.unshift(current.id);
+      current = current.parentId ? hierarchyMap.get(current.parentId) : null;
+    }
+    return result;
+  };
+  return { hierarchyMap, pathFor, descendantIds };
+}
+
 function parseProductHierarchies(filePath) {
   const workbook = XLSX.readFile(filePath, { cellDates: true });
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
@@ -1259,13 +1339,23 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
   const sumRange = (from, to) => historicalDates
     .filter(date => date >= from && date <= to)
     .reduce((sum, date) => sum + dailySales[date].net, 0);
+  const variationPercent = (current, previous) => {
+    if (!previous) return current ? 100 : 0;
+    return ((current / previous) - 1) * 100;
+  };
+  const addSequentialVariation = rows => rows.map((item, index) => ({
+    ...item,
+    variationPercent: index === rows.length - 1
+      ? null
+      : variationPercent(item.netSales, rows[index + 1].netSales)
+  }));
 
   const monthKeyAtOffset = offset => {
     const reference = new Date(`${referenceDate.slice(0, 7)}-01T00:00:00.000Z`);
     reference.setUTCMonth(reference.getUTCMonth() + offset);
     return reference.toISOString().slice(0, 7);
   };
-  const months = Array.from({ length: 14 }, (_, index) => {
+  const months = addSequentialVariation(Array.from({ length: 14 }, (_, index) => {
     const monthKey = monthKeyAtOffset(-index);
     const from = `${monthKey}-01`;
     const nextMonth = new Date(`${from}T00:00:00.000Z`);
@@ -1273,21 +1363,27 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
     const calendarEnd = addDays(nextMonth.toISOString().slice(0, 10), -1);
     const to = calendarEnd > referenceDate ? referenceDate : calendarEnd;
     return { key: monthKey, from, to, netSales: sumRange(from, to) };
-  });
-  const weeks = Array.from({ length: 14 }, (_, index) => {
+  }));
+  const weeks = addSequentialVariation(Array.from({ length: 14 }, (_, index) => {
     const from = addDays(weekStart, -7 * index);
     const calendarEnd = addDays(from, 6);
     const to = calendarEnd > referenceDate ? referenceDate : calendarEnd;
     return { from, to, netSales: sumRange(from, to) };
-  });
+  }));
   const days = Array.from({ length: 14 }, (_, index) => {
     const date = addDays(referenceDate, -index);
-    return { date, netSales: dailySales[date]?.net || 0 };
+    const netSales = dailySales[date]?.net || 0;
+    const priorWeekSales = dailySales[addDays(date, -7)]?.net || 0;
+    return {
+      date,
+      netSales,
+      variationPercent: index === 13 ? null : variationPercent(netSales, priorWeekSales)
+    };
   });
-  const equivalentDays = Array.from({ length: 14 }, (_, index) => {
+  const equivalentDays = addSequentialVariation(Array.from({ length: 14 }, (_, index) => {
     const date = addDays(referenceDate, -7 * index);
     return { date, netSales: dailySales[date]?.net || 0 };
-  });
+  }));
 
   return {
     basis: 'gross-plus-signed-discounts-divided-by-1.19',
@@ -2716,6 +2812,215 @@ function createApp(options = {}) {
       return res.json(buildIngredientsPayload(req.query));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la vista de ingredientes.' });
+    }
+  });
+
+  function buildSalesByIngredientsPayload(query = {}) {
+    const today = projectionToday();
+    const dateTo = String(query.dateTo || today);
+    const dateFrom = String(query.dateFrom || addDays(dateTo, -29));
+    if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo) {
+      const error = new Error('Selecciona un período válido para analizar las ventas.');
+      error.status = 400;
+      throw error;
+    }
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const requestedLocation = String(query.location || 'all');
+    const selectedStore = requestedLocation === 'all' ? null : stores.find(location => location.id === requestedLocation);
+    if (requestedLocation !== 'all' && !selectedStore) {
+      const error = new Error('Selecciona una cafetería válida.');
+      error.status = 400;
+      throw error;
+    }
+    const catalogMaster = latestMasterFile('master-catalog', dateTo);
+    const recipesMaster = latestMasterFile('master-recipes', dateTo);
+    if (!catalogMaster || !recipesMaster) {
+      const error = new Error('Se requiere el maestro de productos e ingredientes y el maestro de recetas vigentes para el período.');
+      error.status = 404;
+      throw error;
+    }
+    const ingredientHierarchyMaster = latestMasterFile('ingredient-hierarchy', dateTo);
+    const extrasHierarchyMaster = latestMasterFile('extras-hierarchy', dateTo);
+    const catalog = parseSalesAnalysisCatalog(catalogMaster.filePath);
+    const recipes = parseRecipes(recipesMaster.filePath);
+    const recipesByProduct = new Map([...recipes].map(([code, lines]) => [code.toUpperCase(), lines]));
+    const ingredientHierarchies = ingredientHierarchyMaster
+      ? parseNamedHierarchies(ingredientHierarchyMaster.filePath, ['Nombre Jerarquía *', 'Nombre Jerarquia *', 'Nombre Jerarquía Producto *'])
+      : null;
+    const extrasHierarchies = extrasHierarchyMaster
+      ? parseNamedHierarchies(extrasHierarchyMaster.filePath, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Nombre Jerarquía *'])
+      : null;
+
+    const ingredientOptions = [...catalog.ingredients.values()].map(item => {
+      const hierarchyId = item.hierarchyIds[0] || 'unassigned';
+      const hierarchyPath = ingredientHierarchies?.pathFor(hierarchyId) || ['Sin jerarquía'];
+      return { key: `ingredient:${item.code}`, code: item.code, name: item.name, unit: item.unit, hierarchyId, hierarchyPath, source: 'ingredient' };
+    });
+    const recipeIngredientCodes = new Set([...recipes.values()].flat().map(line => line.ingredientId.toUpperCase()));
+    ingredientOptions.push(...[...catalog.recipeExtras.values()]
+      .filter(item => /^SUB/i.test(item.code) && recipeIngredientCodes.has(item.code.toUpperCase()))
+      .map(item => {
+        const rawHierarchyId = item.hierarchyIds[0] || 'unassigned';
+        const extraPath = extrasHierarchies?.pathFor(rawHierarchyId) || ['Sin jerarquía'];
+        return {
+          key: `ingredient:${item.code}`,
+          code: item.code,
+          name: item.name,
+          unit: item.unit,
+          hierarchyId: `recipe-extra:${rawHierarchyId}`,
+          hierarchyPath: ['Extras con receta', ...extraPath],
+          source: 'recipe-extra'
+        };
+      }));
+    ingredientOptions.sort((left, right) => left.hierarchyPath.join('/').localeCompare(right.hierarchyPath.join('/'), 'es')
+      || left.name.localeCompare(right.name, 'es'));
+    const extraOptions = extrasHierarchies
+      ? [...extrasHierarchies.hierarchyMap.values()]
+        .filter(item => item.parentId)
+        .map(item => ({ key: `extra:${item.id}`, id: item.id, name: item.name, hierarchyPath: extrasHierarchies.pathFor(item.id) }))
+        .sort((left, right) => left.hierarchyPath.join('/').localeCompare(right.hierarchyPath.join('/'), 'es'))
+      : [];
+
+    const selectedKeys = [...new Set(String(query.selections || '').split(',').map(value => value.trim()).filter(Boolean))].slice(0, 50);
+    const validOptions = new Map([...ingredientOptions, ...extraOptions].map(item => [item.key, item]));
+    const selectedOptions = selectedKeys.map(key => validOptions.get(key)).filter(Boolean);
+    const selectedStores = selectedStore ? [selectedStore] : stores;
+    const facts = [];
+    const seenRows = new Set();
+    let filesRead = 0;
+    const warnings = [];
+    for (const location of selectedStores) {
+      for (const stored of storedSalesFiles(location.id)) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+            if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const canonicalRow = Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right));
+            const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonicalRow)).digest('hex')}`;
+            if (seenRows.has(rowKey)) continue;
+            seenRows.add(rowKey);
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim();
+            const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || catalog.products.get(code.toUpperCase())?.name || code;
+            const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
+            const grossLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar', 'Precio Lista'])) || 0;
+            const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            const totalCost = numericValue(rowValue(row, ['Costo'])) || 0;
+            if (code || name) facts.push({
+              locationId: location.id,
+              code,
+              name,
+              quantity,
+              netSales: (grossLine + discount) / 1.19,
+              totalCost
+            });
+          }
+          filesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    const productsSold = new Map();
+    for (const fact of facts) {
+      const key = fact.code.toUpperCase() || normalizeHeader(fact.name);
+      const current = productsSold.get(key) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0 };
+      current.quantity += fact.quantity;
+      current.netSales += fact.netSales;
+      current.totalCost += fact.totalCost;
+      productsSold.set(key, current);
+    }
+    const matchedProductKeys = new Set();
+    const groups = selectedOptions.map(option => {
+      const isIngredient = option.key.startsWith('ingredient:');
+      const products = [];
+      let ingredientQuantity = 0;
+      let ingredientUnit = isIngredient ? canonicalConsumptionUnit(option.unit).unit || option.unit : null;
+      for (const [productKey, sold] of productsSold) {
+        if (isIngredient) {
+          const matchingLines = (recipesByProduct.get(productKey) || [])
+            .filter(line => line.ingredientId.toUpperCase() === option.code.toUpperCase());
+          if (!matchingLines.length) continue;
+          let required = 0;
+          let compatible = true;
+          for (const line of matchingLines) {
+            const yieldFactor = line.yieldRate > 0 ? line.yieldRate / 100 : 1;
+            const canonical = canonicalConsumptionUnit(line.unit);
+            const lineQuantity = line.quantity / yieldFactor * canonical.factor * sold.quantity;
+            const converted = convertQuantityUnit(lineQuantity, canonical.unit, ingredientUnit);
+            if (converted === null) compatible = false;
+            else required += converted;
+          }
+          if (!compatible) ingredientUnit = 'Varias';
+          ingredientQuantity += required;
+          products.push({ ...sold, ingredientQuantity: compatible ? required : null, ingredientUnit });
+        } else {
+          const descendants = extrasHierarchies.descendantIds(option.id);
+          const product = catalog.products.get(productKey);
+          if (!product?.hierarchyIds.some(id => descendants.has(id))) continue;
+          products.push({ ...sold, ingredientQuantity: null, ingredientUnit: null });
+        }
+        matchedProductKeys.add(productKey);
+      }
+      products.sort((left, right) => right.quantity - left.quantity || right.netSales - left.netSales);
+      const productUnits = products.reduce((sum, item) => sum + item.quantity, 0);
+      const netSales = products.reduce((sum, item) => sum + item.netSales, 0);
+      const totalCost = products.reduce((sum, item) => sum + item.totalCost, 0);
+      return {
+        ...option,
+        type: isIngredient ? 'ingredient' : 'extra',
+        products,
+        totals: {
+          productUnits,
+          ingredientQuantity: isIngredient ? ingredientQuantity : null,
+          ingredientUnit,
+          netSales,
+          totalCost,
+          contributionMarginPercent: netSales ? (netSales - totalCost) / netSales * 100 : null
+        },
+        shareOfPeriodSales: facts.reduce((sum, fact) => sum + fact.netSales, 0) ? netSales / facts.reduce((sum, fact) => sum + fact.netSales, 0) * 100 : 0
+      };
+    });
+    const uniqueProducts = [...matchedProductKeys].map(key => productsSold.get(key)).filter(Boolean);
+    const periodNetSales = facts.reduce((sum, fact) => sum + fact.netSales, 0);
+    const uniqueNetSales = uniqueProducts.reduce((sum, item) => sum + item.netSales, 0);
+    const uniqueTotalCost = uniqueProducts.reduce((sum, item) => sum + item.totalCost, 0);
+    return {
+      date: today,
+      period: { from: dateFrom, to: dateTo },
+      scope: selectedStore
+        ? { location: selectedStore.id, label: selectedStore.name }
+        : { location: 'all', label: 'Todas las cafeterías' },
+      locations: stores.map(publicLocation),
+      options: {
+        ingredients: ingredientOptions,
+        extras: extraOptions,
+        ingredientHierarchiesAvailable: Boolean(ingredientHierarchyMaster),
+        extrasHierarchiesAvailable: Boolean(extrasHierarchyMaster)
+      },
+      selections: selectedOptions.map(item => item.key),
+      groups,
+      totals: {
+        selectedGroups: groups.length,
+        uniqueProducts: uniqueProducts.length,
+        productUnits: uniqueProducts.reduce((sum, item) => sum + item.quantity, 0),
+        netSales: uniqueNetSales,
+        totalCost: uniqueTotalCost,
+        contributionMarginPercent: uniqueNetSales ? (uniqueNetSales - uniqueTotalCost) / uniqueNetSales * 100 : null,
+        periodNetSales,
+        shareOfPeriodSales: periodNetSales ? uniqueNetSales / periodNetSales * 100 : 0
+      },
+      filesRead,
+      warnings
+    };
+  }
+
+  app.get('/api/sales-by-ingredients', (req, res) => {
+    try {
+      return res.json(buildSalesByIngredientsPayload(req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el reporte de ventas por ingredientes.' });
     }
   });
 

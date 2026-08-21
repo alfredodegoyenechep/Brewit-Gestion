@@ -127,6 +127,16 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Cafeteria usage is calculated from sold product quantities expanded through each recipe, including recipe yield. Main-warehouse usage instead reads actual `USO`, `TRL-OUT`, `MOV-OUT`, and `TRN-OUT` Kardex movements because the warehouse has no direct sales.
 - Each ingredient shows its catalog cost, most recent comparable purchase cost as of the selected closing date, first-to-last cost change within the period, consumed quantity, valued consumption, supplier, and every product recipe that uses it. Recipe details show stated quantity, unit, yield, and yield-adjusted effective quantity.
 - A top-ten ranking orders ingredients by valued consumption for the selected scope and period. All main-table columns support ascending/descending sorting.
+
+### Sales by ingredients
+
+- Ventas por Ingredientes is available between Ventas and Productos. It supports all cafeterias or one cafeteria, an inclusive date range, and multiple simultaneous selections.
+- Recipe ingredients are browsed by ingredient hierarchy and can be searched by code or name. Product quantities are expanded through the applicable recipes, including yield, so packaging and ingredient requirements are reported in their normalized unit alongside product units and net sales excluding VAT.
+- Active `SUB` items stored in the Extras catalog are also available as individual recipe filters when they are referenced by at least one recipe. They appear under an `Extras con receta` hierarchy and use the same recipe quantity and yield calculation as regular ingredients.
+- Preparation classifications such as Barra Caliente and Barra Fría come from the extras hierarchy assigned to products. Every selection is rendered as an independent block, ordered by units sold, with product detail and totals.
+- The final summary counts matching products only once even when the same product belongs to several selected ingredients or classifications; each block remains independent for participation analysis.
+- Every result block can be collapsed independently. Collapsing hides only the product rows and keeps the column headings and total footer visible; its state survives report refreshes until the selection is cleared.
+- Product rows also show the total line cost and contribution margin. The sales export's `Costo` is treated as an already-extended line total; group and deduplicated overall margins are calculated from aggregate net sales and aggregate cost, rather than averaging row percentages.
 - Proyección de Compras likewise supports ascending/descending sorting from every table header while preserving editable management, supplier, and min/max settings.
 - Inactive catalog products remain visible and are labeled as inactive.
 - Product views can be saved as dated snapshots for the selected cafeteria scope. One snapshot is retained per date and scope, with explicit confirmation before replacement.
@@ -144,5 +154,6 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Weekly sales accumulate from Monday through the selected cutoff, and monthly sales accumulate from the first day of the month through that cutoff. The default cutoff is yesterday; the toggle extends both totals through today.
 - The intraday section compares today's cumulative sales against the best prior equivalent weekday, the best prior day in the current month, and the best prior historical day. Reference dates are shown in each column.
 - Four compact two-column blocks below the intraday section show the latest 14 calendar months, 14 Monday–Sunday weeks, 14 individual days, and 14 equivalent weekdays. Every series ends at the selected report cutoff and follows the cafeteria filter.
+- Each historical amount includes a one-decimal variation against the preceding period, shown in blue for zero or positive and red for negative. Daily history compares each date with the same weekday one week earlier; the oldest visible record omits the variation.
 - Intraday cutoffs are 08:59:59, 10:59:59, 12:59:59, 14:59:59, 16:59:59, 18:59:59, and 23:59:59. The first row also includes sales before 07:00, and the final row includes every sale from 19:00 through the end of the day.
 - Repeated orders found in overlapping uploads are counted once per location using the order ID.

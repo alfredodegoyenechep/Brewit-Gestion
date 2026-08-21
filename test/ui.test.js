@@ -131,7 +131,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#sales-statistics-weeks tr').count(), 14);
   assert.equal(await page.locator('#sales-statistics-days tr').count(), 14);
   assert.equal(await page.locator('#sales-statistics-equivalent-days tr').count(), 14);
-  assert.match(await page.locator('#sales-statistics-days tr').first().textContent(), /09.*ago.*2026.*\$100/i);
+  assert.equal(await page.locator('.sales-statistics-variation').count(), 52);
+  assert.match(await page.locator('#sales-statistics-days tr').first().textContent(), /09.*ago.*2026.*\+100\.0%.*\$100/i);
+  assert.equal(await page.locator('#sales-statistics-days tr').last().locator('.sales-statistics-variation').count(), 0);
   assert.equal(await page.locator('#report-include-today').isChecked(), false);
   assert.equal(await page.locator('.summary-card.highlight .report-cutoff-toggle').count(), 1);
   assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta día anterior');
@@ -188,6 +190,12 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#sales-hierarchy-back').click();
   assert.equal(await page.locator('#sales-hierarchy-title').textContent(), 'Venta por jerarquía');
   assert.equal(await page.locator('.content-layout').isVisible(), false);
+
+  await page.getByRole('link', { name: 'Ventas por Ingredientes' }).click();
+  await page.getByRole('heading', { name: 'Ventas por ingredientes' }).waitFor();
+  assert.equal(await page.locator('#sales-ingredients-location option').count(), 3);
+  assert.equal(await page.getByRole('button', { name: 'Generar reporte' }).isDisabled(), true);
+  await page.locator('#sales-ingredients-status').filter({ hasText: /maestro de productos e ingredientes/i }).waitFor();
 
   await page.getByRole('link', { name: 'Compras', exact: true }).click();
   await page.getByRole('heading', { name: 'Historial de compras e insumos' }).waitFor();

@@ -30,6 +30,7 @@ let ingredientsViewState = null;
 let purchasesViewState = null;
 let purchaseProjectionState = null;
 let salesDashboardState = null;
+let salesIngredientsState = null;
 let salesHierarchyPath = [];
 let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
@@ -41,6 +42,8 @@ let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
 let ingredientsSort = { key: 'usageCost', direction: 'desc' };
 let purchaseProjectionSort = { key: 'supplier', direction: 'asc' };
 const expandedIngredients = new Set();
+const selectedSalesAnalysis = new Set();
+const collapsedSalesAnalysisGroups = new Set();
 
 function setView(view) {
   document.querySelectorAll('.main-content > section').forEach(section => {
@@ -71,6 +74,13 @@ function setView(view) {
     sales.hidden = false;
     sales.style.display = '';
     loadSalesDashboard();
+    return;
+  }
+  if (view === 'sales-ingredients') {
+    const salesIngredients = document.getElementById('sales-ingredients-workspace');
+    salesIngredients.hidden = false;
+    salesIngredients.style.display = '';
+    loadSalesIngredientsView();
     return;
   }
   if (view === 'inventory') {
@@ -475,7 +485,18 @@ function renderSalesStatistics(statistics) {
       const label = document.createElement('td');
       label.textContent = labelFor(item);
       const amount = document.createElement('td');
-      amount.textContent = formatClp(item.netSales);
+      const amountContent = document.createElement('span');
+      amountContent.className = 'sales-statistics-value-wrap';
+      if (item.variationPercent !== null && Number.isFinite(item.variationPercent)) {
+        const variation = document.createElement('span');
+        variation.className = `sales-statistics-variation ${item.variationPercent < 0 ? 'negative' : 'positive'}`;
+        variation.textContent = `${item.variationPercent > 0 ? '+' : ''}${item.variationPercent.toFixed(1)}%`;
+        amountContent.appendChild(variation);
+      }
+      const value = document.createElement('span');
+      value.textContent = formatClp(item.netSales);
+      amountContent.appendChild(value);
+      amount.appendChild(amountContent);
       row.append(label, amount);
       return row;
     }));
@@ -875,8 +896,245 @@ async function loadSalesDashboard() {
   }
 }
 
+function salesAnalysisChip(text) {
+  const chip = document.createElement('span');
+  chip.className = 'chip neutral';
+  chip.textContent = text;
+  return chip;
+}
+
+function formatSalesAnalysisPercent(value) {
+  return Number.isFinite(value)
+    ? `${value.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+    : '—';
+}
+
+function updateSalesAnalysisSelectionCount() {
+  const count = selectedSalesAnalysis.size;
+  document.getElementById('sales-ingredients-selected-count').textContent = `${count} seleccionado${count === 1 ? '' : 's'}`;
+  document.getElementById('run-sales-ingredients').disabled = !count;
+}
+
+function renderSalesAnalysisPickers() {
+  if (!salesIngredientsState) return;
+  const ingredients = salesIngredientsState.options.ingredients || [];
+  const hierarchySelect = document.getElementById('sales-ingredient-hierarchy');
+  const previousHierarchy = hierarchySelect.value || 'all';
+  const hierarchies = [...new Map(ingredients.map(item => [item.hierarchyId, {
+    id: item.hierarchyId,
+    label: item.hierarchyPath.join(' › ')
+  }])).values()].sort((left, right) => left.label.localeCompare(right.label, 'es'));
+  hierarchySelect.replaceChildren(new Option('Todas las jerarquías', 'all'),
+    ...hierarchies.map(item => new Option(item.label, item.id)));
+  hierarchySelect.value = hierarchies.some(item => item.id === previousHierarchy) ? previousHierarchy : 'all';
+  const ingredientQuery = document.getElementById('sales-ingredient-search').value.trim().toLocaleLowerCase('es');
+  const visibleIngredients = ingredients.filter(item =>
+    (hierarchySelect.value === 'all' || item.hierarchyId === hierarchySelect.value)
+    && (!ingredientQuery || `${item.code} ${item.name}`.toLocaleLowerCase('es').includes(ingredientQuery)));
+  const renderOption = (item, detail) => {
+    const label = document.createElement('label');
+    label.className = 'sales-analysis-option';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset.selectionKey = item.key;
+    input.checked = selectedSalesAnalysis.has(item.key);
+    const text = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = item.name;
+    const context = document.createElement('small');
+    context.textContent = detail;
+    text.append(name, context);
+    label.append(input, text);
+    return label;
+  };
+  const ingredientContainer = document.getElementById('sales-ingredient-options');
+  ingredientContainer.replaceChildren(...visibleIngredients.map(item => renderOption(item,
+    `${item.source === 'recipe-extra' ? 'Extra con receta · ' : ''}${item.code} · ${item.unit || 'sin unidad'}`)));
+  if (!visibleIngredients.length) ingredientContainer.textContent = 'No hay ingredientes para este filtro.';
+
+  const extraQuery = document.getElementById('sales-extra-search').value.trim().toLocaleLowerCase('es');
+  const extras = (salesIngredientsState.options.extras || []).filter(item =>
+    !extraQuery || item.hierarchyPath.join(' ').toLocaleLowerCase('es').includes(extraQuery));
+  const extraContainer = document.getElementById('sales-extra-options');
+  extraContainer.replaceChildren(...extras.map(item => renderOption(item, item.hierarchyPath.slice(0, -1).join(' › ') || 'Jerarquía de extras')));
+  if (!extras.length) extraContainer.textContent = salesIngredientsState.options.extrasHierarchiesAvailable
+    ? 'No hay clasificaciones para este filtro.'
+    : 'No hay un maestro de jerarquía de extras vigente.';
+  updateSalesAnalysisSelectionCount();
+}
+
+function renderSalesIngredientsReport() {
+  const report = document.getElementById('sales-ingredients-report');
+  const summary = document.getElementById('sales-ingredients-summary');
+  if (!salesIngredientsState) {
+    report.replaceChildren();
+    summary.replaceChildren();
+    return;
+  }
+  const { groups, totals } = salesIngredientsState;
+  summary.replaceChildren(
+    salesAnalysisChip(`${totals.selectedGroups} criterio(s)`),
+    salesAnalysisChip(`${totals.uniqueProducts} producto(s) sin duplicar`),
+    salesAnalysisChip(`${formatProductUnits(totals.productUnits)} unidades vendidas`),
+    salesAnalysisChip(`${formatClp(totals.netSales)} venta neta asociada`),
+    salesAnalysisChip(`${formatClp(totals.totalCost)} costo total`),
+    salesAnalysisChip(`${formatSalesAnalysisPercent(totals.contributionMarginPercent)} margen`),
+    salesAnalysisChip(`${totals.shareOfPeriodSales.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de la venta del período`)
+  );
+  if (!groups.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'Selecciona al menos un ingrediente o clasificación para generar el reporte.';
+    report.replaceChildren(empty);
+    return;
+  }
+  report.replaceChildren(...groups.map(group => {
+    const card = document.createElement('article');
+    card.className = 'sales-ingredient-result-card';
+    card.dataset.groupKey = group.key;
+    const collapsed = collapsedSalesAnalysisGroups.has(group.key);
+    card.classList.toggle('collapsed', collapsed);
+    const head = document.createElement('div');
+    head.className = 'sales-ingredient-result-head';
+    const titleWrap = document.createElement('div');
+    const eyebrow = document.createElement('div');
+    eyebrow.className = 'panel-eyebrow';
+    eyebrow.textContent = group.source === 'recipe-extra'
+      ? 'Extra con receta'
+      : group.type === 'ingredient' ? 'Ingrediente de receta' : 'Clasificación de preparación';
+    const title = document.createElement('h3');
+    title.textContent = group.name;
+    const context = document.createElement('p');
+    context.className = 'panel-description';
+    context.textContent = group.type === 'ingredient'
+      ? `${group.code} · ${group.hierarchyPath.join(' › ')}`
+      : group.hierarchyPath.join(' › ');
+    titleWrap.append(eyebrow, title, context);
+    const metrics = document.createElement('div');
+    metrics.className = 'sales-ingredient-result-metrics';
+    metrics.append(
+      salesAnalysisChip(`${formatProductUnits(group.totals.productUnits)} unidades producto`),
+      ...(group.type === 'ingredient' ? [salesAnalysisChip(`${formatProductUnits(group.totals.ingredientQuantity)} ${group.totals.ingredientUnit || ''} requeridos`)] : []),
+      salesAnalysisChip(`${formatClp(group.totals.netSales)} venta neta`),
+      salesAnalysisChip(`${formatClp(group.totals.totalCost)} costo total`),
+      salesAnalysisChip(`${formatSalesAnalysisPercent(group.totals.contributionMarginPercent)} margen`),
+      salesAnalysisChip(`${group.shareOfPeriodSales.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% del período`)
+    );
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'icon-button small sales-ingredient-collapse';
+    toggle.dataset.groupKey = group.key;
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.textContent = collapsed ? 'Expandir' : 'Colapsar';
+    const actions = document.createElement('div');
+    actions.className = 'sales-ingredient-result-actions';
+    actions.append(metrics, toggle);
+    head.append(titleWrap, actions);
+    const wrap = document.createElement('div');
+    wrap.className = 'sales-ingredient-result-table-wrap';
+    const table = document.createElement('table');
+    table.className = 'sales-ingredient-result-table';
+    table.innerHTML = `<thead><tr><th>Código</th><th>Producto vendido</th><th>Unidades vendidas</th>${group.type === 'ingredient' ? '<th>Cantidad ingrediente</th>' : ''}<th>Venta neta sin IVA</th><th>Costo total producto</th><th>Margen</th><th>% del bloque</th></tr></thead>`;
+    const body = document.createElement('tbody');
+    for (const product of group.products) {
+      const row = document.createElement('tr');
+      const values = [
+        product.code || '—', product.name, formatProductUnits(product.quantity),
+        ...(group.type === 'ingredient' ? [product.ingredientQuantity === null ? 'Unidad no compatible' : `${formatProductUnits(product.ingredientQuantity)} ${group.totals.ingredientUnit || ''}`] : []),
+        formatClp(product.netSales),
+        formatClp(product.totalCost),
+        formatSalesAnalysisPercent(product.netSales ? (product.netSales - product.totalCost) / product.netSales * 100 : null),
+        `${(group.totals.netSales ? product.netSales / group.totals.netSales * 100 : 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+      ];
+      values.forEach((value, index) => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        if (index >= 2) cell.className = 'numeric';
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    }
+    if (!group.products.length) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = group.type === 'ingredient' ? 8 : 7;
+      cell.className = 'empty-state';
+      cell.textContent = 'No hubo productos vendidos con este criterio en el período.';
+      row.appendChild(cell);
+      body.appendChild(row);
+    }
+    const foot = document.createElement('tfoot');
+    const totalRow = document.createElement('tr');
+    const totalLabel = document.createElement('th');
+    totalLabel.colSpan = 2;
+    totalLabel.textContent = 'TOTAL';
+    const totalValues = [formatProductUnits(group.totals.productUnits),
+      ...(group.type === 'ingredient' ? [`${formatProductUnits(group.totals.ingredientQuantity)} ${group.totals.ingredientUnit || ''}`] : []),
+      formatClp(group.totals.netSales),
+      formatClp(group.totals.totalCost),
+      formatSalesAnalysisPercent(group.totals.contributionMarginPercent),
+      '100,0%'];
+    totalRow.appendChild(totalLabel);
+    totalValues.forEach(value => {
+      const cell = document.createElement('th');
+      cell.textContent = value;
+      cell.className = 'numeric';
+      totalRow.appendChild(cell);
+    });
+    foot.appendChild(totalRow);
+    table.append(body, foot);
+    wrap.appendChild(table);
+    card.append(head, wrap);
+    return card;
+  }));
+}
+
+async function loadSalesIngredientsView() {
+  const status = document.getElementById('sales-ingredients-status');
+  const button = document.getElementById('refresh-sales-ingredients');
+  const location = document.getElementById('sales-ingredients-location').value || 'all';
+  const params = new URLSearchParams({ location });
+  const dateFrom = document.getElementById('sales-ingredients-from').value;
+  const dateTo = document.getElementById('sales-ingredients-to').value;
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  if (selectedSalesAnalysis.size) params.set('selections', [...selectedSalesAnalysis].join(','));
+  button.disabled = true;
+  setStatus(status, 'Relacionando ventas, recetas, ingredientes y clasificaciones…');
+  try {
+    const data = await apiRequest(`/api/sales-by-ingredients?${params}`);
+    salesIngredientsState = data;
+    document.getElementById('sales-ingredients-from').value = data.period.from;
+    document.getElementById('sales-ingredients-to').value = data.period.to;
+    const validKeys = new Set([...data.options.ingredients, ...data.options.extras].map(item => item.key));
+    for (const key of selectedSalesAnalysis) if (!validKeys.has(key)) selectedSalesAnalysis.delete(key);
+    renderSalesAnalysisPickers();
+    renderSalesIngredientsReport();
+    const sourceText = `${data.filesRead} archivo(s) procesado(s) para ${data.scope.label}.`;
+    setStatus(status, data.warnings.length ? `${sourceText} ${data.warnings.join(' ')}` : sourceText,
+      data.warnings.length ? 'error' : 'success');
+  } catch (error) {
+    salesIngredientsState = null;
+    renderSalesIngredientsReport();
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function refreshProductsLocationFilter() {
   const select = document.getElementById('products-location-filter');
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las cafeterías', 'all')];
+  for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
+    options.push(new Option(location.name, location.id));
+  }
+  select.replaceChildren(...options);
+  select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function refreshSalesIngredientsLocationFilter() {
+  const select = document.getElementById('sales-ingredients-location');
   const previous = select.value || 'all';
   const options = [new Option('Todas las cafeterías', 'all')];
   for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
@@ -2711,6 +2969,7 @@ async function refreshLocationConfiguration() {
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
+    refreshSalesIngredientsLocationFilter();
     refreshProductsLocationFilter();
     refreshIngredientsLocationFilter();
     refreshPurchasesLocationFilter();
@@ -3335,6 +3594,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
+  document.getElementById('refresh-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
+  document.getElementById('sales-ingredients-location').addEventListener('change', loadSalesIngredientsView);
+  document.getElementById('run-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
+  document.getElementById('clear-sales-ingredients').addEventListener('click', () => {
+    selectedSalesAnalysis.clear();
+    collapsedSalesAnalysisGroups.clear();
+    renderSalesAnalysisPickers();
+    loadSalesIngredientsView();
+  });
+  document.getElementById('sales-ingredient-hierarchy').addEventListener('change', renderSalesAnalysisPickers);
+  document.getElementById('sales-ingredient-search').addEventListener('input', renderSalesAnalysisPickers);
+  document.getElementById('sales-extra-search').addEventListener('input', renderSalesAnalysisPickers);
+  for (const containerId of ['sales-ingredient-options', 'sales-extra-options']) {
+    document.getElementById(containerId).addEventListener('change', event => {
+      const checkbox = event.target.closest('input[data-selection-key]');
+      if (!checkbox) return;
+      if (checkbox.checked) selectedSalesAnalysis.add(checkbox.dataset.selectionKey);
+      else selectedSalesAnalysis.delete(checkbox.dataset.selectionKey);
+      updateSalesAnalysisSelectionCount();
+    });
+  }
+  document.getElementById('sales-ingredients-report').addEventListener('click', event => {
+    const button = event.target.closest('.sales-ingredient-collapse');
+    if (!button) return;
+    const key = button.dataset.groupKey;
+    if (collapsedSalesAnalysisGroups.has(key)) collapsedSalesAnalysisGroups.delete(key);
+    else collapsedSalesAnalysisGroups.add(key);
+    renderSalesIngredientsReport();
+  });
   document.getElementById('sales-insight-period').addEventListener('change', () => {
     salesHierarchyPath = [];
     renderSalesInsights();

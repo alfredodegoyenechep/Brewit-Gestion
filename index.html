@@ -30,6 +30,13 @@
         </svg>
         Ventas
       </a>
+      <a href="#" class="nav-link" data-view="sales-ingredients">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path d="M12 3c4 3 6 6 6 10a6 6 0 0 1-12 0c0-4 2-7 6-10Z" />
+          <path d="M9 15c2-1 4-3 5-6M16 5l3-2M18 8h3" />
+        </svg>
+        Ventas por Ingredientes
+      </a>
       <a href="#" class="nav-link" data-view="products">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M6 11h12M6 7h12M6 15h12M6 19h7" />
@@ -384,6 +391,68 @@
           <button id="cancel-report-sales-location" class="icon-button" type="button">Cancelar</button>
         </div>
       </dialog>
+    </section>
+
+    <section id="sales-ingredients-workspace" class="panel sales-ingredients-workspace" style="display:none;">
+      <div class="sales-ingredients-head">
+        <div>
+          <div class="panel-eyebrow">Análisis de ventas</div>
+          <h2>Ventas por ingredientes</h2>
+          <p class="panel-description">Relaciona las ventas con las recetas y con las clasificaciones de extras para entender qué contienen y cómo se preparan los productos vendidos.</p>
+        </div>
+        <div class="sales-ingredients-controls">
+          <label for="sales-ingredients-location">Cafetería
+            <select id="sales-ingredients-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="sales-ingredients-from">Fecha inicial
+            <input id="sales-ingredients-from" type="date" />
+          </label>
+          <label for="sales-ingredients-to">Fecha final
+            <input id="sales-ingredients-to" type="date" />
+          </label>
+          <button id="refresh-sales-ingredients" class="icon-button" type="button">Actualizar datos</button>
+        </div>
+      </div>
+      <div id="sales-ingredients-status" class="form-status" aria-live="polite"></div>
+      <section class="sales-ingredients-picker">
+        <div class="sales-ingredients-picker-head">
+          <div>
+            <div class="panel-eyebrow">Selección múltiple</div>
+            <h3>¿Qué quieres analizar?</h3>
+            <p class="panel-description">Selecciona uno o varios ingredientes y/o clasificaciones de preparación. Puedes combinar ambos criterios.</p>
+          </div>
+          <div class="sales-ingredients-picker-actions">
+            <span id="sales-ingredients-selected-count">0 seleccionados</span>
+            <button id="clear-sales-ingredients" class="icon-button small" type="button">Limpiar</button>
+            <button id="run-sales-ingredients" class="primary" type="button" disabled>Generar reporte</button>
+          </div>
+        </div>
+        <div class="sales-ingredients-picker-grid">
+          <fieldset class="sales-ingredient-selector-card">
+            <legend>Ingredientes de las recetas</legend>
+            <p>Útil para vasos, café, matcha, leches, cremas y extras con receta identificados con códigos SUB.</p>
+            <label for="sales-ingredient-hierarchy">Jerarquía
+              <select id="sales-ingredient-hierarchy"><option value="all">Todas las jerarquías</option></select>
+            </label>
+            <label for="sales-ingredient-search">Buscar ingrediente
+              <input id="sales-ingredient-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+            </label>
+            <div id="sales-ingredient-options" class="sales-analysis-options"></div>
+          </fieldset>
+          <fieldset class="sales-ingredient-selector-card">
+            <legend>Clasificaciones de preparación</legend>
+            <p>Usa la jerarquía de extras para comparar Barra Caliente, Barra Fría y otras formas de preparación.</p>
+            <label for="sales-extra-search">Buscar clasificación
+              <input id="sales-extra-search" type="search" placeholder="Nombre de jerarquía" autocomplete="off" />
+            </label>
+            <div id="sales-extra-options" class="sales-analysis-options"></div>
+          </fieldset>
+        </div>
+      </section>
+      <div id="sales-ingredients-summary" class="products-summary"></div>
+      <div id="sales-ingredients-report" class="sales-ingredients-report">
+        <div class="empty-state">Selecciona al menos un ingrediente o clasificación para generar el reporte.</div>
+      </div>
     </section>
 
     <section id="products-workspace" class="panel products-workspace" style="display:none;">
