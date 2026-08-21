@@ -33,6 +33,10 @@ let salesDashboardState = null;
 let salesHierarchyPath = [];
 let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
+let pendingTransactionDelete = null;
+let inventoryKardexTableState = null;
+let transactionUploadContext = null;
+const expandedUploadHistories = new Set();
 let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
 let ingredientsSort = { key: 'usageCost', direction: 'desc' };
 let purchaseProjectionSort = { key: 'supplier', direction: 'asc' };
@@ -151,10 +155,10 @@ function setStatus(element, message, type = '') {
 function initializeFileUploadControls() {
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => {
     input.classList.add('native-file-input');
-    const control = document.createElement('label');
+    const control = document.createElement('div');
     control.className = 'file-upload-control';
-    control.htmlFor = input.id;
-    const state = document.createElement('span');
+    const state = document.createElement('button');
+    state.type = 'button';
     state.className = 'file-upload-state';
     const filename = document.createElement('span');
     filename.className = 'file-upload-filename';
@@ -170,23 +174,26 @@ function initializeFileUploadControls() {
 function updateFileUploadControls() {
   document.querySelectorAll('[data-weekly-field]').forEach(row => {
     row.querySelector('.weekly-delete-confirmation')?.remove();
+    row.querySelector('.transaction-upload-history')?.remove();
     const field = row.dataset.weeklyField;
     const input = row.querySelector('input[type="file"]');
     const state = row.querySelector('.file-upload-state');
     const filename = row.querySelector('.file-upload-filename');
-    const selected = input.files[0];
     const uploaded = currentWeekFiles[field];
     const latest = uploaded?.latest;
     const actions = row.querySelector('.weekly-file-actions');
     actions.replaceChildren();
 
-    if (selected) {
-      state.textContent = 'Subir Archivo';
-      state.className = 'file-upload-state missing';
-      filename.textContent = selected.name;
-    } else if (latest) {
-      state.textContent = 'Archivo ya subido';
+    if (latest) {
+      state.textContent = `Último archivo subido ${expandedUploadHistories.has(field) ? '▲' : '▼'}`;
       state.className = 'file-upload-state uploaded';
+      state.disabled = false;
+      state.title = 'Ver historial de cargas';
+      state.onclick = () => {
+        if (expandedUploadHistories.has(field)) expandedUploadHistories.delete(field);
+        else expandedUploadHistories.add(field);
+        updateFileUploadControls();
+      };
       const range = uploaded.dataRange ? ` · ${formatDetectedRange(uploaded.dataRange)}` : '';
       filename.textContent = `${latest.originalName || latest.name} · ${uploaded.fileCount} carga(s)${range}`;
       const previewButton = document.createElement('button');
@@ -198,12 +205,51 @@ function updateFileUploadControls() {
       deleteButton.type = 'button';
       deleteButton.className = 'delete-button small';
       deleteButton.textContent = 'Eliminar';
-      deleteButton.addEventListener('click', () => showWeeklyDeleteConfirmation(row, field, latest));
+      deleteButton.addEventListener('click', () => openTransactionDeleteDialog(field, uploaded));
       actions.append(previewButton, deleteButton);
     } else {
-      state.textContent = 'Subir Archivo';
+      state.textContent = 'Sin archivos subidos';
       state.className = 'file-upload-state missing';
+      state.disabled = true;
+      state.title = '';
+      state.onclick = null;
       filename.textContent = '';
+    }
+    const uploadButton = document.createElement('button');
+    uploadButton.type = 'button';
+    uploadButton.className = 'primary small transaction-upload-button';
+    uploadButton.textContent = 'Cargar nuevo archivo';
+    uploadButton.disabled = input.disabled;
+    uploadButton.addEventListener('click', () => {
+      transactionUploadContext = { source: 'uploads', statusId: 'week-status', location: document.getElementById('location-select').value };
+      clearInspection(true);
+      document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(other => {
+        if (other !== input) other.value = '';
+      });
+      input.value = '';
+      input.click();
+    });
+    actions.appendChild(uploadButton);
+
+    if (latest && expandedUploadHistories.has(field)) {
+      const history = document.createElement('div');
+      history.className = 'transaction-upload-history';
+      const heading = document.createElement('strong');
+      heading.textContent = `Historial de cargas (${uploaded.uploads?.length || uploaded.fileCount})`;
+      history.appendChild(heading);
+      (uploaded.uploads || [latest]).forEach((record, index) => {
+        const item = document.createElement('div');
+        item.className = 'transaction-upload-history-item';
+        const name = document.createElement('span');
+        name.textContent = `${index + 1}. ${record.originalName || record.name}`;
+        const details = document.createElement('span');
+        const range = record.confirmedRange || record.detectedRange;
+        const saved = record.savedAt ? new Date(record.savedAt).toLocaleString('es-CL') : record.week ? `Semana ${record.week}` : 'Fecha no disponible';
+        details.textContent = `${saved}${range ? ` · ${formatDetectedRange(range)}` : ''}${record.overlapAction === 'replace' ? ' · Reemplazó fechas coincidentes' : ' · Agregó registros nuevos'}`;
+        item.append(name, details);
+        history.appendChild(item);
+      });
+      row.appendChild(history);
     }
   });
 }
@@ -215,40 +261,63 @@ function openWeeklyPreview(field, record) {
   );
 }
 
-function showWeeklyDeleteConfirmation(row, field, record) {
-  row.querySelector('.delete-confirmation')?.remove();
-  const location = document.getElementById('location-select').value;
-  const confirmation = document.createElement('div');
-  confirmation.className = 'delete-confirmation weekly-delete-confirmation';
-  const message = document.createElement('span');
-  message.textContent = `¿Eliminar la carga más reciente “${record.originalName || record.name}”? Los datos de cargas anteriores se conservarán.`;
-  const confirmButton = document.createElement('button');
-  confirmButton.type = 'button';
-  confirmButton.className = 'delete-button small';
-  confirmButton.textContent = 'Sí, eliminar';
-  const cancelButton = document.createElement('button');
-  cancelButton.type = 'button';
-  cancelButton.className = 'icon-button small';
-  cancelButton.textContent = 'Cancelar';
-  cancelButton.addEventListener('click', () => confirmation.remove());
-  confirmButton.addEventListener('click', async () => {
-    confirmButton.disabled = true;
-    try {
-      await apiRequest(record.deleteUrl, { method: 'DELETE' });
-      await loadTransactionFiles();
-      if (field === 'sales') await loadLatestSalesTransaction(location);
-      setStatus(document.getElementById('week-status'), 'Carga transaccional eliminada.', 'success');
-    } catch (error) {
-      setStatus(document.getElementById('week-status'), error.message, 'error');
-      confirmButton.disabled = false;
-    }
-  });
-  confirmation.append(message, confirmButton, cancelButton);
-  row.appendChild(confirmation);
+function openTransactionDeleteDialog(field, uploaded) {
+  pendingTransactionDelete = {
+    field,
+    location: document.getElementById('location-select').value,
+    fileCount: uploaded.fileCount,
+    latest: uploaded.latest
+  };
+  const label = FIELD_LABELS[field] || field;
+  document.getElementById('transaction-delete-title').textContent = `Eliminar ${label}`;
+  document.getElementById('transaction-delete-description').textContent =
+    `Hay ${uploaded.fileCount} carga(s) guardada(s). La última es “${uploaded.latest.originalName || uploaded.latest.name}”. Selecciona el alcance y confirma antes de continuar.`;
+  document.querySelector('input[name="transaction-delete-action"][value="last"]').checked = true;
+  document.getElementById('transaction-delete-confirmation').value = '';
+  document.getElementById('confirm-transaction-delete').disabled = true;
+  setStatus(document.getElementById('transaction-delete-status'), 'Esta acción no puede deshacerse desde esta pantalla.', 'muted');
+  document.getElementById('transaction-delete-dialog').showModal();
+}
+
+function closeTransactionDeleteDialog() {
+  pendingTransactionDelete = null;
+  document.getElementById('transaction-delete-dialog').close();
+}
+
+function transactionUploadStatus() {
+  return document.getElementById(transactionUploadContext?.statusId || 'week-status');
+}
+
+async function inspectSelectedTransactionFile(input, locationOverride = null) {
+  if (!input.files.length) return;
+  const status = transactionUploadStatus();
+  clearInspection();
+  setStatus(status, `Validando “${input.files[0].name}” y detectando sus fechas…`);
+  document.querySelectorAll('.transaction-upload-button').forEach(button => { button.disabled = true; });
+  try {
+    const location = locationOverride || transactionUploadContext?.location || document.getElementById('location-select').value;
+    const formData = new FormData();
+    formData.append(input.name, input.files[0]);
+    const manifest = await apiRequest(`/api/uploads/transactions/inspect?location=${encodeURIComponent(location)}`, {
+      method: 'POST',
+      body: formData
+    });
+    showInspection(manifest);
+    setStatus(status, manifest.detectedRange
+      ? `Estructura válida. Fechas detectadas: ${formatDetectedRange(manifest.detectedRange)}. Revisa y confirma en la ventana emergente.`
+      : 'La estructura es válida, pero no se detectaron fechas. Ingresa el rango correcto en la ventana emergente.', 'success');
+  } catch (error) {
+    input.value = '';
+    setStatus(status, error.message, 'error');
+    transactionUploadContext = null;
+  } finally {
+    updateFileUploadControls();
+  }
 }
 
 function clearWeeklySelections() {
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => { input.value = ''; });
+  document.getElementById('report-sales-upload-input').value = '';
   updateFileUploadControls();
 }
 
@@ -264,12 +333,21 @@ function appendDownload(parent, record, prefix = '') {
 function clearInspection(clearStatus = false) {
   inspectionState = null;
   const confirmation = document.getElementById('date-confirmation');
-  confirmation.hidden = true;
+  if (confirmation.open) confirmation.close();
   document.getElementById('dates-confirmed').checked = false;
   document.getElementById('detected-files-list').replaceChildren();
   document.getElementById('transaction-overlap-notice').hidden = true;
   document.getElementById('replace-transactions-btn').hidden = true;
+  setStatus(document.getElementById('transaction-confirmation-status'), '');
   if (clearStatus) setStatus(document.getElementById('week-status'), '');
+}
+
+function cancelTransactionConfirmation() {
+  const status = transactionUploadStatus();
+  clearWeeklySelections();
+  clearInspection();
+  setStatus(status, 'Carga cancelada.', 'muted');
+  transactionUploadContext = null;
 }
 
 function updateLocationFields() {
@@ -285,7 +363,6 @@ function updateLocationFields() {
   });
   const kardexInput = document.getElementById('file-kardex');
   kardexInput.disabled = !hasLocation;
-  document.getElementById('inspect-week-btn').disabled = !hasLocation;
   document.getElementById('location-note').textContent = !hasLocation
     ? 'Crea o recupera una ubicación en Configuración para cargar archivos.'
     : isWarehouse
@@ -295,34 +372,6 @@ function updateLocationFields() {
   clearWeeklySelections();
   clearInspection(true);
   loadTransactionFiles();
-  loadLatestSalesTransaction(location);
-}
-
-function formatSalesDateTime(value) {
-  if (!value) return null;
-  const [datePart, timePart = '00:00:00'] = value.split('T');
-  const [year, month, day] = datePart.split('-').map(Number);
-  const [hour, minute, second] = timePart.split(':').map(Number);
-  return new Intl.DateTimeFormat('es-CL', { dateStyle: 'medium', timeStyle: 'medium' })
-    .format(new Date(year, month - 1, day, hour, minute, second));
-}
-
-async function loadLatestSalesTransaction(location = document.getElementById('location-select').value) {
-  const output = document.getElementById('latest-sales-transaction');
-  const locationRecord = locationRegistry[location];
-  if (!locationRecord || locationRecord.type !== 'store') {
-    output.textContent = '';
-    return;
-  }
-  output.textContent = 'Última transacción: consultando…';
-  try {
-    const data = await apiRequest(`/api/sales/latest?location=${encodeURIComponent(location)}`);
-    if (location !== document.getElementById('location-select').value) return;
-    const formatted = formatSalesDateTime(data.latestTransactionAt);
-    output.textContent = formatted ? `Última transacción: ${formatted}` : 'Última transacción: sin registros';
-  } catch (error) {
-    if (location === document.getElementById('location-select').value) output.textContent = 'Última transacción: no disponible';
-  }
 }
 
 async function loadTransactionFiles() {
@@ -402,6 +451,41 @@ function renderIntradayReport(intraday) {
   }));
 }
 
+function renderSalesStatistics(statistics) {
+  const shortDate = (value, includeWeekday = false) => {
+    if (!value) return '—';
+    const [year, month, day] = value.split('-').map(Number);
+    return new Intl.DateTimeFormat('es-CL', {
+      ...(includeWeekday ? { weekday: 'short' } : {}),
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    }).format(new Date(year, month - 1, day)).replace(/\./g, '');
+  };
+  const monthLabel = value => {
+    const [year, month] = value.split('-').map(Number);
+    const label = new Intl.DateTimeFormat('es-CL', { month: 'short', year: 'numeric' })
+      .format(new Date(year, month - 1, 1)).replace(/\./g, '');
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  };
+  const renderRows = (bodyId, rows, labelFor) => {
+    const body = document.getElementById(bodyId);
+    body.replaceChildren(...rows.map(item => {
+      const row = document.createElement('tr');
+      const label = document.createElement('td');
+      label.textContent = labelFor(item);
+      const amount = document.createElement('td');
+      amount.textContent = formatClp(item.netSales);
+      row.append(label, amount);
+      return row;
+    }));
+  };
+  renderRows('sales-statistics-months', statistics.months, item => monthLabel(item.key));
+  renderRows('sales-statistics-weeks', statistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`);
+  renderRows('sales-statistics-days', statistics.days, item => shortDate(item.date, true));
+  renderRows('sales-statistics-equivalent-days', statistics.equivalentDays, item => shortDate(item.date, true));
+}
+
 async function loadWeeklySalesReport() {
   const status = document.getElementById('report-status');
   const refreshButton = document.getElementById('refresh-weekly-report');
@@ -418,6 +502,7 @@ async function loadWeeklySalesReport() {
       : `Venta neta sin IVA para ${report.scope.label}.`;
     document.getElementById('report-yesterday-date').textContent = formatReportDate(report.previousDay.date);
     document.getElementById('report-reference-label').textContent = report.includeToday ? 'Venta de hoy' : 'Venta del día anterior';
+    document.getElementById('report-cutoff-label').textContent = report.includeToday ? 'Venta hoy' : 'Venta día anterior';
     document.getElementById('report-week-chip').textContent = report.includeToday ? 'Lun–hoy' : 'Lun–ayer';
     document.getElementById('report-month-chip').textContent = report.includeToday ? 'Mes–hoy' : 'Mes–ayer';
     document.getElementById('report-yesterday-value').textContent = formatClp(report.previousDay.netSales);
@@ -435,6 +520,7 @@ async function loadWeeklySalesReport() {
     const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(report.previousDay.date));
     document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
     renderIntradayReport(report.intraday);
+    renderSalesStatistics(report.statistics);
     if (!report.filesRead) {
       setStatus(status, 'No hay archivos de ventas cargados para las ubicaciones activas.', 'muted');
     } else if (report.warnings.length) {
@@ -458,6 +544,33 @@ function refreshReportLocationFilter() {
   }
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function closeReportSalesLocationDialog() {
+  const dialog = document.getElementById('report-sales-location-dialog');
+  if (dialog.open) dialog.close();
+}
+
+function openReportSalesFilePicker(location) {
+  if (!location || !locationRegistry[location] || locationRegistry[location].type !== 'store') {
+    return setStatus(document.getElementById('report-status'), 'Selecciona una cafetería válida para cargar sus ventas.', 'error');
+  }
+  transactionUploadContext = { source: 'report', statusId: 'report-status', location, refreshReport: true };
+  const input = document.getElementById('report-sales-upload-input');
+  input.value = '';
+  input.click();
+}
+
+function startReportSalesUpload() {
+  const selected = document.getElementById('report-location-filter').value || 'all';
+  if (selected !== 'all') return openReportSalesFilePicker(selected);
+  const select = document.getElementById('report-sales-upload-location');
+  const stores = Object.values(locationRegistry).filter(location => location.type === 'store');
+  select.replaceChildren(...stores.map(location => new Option(location.name, location.id)));
+  if (!stores.length) {
+    return setStatus(document.getElementById('report-status'), 'No hay cafeterías activas disponibles para cargar ventas.', 'error');
+  }
+  document.getElementById('report-sales-location-dialog').showModal();
 }
 
 function refreshSalesDashboardLocationFilter() {
@@ -1829,9 +1942,7 @@ async function loadInventorySources() {
     const data = await apiRequest(`/api/inventory/sources?location=${encodeURIComponent(location)}`);
     if (location !== select.value) return;
     inventorySourceState = data;
-    document.getElementById('waste-summary-results').hidden = true;
-    document.getElementById('consumption-summary-results').hidden = true;
-    document.getElementById('inventory-report-results').hidden = true;
+    closeInventoryResultDialogs();
     list.replaceChildren(...data.sources.map(source => {
       const card = document.createElement('article');
       card.className = `inventory-source-card${source.applicable ? '' : ' not-applicable'}`;
@@ -1924,9 +2035,17 @@ async function loadInventorySources() {
 }
 
 function clearInventoryPeriodResults() {
-  document.getElementById('waste-summary-results').hidden = true;
-  document.getElementById('consumption-summary-results').hidden = true;
-  document.getElementById('inventory-report-results').hidden = true;
+  closeInventoryResultDialogs();
+}
+
+function closeInventoryResultDialog(id) {
+  const dialog = document.getElementById(id);
+  if (dialog.open) dialog.close();
+}
+
+function closeInventoryResultDialogs() {
+  ['waste-summary-results', 'consumption-summary-results', 'inventory-report-results']
+    .forEach(closeInventoryResultDialog);
 }
 
 function isoLocalDate(date) {
@@ -2114,9 +2233,8 @@ function renderWasteSummary(data) {
     `${formatReportDate(report.dateFrom)} – ${formatReportDate(report.dateTo)} · solo ítems con adiciones distintas de cero.${report.itemsWithoutCost?.length ? ` ${report.itemsWithoutCost.length} ítem(s) sin costo maestro vigente.` : ''}`;
   document.getElementById('waste-summary-item-count').textContent = `${report.itemCount} ítem(s)`;
   populateWasteSummaryTable(document.getElementById('waste-summary-table'), report);
-  const section = document.getElementById('waste-summary-results');
-  section.hidden = false;
-  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const dialog = document.getElementById('waste-summary-results');
+  dialog.showModal();
 }
 
 async function generateSourceSummary() {
@@ -2136,6 +2254,7 @@ async function generateSourceSummary() {
     const location = document.getElementById('inventory-location-select').value;
     if (field === 'waste') {
       const data = await apiRequest(`/api/inventory/waste-summary?location=${encodeURIComponent(location)}&dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`);
+      dialog.close();
       renderWasteSummary(data);
       setStatus(pageStatus, 'Resumen de Merma generado correctamente.', 'success');
     } else {
@@ -2148,12 +2267,10 @@ async function generateSourceSummary() {
       document.getElementById('consumption-summary-period').textContent =
         `${formatReportDate(dateFrom)} – ${formatReportDate(dateTo)} · ambas fechas incluidas.`;
       renderConsumptionReports({ [field]: data.summary }, [field], document.getElementById('standalone-consumption-report'));
-      const section = document.getElementById('consumption-summary-results');
-      section.hidden = false;
-      section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      dialog.close();
+      document.getElementById('consumption-summary-results').showModal();
       setStatus(pageStatus, `Resumen de ${titles[field].toLowerCase()} generado correctamente.`, 'success');
     }
-    dialog.close();
     pendingInventorySummaryField = null;
   } catch (error) {
     setStatus(dialogStatus, error.message, 'error');
@@ -2359,6 +2476,117 @@ function renderConsumptionReports(
   }));
 }
 
+function normalizedInventorySearch(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function renderInventoryKardexTable() {
+  if (!inventoryKardexTableState) return;
+  const { report, columns } = inventoryKardexTableState;
+  const table = document.getElementById('inventory-results-table');
+  const previousScrollLeft = table.parentElement.scrollLeft;
+  const search = normalizedInventorySearch(document.getElementById('inventory-kardex-search').value);
+  const costCriterion = document.getElementById('inventory-kardex-cost-filter').value;
+  const minimumInput = document.getElementById('inventory-kardex-cost-min').value;
+  const maximumInput = document.getElementById('inventory-kardex-cost-max').value;
+  const minimum = minimumInput === '' ? null : Number(minimumInput);
+  const maximum = maximumInput === '' ? null : Number(maximumInput);
+  const epsilon = 0.000001;
+  const items = report.items.filter(item => {
+    const matchesSearch = !search || normalizedInventorySearch(`${item.code} ${item.name}`).includes(search);
+    if (!matchesSearch) return false;
+    const cost = Number(item.totalCost) || 0;
+    if (costCriterion === 'positive' && cost <= epsilon) return false;
+    if (costCriterion === 'negative' && cost >= -epsilon) return false;
+    if (costCriterion === 'zero' && Math.abs(cost) > epsilon) return false;
+    if (costCriterion === 'nonzero' && Math.abs(cost) <= epsilon) return false;
+    if (minimum !== null && cost < minimum) return false;
+    if (maximum !== null && cost > maximum) return false;
+    return true;
+  });
+  const sortColumn = columns[inventoryKardexTableState.sortIndex];
+  const direction = inventoryKardexTableState.direction === 'desc' ? -1 : 1;
+  items.sort((left, right) => {
+    const leftValue = sortColumn.sortValue(left);
+    const rightValue = sortColumn.sortValue(right);
+    const leftMissing = leftValue === null || leftValue === undefined || leftValue === '';
+    const rightMissing = rightValue === null || rightValue === undefined || rightValue === '';
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (leftMissing) return String(left.code).localeCompare(String(right.code), 'es', { numeric: true });
+    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), 'es', { numeric: true, sensitivity: 'base' });
+    return (comparison || String(left.code).localeCompare(String(right.code), 'es', { numeric: true })) * direction;
+  });
+
+  const header = document.createElement('tr');
+  columns.forEach((column, index) => {
+    const cell = document.createElement('th');
+    const active = index === inventoryKardexTableState.sortIndex;
+    cell.setAttribute('aria-sort', active
+      ? inventoryKardexTableState.direction === 'asc' ? 'ascending' : 'descending'
+      : 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `inventory-sort-button${active ? ' active' : ''}`;
+    button.textContent = `${column.label}${active ? inventoryKardexTableState.direction === 'asc' ? ' ▲' : ' ▼' : ''}`;
+    button.addEventListener('click', () => {
+      if (inventoryKardexTableState.sortIndex === index) {
+        inventoryKardexTableState.direction = inventoryKardexTableState.direction === 'asc' ? 'desc' : 'asc';
+      } else {
+        inventoryKardexTableState.sortIndex = index;
+        inventoryKardexTableState.direction = 'asc';
+      }
+      renderInventoryKardexTable();
+    });
+    cell.appendChild(button);
+    header.appendChild(cell);
+  });
+  const head = document.createElement('thead');
+  head.appendChild(header);
+  const body = document.createElement('tbody');
+  if (!items.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns.length;
+    cell.className = 'inventory-empty-result';
+    cell.textContent = 'No hay filas que coincidan con los filtros seleccionados.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  } else {
+    for (const item of items) {
+      const row = document.createElement('tr');
+      for (const [columnIndex, column] of columns.entries()) {
+        const cell = document.createElement('td');
+        cell.textContent = column.value(item);
+        if (columnIndex < 4) cell.title = cell.textContent;
+        if (column.signValue) {
+          const value = Number(column.signValue(item)) || 0;
+          if (value < 0) cell.className = 'difference-negative';
+          else if (value > 0) cell.className = column.finalDifference ? 'difference-final-positive' : 'difference-positive';
+        }
+        row.appendChild(cell);
+      }
+      body.appendChild(row);
+    }
+  }
+  const foot = document.createElement('tfoot');
+  const totalRow = document.createElement('tr');
+  totalRow.className = 'consumption-total-row';
+  columns.forEach((column, index) => {
+    const cell = document.createElement('td');
+    if (index === 0) cell.textContent = 'TOTAL';
+    else if (index === columns.length - 1) {
+      cell.textContent = formatKardexCost(items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0));
+    }
+    totalRow.appendChild(cell);
+  });
+  foot.appendChild(totalRow);
+  table.replaceChildren(head, body, foot);
+  table.parentElement.scrollLeft = previousScrollLeft;
+  document.getElementById('inventory-kardex-visible-count').textContent = `${items.length} de ${report.items.length} filas`;
+}
+
 function renderInventoryResults(data) {
   const report = data.report;
   renderConsumptionReports(data.consumption);
@@ -2376,91 +2604,60 @@ function renderInventoryResults(data) {
     ? `Saldo inicial: ${basisLabel(report.selection.initialBasis)} del ${formatReportDate(report.selection.initialDate)} · movimientos: ${formatReportDate(report.dateFrom)} a ${formatReportDate(report.dateTo)}, ambas fechas incluidas · saldo final: ${basisLabel(report.selection.finalBasis)} del ${formatReportDate(report.selection.finalDate)}.`
     : `${formatReportDate(report.dateFrom)} a ${formatReportDate(report.dateTo)} · inventario físico tomado del inicio del ${formatReportDate(report.physicalInventoryDate)}.`;
   document.getElementById('inventory-report-item-count').textContent = `${report.itemCount} productos`;
-  const table = document.getElementById('inventory-results-table');
-  const header = document.createElement('tr');
   const columns = [
-    { label: 'Código', value: item => item.code },
-    { label: 'Producto', value: item => item.name },
-    { label: 'Unidad', value: item => item.unit },
+    { label: 'Código', value: item => item.code, sortValue: item => item.code },
+    { label: 'Producto', value: item => item.name, sortValue: item => item.name },
+    { label: 'Unidad', value: item => item.unit, sortValue: item => item.unit },
     {
       label: 'Costo unitario',
-      value: item => item.costAvailable ? formatKardexCost(item.unitCost) : 'Sin costo'
+      value: item => item.costAvailable ? formatKardexCost(item.unitCost) : 'Sin costo',
+      sortValue: item => item.costAvailable ? Number(item.unitCost) || 0 : null
     },
     {
       label: report.selection
         ? `${basisLabel(report.selection.initialBasis)} ${formatReportDate(report.selection.initialDate)}`
         : 'Inventario inicial',
-      value: item => formatKardexQuantity(item.initialInventory)
+      value: item => formatKardexQuantity(item.initialInventory),
+      sortValue: item => Number(item.initialInventory) || 0
     },
     ...report.movementDefinitions.map(definition => ({
       label: definition.label,
-      value: item => formatKardexQuantity(item.movements[definition.key])
+      value: item => formatKardexQuantity(item.movements[definition.key]),
+      sortValue: item => Number(item.movements[definition.key]) || 0
     })),
+    { label: 'Consumo Colaboradores', value: item => formatKardexQuantity(item.employeeConsumption), sortValue: item => Number(item.employeeConsumption) || 0 },
+    { label: 'Consumo Marketing', value: item => formatKardexQuantity(item.marketingConsumption), sortValue: item => Number(item.marketingConsumption) || 0 },
     ...(report.selection ? [
       {
         label: 'Inventario Final Teórico',
-        value: item => formatKardexQuantity(item.theoreticalFinal)
+        value: item => formatKardexQuantity(item.theoreticalFinal),
+        sortValue: item => Number(item.theoreticalFinal) || 0
       },
       {
         label: `${basisLabel(report.selection.finalBasis)} ${formatReportDate(report.selection.finalDate)}`,
-        value: item => formatKardexQuantity(item.finalInventory)
-      },
-      {
-        label: 'Diferencia de Inventario',
-        value: item => formatKardexQuantity(item.difference),
-        signValue: item => item.difference
+        value: item => formatKardexQuantity(item.finalInventory),
+        sortValue: item => Number(item.finalInventory) || 0
       }
     ] : [
-      { label: 'Inventario final teórico', value: item => formatKardexQuantity(item.theoreticalFinal) },
-      { label: `Inventario físico ${formatReportDate(report.physicalInventoryDate)}`, value: item => formatKardexQuantity(item.physicalFinal) },
-      { label: 'Diferencia físico − teórico', value: item => formatKardexQuantity(item.difference), signValue: item => item.difference }
+      { label: 'Inventario final teórico', value: item => formatKardexQuantity(item.theoreticalFinal), sortValue: item => Number(item.theoreticalFinal) || 0 },
+      { label: `Inventario físico ${formatReportDate(report.physicalInventoryDate)}`, value: item => formatKardexQuantity(item.physicalFinal), sortValue: item => Number(item.physicalFinal) || 0 }
     ]),
-    { label: 'Consumo Colaboradores', value: item => formatKardexQuantity(item.employeeConsumption) },
-    { label: 'Consumo Marketing', value: item => formatKardexQuantity(item.marketingConsumption) },
     {
-      label: 'Diferencia ajustada por consumos',
-      value: item => formatKardexQuantity(item.adjustedDifference),
-      signValue: item => item.adjustedDifference,
-      adjustedDifference: true
+      label: report.selection ? 'Diferencia de Inventario' : 'Diferencia físico − teórico',
+      value: item => formatKardexQuantity(item.difference),
+      sortValue: item => Number(item.difference) || 0,
+      signValue: item => item.difference,
+      finalDifference: true
     },
-    { label: 'Costo Total', value: item => item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo' }
+    { label: 'Costo Total', value: item => item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.totalCost) || 0 : null }
   ];
-  for (const column of columns) {
-    const cell = document.createElement('th');
-    cell.textContent = column.label;
-    header.appendChild(cell);
-  }
-  const head = document.createElement('thead');
-  head.appendChild(header);
-  const body = document.createElement('tbody');
-  for (const item of report.items) {
-    const row = document.createElement('tr');
-    for (const column of columns) {
-      const cell = document.createElement('td');
-      cell.textContent = column.value(item);
-      if (column.signValue) {
-        const value = Number(column.signValue(item)) || 0;
-        if (value < 0) cell.className = 'difference-negative';
-        else if (value > 0) cell.className = column.adjustedDifference ? 'difference-adjusted-positive' : 'difference-positive';
-      }
-      row.appendChild(cell);
-    }
-    body.appendChild(row);
-  }
-  const foot = document.createElement('tfoot');
-  const totalRow = document.createElement('tr');
-  totalRow.className = 'consumption-total-row';
-  columns.forEach((column, index) => {
-    const cell = document.createElement('td');
-    if (index === 0) cell.textContent = 'TOTAL';
-    else if (index === columns.length - 1) cell.textContent = formatKardexCost(report.totalCost);
-    totalRow.appendChild(cell);
-  });
-  foot.appendChild(totalRow);
-  table.replaceChildren(head, body, foot);
-  const results = document.getElementById('inventory-report-results');
-  results.hidden = false;
-  results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('inventory-kardex-search').value = '';
+  document.getElementById('inventory-kardex-cost-filter').value = 'all';
+  document.getElementById('inventory-kardex-cost-min').value = '';
+  document.getElementById('inventory-kardex-cost-max').value = '';
+  inventoryKardexTableState = { report, columns, sortIndex: 0, direction: 'asc' };
+  renderInventoryKardexTable();
+  document.getElementById('inventory-report-results').showModal();
 }
 
 async function generateInventoryReport() {
@@ -2683,8 +2880,8 @@ function showInspection(manifest) {
     document.getElementById('transaction-confirmation-copy').textContent =
       'No se encontraron fechas coincidentes. Confirma el rango para agregar estos registros al sistema.';
   }
-  confirmation.hidden = false;
-  confirmation.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  setStatus(document.getElementById('transaction-confirmation-status'), '');
+  confirmation.showModal();
 }
 
 async function renderMasterList() {
@@ -2826,6 +3023,8 @@ function printInventoryReport(sectionId) {
   const section = document.getElementById(sectionId);
   if (!section || section.hidden) return;
   const previousTitle = document.title;
+  const reopenDialog = section instanceof HTMLDialogElement && section.open;
+  if (reopenDialog) section.close();
   document.title = inventoryReportTitle(section);
   document.body.classList.add('printing-inventory-report');
   section.classList.add('inventory-print-target');
@@ -2835,6 +3034,7 @@ function printInventoryReport(sectionId) {
     section.classList.remove('inventory-print-target');
     document.body.classList.remove('printing-inventory-report');
     document.title = previousTitle;
+    if (reopenDialog) section.showModal();
   }
 }
 
@@ -2975,6 +3175,7 @@ async function uploadMasterFiles(replace = false) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
     link.addEventListener('click', event => {
       event.preventDefault();
@@ -3000,43 +3201,70 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('location-select').addEventListener('change', updateLocationFields);
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => {
     input.addEventListener('change', () => {
-      clearInspection(true);
-      updateFileUploadControls();
+      transactionUploadContext = { source: 'uploads', statusId: 'week-status', location: document.getElementById('location-select').value };
+      inspectSelectedTransactionFile(input);
     });
   });
+  document.getElementById('report-sales-upload-input').addEventListener('change', event => {
+    inspectSelectedTransactionFile(event.currentTarget, transactionUploadContext?.location);
+  });
+  document.getElementById('report-upload-sales').addEventListener('click', startReportSalesUpload);
+  document.getElementById('confirm-report-sales-location').addEventListener('click', () => {
+    const location = document.getElementById('report-sales-upload-location').value;
+    closeReportSalesLocationDialog();
+    openReportSalesFilePicker(location);
+  });
+  for (const id of ['close-report-sales-location', 'cancel-report-sales-location']) {
+    document.getElementById(id).addEventListener('click', closeReportSalesLocationDialog);
+  }
 
-  document.getElementById('weekly-upload-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = document.getElementById('inspect-week-btn');
-    const status = document.getElementById('week-status');
-    const files = [...form.querySelectorAll('input[type="file"]:not(:disabled)')].flatMap(input => [...input.files]);
-    if (!files.length) return setStatus(status, 'Selecciona al menos un archivo.', 'error');
-    clearInspection();
+  document.getElementById('weekly-upload-form').addEventListener('submit', event => event.preventDefault());
+
+  document.getElementById('transaction-delete-confirmation').addEventListener('input', event => {
+    document.getElementById('confirm-transaction-delete').disabled = event.target.value.trim() !== 'ELIMINAR';
+  });
+  document.getElementById('confirm-transaction-delete').addEventListener('click', async event => {
+    if (!pendingTransactionDelete) return;
+    const button = event.currentTarget;
+    const action = document.querySelector('input[name="transaction-delete-action"]:checked')?.value;
+    const { location, field } = pendingTransactionDelete;
     button.disabled = true;
-    setStatus(status, 'Leyendo archivos y detectando fechas…');
+    setStatus(document.getElementById('transaction-delete-status'), action === 'all'
+      ? 'Eliminando toda la información de esta categoría…'
+      : 'Revirtiendo la última carga…');
     try {
-      const location = document.getElementById('location-select').value;
-      const manifest = await apiRequest(`/api/uploads/transactions/inspect?location=${encodeURIComponent(location)}`, {
+      const result = await apiRequest(`/api/transactions/${encodeURIComponent(location)}/${encodeURIComponent(field)}/remove`, {
         method: 'POST',
-        body: new FormData(form)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, confirmed: true, confirmationText: 'ELIMINAR' })
       });
-      showInspection(manifest);
-      setStatus(status, manifest.detectedRange
-        ? `Fechas detectadas: ${formatDetectedRange(manifest.detectedRange)}. Revisa y confirma abajo.`
-        : 'No se detectaron fechas automáticamente. Ingresa el rango correcto y confírmalo.', 'success');
+      closeTransactionDeleteDialog();
+      await loadTransactionFiles();
+      setStatus(document.getElementById('week-status'), action === 'all'
+        ? `Se eliminó toda la información de ${FIELD_LABELS[field] || field}.`
+        : `Se revirtió la última carga de ${FIELD_LABELS[field] || field}. Quedan ${result.remainingCount} carga(s).`, 'success');
     } catch (error) {
-      setStatus(status, error.message, 'error');
-    } finally {
+      setStatus(document.getElementById('transaction-delete-status'), error.message, 'error');
       button.disabled = false;
     }
+  });
+  document.getElementById('close-transaction-delete').addEventListener('click', closeTransactionDeleteDialog);
+  document.getElementById('cancel-transaction-delete').addEventListener('click', closeTransactionDeleteDialog);
+  document.getElementById('transaction-delete-dialog').addEventListener('close', () => { pendingTransactionDelete = null; });
+  document.getElementById('close-transaction-confirmation').addEventListener('click', cancelTransactionConfirmation);
+  document.getElementById('cancel-transaction-confirmation').addEventListener('click', cancelTransactionConfirmation);
+  document.getElementById('date-confirmation').addEventListener('cancel', event => {
+    event.preventDefault();
+    cancelTransactionConfirmation();
   });
 
   async function confirmTransactionUpload(overlapAction) {
     const button = overlapAction === 'replace'
       ? document.getElementById('replace-transactions-btn')
       : document.getElementById('keep-transactions-btn');
-    const status = document.getElementById('week-status');
+    const status = document.getElementById('transaction-confirmation-status');
+    const uploadContext = transactionUploadContext;
+    const pageStatus = transactionUploadStatus();
     const dateFrom = document.getElementById('confirmed-date-from').value;
     const dateTo = document.getElementById('confirmed-date-to').value;
     const confirmed = document.getElementById('dates-confirmed').checked;
@@ -3055,7 +3283,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       clearWeeklySelections();
       clearInspection();
       await loadTransactionFiles();
-      await loadLatestSalesTransaction(savedLocation);
+      if (uploadContext?.refreshReport) await loadWeeklySalesReport();
       const importMessages = [];
       if (result.imports?.sales) {
         const imported = result.imports.sales;
@@ -3070,12 +3298,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
       }
       if (importMessages.length) {
-        setStatus(status, importMessages.join(' '), 'success');
+        setStatus(pageStatus, importMessages.join(' '), 'success');
       } else {
-        setStatus(status, overlapAction === 'replace'
+        setStatus(pageStatus, overlapAction === 'replace'
           ? `Se reemplazaron los días coincidentes y se conservaron los datos fuera del rango para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`
           : `Se agregaron los registros nuevos sin duplicar los ya existentes para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`, 'success');
       }
+      transactionUploadContext = null;
     } catch (error) {
       setStatus(status, error.message, 'error');
     } finally {
@@ -3221,10 +3450,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
   document.getElementById('close-waste-summary').addEventListener('click', () => {
-    document.getElementById('waste-summary-results').hidden = true;
+    closeInventoryResultDialog('waste-summary-results');
   });
   document.getElementById('close-consumption-summary').addEventListener('click', () => {
-    document.getElementById('consumption-summary-results').hidden = true;
+    closeInventoryResultDialog('consumption-summary-results');
+  });
+  document.getElementById('close-inventory-report').addEventListener('click', () => {
+    closeInventoryResultDialog('inventory-report-results');
+  });
+  for (const id of ['inventory-kardex-search', 'inventory-kardex-cost-min', 'inventory-kardex-cost-max']) {
+    document.getElementById(id).addEventListener('input', renderInventoryKardexTable);
+  }
+  document.getElementById('inventory-kardex-cost-filter').addEventListener('change', renderInventoryKardexTable);
+  document.getElementById('clear-inventory-kardex-filters').addEventListener('click', () => {
+    document.getElementById('inventory-kardex-search').value = '';
+    document.getElementById('inventory-kardex-cost-filter').value = 'all';
+    document.getElementById('inventory-kardex-cost-min').value = '';
+    document.getElementById('inventory-kardex-cost-max').value = '';
+    renderInventoryKardexTable();
   });
   document.querySelectorAll('.inventory-print-report').forEach(button => {
     button.addEventListener('click', () => printInventoryReport(button.dataset.reportTarget));

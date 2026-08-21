@@ -91,22 +91,30 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#file-loader').isVisible(), true);
   assert.equal(await page.getByRole('button', { name: /New Order/i }).count(), 0);
   assert.equal(await page.locator('#week-select').count(), 0);
-  assert.equal(await page.locator('[data-weekly-field="sales"] .file-upload-state').textContent(), 'Archivo ya subido');
+  assert.match(await page.locator('[data-weekly-field="sales"] .file-upload-state').textContent(), /Último archivo subido/);
   assert.match(await page.locator('[data-weekly-field="sales"] .file-upload-filename').textContent(), /ventas-semana\.csv.*1 carga/i);
-  assert.match(await page.locator('#latest-sales-transaction').textContent(), /09-08-2026.*12:00:00/i);
-  assert.equal(await page.locator('[data-weekly-field="kardex"] .file-upload-state').textContent(), 'Subir Archivo');
+  assert.equal(await page.locator('#latest-sales-transaction').count(), 0);
+  await page.locator('[data-weekly-field="sales"] .file-upload-state').click();
+  await page.locator('[data-weekly-field="sales"] .transaction-upload-history').waitFor();
+  assert.match(await page.locator('[data-weekly-field="sales"] .transaction-upload-history').textContent(), /ventas-semana\.csv.*2026-08-09.*2026-08-09/s);
+  await page.locator('[data-weekly-field="sales"] .file-upload-state').click();
+  assert.equal(await page.locator('[data-weekly-field="kardex"] .file-upload-state').textContent(), 'Sin archivos subidos');
+  assert.equal(await page.locator('[data-weekly-field="sales"]').getByRole('button', { name: 'Cargar nuevo archivo' }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'Detectar fechas y revisar' }).count(), 0);
   assert.equal(await page.locator('#previous-weeks').count(), 0);
   await page.locator('#file-sales').setInputFiles({
     name: 'ventas-coincidentes.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\norder-1\t2026-08-09\t119\t0')
   });
-  await page.getByRole('button', { name: 'Detectar fechas y revisar' }).click();
   await page.locator('#transaction-overlap-notice').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#date-confirmation').evaluate(dialog => dialog.open), true);
   assert.match(await page.locator('.structure-validation-ok').textContent(), /Estructura verificada/);
   assert.equal(await page.locator('#replace-transactions-btn').isVisible(), true);
   assert.match(await page.locator('#transaction-overlap-notice').textContent(), /2026-08-09.*2026-08-09/);
-  await page.locator('#file-sales').setInputFiles([]);
+  await page.getByRole('button', { name: 'Cancelar' }).click();
+  assert.equal(await page.locator('#date-confirmation').evaluate(dialog => dialog.open), false);
+  assert.equal(await page.locator('#file-sales').evaluate(input => input.files.length), 0);
 
   await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
@@ -118,17 +126,46 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#intraday-sales-body tr').count(), 7);
   assert.match(await page.locator('#intraday-sales-body tr').first().locator('td').first().textContent(), /07:00.*09:00/);
   assert.match(await page.locator('#intraday-sales-body tr').last().locator('td').first().textContent(), /19:00.*cierre/);
+  assert.equal(await page.locator('.sales-statistics-card').count(), 4);
+  assert.equal(await page.locator('#sales-statistics-months tr').count(), 14);
+  assert.equal(await page.locator('#sales-statistics-weeks tr').count(), 14);
+  assert.equal(await page.locator('#sales-statistics-days tr').count(), 14);
+  assert.equal(await page.locator('#sales-statistics-equivalent-days tr').count(), 14);
+  assert.match(await page.locator('#sales-statistics-days tr').first().textContent(), /09.*ago.*2026.*\$100/i);
   assert.equal(await page.locator('#report-include-today').isChecked(), false);
+  assert.equal(await page.locator('.summary-card.highlight .report-cutoff-toggle').count(), 1);
+  assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta día anterior');
   await page.locator('.report-cutoff-toggle').click();
   await page.locator('#report-reference-label').filter({ hasText: 'Venta de hoy' }).waitFor();
   assert.equal(await page.locator('#report-include-today').isChecked(), true);
+  assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta hoy');
   assert.equal(await page.locator('#report-week-chip').textContent(), 'Lun–hoy');
   assert.equal(await page.locator('#report-month-chip').textContent(), 'Mes–hoy');
   await page.locator('.report-cutoff-toggle').click();
   await page.locator('#report-reference-label').filter({ hasText: 'Venta del día anterior' }).waitFor();
+  await page.locator('#report-upload-sales').click();
+  await page.locator('#report-sales-location-dialog').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#report-sales-upload-location option').count(), 2);
+  await page.locator('#cancel-report-sales-location').click();
   await page.locator('#report-location-filter').selectOption('store-2');
   await page.locator('#report-scope-description').filter({ hasText: 'Tienda 2' }).waitFor();
   assert.match(await page.locator('#report-yesterday-value').textContent(), /0/);
+  await page.locator('#report-location-filter').selectOption('all');
+  await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
+  await page.locator('#report-location-filter').selectOption('store-1');
+  await page.locator('#report-scope-description').filter({ hasText: 'Tienda 1' }).waitFor();
+  const reportSalesChooserPromise = page.waitForEvent('filechooser');
+  await page.locator('#report-upload-sales').click();
+  const reportSalesChooser = await reportSalesChooserPromise;
+  await reportSalesChooser.setFiles({
+    name: 'ventas-desde-resumen.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\nreport-upload-test\t2026-08-09\t119\t0')
+  });
+  await page.locator('#date-confirmation').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#detected-files-list').textContent(), /ventas-desde-resumen\.csv.*2026-08-09/s);
+  await page.locator('#cancel-transaction-confirmation').click();
+  await page.locator('#report-status').filter({ hasText: 'Carga cancelada' }).waitFor();
   await page.locator('#report-location-filter').selectOption('all');
   await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
 
@@ -253,6 +290,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#source-summary-date-to').fill('2026-08-05');
   await page.locator('#confirm-source-summary').click();
   await page.locator('#waste-summary-results').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#waste-summary-results').evaluate(dialog => dialog.tagName === 'DIALOG' && dialog.open), true);
+  assert.equal(await page.locator('#consumption-summary-results').evaluate(dialog => dialog.tagName), 'DIALOG');
+  assert.equal(await page.locator('#inventory-report-results').evaluate(dialog => dialog.tagName), 'DIALOG');
   assert.equal(await page.locator('#waste-summary-table tbody tr').count(), 1);
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'BUY - Compras' }).count(), 0);
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'MOV-IN' }).count(), 1);
@@ -267,6 +307,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const exportedWorkbook = XLSX.readFile(await excelDownload.path());
   assert.deepEqual(exportedWorkbook.SheetNames, ['Información', 'Merma']);
   assert.equal(exportedWorkbook.Sheets.Merma.A1.v, 'Código');
+  await page.locator('#close-waste-summary').click();
+  assert.equal(await page.locator('#waste-summary-results').evaluate(dialog => dialog.open), false);
   await page.locator('#process-inventory-report').click();
   await page.locator('#inventory-process-dialog').waitFor({ state: 'visible' });
   const defaults = await page.evaluate(() => {
@@ -298,17 +340,78 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Costo unitario' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Consumo Colaboradores' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Consumo Marketing' }).count(), 1);
-  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencia ajustada por consumos' }).count(), 1);
+  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencia ajustada por consumos' }).count(), 0);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Costo Total' }).count(), 1);
   const kardexHeaders = await page.locator('#inventory-results-table th').allTextContents();
-  const adjustedColumn = kardexHeaders.indexOf('Diferencia ajustada por consumos');
-  const adjustedCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(adjustedColumn);
-  assert.match(await adjustedCell.textContent(), /-1,0000/);
-  assert.equal(await adjustedCell.getAttribute('class'), 'difference-negative');
+  const employeeColumn = kardexHeaders.indexOf('Consumo Colaboradores');
+  const marketingColumn = kardexHeaders.indexOf('Consumo Marketing');
+  const theoreticalColumn = kardexHeaders.indexOf('Inventario Final Teórico');
+  const differenceColumn = kardexHeaders.indexOf('Diferencia de Inventario');
+  assert.ok(employeeColumn < marketingColumn && marketingColumn < theoreticalColumn && theoreticalColumn < differenceColumn);
+  const differenceCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(differenceColumn);
+  assert.match(await differenceCell.textContent(), /-1,0000/);
+  assert.equal(await differenceCell.getAttribute('class'), 'difference-negative');
+  const horizontalScroll = await page.locator('#inventory-results-table').evaluate(table => {
+    const wrap = table.parentElement;
+    const cells = [...table.querySelectorAll('tbody tr:first-child td')];
+    const before = cells.slice(0, 5).map(cell => cell.getBoundingClientRect().left);
+    wrap.scrollLeft = 600;
+    const after = cells.slice(0, 5).map(cell => cell.getBoundingClientRect().left);
+    return { before, after, scrollLeft: wrap.scrollLeft };
+  });
+  assert.ok(horizontalScroll.scrollLeft > 0);
+  horizontalScroll.before.slice(0, 4).forEach((left, index) => {
+    assert.ok(Math.abs(left - horizontalScroll.after[index]) < 2);
+  });
+  assert.ok(horizontalScroll.after[4] < horizontalScroll.before[4] - 100);
+  assert.equal(
+    await page.locator('#inventory-results-table .inventory-sort-button').count(),
+    await page.locator('#inventory-results-table th').count()
+  );
+  const totalCostHeader = page.locator('#inventory-results-table th', { hasText: 'Costo Total' });
+  await totalCostHeader.locator('button').click();
+  assert.equal(await totalCostHeader.getAttribute('aria-sort'), 'ascending');
+  await totalCostHeader.locator('button').click();
+  assert.equal(await totalCostHeader.getAttribute('aria-sort'), 'descending');
+  await page.locator('#inventory-kardex-search').fill('producto uno');
+  assert.equal(await page.locator('#inventory-results-table tbody tr').count(), 1);
+  assert.equal(await page.locator('#inventory-kardex-visible-count').textContent(), '1 de 1 filas');
+  await page.locator('#inventory-kardex-cost-filter').selectOption('positive');
+  assert.match(await page.locator('#inventory-results-table tbody').textContent(), /No hay filas/);
+  assert.equal(await page.locator('#inventory-kardex-visible-count').textContent(), '0 de 1 filas');
+  await page.locator('#clear-inventory-kardex-filters').click();
+  assert.equal(await page.locator('#inventory-results-table tbody tr').count(), 1);
   assert.match(await page.locator('#inventory-results-table tbody tr').first().textContent(), /10,0000/);
   assert.match(await page.locator('#inventory-results-table tfoot').textContent(), /TOTAL.*\$0/s);
   assert.equal(await page.locator('#inventory-report-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
   assert.equal(await page.locator('#inventory-report-results').getByRole('button', { name: 'Exportar Excel' }).count(), 1);
+  await page.emulateMedia({ media: 'print' });
+  const printLayout = await page.locator('#inventory-report-results').evaluate(section => {
+    section.close();
+    document.body.classList.add('printing-inventory-report');
+    section.classList.add('inventory-print-target');
+    const card = section.querySelector('.consumption-report-card');
+    const wrap = section.querySelector('.consumption-table-wrap, .inventory-results-table-wrap');
+    const styles = getComputedStyle(section);
+    return {
+      position: styles.position,
+      maxHeight: styles.maxHeight,
+      overflow: styles.overflow,
+      cardBreakInside: getComputedStyle(card || section).breakInside,
+      tableWrapMaxHeight: getComputedStyle(wrap).maxHeight
+    };
+  });
+  assert.equal(printLayout.position, 'static');
+  assert.equal(printLayout.maxHeight, 'none');
+  assert.equal(printLayout.overflow, 'visible');
+  assert.equal(printLayout.cardBreakInside, 'auto');
+  assert.equal(printLayout.tableWrapMaxHeight, 'none');
+  await page.locator('#inventory-report-results').evaluate(section => {
+    section.classList.remove('inventory-print-target');
+    document.body.classList.remove('printing-inventory-report');
+    section.showModal();
+  });
+  await page.emulateMedia({ media: 'screen' });
   const consolidatedDownloadPromise = page.waitForEvent('download');
   await page.locator('#inventory-report-results').getByRole('button', { name: 'Exportar Excel' }).click();
   const consolidatedDownload = await consolidatedDownloadPromise;
@@ -319,6 +422,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#inventory-waste-report').isVisible(), true);
   assert.equal(await page.locator('#inventory-waste-table tbody tr').count(), 1);
   assert.match(await page.locator('#inventory-report-period').textContent(), /Saldo inicial.*04.*ago.*2026.*movimientos.*04.*ago.*2026.*05.*ago.*2026.*saldo final.*06.*ago.*2026/i);
+  assert.equal(await page.locator('#inventory-report-results').evaluate(dialog => dialog.open), true);
+  await page.locator('#close-inventory-report').click();
+  assert.equal(await page.locator('#inventory-report-results').evaluate(dialog => dialog.open), false);
 
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
 
@@ -327,19 +433,19 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#master-preview-title').filter({ hasText: 'ventas-semana.csv' }).waitFor();
   await page.getByRole('button', { name: 'Cerrar' }).click();
   await salesRow.getByRole('button', { name: 'Eliminar' }).click();
-  await salesRow.getByText(/¿Eliminar la carga más reciente “ventas-semana.csv”/).waitFor();
-  await salesRow.getByRole('button', { name: 'Cancelar' }).click();
-  assert.equal(await salesRow.locator('.file-upload-state').textContent(), 'Archivo ya subido');
+  await page.getByRole('heading', { name: 'Eliminar Ventas' }).waitFor();
+  await page.getByRole('button', { name: 'Cancelar' }).click();
+  assert.match(await salesRow.locator('.file-upload-state').textContent(), /Último archivo subido/);
   await salesRow.getByRole('button', { name: 'Eliminar' }).click();
-  await salesRow.getByRole('button', { name: 'Sí, eliminar' }).click();
-  await page.getByText('Carga transaccional eliminada.').waitFor();
-  assert.equal(await salesRow.locator('.file-upload-state').textContent(), 'Subir Archivo');
+  await page.locator('#transaction-delete-confirmation').fill('ELIMINAR');
+  await page.getByRole('button', { name: 'Confirmar eliminación' }).click();
+  await page.getByText(/Se revirtió la última carga de Ventas/).waitFor();
+  assert.equal(await salesRow.locator('.file-upload-state').textContent(), 'Sin archivos subidos');
   await page.locator('#file-sales').setInputFiles({
     name: 'compras-en-ventas.xls',
     mimeType: 'application/vnd.ms-excel',
     buffer: Buffer.from('Fecha emisión\tDocumento\tProveedor/Para\tPRODUCTO\tCod\tQ.Rec\tUm.Rec\tCosto\n2026-08-04\t100\tProveedor\tInsumo\tI1\t1\tUN\t100')
   });
-  await page.getByRole('button', { name: 'Detectar fechas y revisar' }).click();
   await page.locator('#week-status').filter({ hasText: /seleccionado como Transacciones de venta.*parece corresponder a Compras/i }).waitFor();
   await page.locator('#file-sales').setInputFiles([]);
 

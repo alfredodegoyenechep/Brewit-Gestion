@@ -549,6 +549,21 @@ body {
   background: var(--coffee-soft-2);
 }
 
+.inventory-report-dialog {
+  width: min(1600px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  overflow: auto;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(46, 32, 21, 0.28);
+}
+
+.inventory-report-dialog::backdrop {
+  background: rgba(46, 32, 21, 0.55);
+}
+
 .inventory-period-card h3,
 .inventory-report-results h3 {
   margin-top: 6px;
@@ -743,6 +758,38 @@ body {
   font-size: 16px;
 }
 
+.inventory-kardex-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.8fr) minmax(130px, 0.65fr) minmax(130px, 0.65fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.inventory-kardex-tools label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.inventory-kardex-tools input,
+.inventory-kardex-tools select {
+  min-width: 0;
+  height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.inventory-kardex-tools .chip {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .inventory-results-table {
   width: max-content;
   min-width: 100%;
@@ -777,6 +824,29 @@ body {
   color: var(--coffee);
 }
 
+.inventory-sort-button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 900;
+  text-align: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.inventory-sort-button:hover,
+.inventory-sort-button.active {
+  color: var(--clay);
+}
+
+.inventory-sort-button:focus-visible {
+  outline: 2px solid #e28a00;
+  outline-offset: 3px;
+}
+
 .inventory-results-table tfoot td {
   border-top: 2px solid #c9aa87;
   background: #f0e3d2;
@@ -796,8 +866,74 @@ body {
   color: var(--red);
 }
 
-.inventory-results-table .difference-adjusted-positive {
+.inventory-results-table .difference-final-positive {
   color: #2869a8;
+}
+
+#inventory-results-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#inventory-results-table th:nth-child(-n + 4),
+#inventory-results-table td:nth-child(-n + 4) {
+  position: sticky;
+  z-index: 2;
+  box-sizing: border-box;
+  background: white;
+}
+
+#inventory-results-table th:nth-child(1),
+#inventory-results-table td:nth-child(1) {
+  left: 0;
+  width: 90px;
+  min-width: 90px;
+  max-width: 90px;
+}
+
+#inventory-results-table th:nth-child(2),
+#inventory-results-table td:nth-child(2) {
+  left: 90px;
+  width: 280px;
+  min-width: 280px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#inventory-results-table th:nth-child(3),
+#inventory-results-table td:nth-child(3) {
+  left: 370px;
+  width: 70px;
+  min-width: 70px;
+  max-width: 70px;
+}
+
+#inventory-results-table th:nth-child(4),
+#inventory-results-table td:nth-child(4) {
+  left: 440px;
+  width: 120px;
+  min-width: 120px;
+  max-width: 120px;
+  box-shadow: 7px 0 9px -8px rgba(46, 32, 21, 0.7);
+}
+
+#inventory-results-table thead th:nth-child(-n + 4) {
+  z-index: 4;
+  background: var(--coffee-soft-2);
+}
+
+#inventory-results-table tfoot td:nth-child(-n + 4) {
+  z-index: 3;
+  background: #f0e3d2;
+}
+
+#inventory-results-table td.inventory-empty-result {
+  position: static;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  background: white;
 }
 
 @media print {
@@ -821,8 +957,11 @@ body {
   body.printing-inventory-report #inventory-workspace,
   body.printing-inventory-report .inventory-print-target {
     display: block !important;
+    position: static !important;
     width: 100% !important;
     max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
     margin: 0 !important;
     padding: 0 !important;
     overflow: visible !important;
@@ -837,6 +976,7 @@ body {
 
   body.printing-inventory-report .inventory-results-table-wrap,
   body.printing-inventory-report .consumption-table-wrap {
+    height: auto !important;
     max-height: none !important;
     overflow: visible !important;
   }
@@ -856,8 +996,35 @@ body {
   }
 
   body.printing-inventory-report .consumption-report-card,
+  body.printing-inventory-report .consumption-report-part,
   body.printing-inventory-report .inventory-results-table-wrap {
+    break-inside: auto;
+  }
+
+  body.printing-inventory-report thead {
+    display: table-header-group;
+  }
+
+  body.printing-inventory-report tfoot {
+    display: table-footer-group;
+  }
+
+  body.printing-inventory-report tr {
     break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.printing-inventory-report #inventory-results-table th:nth-child(-n + 4),
+  body.printing-inventory-report #inventory-results-table td:nth-child(-n + 4) {
+    position: static !important;
+    left: auto !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-inventory-report .consumption-report-card + .consumption-report-card,
+  body.printing-inventory-report #inventory-waste-report,
+  body.printing-inventory-report .inventory-kardex-heading {
+    break-before: page;
   }
 
   body.printing-purchases-report {
@@ -1027,6 +1194,10 @@ body {
   gap: 7px;
 }
 
+.report-refresh-stack > button {
+  width: 100%;
+}
+
 .report-cutoff-toggle {
   display: flex;
   align-items: center;
@@ -1078,6 +1249,44 @@ body {
 
 .report-summary-grid {
   margin-top: 22px;
+}
+
+.report-summary-grid .summary-card.highlight {
+  position: relative;
+  padding-bottom: 48px;
+}
+
+.report-card-cutoff {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+  color: #eadfc9;
+}
+
+.report-card-cutoff .toggle-track {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.report-card-cutoff input:checked + .toggle-track {
+  background: var(--clay);
+}
+
+.report-sales-location-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 20px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.report-sales-location-field select {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
 }
 
 .report-card-details {
@@ -1203,6 +1412,67 @@ body {
 .intraday-table td.today-value {
   color: var(--clay);
   font-size: 17px;
+}
+
+.sales-statistics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.sales-statistics-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 10px 24px rgba(54, 38, 26, 0.05);
+}
+
+.sales-statistics-card h3 {
+  min-height: 42px;
+  margin-top: 6px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.sales-statistics-table-wrap {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.sales-statistics-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sales-statistics-table th,
+.sales-statistics-table td {
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+
+.sales-statistics-table th {
+  color: var(--text-soft);
+  font-size: 13px;
+  text-align: left;
+}
+
+.sales-statistics-table th:last-child,
+.sales-statistics-table td:last-child {
+  text-align: right;
+}
+
+.sales-statistics-table td {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.sales-statistics-table td:first-child {
+  color: var(--text-soft);
 }
 
 .products-workspace-head {
@@ -2002,19 +2272,21 @@ body {
 }
 
 #weekly-upload-form .file-row {
-  grid-template-columns: minmax(190px, 0.7fr) minmax(260px, 1.25fr) auto minmax(210px, auto);
+  grid-template-columns: minmax(190px, 0.7fr) minmax(300px, 1.35fr) minmax(340px, auto);
 }
 
 .weekly-file-actions {
   display: flex;
+  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
 }
 
-.latest-sales-transaction {
-  justify-self: end;
-  color: #4f94bf;
-  font-size: 11px;
-  font-weight: 800;
+.weekly-file-actions button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
   white-space: nowrap;
 }
 
@@ -2060,7 +2332,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-soft);
-  cursor: pointer;
+  cursor: default;
 }
 
 .native-file-input:focus-visible + .file-upload-control {
@@ -2074,6 +2346,17 @@ body {
   border-radius: 8px;
   font-size: 11px;
   font-weight: 900;
+}
+
+button.file-upload-state {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.file-upload-state:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 .file-upload-state.uploaded {
@@ -2093,6 +2376,106 @@ body {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.transaction-upload-history {
+  display: grid;
+  grid-column: 2 / -1;
+  gap: 8px;
+  max-height: 360px;
+  padding: 13px 15px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid #cfe1f1;
+  border-radius: 11px;
+  background: #f4f9fe;
+}
+
+.transaction-upload-history > strong {
+  position: sticky;
+  top: -13px;
+  z-index: 1;
+  margin: -13px -15px 0;
+  padding: 13px 15px 9px;
+  background: #f4f9fe;
+  color: #2869a8;
+  font-size: 12px;
+}
+
+.transaction-upload-history-item {
+  display: grid;
+  grid-template-columns: minmax(190px, .7fr) minmax(320px, 1.3fr);
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #dceaf6;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.transaction-upload-history-item span:first-child {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction-delete-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.transaction-delete-options {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.transaction-delete-options legend {
+  margin-bottom: 9px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.transaction-delete-options label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--bg-soft);
+  cursor: pointer;
+}
+
+.transaction-delete-options input { margin-top: 3px; }
+
+.transaction-delete-options span {
+  display: grid;
+  gap: 4px;
+}
+
+.transaction-delete-options small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.transaction-delete-confirmation {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.transaction-delete-confirmation input {
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
 }
 
 .latest-valid-date {
@@ -2135,6 +2518,15 @@ body {
   border: 1px solid #d9c59f;
   border-radius: 16px;
   background: #fff9ed;
+}
+
+.transaction-confirmation-dialog {
+  width: min(900px, calc(100vw - 32px));
+}
+
+.transaction-confirmation-dialog .detected-files-list {
+  max-height: min(300px, 36vh);
+  overflow-y: auto;
 }
 
 .master-conflict {
@@ -3237,6 +3629,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .inventory-kardex-tools {
+    grid-template-columns: 1fr;
+  }
+
   .inventory-criteria-grid,
   .inventory-criteria-grid fieldset,
   .inventory-summary-period {
@@ -3251,12 +3647,21 @@ button:disabled {
     justify-self: start;
   }
 
-  .latest-sales-transaction {
-    justify-self: start;
-  }
-
   #weekly-upload-form .file-row,
   .upload-context-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-file-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .transaction-upload-history {
+    grid-column: 1;
+  }
+
+  .transaction-upload-history-item {
     grid-template-columns: 1fr;
   }
 
@@ -3300,7 +3705,8 @@ button:disabled {
   .lower-grid,
   .sales-dashboard-metrics,
   .sales-insights-grid,
-  .frequency-grid {
+  .frequency-grid,
+  .sales-statistics-grid {
     grid-template-columns: 1fr;
   }
 

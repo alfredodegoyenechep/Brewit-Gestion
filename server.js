@@ -902,7 +902,10 @@ function enrichKardexReport(report, consumption, catalog) {
   const items = report.items.map(item => {
     const employeeConsumption = consumptionQuantityForKardex(consumption.employees, item.code, item.unit);
     const marketingConsumption = consumptionQuantityForKardex(consumption.marketing, item.code, item.unit);
-    const adjustedDifference = (Number(item.difference) || 0) + employeeConsumption + marketingConsumption;
+    const baseTheoreticalFinal = Number(item.theoreticalFinal) || 0;
+    const theoreticalFinal = baseTheoreticalFinal - employeeConsumption - marketingConsumption;
+    const finalInventory = report.selection ? Number(item.finalInventory) || 0 : Number(item.physicalFinal) || 0;
+    const difference = finalInventory - theoreticalFinal;
     const catalogUnitCost = unitCostForRecipeUnit(catalog?.get(item.code), item.unit);
     if (catalogUnitCost === null) itemsWithoutCost.add(item.code || item.name);
     const unitCost = catalogUnitCost ?? 0;
@@ -910,10 +913,12 @@ function enrichKardexReport(report, consumption, catalog) {
       ...item,
       employeeConsumption,
       marketingConsumption,
-      adjustedDifference,
+      baseTheoreticalFinal,
+      theoreticalFinal,
+      difference,
       unitCost,
       costAvailable: catalogUnitCost !== null,
-      totalCost: adjustedDifference * unitCost
+      totalCost: difference * unitCost
     };
   });
   return {
@@ -1255,6 +1260,35 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
     .filter(date => date >= from && date <= to)
     .reduce((sum, date) => sum + dailySales[date].net, 0);
 
+  const monthKeyAtOffset = offset => {
+    const reference = new Date(`${referenceDate.slice(0, 7)}-01T00:00:00.000Z`);
+    reference.setUTCMonth(reference.getUTCMonth() + offset);
+    return reference.toISOString().slice(0, 7);
+  };
+  const months = Array.from({ length: 14 }, (_, index) => {
+    const monthKey = monthKeyAtOffset(-index);
+    const from = `${monthKey}-01`;
+    const nextMonth = new Date(`${from}T00:00:00.000Z`);
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+    const calendarEnd = addDays(nextMonth.toISOString().slice(0, 10), -1);
+    const to = calendarEnd > referenceDate ? referenceDate : calendarEnd;
+    return { key: monthKey, from, to, netSales: sumRange(from, to) };
+  });
+  const weeks = Array.from({ length: 14 }, (_, index) => {
+    const from = addDays(weekStart, -7 * index);
+    const calendarEnd = addDays(from, 6);
+    const to = calendarEnd > referenceDate ? referenceDate : calendarEnd;
+    return { from, to, netSales: sumRange(from, to) };
+  });
+  const days = Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(referenceDate, -index);
+    return { date, netSales: dailySales[date]?.net || 0 };
+  });
+  const equivalentDays = Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(referenceDate, -7 * index);
+    return { date, netSales: dailySales[date]?.net || 0 };
+  });
+
   return {
     basis: 'gross-plus-signed-discounts-divided-by-1.19',
     currency: 'CLP',
@@ -1275,6 +1309,7 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
     },
     week: { from: weekStart, to: referenceDate, netSales: sumRange(weekStart, referenceDate) },
     month: { from: monthStart, to: referenceDate, netSales: sumRange(monthStart, referenceDate) },
+    statistics: { months, weeks, days, equivalentDays },
     coverage: historicalDates.length ? { from: historicalDates[0], to: historicalDates.at(-1) } : null
   };
 }
@@ -3421,6 +3456,32 @@ function createApp(options = {}) {
     };
   }
 
+  function deleteStoredSource(locationId, field, stored) {
+    if (stored.week) {
+      const metadataPath = path.join(stored.destination, 'meta.json');
+      const metadata = readJson(metadataPath, null);
+      if (!metadata?.files || !Object.hasOwn(metadata.files, field)) return false;
+      const fieldRecords = Array.isArray(metadata.files[field]) ? metadata.files[field] : [metadata.files[field]];
+      const remaining = fieldRecords.filter(record => record.name !== stored.record.name);
+      if (remaining.length) metadata.files[field] = Array.isArray(metadata.files[field]) ? remaining : remaining[0];
+      else delete metadata.files[field];
+      metadata.savedAt = new Date().toISOString();
+      writeJsonAtomic(metadataPath, metadata);
+      removeStoredRecords(stored.destination, stored.record);
+      return true;
+    }
+    const index = readTransactionIndex(locationId);
+    const files = index.fields?.[field]?.files || [];
+    const position = files.findIndex(record => record.id === stored.sourceId);
+    if (position < 0) return false;
+    const [record] = files.splice(position, 1);
+    rebuildTransactionExclusions(index);
+    index.updatedAt = new Date().toISOString();
+    writeTransactionIndex(locationId, index);
+    removeStoredRecords(transactionLocationRoot(locationId), record);
+    return true;
+  }
+
   app.get('/api/transactions', (req, res) => {
     const location = activeLocation(req.query.location);
     if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
@@ -3429,14 +3490,15 @@ function createApp(options = {}) {
       for (const field of fieldsForLocation(location.type)) {
         const stored = storedFieldFiles(location.id, field);
         const sorted = [...stored].sort((left, right) =>
-          String(right.record.detectedRange?.to || '').localeCompare(String(left.record.detectedRange?.to || ''))
-          || String(right.record.savedAt || '').localeCompare(String(left.record.savedAt || '')));
+          String(right.record.savedAt || right.week || '').localeCompare(String(left.record.savedAt || left.week || ''))
+          || String(right.record.detectedRange?.to || '').localeCompare(String(left.record.detectedRange?.to || '')));
         const ranges = sorted.map(item => item.record.confirmedRange || item.record.detectedRange).filter(Boolean);
         files[field] = {
           field,
           fileCount: sorted.length,
           dataRange: combinedDateRange(ranges.map(detectedRange => ({ detectedRange }))),
-          latest: sorted[0] ? publicStoredFile(sorted[0], location.id, field) : null
+          latest: sorted[0] ? publicStoredFile(sorted[0], location.id, field) : null,
+          uploads: sorted.map(item => publicStoredFile(item, location.id, field))
         };
       }
       return res.json({ location: publicLocation(location), files });
@@ -3643,6 +3705,42 @@ function createApp(options = {}) {
     writeTransactionIndex(location.id, index);
     removeStoredRecords(transactionLocationRoot(location.id), record);
     return res.json({ ok: true, deleted: { location: location.id, field: req.params.field, source: record.id } });
+  });
+
+  app.post('/api/transactions/:location/:field/remove', (req, res) => {
+    const location = activeLocation(req.params.location);
+    const field = String(req.params.field || '');
+    const action = String(req.body?.action || '');
+    if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
+    if (!fieldsForLocation(location.type).includes(field)) return res.status(400).json({ error: 'La categoría no corresponde a esta ubicación.' });
+    if (!['last', 'all'].includes(action)) return res.status(400).json({ error: 'Selecciona si deseas revertir la última carga o eliminar toda la información.' });
+    if (req.body?.confirmed !== true || req.body?.confirmationText !== 'ELIMINAR') {
+      return res.status(400).json({ error: 'Debes confirmar la eliminación escribiendo ELIMINAR.' });
+    }
+    try {
+      const stored = storedFieldFiles(location.id, field);
+      if (!stored.length) return res.status(404).json({ error: 'No hay información guardada para esta categoría.' });
+      const targets = action === 'all'
+        ? stored
+        : [[...stored].sort((left, right) =>
+          String(right.record.savedAt || right.week || '').localeCompare(String(left.record.savedAt || left.week || '')))[0]];
+      let deletedCount = 0;
+      for (const target of targets) {
+        if (deleteStoredSource(location.id, field, target)) deletedCount += 1;
+      }
+      const index = readTransactionIndex(location.id);
+      rebuildTransactionExclusions(index);
+      index.updatedAt = new Date().toISOString();
+      writeTransactionIndex(location.id, index);
+      return res.json({
+        ok: true,
+        action,
+        deletedCount,
+        remainingCount: storedFieldFiles(location.id, field).length
+      });
+    } catch (error) {
+      return res.status(500).json({ error: 'No se pudo eliminar la información seleccionada.' });
+    }
   });
 
   app.post('/api/uploads/weekly/inspect', (req, res) => {

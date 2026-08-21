@@ -229,11 +229,8 @@
           </select>
           <div class="report-refresh-stack">
             <button id="refresh-weekly-report" class="icon-button" type="button">Actualizar</button>
-            <label class="report-cutoff-toggle" for="report-include-today">
-              <input id="report-include-today" type="checkbox" />
-              <span class="toggle-track" aria-hidden="true"><span></span></span>
-              <span>Incluir venta de hoy</span>
-            </label>
+            <button id="report-upload-sales" class="primary" type="button">Cargar Archivo</button>
+            <input id="report-sales-upload-input" class="native-file-input" name="sales" type="file" accept=".csv,.xls,.xlsx,.txt" hidden />
           </div>
         </div>
       </div>
@@ -251,6 +248,11 @@
             <span id="report-weekday-rank">Ranking mismo día: —</span>
             <span id="report-average-comparison">Vs. promedio 8 semanas: —</span>
           </div>
+          <label class="report-cutoff-toggle report-card-cutoff" for="report-include-today">
+            <input id="report-include-today" type="checkbox" />
+            <span class="toggle-track" aria-hidden="true"><span></span></span>
+            <span id="report-cutoff-label">Venta día anterior</span>
+          </label>
         </article>
 
         <article class="summary-card">
@@ -321,6 +323,67 @@
           </table>
         </div>
       </section>
+
+      <section class="sales-statistics-grid" aria-label="Historial estadístico de ventas">
+        <article class="sales-statistics-card">
+          <div class="panel-eyebrow">Historial mensual</div>
+          <h3>Venta de los últimos 14 meses</h3>
+          <div class="sales-statistics-table-wrap">
+            <table class="sales-statistics-table">
+              <thead><tr><th>Mes</th><th>Venta neta</th></tr></thead>
+              <tbody id="sales-statistics-months"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="sales-statistics-card">
+          <div class="panel-eyebrow">Historial semanal</div>
+          <h3>Venta de las últimas 14 semanas</h3>
+          <div class="sales-statistics-table-wrap">
+            <table class="sales-statistics-table">
+              <thead><tr><th>Semana</th><th>Venta neta</th></tr></thead>
+              <tbody id="sales-statistics-weeks"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="sales-statistics-card">
+          <div class="panel-eyebrow">Historial diario</div>
+          <h3>Venta de los últimos 14 días</h3>
+          <div class="sales-statistics-table-wrap">
+            <table class="sales-statistics-table">
+              <thead><tr><th>Día</th><th>Venta neta</th></tr></thead>
+              <tbody id="sales-statistics-days"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="sales-statistics-card">
+          <div class="panel-eyebrow">Días equivalentes</div>
+          <h3>Venta de los últimos 14 días equivalentes</h3>
+          <div class="sales-statistics-table-wrap">
+            <table class="sales-statistics-table">
+              <thead><tr><th>Mismo día</th><th>Venta neta</th></tr></thead>
+              <tbody id="sales-statistics-equivalent-days"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <dialog id="report-sales-location-dialog" class="inventory-criteria-dialog report-sales-location-dialog">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Cargar transacciones de venta</div>
+            <h3>Selecciona la cafetería</h3>
+            <p class="panel-description">Indica a qué cafetería pertenecen las transacciones antes de seleccionar el archivo.</p>
+          </div>
+          <button id="close-report-sales-location" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <label class="report-sales-location-field">Cafetería
+          <select id="report-sales-upload-location"></select>
+        </label>
+        <div class="conflict-actions">
+          <button id="confirm-report-sales-location" class="primary" type="button">Seleccionar archivo</button>
+          <button id="cancel-report-sales-location" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
     </section>
 
     <section id="products-workspace" class="panel products-workspace" style="display:none;">
@@ -600,11 +663,11 @@
         </div>
       </dialog>
 
-      <section id="waste-summary-results" class="inventory-report-results" hidden>
+      <dialog id="waste-summary-results" class="inventory-report-results inventory-report-dialog" aria-labelledby="waste-summary-title">
         <div class="inventory-results-head">
           <div>
             <div class="panel-eyebrow">Resumen de merma</div>
-            <h3>Adiciones por ítem</h3>
+            <h3 id="waste-summary-title">Adiciones por ítem</h3>
             <p id="waste-summary-period" class="panel-description"></p>
           </div>
           <div class="inventory-source-actions">
@@ -617,9 +680,9 @@
         <div class="inventory-results-table-wrap">
           <table id="waste-summary-table" class="inventory-results-table"></table>
         </div>
-      </section>
+      </dialog>
 
-      <section id="consumption-summary-results" class="inventory-report-results" hidden>
+      <dialog id="consumption-summary-results" class="inventory-report-results inventory-report-dialog" aria-labelledby="consumption-summary-title">
         <div class="inventory-results-head">
           <div>
             <div class="panel-eyebrow">Resumen de consumo</div>
@@ -633,19 +696,20 @@
           </div>
         </div>
         <div id="standalone-consumption-report" class="inventory-consumption-reports"></div>
-      </section>
+      </dialog>
 
-      <section id="inventory-report-results" class="inventory-report-results" hidden>
+      <dialog id="inventory-report-results" class="inventory-report-results inventory-report-dialog" aria-labelledby="inventory-report-title">
         <div class="inventory-results-head">
           <div>
             <div class="panel-eyebrow">Informe procesado</div>
-            <h3>Consolidado de inventario</h3>
+            <h3 id="inventory-report-title">Consolidado de inventario</h3>
             <p id="inventory-report-period" class="panel-description"></p>
           </div>
           <div class="inventory-source-actions">
             <span id="inventory-report-item-count" class="chip neutral"></span>
             <button class="icon-button small inventory-print-report" data-report-target="inventory-report-results" type="button">Imprimir / PDF</button>
             <button class="icon-button small inventory-export-report" data-report-target="inventory-report-results" type="button">Exportar Excel</button>
+            <button id="close-inventory-report" class="icon-button small" type="button">Cerrar</button>
           </div>
         </div>
         <div id="inventory-consumption-reports" class="inventory-consumption-reports"></div>
@@ -657,10 +721,32 @@
           </div>
         </section>
         <h4 class="inventory-kardex-heading">Consolidado del Kardex</h4>
+        <div class="inventory-kardex-tools">
+          <label class="inventory-kardex-search">Buscar por código o producto
+            <input id="inventory-kardex-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+          </label>
+          <label>Costo total
+            <select id="inventory-kardex-cost-filter">
+              <option value="all">Todos</option>
+              <option value="nonzero">Distinto de cero</option>
+              <option value="positive">Mayor que cero</option>
+              <option value="negative">Menor que cero</option>
+              <option value="zero">Igual a cero</option>
+            </select>
+          </label>
+          <label>Costo mínimo
+            <input id="inventory-kardex-cost-min" type="number" step="1" placeholder="Sin mínimo" />
+          </label>
+          <label>Costo máximo
+            <input id="inventory-kardex-cost-max" type="number" step="1" placeholder="Sin máximo" />
+          </label>
+          <button id="clear-inventory-kardex-filters" class="icon-button small" type="button">Limpiar filtros</button>
+          <span id="inventory-kardex-visible-count" class="chip neutral"></span>
+        </div>
         <div class="inventory-results-table-wrap">
           <table id="inventory-results-table" class="inventory-results-table"></table>
         </div>
-      </section>
+      </dialog>
 
       <dialog id="inventory-preview-dialog" class="preview-dialog">
         <div class="preview-dialog-head">
@@ -747,22 +833,21 @@
           <div class="file-row store-only" data-weekly-field="sales">
             <label for="file-sales">Transacciones de venta</label>
             <input type="file" id="file-sales" name="sales" accept=".csv,.xls,.xlsx,.txt" />
-            <span id="latest-sales-transaction" class="latest-sales-transaction" aria-live="polite">Última transacción: consultando…</span>
           </div>
           <div class="file-row store-only" data-weekly-field="mercadopago">
             <label for="file-mercadopago">Transacciones MercadoPago</label>
             <input type="file" id="file-mercadopago" name="mercadopago" accept=".csv,.xls,.xlsx,.txt" />
           </div>
-          <div class="form-actions">
-            <button id="inspect-week-btn" class="primary" type="submit">Detectar fechas y revisar</button>
-          </div>
         </form>
 
-        <section id="date-confirmation" class="confirmation-card" hidden>
-          <div>
-            <div class="panel-eyebrow">Confirmación requerida</div>
-            <h3>Revisa las fechas detectadas</h3>
-            <p id="transaction-confirmation-copy">Confirma que este rango corresponde a todos los archivos antes de guardarlos.</p>
+        <dialog id="date-confirmation" class="inventory-criteria-dialog transaction-confirmation-dialog" aria-labelledby="transaction-confirmation-title">
+          <div class="preview-dialog-head">
+            <div>
+              <div class="panel-eyebrow">Confirmación requerida</div>
+              <h3 id="transaction-confirmation-title">Revisa las fechas detectadas</h3>
+              <p id="transaction-confirmation-copy" class="panel-description">Confirma que este rango corresponde a todos los archivos antes de guardarlos.</p>
+            </div>
+            <button id="close-transaction-confirmation" class="icon-button" type="button">Cerrar</button>
           </div>
           <div id="detected-files-list" class="detected-files-list"></div>
           <div class="confirmation-dates">
@@ -774,11 +859,44 @@
             Confirmo que estas fechas son válidas para los archivos seleccionados.
           </label>
           <div id="transaction-overlap-notice" class="transaction-overlap-notice" hidden></div>
+          <div id="transaction-confirmation-status" class="form-status" aria-live="polite"></div>
           <div class="conflict-actions">
             <button id="keep-transactions-btn" class="primary" type="button">Mantener existentes y agregar nuevos</button>
             <button id="replace-transactions-btn" class="delete-button" type="button" hidden>Reemplazar días coincidentes</button>
+            <button id="cancel-transaction-confirmation" class="icon-button" type="button">Cancelar</button>
           </div>
-        </section>
+        </dialog>
+
+        <dialog id="transaction-delete-dialog" class="inventory-criteria-dialog transaction-delete-dialog">
+          <div class="preview-dialog-head">
+            <div>
+              <div class="panel-eyebrow">Eliminar información</div>
+              <h3 id="transaction-delete-title">Administrar datos guardados</h3>
+              <p id="transaction-delete-description" class="panel-description"></p>
+            </div>
+            <button id="close-transaction-delete" class="icon-button" type="button">Cerrar</button>
+          </div>
+          <fieldset class="transaction-delete-options">
+            <legend>¿Qué deseas eliminar?</legend>
+            <label>
+              <input type="radio" name="transaction-delete-action" value="last" checked />
+              <span><strong>Revertir la última carga</strong><small>Elimina solo el archivo incorporado más recientemente y restaura los datos anteriores que esa carga hubiera reemplazado.</small></span>
+            </label>
+            <label>
+              <input type="radio" name="transaction-delete-action" value="all" />
+              <span><strong>Eliminar toda la información</strong><small>Elimina todas las cargas de esta categoría para la ubicación seleccionada, incluidas las cargas históricas.</small></span>
+            </label>
+          </fieldset>
+          <div class="transaction-delete-confirmation">
+            <label for="transaction-delete-confirmation">Para confirmar, escribe <strong>ELIMINAR</strong></label>
+            <input id="transaction-delete-confirmation" type="text" autocomplete="off" />
+          </div>
+          <div id="transaction-delete-status" class="form-status" aria-live="polite"></div>
+          <div class="conflict-actions">
+            <button id="confirm-transaction-delete" class="delete-button" type="button" disabled>Confirmar eliminación</button>
+            <button id="cancel-transaction-delete" class="icon-button" type="button">Cancelar</button>
+          </div>
+        </dialog>
 
       </div>
 

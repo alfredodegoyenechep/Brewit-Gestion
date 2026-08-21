@@ -185,6 +185,24 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(report.week.netSales), 800);
   assert.equal(report.month.from, '2026-08-01');
   assert.equal(Math.round(report.month.netSales), 1900);
+  assert.equal(report.statistics.months.length, 14);
+  assert.deepEqual(report.statistics.months[0], {
+    key: '2026-08', from: '2026-08-01', to: '2026-08-13', netSales: 1900
+  });
+  assert.equal(report.statistics.weeks.length, 14);
+  assert.deepEqual(report.statistics.weeks[0], {
+    from: '2026-08-10', to: '2026-08-13', netSales: 800
+  });
+  assert.equal(report.statistics.days.length, 14);
+  assert.deepEqual(report.statistics.days.slice(0, 2), [
+    { date: '2026-08-13', netSales: 200 },
+    { date: '2026-08-12', netSales: 300 }
+  ]);
+  assert.equal(report.statistics.equivalentDays.length, 14);
+  assert.deepEqual(report.statistics.equivalentDays.slice(0, 2), [
+    { date: '2026-08-13', netSales: 200 },
+    { date: '2026-08-06', netSales: 100 }
+  ]);
 
   const includingToday = await fetch(`${baseUrl}/api/reports/weekly-sales?includeToday=true`).then(response => response.json());
   assert.equal(includingToday.includeToday, true);
@@ -195,6 +213,9 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(includingToday.week.netSales), 1200);
   assert.equal(includingToday.month.to, '2026-08-14');
   assert.equal(Math.round(includingToday.month.netSales), 2300);
+  assert.equal(Math.round(includingToday.statistics.months[0].netSales), 2300);
+  assert.equal(Math.round(includingToday.statistics.weeks[0].netSales), 1200);
+  assert.deepEqual(includingToday.statistics.days[0], { date: '2026-08-14', netSales: 400 });
 });
 
 test('does not compare a missing previous sales day as if it were a zero-sale day', async t => {
@@ -851,7 +872,10 @@ test('processes marketing and employee consumption into product and recipe ingre
   assert.equal(data.consumption.employees.ingredients.totalCost, 5);
   assert.equal(data.report.items[0].employeeConsumption, 1.25);
   assert.equal(data.report.items[0].marketingConsumption, 2.875);
-  assert.equal(data.report.items[0].adjustedDifference, 4.125);
+  assert.equal(data.report.items[0].baseTheoreticalFinal, 17);
+  assert.equal(data.report.items[0].theoreticalFinal, 12.875);
+  assert.equal(data.report.items[0].difference, 4.125);
+  assert.equal('adjustedDifference' in data.report.items[0], false);
   assert.equal(data.report.items[0].unitCost, 4);
   assert.equal(data.report.items[0].totalCost, 16.5);
   assert.equal(data.report.totalCost, 16.5);
@@ -1089,7 +1113,31 @@ test('stores transactions without a week and confirms whether overlapping dates 
   assert.equal(latest.transactionCount, 2);
   const stored = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
   assert.equal(stored.files.sales.fileCount, 3);
+  assert.equal(stored.files.sales.uploads.length, 3);
+  assert.equal(stored.files.sales.uploads[0].originalName, 'ventas-corregidas.csv');
   assert.deepEqual(stored.files.sales.dataRange, { from: '2026-08-04', to: '2026-08-05' });
+
+  const unconfirmedRemoval = await fetch(`${baseUrl}/api/transactions/store-1/sales/remove`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'last', confirmed: true, confirmationText: 'NO' })
+  });
+  assert.equal(unconfirmedRemoval.status, 400);
+  const reverted = await fetch(`${baseUrl}/api/transactions/store-1/sales/remove`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'last', confirmed: true, confirmationText: 'ELIMINAR' })
+  }).then(response => response.json());
+  assert.equal(reverted.deletedCount, 1);
+  assert.equal(reverted.remainingCount, 2);
+  const restoredReport = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1`).then(response => response.json());
+  assert.equal(restoredReport.month.netSales, 300);
+  const removedAll = await fetch(`${baseUrl}/api/transactions/store-1/sales/remove`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'all', confirmed: true, confirmationText: 'ELIMINAR' })
+  }).then(response => response.json());
+  assert.equal(removedAll.deletedCount, 2);
+  assert.equal(removedAll.remainingCount, 0);
+  const empty = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
+  assert.equal(empty.files.sales.fileCount, 0);
 });
 
 test('accepts MercadoPago files without a structural reference and avoids duplicate rows', async t => {
