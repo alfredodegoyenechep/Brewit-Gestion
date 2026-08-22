@@ -2256,6 +2256,7 @@ function createApp(options = {}) {
     }])).values()].sort((left, right) => left.name.localeCompare(right.name, 'es'));
 
     const previousPrices = new Map();
+    const previousUnitCosts = new Map();
     allRows.sort((left, right) => left.date.localeCompare(right.date)
       || left.document.localeCompare(right.document, 'es', { numeric: true })
       || left.line.localeCompare(right.line, 'es', { numeric: true }));
@@ -2266,6 +2267,13 @@ function createApp(options = {}) {
         ? ((row.effectiveUnitPrice / row.previousEffectiveUnitPrice) - 1) * 100
         : null;
       previousPrices.set(historyKey, row.effectiveUnitPrice);
+      row.comparisonUnitCost = row.baseUnitCost ?? row.listedUnitPrice;
+      row.comparisonUnit = row.baseUnit || row.purchaseUnit || row.unit || '';
+      row.previousComparisonUnitCost = previousUnitCosts.get(historyKey) ?? null;
+      row.unitCostChangePercent = row.previousComparisonUnitCost
+        ? ((row.comparisonUnitCost / row.previousComparisonUnitCost) - 1) * 100
+        : null;
+      previousUnitCosts.set(historyKey, row.comparisonUnitCost);
     });
 
     const rows = allRows.filter(row => (!dateFrom || row.date >= dateFrom)
@@ -2297,11 +2305,108 @@ function createApp(options = {}) {
     };
   }
 
+  function buildPurchaseCostVariationsPayload(query = {}) {
+    const dateTo = projectionToday();
+    const dateFrom = addDays(dateTo, -29);
+    const purchases = buildPurchasesPayload({
+      location: query.location || 'all',
+      supplier: 'all',
+      product: '',
+      dateFrom,
+      dateTo
+    });
+    const rowsByItem = new Map();
+    for (const row of purchases.rows) {
+      const key = [
+        row.supplierKey,
+        row.locationId,
+        row.code || normalizeHeader(row.product),
+        row.purchaseUnit || row.unit,
+        row.comparisonUnit
+      ].join('|');
+      if (!rowsByItem.has(key)) rowsByItem.set(key, []);
+      rowsByItem.get(key).push(row);
+    }
+    const groupsBySupplier = new Map();
+    for (const itemRows of rowsByItem.values()) {
+      itemRows.sort((left, right) => left.date.localeCompare(right.date)
+        || left.document.localeCompare(right.document, 'es', { numeric: true })
+        || left.line.localeCompare(right.line, 'es', { numeric: true }));
+      const changes = itemRows.filter(row => row.unitCostChangePercent !== null
+        && Math.abs(row.unitCostChangePercent) >= 0.01);
+      if (!changes.length) continue;
+      const first = itemRows[0];
+      const latest = itemRows.at(-1);
+      const costs = itemRows.map(row => row.comparisonUnitCost);
+      const firstComparableCost = changes[0].previousComparisonUnitCost ?? first.comparisonUnitCost;
+      const netChangePercent = firstComparableCost
+        ? ((latest.comparisonUnitCost / firstComparableCost) - 1) * 100
+        : null;
+      const item = {
+        key: [first.locationId, first.code || normalizeHeader(first.product), first.purchaseUnit || first.unit].join('|'),
+        code: first.code,
+        product: first.product,
+        locationId: first.locationId,
+        locationName: first.locationName,
+        purchaseUnit: first.purchaseUnit || first.unit,
+        comparisonUnit: first.comparisonUnit,
+        firstCost: firstComparableCost,
+        latestCost: latest.comparisonUnitCost,
+        minCost: Math.min(firstComparableCost, ...costs),
+        maxCost: Math.max(firstComparableCost, ...costs),
+        netChangePercent,
+        fluctuationCount: changes.length,
+        increaseCount: changes.filter(row => row.unitCostChangePercent > 0).length,
+        decreaseCount: changes.filter(row => row.unitCostChangePercent < 0).length,
+        maxIncreasePercent: Math.max(0, ...changes.map(row => row.unitCostChangePercent)),
+        maxDecreasePercent: Math.min(0, ...changes.map(row => row.unitCostChangePercent)),
+        lastChangeDate: changes.at(-1).date
+      };
+      if (!groupsBySupplier.has(first.supplierKey)) {
+        groupsBySupplier.set(first.supplierKey, {
+          supplierKey: first.supplierKey,
+          supplier: first.supplier,
+          supplierTaxId: first.supplierTaxId,
+          items: []
+        });
+      }
+      groupsBySupplier.get(first.supplierKey).items.push(item);
+    }
+    const groups = [...groupsBySupplier.values()]
+      .sort((left, right) => left.supplier.localeCompare(right.supplier, 'es'))
+      .map(group => ({
+        ...group,
+        items: group.items.sort((left, right) => left.product.localeCompare(right.product, 'es')
+          || left.locationName.localeCompare(right.locationName, 'es'))
+      }));
+    const items = groups.flatMap(group => group.items);
+    return {
+      scope: purchases.scope,
+      period: { from: dateFrom, to: dateTo },
+      summary: {
+        supplierCount: groups.length,
+        itemCount: items.length,
+        fluctuationCount: items.reduce((sum, item) => sum + item.fluctuationCount, 0),
+        increaseCount: items.reduce((sum, item) => sum + item.increaseCount, 0),
+        decreaseCount: items.reduce((sum, item) => sum + item.decreaseCount, 0)
+      },
+      groups
+    };
+  }
+
   app.get('/api/purchases', (req, res) => {
     try {
       return res.json(buildPurchasesPayload(req.query));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudieron procesar las compras.' });
+    }
+  });
+
+  app.get('/api/purchase-cost-variations', (req, res) => {
+    try {
+      return res.json(buildPurchaseCostVariationsPayload(req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo generar el reporte de variaciones de costo.' });
     }
   });
 

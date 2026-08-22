@@ -28,6 +28,7 @@ let inventorySourceState = null;
 let productsViewState = null;
 let ingredientsViewState = null;
 let purchasesViewState = null;
+let purchaseCostVariationState = null;
 let purchaseProjectionState = null;
 let salesDashboardState = null;
 let salesIngredientsState = null;
@@ -40,6 +41,8 @@ let transactionUploadContext = null;
 const expandedUploadHistories = new Set();
 let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
 let ingredientsSort = { key: 'usageCost', direction: 'desc' };
+let purchasesSort = { key: 'date', direction: 'desc' };
+let purchaseCostVariationSort = { key: 'product', direction: 'asc' };
 let purchaseProjectionSort = { key: 'supplier', direction: 'asc' };
 const expandedIngredients = new Set();
 const selectedSalesAnalysis = new Set();
@@ -1530,7 +1533,8 @@ function renderPurchasesView() {
     if (!groups.has(row.supplierKey)) groups.set(row.supplierKey, []);
     groups.get(row.supplierKey).push(row);
   });
-  container.replaceChildren(...[...groups.values()].map(rows => {
+  container.replaceChildren(...[...groups.values()].map(groupRows => {
+    const rows = sortRows(groupRows, purchasesSort);
     const section = document.createElement('section');
     section.className = 'purchase-supplier-group';
     const heading = document.createElement('div');
@@ -1550,14 +1554,15 @@ function renderPurchasesView() {
     const table = document.createElement('table');
     table.className = 'purchases-table';
     const columns = [
-      { label: 'Fecha', value: row => formatReportDate(row.date) },
-      { label: 'Ubicación', value: row => row.locationName },
-      { label: 'Documento', value: row => row.document || '—' },
-      { label: 'Código', value: row => row.code || '—' },
-      { label: 'Insumo', value: row => row.product || '—' },
-      { label: 'Cantidad', value: row => formatProductUnits(row.quantity) },
-      { label: 'UDC', headerTitle: 'Unidad de Compra', value: row => row.purchaseUnit || row.unit || '—' },
+      { key: 'date', label: 'Fecha', value: row => formatReportDate(row.date) },
+      { key: 'locationName', label: 'Ubicación', value: row => row.locationName },
+      { key: 'document', label: 'Documento', value: row => row.document || '—' },
+      { key: 'code', label: 'Código', value: row => row.code || '—' },
+      { key: 'product', label: 'Insumo', value: row => row.product || '—' },
+      { key: 'quantity', label: 'Cantidad', value: row => formatProductUnits(row.quantity) },
+      { key: 'purchaseUnit', label: 'UDC', headerTitle: 'Unidad de Compra', value: row => row.purchaseUnit || row.unit || '—' },
       {
+        key: 'unitsPerPurchaseUnit',
         label: 'Unidades x UDC',
         headerTitle: 'UDC significa Unidad de Compra',
         value: row => formatPurchaseConversion(row.unitsPerPurchaseUnit),
@@ -1565,29 +1570,31 @@ function renderPurchasesView() {
           ? `1 ${row.purchaseUnit || row.unit} = ${formatPurchaseConversion(row.unitsPerPurchaseUnit)} ${row.baseUnit}`
           : 'Conversión no disponible en el maestro vigente'
       },
-      { label: 'Unidad de Medida', value: row => row.baseUnit || '—' },
-      { label: 'Costo UDC registrado', value: row => formatClp(row.listedUnitPrice) },
+      { key: 'baseUnit', label: 'Unidad de Medida', value: row => row.baseUnit || '—' },
+      { key: 'listedUnitPrice', label: 'Costo UDC registrado', value: row => formatClp(row.listedUnitPrice) },
       {
+        key: 'baseUnitCost',
         label: 'Costo Unitario',
         value: row => row.baseUnitCost === null || row.baseUnitCost === undefined ? '—' : formatClp(row.baseUnitCost),
         muted: true
       },
-      { label: 'Descuento', value: row => formatClp(row.discount) },
-      { label: 'Precio unit. efectivo', value: row => formatClp(row.effectiveUnitPrice) },
-      { label: 'Precio anterior', value: row => row.previousEffectiveUnitPrice === null ? '—' : formatClp(row.previousEffectiveUnitPrice) },
+      { key: 'discount', label: 'Descuento', value: row => formatClp(row.discount) },
+      { key: 'effectiveUnitPrice', label: 'Precio unit. efectivo', value: row => formatClp(row.effectiveUnitPrice) },
+      { key: 'previousEffectiveUnitPrice', label: 'Precio anterior', value: row => row.previousEffectiveUnitPrice === null ? '—' : formatClp(row.previousEffectiveUnitPrice) },
       {
+        key: 'priceChangePercent',
         label: 'Cambio',
         value: row => row.priceChangePercent === null
           ? '—'
           : `${row.priceChangePercent >= 0 ? '+' : ''}${row.priceChangePercent.toFixed(1)}%`,
         change: true
       },
-      { label: 'Monto total', value: row => formatClp(row.totalAmount) }
+      { key: 'totalAmount', label: 'Monto total', value: row => formatClp(row.totalAmount) }
     ];
     const headRow = document.createElement('tr');
     columns.forEach(column => {
       const cell = document.createElement('th');
-      cell.textContent = column.label;
+      markSortableHeader(cell, column.key, purchasesSort, column.label);
       if (column.headerTitle) cell.title = column.headerTitle;
       if (column.muted) cell.classList.add('purchase-muted-column');
       headRow.appendChild(cell);
@@ -1747,6 +1754,176 @@ function exportPurchasesReport() {
   } catch (error) {
     setStatus(status, `No fue posible exportar el historial: ${error.message}`, 'error');
   }
+}
+
+function renderPurchaseCostVariations() {
+  const data = purchaseCostVariationState;
+  const summary = document.getElementById('purchase-cost-variation-summary');
+  const container = document.getElementById('purchase-cost-variation-groups');
+  const printButton = document.getElementById('print-purchase-cost-variations');
+  const exportButton = document.getElementById('export-purchase-cost-variations');
+  if (!data) {
+    summary.replaceChildren();
+    container.replaceChildren();
+    printButton.disabled = true;
+    exportButton.disabled = true;
+    return;
+  }
+  printButton.disabled = data.summary.itemCount === 0;
+  exportButton.disabled = data.summary.itemCount === 0;
+  document.getElementById('purchase-cost-variation-period').textContent =
+    `${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${data.scope.label}. Se incluye toda fluctuación positiva o negativa del costo unitario.`;
+  const summaryTexts = [
+    `${data.summary.supplierCount} proveedor(es)`,
+    `${data.summary.itemCount} insumo(s) con variación`,
+    `${data.summary.fluctuationCount} fluctuación(es)`,
+    `${data.summary.increaseCount} alza(s)`,
+    `${data.summary.decreaseCount} baja(s)`
+  ];
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+  const columns = [
+    { key: 'code', label: 'Código', value: item => item.code || '—' },
+    { key: 'product', label: 'Insumo', value: item => item.product || '—' },
+    { key: 'locationName', label: 'Ubicación', value: item => item.locationName },
+    { key: 'purchaseUnit', label: 'UDC', value: item => item.purchaseUnit || '—' },
+    { key: 'comparisonUnit', label: 'Unid. costo', value: item => item.comparisonUnit || '—' },
+    { key: 'firstCost', label: 'Costo inicial', value: item => formatClp(item.firstCost) },
+    { key: 'minCost', label: 'Costo mínimo', value: item => formatClp(item.minCost) },
+    { key: 'maxCost', label: 'Costo máximo', value: item => formatClp(item.maxCost) },
+    { key: 'latestCost', label: 'Último costo', value: item => formatClp(item.latestCost) },
+    {
+      key: 'netChangePercent', label: 'Variación período', change: true,
+      value: item => item.netChangePercent === null ? '—' : `${item.netChangePercent >= 0 ? '+' : ''}${item.netChangePercent.toFixed(1)}%`
+    },
+    { key: 'fluctuationCount', label: 'Fluc.', value: item => String(item.fluctuationCount) },
+    { key: 'increaseCount', label: 'Alzas', value: item => String(item.increaseCount) },
+    { key: 'decreaseCount', label: 'Bajas', value: item => String(item.decreaseCount) },
+    {
+      key: 'maxIncreasePercent', label: 'Mayor alza', positive: true,
+      value: item => item.maxIncreasePercent ? `+${item.maxIncreasePercent.toFixed(1)}%` : '—'
+    },
+    {
+      key: 'maxDecreasePercent', label: 'Mayor baja', negative: true,
+      value: item => item.maxDecreasePercent ? `${item.maxDecreasePercent.toFixed(1)}%` : '—'
+    },
+    { key: 'lastChangeDate', label: 'Último cambio', value: item => formatReportDate(item.lastChangeDate) }
+  ];
+  container.replaceChildren(...data.groups.map(group => {
+    const section = document.createElement('section');
+    section.className = 'purchase-supplier-group';
+    const heading = document.createElement('div');
+    heading.className = 'purchase-supplier-heading';
+    const title = document.createElement('div');
+    const name = document.createElement('h3');
+    name.textContent = group.supplier;
+    const taxId = document.createElement('span');
+    taxId.textContent = group.supplierTaxId ? `RUT ${group.supplierTaxId}` : 'RUT no disponible';
+    title.append(name, taxId);
+    const totals = document.createElement('span');
+    totals.textContent = `${group.items.length} insumo(s) · ${group.items.reduce((sum, item) => sum + item.fluctuationCount, 0)} fluctuación(es)`;
+    heading.append(title, totals);
+    const wrap = document.createElement('div');
+    wrap.className = 'purchases-table-wrap';
+    const table = document.createElement('table');
+    table.className = 'purchases-table purchase-cost-variation-table';
+    const headRow = document.createElement('tr');
+    columns.forEach(column => {
+      const cell = document.createElement('th');
+      markSortableHeader(cell, column.key, purchaseCostVariationSort, column.label);
+      headRow.appendChild(cell);
+    });
+    const head = document.createElement('thead');
+    head.appendChild(headRow);
+    const body = document.createElement('tbody');
+    sortRows(group.items, purchaseCostVariationSort).forEach(item => {
+      const row = document.createElement('tr');
+      columns.forEach(column => {
+        const cell = document.createElement('td');
+        cell.textContent = column.value(item);
+        if (column.change && item.netChangePercent !== null && Math.abs(item.netChangePercent) >= 0.01) {
+          cell.className = item.netChangePercent > 0 ? 'purchase-price-increase' : 'purchase-price-decrease';
+        } else if (column.positive && item.maxIncreasePercent) cell.className = 'purchase-price-increase';
+        else if (column.negative && item.maxDecreasePercent) cell.className = 'purchase-price-decrease';
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    });
+    table.append(head, body);
+    wrap.appendChild(table);
+    section.append(heading, wrap);
+    return section;
+  }));
+  if (!data.groups.length) {
+    const empty = document.createElement('p');
+    empty.className = 'form-status muted';
+    empty.textContent = 'No se encontraron variaciones de costo unitario durante los últimos 30 días.';
+    container.appendChild(empty);
+  }
+}
+
+async function openPurchaseCostVariations() {
+  const button = document.getElementById('open-purchase-cost-variations');
+  const status = document.getElementById('purchases-status');
+  const location = document.getElementById('purchases-location-filter').value || 'all';
+  button.disabled = true;
+  setStatus(status, 'Preparando las variaciones de costo de los últimos 30 días…');
+  try {
+    purchaseCostVariationState = await apiRequest(`/api/purchase-cost-variations?location=${encodeURIComponent(location)}`);
+    renderPurchaseCostVariations();
+    document.getElementById('purchase-cost-variation-dialog').showModal();
+    setStatus(status, `Reporte de variaciones generado para ${purchaseCostVariationState.scope.label}.`, 'success');
+  } catch (error) {
+    purchaseCostVariationState = null;
+    renderPurchaseCostVariations();
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function printPurchaseCostVariations() {
+  if (!purchaseCostVariationState) return;
+  const dialog = document.getElementById('purchase-cost-variation-dialog');
+  const previousTitle = document.title;
+  document.title = `Variaciones de costo - ${purchaseCostVariationState.scope.label}`;
+  document.body.classList.add('printing-purchase-cost-variations');
+  dialog.classList.add('purchase-cost-variation-print-target');
+  try {
+    window.print();
+  } finally {
+    dialog.classList.remove('purchase-cost-variation-print-target');
+    document.body.classList.remove('printing-purchase-cost-variations');
+    document.title = previousTitle;
+  }
+}
+
+function exportPurchaseCostVariations() {
+  const data = purchaseCostVariationState;
+  const status = document.getElementById('purchases-status');
+  if (!data || !window.XLSX) return;
+  const headers = [
+    'Proveedor', 'RUT proveedor', 'Código', 'Insumo', 'Ubicación', 'UDC', 'Unidad costo',
+    'Costo inicial', 'Costo mínimo', 'Costo máximo', 'Último costo', 'Variación período %',
+    'Fluctuaciones', 'Alzas', 'Bajas', 'Mayor alza %', 'Mayor baja %', 'Último cambio'
+  ];
+  const values = data.groups.flatMap(group => group.items.map(item => [
+    group.supplier, group.supplierTaxId || '', item.code || '', item.product, item.locationName,
+    item.purchaseUnit, item.comparisonUnit, item.firstCost, item.minCost, item.maxCost, item.latestCost,
+    item.netChangePercent, item.fluctuationCount, item.increaseCount, item.decreaseCount,
+    item.maxIncreasePercent, item.maxDecreasePercent, item.lastChangeDate
+  ]));
+  const sheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
+  sheet['!autofilter'] = { ref: `A1:R${values.length + 1}` };
+  sheet['!cols'] = headers.map((header, index) => ({ wch: index === 3 ? 42 : Math.max(12, Math.min(24, header.length + 2)) }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Variaciones de costo');
+  XLSX.writeFile(workbook, `variaciones-costo-${data.period.from}-${data.period.to}.xlsx`, { compression: true });
+  setStatus(status, 'Reporte de variaciones exportado a Excel correctamente.', 'success');
 }
 
 function formatProjectionQuantity(value) {
@@ -3667,6 +3844,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderIngredientsView();
   });
   document.getElementById('purchases-location-filter').addEventListener('change', () => {
+    document.getElementById('purchase-cost-variation-dialog').close();
+    purchaseCostVariationState = null;
     document.getElementById('purchases-supplier-filter').value = 'all';
     document.getElementById('purchases-product-filter').value = '';
     document.getElementById('purchases-date-from').value = '';
@@ -3678,8 +3857,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('purchases-date-from').addEventListener('change', loadPurchasesView);
   document.getElementById('purchases-date-to').addEventListener('change', loadPurchasesView);
   document.getElementById('refresh-purchases').addEventListener('click', loadPurchasesView);
+  document.getElementById('purchases-groups').addEventListener('click', event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header) return;
+    applySort(purchasesSort, header.dataset.sortKey,
+      ['quantity', 'unitsPerPurchaseUnit', 'listedUnitPrice', 'baseUnitCost', 'discount', 'effectiveUnitPrice', 'previousEffectiveUnitPrice', 'priceChangePercent', 'totalAmount'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+    renderPurchasesView();
+  });
+  document.getElementById('open-purchase-cost-variations').addEventListener('click', openPurchaseCostVariations);
   document.getElementById('print-purchases-report').addEventListener('click', printPurchasesReport);
   document.getElementById('export-purchases-report').addEventListener('click', exportPurchasesReport);
+  document.getElementById('close-purchase-cost-variations').addEventListener('click', () => {
+    document.getElementById('purchase-cost-variation-dialog').close();
+  });
+  document.getElementById('print-purchase-cost-variations').addEventListener('click', printPurchaseCostVariations);
+  document.getElementById('export-purchase-cost-variations').addEventListener('click', exportPurchaseCostVariations);
+  document.getElementById('purchase-cost-variation-groups').addEventListener('click', event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header) return;
+    applySort(purchaseCostVariationSort, header.dataset.sortKey,
+      ['firstCost', 'minCost', 'maxCost', 'latestCost', 'netChangePercent', 'fluctuationCount', 'increaseCount', 'decreaseCount', 'maxIncreasePercent', 'maxDecreasePercent'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+    renderPurchaseCostVariations();
+  });
   document.getElementById('projection-location-filter').addEventListener('change', () => {
     document.getElementById('projection-supplier-filter').value = 'all';
     loadPurchaseProjection();

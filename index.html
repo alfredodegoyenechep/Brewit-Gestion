@@ -587,6 +587,7 @@
           </label>
           <button id="refresh-purchases" class="icon-button" type="button">Actualizar</button>
           <div class="purchases-report-actions">
+            <button id="open-purchase-cost-variations" class="icon-button" type="button">Variaciones de costo 30 días</button>
             <button id="print-purchases-report" class="icon-button" type="button" disabled>Imprimir / PDF</button>
             <button id="export-purchases-report" class="icon-button" type="button" disabled>Exportar Excel</button>
           </div>
@@ -595,6 +596,23 @@
       <div id="purchases-status" class="form-status" aria-live="polite"></div>
       <div id="purchases-summary" class="products-summary"></div>
       <div id="purchases-groups" class="purchases-groups"></div>
+
+      <dialog id="purchase-cost-variation-dialog" class="inventory-report-dialog purchase-cost-variation-dialog" aria-labelledby="purchase-cost-variation-title">
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Compras</div>
+            <h3 id="purchase-cost-variation-title">Variaciones de costo unitario</h3>
+            <p id="purchase-cost-variation-period" class="panel-description"></p>
+          </div>
+          <div class="inventory-source-actions">
+            <button id="print-purchase-cost-variations" class="icon-button small" type="button" disabled>Imprimir / PDF</button>
+            <button id="export-purchase-cost-variations" class="icon-button small" type="button" disabled>Exportar Excel</button>
+            <button id="close-purchase-cost-variations" class="icon-button small" type="button">Cerrar</button>
+          </div>
+        </div>
+        <div id="purchase-cost-variation-summary" class="products-summary"></div>
+        <div id="purchase-cost-variation-groups" class="purchases-groups"></div>
+      </dialog>
     </section>
 
     <section id="purchase-projection-workspace" class="panel purchase-projection-workspace" style="display:none;">

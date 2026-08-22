@@ -611,6 +611,16 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(kilograms.baseUnit, 'kg');
   assert.equal(kilograms.baseUnitCost, 500);
 
+  const costVariations = await fetch(`${baseUrl}/api/purchase-cost-variations?location=all`).then(response => response.json());
+  assert.deepEqual(costVariations.period, { from: '2026-07-17', to: '2026-08-15' });
+  assert.equal(costVariations.summary.supplierCount, 1);
+  assert.equal(costVariations.summary.itemCount, 1);
+  assert.equal(costVariations.summary.fluctuationCount, 1);
+  assert.equal(costVariations.groups[0].supplier, 'Proveedor Uno');
+  assert.equal(costVariations.groups[0].items[0].code, 'I1');
+  assert.equal(Math.round(costVariations.groups[0].items[0].netChangePercent), 20);
+  assert.equal(costVariations.groups[0].items[0].comparisonUnit, 'UN');
+
   const filtered = await fetch(`${baseUrl}/api/purchases?location=store-1&supplier=111&dateFrom=2026-08-05&dateTo=2026-08-06`)
     .then(response => response.json());
   assert.equal(filtered.rows.length, 1);

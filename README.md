@@ -101,6 +101,7 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - The filtered purchase history can open the browser's landscape print/PDF preview or export to an XLSX workbook with an information sheet, raw numeric purchase data, and an autofilter.
 - Each line shows the purchased item, quantity, purchase unit (UDC), units per UDC and resulting base unit from the catalog conversion valid on the purchase date, recorded UDC cost, base-unit cost calculated as `recorded UDC cost ÷ units per UDC`, discount, effective unit price after discount, previous effective price for the same supplier/item/cafeteria, percentage change, and total amount. Missing conversion definitions are shown explicitly rather than inferred.
 - Overlapping purchase files are de-duplicated by cafeteria, date, supplier, document, line, and item before reporting.
+- Every purchase-history column can be sorted ascending or descending from its header. The `Variaciones de costo 30 días` report identifies any positive or negative base-unit cost fluctuation in the latest 30 calendar days, keeps comparisons separated by location/supplier/item/purchase unit, groups results by supplier, and supports PDF printing and Excel export.
 
 ## Purchase projection workspace
 

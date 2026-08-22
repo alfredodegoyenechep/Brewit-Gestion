@@ -1127,6 +1127,62 @@ body {
     white-space: normal !important;
   }
 
+  body.printing-purchase-cost-variations {
+    display: block;
+    background: white;
+  }
+
+  body.printing-purchase-cost-variations .sidebar,
+  body.printing-purchase-cost-variations .main-content > section:not(#purchases-workspace),
+  body.printing-purchase-cost-variations #purchases-workspace > *:not(.purchase-cost-variation-print-target),
+  body.printing-purchase-cost-variations .purchase-cost-variation-print-target .inventory-source-actions {
+    display: none !important;
+  }
+
+  body.printing-purchase-cost-variations .main-content,
+  body.printing-purchase-cost-variations #purchases-workspace,
+  body.printing-purchase-cost-variations .purchase-cost-variation-print-target {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+  }
+
+  body.printing-purchase-cost-variations .purchase-supplier-group,
+  body.printing-purchase-cost-variations .purchases-table-wrap {
+    overflow: visible !important;
+  }
+
+  body.printing-purchase-cost-variations .purchase-supplier-group {
+    margin-bottom: 8mm;
+    break-inside: auto;
+  }
+
+  body.printing-purchase-cost-variations .purchase-supplier-heading {
+    break-after: avoid;
+  }
+
+  body.printing-purchase-cost-variations .purchase-cost-variation-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+    font-size: 6px !important;
+  }
+
+  body.printing-purchase-cost-variations .purchase-cost-variation-table th,
+  body.printing-purchase-cost-variations .purchase-cost-variation-table td {
+    max-width: none !important;
+    padding: 2px 3px !important;
+    white-space: normal !important;
+  }
+
   body.printing-purchase-order .sidebar,
   body.printing-purchase-order .main-content > section:not(#purchase-projection-workspace),
   body.printing-purchase-order #purchase-projection-workspace > *:not(#purchase-order-document) {
@@ -2230,6 +2286,77 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.purchases-report-actions > button {
+  min-height: 42px;
+}
+
+.purchase-cost-variation-dialog {
+  box-sizing: border-box;
+  width: calc(100vw - 8px);
+  max-width: 1800px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.purchase-cost-variation-dialog h3 {
+  margin: 5px 0;
+  font-size: 22px;
+}
+
+.purchase-cost-variation-dialog .products-summary {
+  margin-top: 14px;
+}
+
+.purchases-table.purchase-cost-variation-table {
+  width: 100%;
+  min-width: 1240px;
+  table-layout: fixed;
+  font-size: 10px;
+}
+
+.purchases-table.purchase-cost-variation-table th:nth-child(-n+5),
+.purchases-table.purchase-cost-variation-table td:nth-child(-n+5) {
+  text-align: left;
+}
+
+.purchases-table.purchase-cost-variation-table th,
+.purchases-table.purchase-cost-variation-table td {
+  box-sizing: border-box;
+  padding: 7px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.purchases-table.purchase-cost-variation-table th {
+  font-size: 9px;
+}
+
+.purchases-table.purchase-cost-variation-table th:nth-child(1) { width: 4.5%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(2) { width: 16%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(3) { width: 8%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(4) { width: 3.5%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(5) { width: 4%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(n+6):nth-child(-n+9) { width: 7%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(10) { width: 8%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(11) { width: 3.5%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(12),
+.purchases-table.purchase-cost-variation-table th:nth-child(13) { width: 3%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(14),
+.purchases-table.purchase-cost-variation-table th:nth-child(15) { width: 5.5%; }
+.purchases-table.purchase-cost-variation-table th:nth-child(16) { width: 7.5%; }
+
+.purchases-table.purchase-cost-variation-table th:nth-child(n+6):nth-child(-n+9),
+.purchases-table.purchase-cost-variation-table td:nth-child(n+6):nth-child(-n+9) {
+  padding-right: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.purchase-cost-variation-dialog .purchase-supplier-heading {
+  padding: 11px 14px;
 }
 
 .purchases-controls label {
