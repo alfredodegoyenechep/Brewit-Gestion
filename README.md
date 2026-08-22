@@ -120,6 +120,7 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - The view can aggregate all active cafeterias or filter a single cafeteria, and includes a code/name search without hiding products that have no sales.
 - Each product shows gross base selling price, net selling price calculated as `selling price / 1.19`, catalog cost, margin calculated as `(net selling price - cost) / net selling price`, average weekly units over the latest rolling 56 days divided by eight (always displayed with one decimal), units sold in the latest rolling seven days including today, and the percentage change of those seven days against the eight-week weekly average.
 - Every main product-table header is sortable in ascending or descending order without losing the hierarchy grouping.
+- `Cambios Relevantes` preserves those hierarchies and columns but includes only products averaging at least 5 weekly units whose latest-seven-day variation exceeds 20% in absolute value. All matching hierarchies open expanded, and the report supports PDF printing and numeric XLSX export. If a prior snapshot for the same cafeteria scope exists within 30 days, a changed selling price shows the saved value as a blue `(ant. $…)` reference in both the main table and the relevant-changes report.
 
 ## Ingredients workspace
 

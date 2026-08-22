@@ -120,6 +120,10 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
   assert.equal(await page.locator('#report-location-filter').inputValue(), 'all');
   assert.equal(await page.locator('#report-location-filter option').count(), 3);
+  assert.equal(await page.locator('#report-include-today').isChecked(), true);
+  assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta hoy');
+  await page.locator('.report-cutoff-toggle').click();
+  await page.locator('#report-reference-label').filter({ hasText: 'Venta del día anterior' }).waitFor();
   await page.locator('#report-yesterday-value').filter({ hasText: '100' }).waitFor();
   assert.match(await page.locator('#report-general-rank').textContent(), /#1 de 1/);
   assert.match(await page.locator('#report-week-range').textContent(), /03.*ago.*2026.*09.*ago.*2026/i);
@@ -143,8 +147,6 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta hoy');
   assert.equal(await page.locator('#report-week-chip').textContent(), 'Lun–hoy');
   assert.equal(await page.locator('#report-month-chip').textContent(), 'Mes–hoy');
-  await page.locator('.report-cutoff-toggle').click();
-  await page.locator('#report-reference-label').filter({ hasText: 'Venta del día anterior' }).waitFor();
   await page.locator('#report-upload-sales').click();
   await page.locator('#report-sales-location-dialog').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#report-sales-upload-location option').count(), 2);

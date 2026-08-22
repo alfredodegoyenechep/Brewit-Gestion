@@ -265,7 +265,8 @@ test('filters the sales report by cafeteria and defaults to all cafeterias', asy
 });
 
 test('organizes products by hierarchy and calculates rolling sales by cafeteria', async t => {
-  const baseUrl = await startTestServer(t, { reportToday: '2026-08-14' });
+  let reportToday = '2026-08-14';
+  const baseUrl = await startTestServer(t, { reportToday: () => reportToday });
   const catalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
     ['pl', 'np', 'pv', 'ce', 'st', 'jp'],
@@ -351,6 +352,7 @@ test('organizes products by hierarchy and calculates rolling sales by cafeteria'
   })).status, 409);
   const savedList = await fetch(`${baseUrl}/api/products/reports?location=store-1`).then(response => response.json());
   assert.equal(savedList.reports.length, 1);
+  reportToday = '2026-08-22';
 
   const updatedCatalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(updatedCatalog, XLSX.utils.aoa_to_sheet([
@@ -368,6 +370,13 @@ test('organizes products by hierarchy and calculates rolling sales by cafeteria'
     }], { 'master-catalog-from': '2026-08-01' })
   });
   assert.equal(updateMaster.status, 200);
+  const productsWithPreviousPrice = await fetch(`${baseUrl}/api/products?location=store-1`).then(response => response.json());
+  assert.equal(productsWithPreviousPrice.priceReference.id, savedReport.id);
+  const updatedP1 = productsWithPreviousPrice.hierarchies[0].products.find(product => product.code === 'P1');
+  assert.equal(updatedP1.price, 3300);
+  assert.equal(updatedP1.previousPrice, 3000);
+  const unchangedP2 = productsWithPreviousPrice.hierarchies[0].products.find(product => product.code === 'P2');
+  assert.equal(unchangedP2.previousPrice, null);
   const comparison = await fetch(`${baseUrl}/api/products/reports/compare?location=store-1&snapshot=${savedReport.id}`)
     .then(response => response.json());
   assert.equal(comparison.changeCount, 1);

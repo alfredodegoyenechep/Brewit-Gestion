@@ -1229,36 +1229,11 @@ function markSortableHeader(cell, key, sortState, label) {
   cell.setAttribute('aria-sort', sortState.key === key ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none');
 }
 
-function renderProductsView() {
-  const container = document.getElementById('products-hierarchy-list');
-  const summary = document.getElementById('products-summary');
-  if (!productsViewState) {
-    container.replaceChildren();
-    summary.replaceChildren();
-    return;
-  }
-  const query = document.getElementById('products-search').value.trim().toLocaleLowerCase('es');
-  const matches = product => !query || `${product.code} ${product.name}`.toLocaleLowerCase('es').includes(query);
-  const groups = productsViewState.hierarchies
-    .map(group => ({ ...group, products: group.products.filter(matches) }))
-    .filter(group => group.products.length);
-  const visibleCount = groups.reduce((sum, group) => sum + group.products.length, 0);
-  const summaryTexts = [
-    `${visibleCount} de ${productsViewState.productCount} productos`,
-    `${groups.length} jerarquías`,
-    `Últimos 7 días: ${formatReportDate(productsViewState.periods.last7.from)} – ${formatReportDate(productsViewState.periods.last7.to)}`,
-    `Promedio 8 semanas: 56 días ÷ 8`
-  ];
-  summary.replaceChildren(...summaryTexts.map(text => {
-    const chip = document.createElement('span');
-    chip.className = 'chip neutral';
-    chip.textContent = text;
-    return chip;
-  }));
-  container.replaceChildren(...groups.map((group, groupIndex) => {
+function productHierarchyNodes(groups, { queryActive = false, openAll = false } = {}) {
+  return groups.map((group, groupIndex) => {
     const details = document.createElement('details');
     details.className = 'product-hierarchy-group';
-    details.open = Boolean(query) || groupIndex < 3;
+    details.open = openAll || queryActive || groupIndex < 3;
     const heading = document.createElement('summary');
     const path = document.createElement('strong');
     path.textContent = group.path.join(' › ');
@@ -1301,7 +1276,12 @@ function renderProductsView() {
       ];
       values.forEach((value, index) => {
         const cell = document.createElement('td');
-        cell.textContent = value;
+        if (index === 2 && product.previousPrice !== null && product.previousPrice !== undefined) {
+          const previous = document.createElement('span');
+          previous.className = 'product-previous-price';
+          previous.textContent = `(ant. ${formatClp(product.previousPrice)})`;
+          cell.append(previous, document.createTextNode(value));
+        } else cell.textContent = value;
         if (index === 1 && !product.active) {
           const badge = document.createElement('span');
           badge.className = 'product-inactive-badge';
@@ -1319,12 +1299,148 @@ function renderProductsView() {
     wrap.appendChild(table);
     details.append(heading, wrap);
     return details;
+  });
+}
+
+function renderProductsView() {
+  const container = document.getElementById('products-hierarchy-list');
+  const summary = document.getElementById('products-summary');
+  if (!productsViewState) {
+    container.replaceChildren();
+    summary.replaceChildren();
+    return;
+  }
+  const query = document.getElementById('products-search').value.trim().toLocaleLowerCase('es');
+  const matches = product => !query || `${product.code} ${product.name}`.toLocaleLowerCase('es').includes(query);
+  const groups = productsViewState.hierarchies
+    .map(group => ({ ...group, products: group.products.filter(matches) }))
+    .filter(group => group.products.length);
+  const visibleCount = groups.reduce((sum, group) => sum + group.products.length, 0);
+  const summaryTexts = [
+    `${visibleCount} de ${productsViewState.productCount} productos`,
+    `${groups.length} jerarquías`,
+    `Últimos 7 días: ${formatReportDate(productsViewState.periods.last7.from)} – ${formatReportDate(productsViewState.periods.last7.to)}`,
+    `Promedio 8 semanas: 56 días ÷ 8`
+  ];
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
   }));
+  container.replaceChildren(...productHierarchyNodes(groups, { queryActive: Boolean(query) }));
   if (!groups.length) {
     const empty = document.createElement('p');
     empty.className = 'form-status muted';
     empty.textContent = 'No hay productos que coincidan con la búsqueda.';
     container.appendChild(empty);
+  }
+}
+
+function relevantProductGroups() {
+  if (!productsViewState) return [];
+  return productsViewState.hierarchies
+    .map(group => ({
+      ...group,
+      products: group.products.filter(product => product.averageWeeklyUnits8 >= 5
+        && product.unitsChangePercent !== null
+        && Math.abs(product.unitsChangePercent) > 20)
+    }))
+    .filter(group => group.products.length);
+}
+
+function renderRelevantProductsReport() {
+  const groups = relevantProductGroups();
+  const container = document.getElementById('relevant-products-hierarchy-list');
+  const summary = document.getElementById('relevant-products-summary');
+  const count = groups.reduce((sum, group) => sum + group.products.length, 0);
+  document.getElementById('print-relevant-products-report').disabled = count === 0;
+  document.getElementById('export-relevant-products-report').disabled = count === 0;
+  const priceReference = productsViewState?.priceReference;
+  document.getElementById('relevant-products-description').textContent =
+    `Productos con promedio semanal de al menos 5 unidades y variación absoluta superior a 20%. ${priceReference
+      ? `Los precios anteriores corresponden al reporte guardado del ${formatReportDate(priceReference.date)}.`
+      : 'No existe un reporte anterior del mismo alcance dentro de los últimos 30 días; no se muestran precios anteriores.'}`;
+  const summaryTexts = [
+    `${count} producto(s) relevante(s)`,
+    `${groups.length} jerarquía(s)`,
+    `Promedio mínimo: 5,0 unidades`,
+    `Variación: superior a ±20,0%`
+  ];
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+  container.replaceChildren(...productHierarchyNodes(groups, { openAll: true }));
+  if (!groups.length) {
+    const empty = document.createElement('p');
+    empty.className = 'form-status muted';
+    empty.textContent = 'No hay productos que cumplan ambos criterios.';
+    container.appendChild(empty);
+  }
+}
+
+function openRelevantProductsReport() {
+  if (!productsViewState) return;
+  renderRelevantProductsReport();
+  document.getElementById('relevant-products-dialog').showModal();
+}
+
+function printRelevantProductsReport() {
+  if (!relevantProductGroups().length) return;
+  const dialog = document.getElementById('relevant-products-dialog');
+  const previousTitle = document.title;
+  document.title = `Cambios Relevantes - ${productsViewState.scope.label}`;
+  document.body.classList.add('printing-relevant-products');
+  dialog.classList.add('relevant-products-print-target');
+  try {
+    window.print();
+  } finally {
+    dialog.classList.remove('relevant-products-print-target');
+    document.body.classList.remove('printing-relevant-products');
+    document.title = previousTitle;
+  }
+}
+
+function exportRelevantProductsReport() {
+  const groups = relevantProductGroups();
+  const status = document.getElementById('products-status');
+  if (!groups.length) return;
+  if (!window.XLSX) return setStatus(status, 'No fue posible cargar el generador de archivos Excel.', 'error');
+  try {
+    const information = XLSX.utils.aoa_to_sheet([
+      ['Reporte', 'Cambios Relevantes'],
+      ['Cafetería', productsViewState.scope.label],
+      ['Fecha', productsViewState.date],
+      ['Criterio promedio', 'Promedio semanal últimas 8 semanas >= 5 unidades'],
+      ['Criterio variación', 'Variación absoluta últimos 7 días > 20%'],
+      ['Referencia de precios', productsViewState.priceReference?.date || 'Sin reporte anterior aplicable'],
+      ['Productos incluidos', groups.reduce((sum, group) => sum + group.products.length, 0)],
+      ['Exportado', new Date().toLocaleString('es-CL')]
+    ]);
+    const headers = [
+      'Jerarquía', 'Código', 'Producto', 'Precio anterior', 'Precio venta', 'Precio venta neto',
+      'Costo', 'Margen %', 'Prom. semanal 8 sem.', 'Últimos 7 días', 'Cambio vs. prom. 8 sem. %'
+    ];
+    const values = groups.flatMap(group => sortRows(group.products, productsSort).map(product => [
+      group.path.join(' › '), product.code, product.name, product.previousPrice,
+      product.price, product.netPrice, product.cost, product.marginPercent,
+      product.averageWeeklyUnits8, product.unitsLast7Days, product.unitsChangePercent
+    ]));
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
+    sheet['!autofilter'] = { ref: `A1:K${values.length + 1}` };
+    sheet['!cols'] = headers.map((header, index) => ({
+      wch: index === 0 ? 42 : index === 2 ? 38 : Math.max(12, Math.min(24, header.length + 2))
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, information, 'Información');
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Cambios Relevantes');
+    XLSX.writeFile(workbook, `cambios-relevantes-${productsViewState.date}.xlsx`, { compression: true });
+    setStatus(status, 'Reporte de Cambios Relevantes exportado a Excel correctamente.', 'success');
+  } catch (error) {
+    setStatus(status, `No fue posible exportar el reporte: ${error.message}`, 'error');
   }
 }
 
@@ -1479,20 +1595,24 @@ async function loadIngredientsView() {
 async function loadProductsView() {
   const status = document.getElementById('products-status');
   const button = document.getElementById('refresh-products');
+  const relevantButton = document.getElementById('open-relevant-products-report');
   const location = document.getElementById('products-location-filter').value || 'all';
   button.disabled = true;
+  relevantButton.disabled = true;
   setStatus(status, 'Calculando catálogo y ventas por producto…');
   try {
     const data = await apiRequest(`/api/products?location=${encodeURIComponent(location)}`);
     if (location !== document.getElementById('products-location-filter').value) return;
     productsViewState = data;
     renderProductsView();
+    relevantButton.disabled = false;
     await refreshSavedProductReports();
     if (data.warnings.length) setStatus(status, data.warnings.join(' '), 'error');
     else setStatus(status, `${data.filesRead} archivo(s) de ventas procesado(s) para ${data.scope.label}.`, 'success');
   } catch (error) {
     productsViewState = null;
     renderProductsView();
+    relevantButton.disabled = true;
     setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
@@ -3810,15 +3930,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('products-location-filter').addEventListener('change', () => {
     document.getElementById('products-comparison').hidden = true;
+    document.getElementById('relevant-products-dialog').close();
     loadProductsView();
   });
   document.getElementById('products-search').addEventListener('input', renderProductsView);
   document.getElementById('refresh-products').addEventListener('click', loadProductsView);
+  document.getElementById('open-relevant-products-report').addEventListener('click', openRelevantProductsReport);
+  document.getElementById('close-relevant-products-report').addEventListener('click', () => {
+    document.getElementById('relevant-products-dialog').close();
+  });
+  document.getElementById('print-relevant-products-report').addEventListener('click', printRelevantProductsReport);
+  document.getElementById('export-relevant-products-report').addEventListener('click', exportRelevantProductsReport);
   document.getElementById('products-hierarchy-list').addEventListener('click', event => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
     applySort(productsSort, header.dataset.sortKey, ['price', 'netPrice', 'cost', 'marginPercent', 'averageWeeklyUnits8', 'unitsLast7Days', 'unitsChangePercent'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderProductsView();
+    if (document.getElementById('relevant-products-dialog').open) renderRelevantProductsReport();
+  });
+  document.getElementById('relevant-products-hierarchy-list').addEventListener('click', event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header) return;
+    applySort(productsSort, header.dataset.sortKey, ['price', 'netPrice', 'cost', 'marginPercent', 'averageWeeklyUnits8', 'unitsLast7Days', 'unitsChangePercent'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+    renderProductsView();
+    renderRelevantProductsReport();
   });
   document.getElementById('ingredients-location-filter').addEventListener('change', () => {
     document.getElementById('ingredients-supplier-filter').value = 'all';

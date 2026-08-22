@@ -246,7 +246,7 @@
       <div class="summary-grid report-summary-grid">
         <article class="summary-card highlight">
           <div class="summary-head">
-            <span id="report-reference-label" class="label">Venta del día anterior</span>
+            <span id="report-reference-label" class="label">Venta de hoy</span>
             <span id="report-yesterday-date" class="chip neutral">—</span>
           </div>
           <div id="report-yesterday-value" class="value">$0</div>
@@ -256,9 +256,9 @@
             <span id="report-average-comparison">Vs. promedio 8 semanas: —</span>
           </div>
           <label class="report-cutoff-toggle report-card-cutoff" for="report-include-today">
-            <input id="report-include-today" type="checkbox" />
+            <input id="report-include-today" type="checkbox" checked />
             <span class="toggle-track" aria-hidden="true"><span></span></span>
-            <span id="report-cutoff-label">Venta día anterior</span>
+            <span id="report-cutoff-label">Venta hoy</span>
           </label>
         </article>
 
@@ -469,7 +469,10 @@
           <label for="products-search">Buscar producto
             <input id="products-search" type="search" placeholder="Código o nombre" autocomplete="off" />
           </label>
-          <button id="refresh-products" class="icon-button" type="button">Actualizar</button>
+          <div class="products-control-actions">
+            <button id="refresh-products" class="icon-button" type="button">Actualizar</button>
+            <button id="open-relevant-products-report" class="icon-button" type="button" disabled>Cambios Relevantes</button>
+          </div>
         </div>
       </div>
       <div id="products-status" class="form-status" aria-live="polite"></div>
@@ -482,6 +485,22 @@
       </div>
       <div id="products-summary" class="products-summary"></div>
       <div id="products-hierarchy-list" class="products-hierarchy-list"></div>
+      <dialog id="relevant-products-dialog" class="inventory-report-dialog relevant-products-dialog" aria-labelledby="relevant-products-title">
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Productos</div>
+            <h3 id="relevant-products-title">Cambios Relevantes</h3>
+            <p id="relevant-products-description" class="panel-description"></p>
+          </div>
+          <div class="inventory-source-actions">
+            <button id="print-relevant-products-report" class="icon-button small" type="button">Imprimir / PDF</button>
+            <button id="export-relevant-products-report" class="icon-button small" type="button">Exportar Excel</button>
+            <button id="close-relevant-products-report" class="icon-button small" type="button">Cerrar</button>
+          </div>
+        </div>
+        <div id="relevant-products-summary" class="products-summary"></div>
+        <div id="relevant-products-hierarchy-list" class="products-hierarchy-list"></div>
+      </dialog>
       <section id="products-comparison" class="products-comparison" hidden>
         <div class="products-comparison-head">
           <div>

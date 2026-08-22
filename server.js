@@ -2741,9 +2741,35 @@ function createApp(options = {}) {
     })));
   }
 
+  function withPreviousProductPrices(report, requestedLocation) {
+    const oldestAcceptedDate = addDays(report.date, -30);
+    const previousMetadata = listProductSnapshots(requestedLocation)
+      .find(snapshot => snapshot.date < report.date && snapshot.date >= oldestAcceptedDate);
+    if (!previousMetadata) return { ...report, priceReference: null };
+    const filePath = productSnapshotPath(previousMetadata.id);
+    const previous = filePath ? readJson(filePath, null) : null;
+    if (!previous) return { ...report, priceReference: null };
+    const previousProducts = new Map(flattenProductReport(previous).map(product => [product.code, product]));
+    return {
+      ...report,
+      priceReference: productSnapshotMetadata(previous, previousMetadata.id),
+      hierarchies: report.hierarchies.map(group => ({
+        ...group,
+        products: group.products.map(product => {
+          const previousProduct = previousProducts.get(product.code);
+          const previousPrice = previousProduct && Math.abs((previousProduct.price || 0) - (product.price || 0)) > 0.005
+            ? previousProduct.price
+            : null;
+          return { ...product, previousPrice };
+        })
+      }))
+    };
+  }
+
   app.get('/api/products', (req, res) => {
     try {
-      return res.json(buildProductsPayload(String(req.query.location || 'all')));
+      const requestedLocation = String(req.query.location || 'all');
+      return res.json(withPreviousProductPrices(buildProductsPayload(requestedLocation), requestedLocation));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la vista de productos.' });
     }
