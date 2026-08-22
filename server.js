@@ -1514,6 +1514,7 @@ function createApp(options = {}) {
   const configRoot = path.join(uploadsRoot, 'config');
   const transactionsRoot = path.join(uploadsRoot, 'transactions');
   const productReportsRoot = path.join(uploadsRoot, 'reports', 'products');
+  const purchaseOrdersRoot = path.join(uploadsRoot, 'reports', 'purchase-orders');
   const trashLocationsRoot = path.join(uploadsRoot, 'trash', 'locations');
   const locationsPath = path.join(configRoot, 'locations.json');
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
@@ -1523,6 +1524,7 @@ function createApp(options = {}) {
   ensureDir(configRoot);
   ensureDir(transactionsRoot);
   ensureDir(productReportsRoot);
+  ensureDir(purchaseOrdersRoot);
   ensureDir(trashLocationsRoot);
   migrateLegacySundayWeeks(weeksRoot);
   if (!fs.existsSync(locationsPath)) {
@@ -2600,6 +2602,154 @@ function createApp(options = {}) {
     }
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
     return res.json({ ok: true, saved: requested.length });
+  });
+
+  function purchaseOrderPath(orderId) {
+    if (!/^OC-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$/.test(orderId || '')) return null;
+    const filePath = path.resolve(purchaseOrdersRoot, `${orderId}.json`);
+    return path.dirname(filePath) === path.resolve(purchaseOrdersRoot) ? filePath : null;
+  }
+
+  function purchaseOrderMetadata(order) {
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      confirmedAt: order.confirmedAt,
+      location: order.location,
+      supplier: order.supplier,
+      itemCount: order.items.length,
+      total: order.total
+    };
+  }
+
+  function readPurchaseOrders() {
+    return fs.readdirSync(purchaseOrdersRoot)
+      .filter(name => /^OC-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}\.json$/.test(name))
+      .flatMap(name => {
+        const order = readJson(path.join(purchaseOrdersRoot, name), null);
+        return order?.id ? [order] : [];
+      });
+  }
+
+  function normalizedPurchaseOrderItems(requested, availableItems, existingItems = null) {
+    if (!Array.isArray(requested) || !requested.length) {
+      const error = new Error('Selecciona al menos un ítem para la orden de compra.');
+      error.status = 400;
+      throw error;
+    }
+    const allowed = existingItems
+      ? new Map(existingItems.map(item => [item.key, item]))
+      : new Map(availableItems.map(item => [item.key, item]));
+    const seen = new Set();
+    return requested.map(requestedItem => {
+      const key = String(requestedItem.key || '').trim().toUpperCase();
+      const source = allowed.get(key);
+      const quantity = Number(requestedItem.quantity);
+      const unitCost = Number(requestedItem.unitCost);
+      if (!source || seen.has(key) || !Number.isFinite(quantity) || quantity <= 0
+        || !Number.isFinite(unitCost) || unitCost < 0) {
+        const error = new Error('Cada ítem debe ser válido, no repetirse y tener cantidad y costo correctos.');
+        error.status = 400;
+        throw error;
+      }
+      seen.add(key);
+      const referenceCost = Number(source.estimatedPurchaseUnitCost ?? source.referenceUnitCost ?? 0);
+      const unitsPerPurchaseUnit = Number(source.unitsPerPurchaseUnit);
+      return {
+        key,
+        code: source.code || '',
+        name: source.name,
+        internalUnit: source.internalUnit || '',
+        purchaseUnit: source.purchaseUnit || '',
+        unitsPerPurchaseUnit: Number.isFinite(unitsPerPurchaseUnit) ? unitsPerPurchaseUnit : null,
+        suggestedPurchaseUnits: source.suggestedPurchaseUnits ?? null,
+        referenceUnitCost: referenceCost,
+        quantity,
+        unitCost,
+        internalQuantity: Number.isFinite(unitsPerPurchaseUnit) ? quantity * unitsPerPurchaseUnit : null,
+        costModified: Math.abs(unitCost - referenceCost) > 0.005,
+        total: quantity * unitCost
+      };
+    });
+  }
+
+  app.get('/api/purchase-orders', (req, res) => {
+    const location = String(req.query.location || '');
+    const supplier = String(req.query.supplier || '');
+    const orders = readPurchaseOrders()
+      .filter(order => (!location || order.location.id === location) && (!supplier || order.supplier.key === supplier))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(purchaseOrderMetadata);
+    return res.json({ orders });
+  });
+
+  app.get('/api/purchase-orders/:orderId', (req, res) => {
+    const filePath = purchaseOrderPath(req.params.orderId);
+    const order = filePath ? readJson(filePath, null) : null;
+    if (!order) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
+    return res.json(order);
+  });
+
+  app.post('/api/purchase-orders', (req, res) => {
+    try {
+      const projection = buildPurchaseProjection(String(req.body?.location || ''));
+      const supplierKey = String(req.body?.supplierKey || '');
+      const supplier = projection.suppliers.find(item => item.key === supplierKey);
+      if (!supplier || ['all', 'unassigned'].includes(supplierKey)) {
+        return res.status(400).json({ error: 'Selecciona un proveedor válido para generar la orden.' });
+      }
+      const availableItems = projection.items.filter(item => item.supplierKey === supplierKey);
+      const items = normalizedPurchaseOrderItems(req.body?.items, availableItems);
+      const now = new Date();
+      const stamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const id = `OC-${stamp.slice(0, 8)}-${stamp.slice(8)}-${crypto.randomBytes(4).toString('hex')}`;
+      const order = {
+        id,
+        orderNumber: id,
+        status: 'confirmed',
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        confirmedAt: now.toISOString(),
+        location: projection.location,
+        supplier,
+        projectionPeriod: projection.period,
+        filters: {
+          onlyRequired: req.body?.filters?.onlyRequired === true,
+          onlyManaged: req.body?.filters?.onlyManaged === true
+        },
+        items,
+        total: items.reduce((sum, item) => sum + item.total, 0)
+      };
+      writeJsonAtomic(purchaseOrderPath(id), order);
+      return res.status(201).json(order);
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo guardar la orden de compra.' });
+    }
+  });
+
+  app.put('/api/purchase-orders/:orderId', (req, res) => {
+    try {
+      const filePath = purchaseOrderPath(req.params.orderId);
+      const existing = filePath ? readJson(filePath, null) : null;
+      if (!existing) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
+      const items = normalizedPurchaseOrderItems(req.body?.items, [], existing.items);
+      const updatedAt = new Date().toISOString();
+      const order = {
+        ...existing,
+        status: 'confirmed',
+        updatedAt,
+        confirmedAt: updatedAt,
+        items,
+        total: items.reduce((sum, item) => sum + item.total, 0)
+      };
+      writeJsonAtomic(filePath, order);
+      return res.json(order);
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo actualizar la orden de compra.' });
+    }
   });
 
   function buildProductsPayload(requestedLocation = 'all') {

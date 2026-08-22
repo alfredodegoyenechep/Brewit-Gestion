@@ -30,6 +30,7 @@ let ingredientsViewState = null;
 let purchasesViewState = null;
 let purchaseCostVariationState = null;
 let purchaseProjectionState = null;
+let purchaseOrderEditorState = null;
 let salesDashboardState = null;
 let salesIngredientsState = null;
 let salesHierarchyPath = [];
@@ -2069,9 +2070,7 @@ function filteredPurchaseProjectionItems() {
 
 function updatePurchaseOrderButton() {
   const supplier = document.getElementById('projection-supplier-filter').value || 'all';
-  const eligible = purchaseProjectionState?.items.some(item =>
-    item.managed && item.supplierKey === supplier && item.needsPurchase
-    && item.suggestedPurchaseUnits > 0 && item.conversionAvailable);
+  const eligible = filteredPurchaseProjectionItems().some(item => item.supplierKey === supplier);
   document.getElementById('print-purchase-order').disabled = supplier === 'all' || supplier === 'unassigned' || !eligible;
 }
 
@@ -2275,41 +2274,214 @@ async function savePurchaseProjectionPolicies() {
   }
 }
 
-function printPurchaseOrder() {
+function purchaseOrderHasChangedCosts() {
+  return purchaseOrderEditorState?.items.some(item => item.selected
+    && Math.abs(Number(item.unitCost) - Number(item.referenceUnitCost || 0)) > 0.005) || false;
+}
+
+function editableSavedPurchaseOrder(order) {
+  return {
+    ...order,
+    items: order.items.map(item => ({
+      ...item,
+      selected: true,
+      savedSelected: true,
+      savedQuantity: Number(item.quantity),
+      savedUnitCost: Number(item.unitCost)
+    }))
+  };
+}
+
+function purchaseOrderEditorIsDirty() {
+  if (!purchaseOrderEditorState?.id) return true;
+  return purchaseOrderEditorState.items.some(item => item.selected !== item.savedSelected
+    || Math.abs(Number(item.quantity) - Number(item.savedQuantity)) > 0.000001
+    || Math.abs(Number(item.unitCost) - Number(item.savedUnitCost)) > 0.005);
+}
+
+function updatePurchaseOrderEditorTotals() {
+  if (!purchaseOrderEditorState) return;
+  const rows = [...document.querySelectorAll('#purchase-order-editor-body tr[data-key]')];
+  let total = 0;
+  for (const row of rows) {
+    const item = purchaseOrderEditorState.items.find(candidate => candidate.key === row.dataset.key);
+    if (!item) continue;
+    item.selected = row.querySelector('.purchase-order-select').checked;
+    item.quantity = Number(row.querySelector('.purchase-order-quantity').value);
+    item.unitCost = Number(row.querySelector('.purchase-order-cost').value);
+    const changed = Math.abs(item.unitCost - Number(item.referenceUnitCost || 0)) > 0.005;
+    const rowTotal = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
+      ? item.quantity * item.unitCost : 0;
+    row.querySelector('.purchase-order-row-total').textContent = formatClp(rowTotal);
+    row.querySelector('.purchase-order-row-warning').textContent = changed ? 'Costo modificado' : '';
+    row.classList.toggle('purchase-order-cost-modified', changed);
+    row.classList.toggle('purchase-order-row-excluded', !item.selected);
+    total += rowTotal;
+  }
+  document.getElementById('purchase-order-editor-total').textContent = formatClp(total);
+  document.getElementById('purchase-order-cost-warning').hidden = !purchaseOrderHasChangedCosts();
+  const dirty = purchaseOrderEditorIsDirty();
+  document.getElementById('print-saved-purchase-order').disabled = !purchaseOrderEditorState.id || dirty;
+  if (purchaseOrderEditorState.id && dirty) {
+    setStatus(document.getElementById('purchase-order-editor-status'),
+      'Hay cambios pendientes. Confirma y guarda nuevamente antes de imprimir.', 'muted');
+  } else if (purchaseOrderEditorState.id) {
+    setStatus(document.getElementById('purchase-order-editor-status'),
+      `Orden guardada. Última actualización: ${new Date(purchaseOrderEditorState.updatedAt).toLocaleString('es-CL')}.`, 'success');
+  }
+}
+
+function renderPurchaseOrderEditor() {
+  const state = purchaseOrderEditorState;
+  if (!state) return;
+  document.getElementById('purchase-order-editor-title').textContent = state.id
+    ? `Orden de compra ${state.orderNumber}` : 'Nueva orden de compra';
+  document.getElementById('purchase-order-editor-subtitle').textContent =
+    `${state.supplier.name}${state.supplier.taxId ? ` · RUT ${state.supplier.taxId}` : ''} · ${state.location.name}`;
+  document.getElementById('purchase-order-editor-status').textContent = state.id
+    ? `Orden guardada. Última actualización: ${new Date(state.updatedAt).toLocaleString('es-CL')}.` :
+      'Selecciona los ítems y confirma sus cantidades y costos antes de guardar.';
+  const body = document.getElementById('purchase-order-editor-body');
+  body.replaceChildren(...state.items.map(item => {
+    const row = document.createElement('tr');
+    row.dataset.key = item.key;
+    const selectCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'purchase-order-select';
+    checkbox.checked = item.selected;
+    checkbox.setAttribute('aria-label', `Incluir ${item.name}`);
+    selectCell.appendChild(checkbox);
+    row.appendChild(selectCell);
+    [item.code || '—', item.name, item.purchaseUnit || '—',
+      item.unitsPerPurchaseUnit === null ? '—' : formatProjectionQuantity(item.unitsPerPurchaseUnit),
+      item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits)]
+      .forEach(value => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+    const quantityCell = document.createElement('td');
+    const quantity = document.createElement('input');
+    quantity.type = 'number';
+    quantity.min = '0';
+    quantity.step = '0.01';
+    quantity.value = String(item.quantity ?? 0);
+    quantity.className = 'purchase-order-quantity';
+    quantityCell.appendChild(quantity);
+    row.appendChild(quantityCell);
+    const costCell = document.createElement('td');
+    const cost = document.createElement('input');
+    cost.type = 'number';
+    cost.min = '0';
+    cost.step = '1';
+    cost.value = String(item.unitCost ?? 0);
+    cost.className = 'purchase-order-cost';
+    costCell.appendChild(cost);
+    row.appendChild(costCell);
+    const totalCell = document.createElement('td');
+    totalCell.className = 'purchase-order-row-total';
+    row.appendChild(totalCell);
+    const warningCell = document.createElement('td');
+    warningCell.className = 'purchase-order-row-warning';
+    row.appendChild(warningCell);
+    return row;
+  }));
+  updatePurchaseOrderEditorTotals();
+}
+
+function openPurchaseOrderEditor() {
   const data = purchaseProjectionState;
   const supplierKey = document.getElementById('projection-supplier-filter').value;
   if (!data || ['all', 'unassigned'].includes(supplierKey)) return;
   const supplier = data.suppliers.find(item => item.key === supplierKey);
-  const items = data.items.filter(item => item.managed && item.supplierKey === supplierKey
-    && item.needsPurchase && item.suggestedPurchaseUnits > 0 && item.conversionAvailable);
-  if (!supplier || !items.length) return;
+  const visibleItems = filteredPurchaseProjectionItems().filter(item => item.supplierKey === supplierKey);
+  if (!supplier || !visibleItems.length) return;
+  purchaseOrderEditorState = {
+    id: null,
+    orderNumber: null,
+    location: data.location,
+    supplier,
+    projectionPeriod: data.period,
+    filters: {
+      onlyRequired: document.getElementById('projection-only-required').checked,
+      onlyManaged: document.getElementById('projection-only-managed').checked
+    },
+    items: visibleItems.map(item => ({
+      ...item,
+      referenceUnitCost: Number(item.estimatedPurchaseUnitCost || 0),
+      quantity: Number(item.suggestedPurchaseUnits || 0),
+      unitCost: Number(item.estimatedPurchaseUnitCost || 0),
+      selected: Number(item.suggestedPurchaseUnits || 0) > 0
+    }))
+  };
+  renderPurchaseOrderEditor();
+  document.getElementById('purchase-order-editor-dialog').showModal();
+}
+
+async function confirmPurchaseOrder() {
+  if (!purchaseOrderEditorState) return;
+  updatePurchaseOrderEditorTotals();
+  const status = document.getElementById('purchase-order-editor-status');
+  const selected = purchaseOrderEditorState.items.filter(item => item.selected);
+  if (!selected.length) return setStatus(status, 'Selecciona al menos un ítem para guardar la orden.', 'error');
+  if (selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
+    return setStatus(status, 'Todos los ítems incluidos deben tener cantidad mayor que cero y un costo válido.', 'error');
+  }
+  if (purchaseOrderHasChangedCosts() && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden con estos nuevos costos?')) return;
+  const button = document.getElementById('confirm-purchase-order');
+  button.disabled = true;
+  try {
+    const existing = purchaseOrderEditorState.id;
+    const payload = {
+      location: purchaseOrderEditorState.location.id,
+      supplierKey: purchaseOrderEditorState.supplier.key,
+      filters: purchaseOrderEditorState.filters,
+      items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
+    };
+    const saved = await apiRequest(existing ? `/api/purchase-orders/${encodeURIComponent(existing)}` : '/api/purchase-orders', {
+      method: existing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    purchaseOrderEditorState = editableSavedPurchaseOrder(saved);
+    renderPurchaseOrderEditor();
+    setStatus(status, `Orden ${saved.orderNumber} guardada correctamente. Ya puedes imprimirla o volver a modificarla.`, 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function printPurchaseOrder(order = purchaseOrderEditorState) {
+  if (!order?.id || !order.items?.length) return;
   const documentSection = document.getElementById('purchase-order-document');
   const heading = document.createElement('div');
   heading.className = 'purchase-order-heading';
   const headingMain = document.createElement('div');
   const eyebrow = document.createElement('div');
   eyebrow.className = 'panel-eyebrow';
-  eyebrow.textContent = 'Orden de compra sugerida';
+  eyebrow.textContent = `Orden de compra · ${order.orderNumber}`;
   const supplierName = document.createElement('h2');
-  supplierName.textContent = supplier.name;
+  supplierName.textContent = order.supplier.name;
   const supplierDetail = document.createElement('p');
-  supplierDetail.textContent = `${supplier.taxId ? `RUT ${supplier.taxId} · ` : ''}${data.location.name}`;
+  supplierDetail.textContent = `${order.supplier.taxId ? `RUT ${order.supplier.taxId} · ` : ''}${order.location.name}`;
   headingMain.append(eyebrow, supplierName, supplierDetail);
   const headingMeta = document.createElement('div');
   const orderDate = document.createElement('strong');
-  orderDate.textContent = isoLocalDate(new Date());
-  headingMeta.append(orderDate, document.createElement('br'), document.createTextNode('Basada en proyección de 30 días'));
+  orderDate.textContent = new Date(order.confirmedAt).toLocaleDateString('es-CL');
+  headingMeta.append(orderDate, document.createElement('br'), document.createTextNode('Orden confirmada y guardada'));
   heading.append(headingMain, headingMeta);
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDC</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDC estimado</th><th>Total estimado</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDC</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDC</th><th>Total</th></tr></thead>';
   const body = document.createElement('tbody');
-  items.forEach(item => {
+  order.items.forEach(item => {
     const row = document.createElement('tr');
     [
-      item.code || '', item.name, formatProjectionQuantity(item.suggestedPurchaseUnits), item.purchaseUnit,
-      `${formatProjectionQuantity(item.projectedInternalQuantity)} ${item.internalUnit}`,
-      item.estimatedPurchaseUnitCost === null ? '—' : formatClp(item.estimatedPurchaseUnitCost),
-      item.estimatedTotal === null ? '—' : formatClp(item.estimatedTotal)
+      item.code || '', item.name, formatProjectionQuantity(item.quantity), item.purchaseUnit,
+      item.internalQuantity === null ? '—' : `${formatProjectionQuantity(item.internalQuantity)} ${item.internalUnit}`,
+      formatClp(item.unitCost), formatClp(item.total)
     ].forEach(value => {
       const cell = document.createElement('td');
       cell.textContent = value;
@@ -2319,16 +2491,18 @@ function printPurchaseOrder() {
   });
   const footer = document.createElement('tfoot');
   const totalRow = document.createElement('tr');
-  totalRow.innerHTML = `<td colspan="6">TOTAL ESTIMADO</td><td>${formatClp(items.reduce((sum, item) => sum + (item.estimatedTotal || 0), 0))}</td>`;
+  totalRow.innerHTML = `<td colspan="6">TOTAL ORDEN</td><td>${formatClp(order.total)}</td>`;
   footer.appendChild(totalRow);
   table.append(body, footer);
   const note = document.createElement('p');
   note.className = 'purchase-order-note';
-  note.textContent = 'Documento sugerido. Verificar disponibilidad, precios, impuestos y condiciones comerciales antes de enviarlo al proveedor.';
+  note.textContent = order.items.some(item => item.costModified)
+    ? 'Esta orden contiene costos modificados manualmente respecto de la estimación original. Verificar impuestos y condiciones comerciales antes de enviarla.'
+    : 'Verificar disponibilidad, impuestos y condiciones comerciales antes de enviar la orden al proveedor.';
   documentSection.replaceChildren(heading, table, note);
   documentSection.hidden = false;
   const previousTitle = document.title;
-  document.title = `Orden de compra - ${supplier.name}`;
+  document.title = `${order.orderNumber} - ${order.supplier.name}`;
   document.body.classList.add('printing-purchase-order');
   try {
     window.print();
@@ -2336,6 +2510,58 @@ function printPurchaseOrder() {
     document.body.classList.remove('printing-purchase-order');
     documentSection.hidden = true;
     document.title = previousTitle;
+  }
+}
+
+async function openPastPurchaseOrders() {
+  const dialog = document.getElementById('past-purchase-orders-dialog');
+  const list = document.getElementById('past-purchase-orders-list');
+  const status = document.getElementById('past-purchase-orders-status');
+  dialog.showModal();
+  list.replaceChildren();
+  setStatus(status, 'Cargando órdenes guardadas…');
+  try {
+    const location = document.getElementById('projection-location-filter').value;
+    const data = await apiRequest(`/api/purchase-orders?location=${encodeURIComponent(location)}`);
+    if (!data.orders.length) {
+      setStatus(status, 'Aún no hay órdenes de compra guardadas para esta ubicación.', 'muted');
+      return;
+    }
+    setStatus(status, `${data.orders.length} orden(es) guardada(s).`, 'success');
+    list.replaceChildren(...data.orders.map(order => {
+      const card = document.createElement('article');
+      card.className = 'past-purchase-order-card';
+      const detail = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = `${order.orderNumber} · ${order.supplier.name}`;
+      const meta = document.createElement('span');
+      meta.textContent = `${new Date(order.updatedAt).toLocaleString('es-CL')} · ${order.itemCount} ítem(s) · ${formatClp(order.total)}`;
+      detail.append(title, meta);
+      const actions = document.createElement('div');
+      const edit = document.createElement('button');
+      edit.type = 'button'; edit.className = 'primary'; edit.dataset.orderAction = 'edit'; edit.dataset.orderId = order.id; edit.textContent = 'Ver / modificar';
+      const print = document.createElement('button');
+      print.type = 'button'; print.className = 'icon-button'; print.dataset.orderAction = 'print'; print.dataset.orderId = order.id; print.textContent = 'Imprimir / PDF';
+      actions.append(edit, print);
+      card.append(detail, actions);
+      return card;
+    }));
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function openSavedPurchaseOrder(orderId, printOnly = false) {
+  const status = document.getElementById('past-purchase-orders-status');
+  try {
+    const order = await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}`);
+    if (printOnly) return printPurchaseOrder(order);
+    document.getElementById('past-purchase-orders-dialog').close();
+    purchaseOrderEditorState = editableSavedPurchaseOrder(order);
+    renderPurchaseOrderEditor();
+    document.getElementById('purchase-order-editor-dialog').showModal();
+  } catch (error) {
+    setStatus(status, error.message, 'error');
   }
 }
 
@@ -4030,7 +4256,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderPurchaseProjection();
   });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
-  document.getElementById('print-purchase-order').addEventListener('click', printPurchaseOrder);
+  document.getElementById('print-purchase-order').addEventListener('click', openPurchaseOrderEditor);
+  document.getElementById('past-purchase-orders').addEventListener('click', openPastPurchaseOrders);
+  document.getElementById('close-purchase-order-editor').addEventListener('click', () => {
+    document.getElementById('purchase-order-editor-dialog').close();
+  });
+  document.getElementById('close-past-purchase-orders').addEventListener('click', () => {
+    document.getElementById('past-purchase-orders-dialog').close();
+  });
+  document.getElementById('purchase-order-editor-body').addEventListener('input', updatePurchaseOrderEditorTotals);
+  document.getElementById('purchase-order-editor-body').addEventListener('change', updatePurchaseOrderEditorTotals);
+  document.getElementById('confirm-purchase-order').addEventListener('click', confirmPurchaseOrder);
+  document.getElementById('print-saved-purchase-order').addEventListener('click', () => printPurchaseOrder());
+  document.getElementById('past-purchase-orders-list').addEventListener('click', event => {
+    const button = event.target.closest('button[data-order-action]');
+    if (button) openSavedPurchaseOrder(button.dataset.orderId, button.dataset.orderAction === 'print');
+  });
   document.getElementById('purchase-projection-body').addEventListener('input', event => {
     const row = event.target.closest('tr[data-key]');
     const item = purchaseProjectionState?.items.find(candidate => candidate.key === row?.dataset.key);

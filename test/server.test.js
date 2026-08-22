@@ -701,6 +701,42 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
     body: JSON.stringify({ location: 'main-warehouse', items: [{ key: 'I1', minDays: 20, maxDays: 10 }] })
   });
   assert.equal(invalidPolicy.status, 400);
+
+  const createOrder = await fetch(`${baseUrl}/api/purchase-orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'main-warehouse',
+      supplierKey: '222',
+      filters: { onlyRequired: true, onlyManaged: true },
+      items: [{ key: 'I1', quantity: 2, unitCost: 12 }]
+    })
+  });
+  assert.equal(createOrder.status, 201);
+  const createdOrder = await createOrder.json();
+  assert.match(createdOrder.id, /^OC-/);
+  assert.equal(createdOrder.items.length, 1);
+  assert.equal(createdOrder.items[0].quantity, 2);
+  assert.equal(createdOrder.items[0].costModified, true);
+  assert.equal(createdOrder.total, 24);
+
+  const orderList = await fetch(`${baseUrl}/api/purchase-orders?location=main-warehouse`).then(response => response.json());
+  assert.equal(orderList.orders.length, 1);
+  assert.equal(orderList.orders[0].id, createdOrder.id);
+  assert.equal(orderList.orders[0].itemCount, 1);
+
+  const updateOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ key: 'I1', quantity: 3, unitCost: createdOrder.items[0].referenceUnitCost }] })
+  });
+  assert.equal(updateOrder.status, 200);
+  const updatedOrder = await updateOrder.json();
+  assert.equal(updatedOrder.items[0].quantity, 3);
+  assert.equal(updatedOrder.items[0].costModified, false);
+  assert.equal(updatedOrder.total, 3 * createdOrder.items[0].referenceUnitCost);
+  const loadedOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`).then(response => response.json());
+  assert.equal(loadedOrder.total, 3 * createdOrder.items[0].referenceUnitCost);
 });
 
 test('builds cumulative intraday blocks with weekday, month, and historical reference days', async t => {

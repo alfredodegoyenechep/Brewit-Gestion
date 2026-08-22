@@ -665,7 +665,8 @@
       <div id="purchase-projection-summary" class="products-summary"></div>
       <div class="purchase-projection-actions">
         <button id="save-projection-policies" class="icon-button" type="button" disabled>Guardar criterios</button>
-        <button id="print-purchase-order" class="primary-button" type="button" disabled>Generar orden de compra PDF</button>
+        <button id="past-purchase-orders" class="icon-button" type="button">Órdenes de Compra Pasadas</button>
+        <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
       </div>
       <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. Las UDC se redondean hacia arriba.</p>
       <div class="purchase-projection-table-wrap">
@@ -681,6 +682,43 @@
           <tbody id="purchase-projection-body"></tbody>
         </table>
       </div>
+      <dialog id="purchase-order-editor-dialog" class="inventory-report-dialog purchase-order-editor-dialog" aria-labelledby="purchase-order-editor-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Abastecimiento</div>
+            <h2 id="purchase-order-editor-title">Nueva orden de compra</h2>
+            <p id="purchase-order-editor-subtitle" class="panel-description"></p>
+          </div>
+          <button id="close-purchase-order-editor" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div id="purchase-order-editor-status" class="form-status" aria-live="polite"></div>
+        <div id="purchase-order-cost-warning" class="purchase-order-cost-warning" hidden>
+          Advertencia: modificaste el costo de uno o más ítems respecto del costo estimado. Confirma cuidadosamente estos valores antes de guardar.
+        </div>
+        <div class="purchase-order-editor-table-wrap">
+          <table class="purchase-order-editor-table">
+            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>UDC</th><th>Unidades x UDC</th><th>UDC sugeridas</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
+            <tbody id="purchase-order-editor-body"></tbody>
+            <tfoot><tr><td colspan="8">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
+          </table>
+        </div>
+        <div class="purchase-order-editor-actions">
+          <button id="confirm-purchase-order" class="primary" type="button">Confirmar y guardar orden</button>
+          <button id="print-saved-purchase-order" class="icon-button" type="button" disabled>Imprimir / PDF</button>
+        </div>
+      </dialog>
+      <dialog id="past-purchase-orders-dialog" class="inventory-report-dialog past-purchase-orders-dialog" aria-labelledby="past-purchase-orders-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Abastecimiento</div>
+            <h2 id="past-purchase-orders-title">Órdenes de Compra Pasadas</h2>
+            <p class="panel-description">Abre una orden guardada para revisarla, modificarla o imprimirla nuevamente.</p>
+          </div>
+          <button id="close-past-purchase-orders" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div id="past-purchase-orders-status" class="form-status" aria-live="polite"></div>
+        <div id="past-purchase-orders-list" class="past-purchase-orders-list"></div>
+      </dialog>
       <section id="purchase-order-document" class="purchase-order-document" hidden></section>
     </section>
 

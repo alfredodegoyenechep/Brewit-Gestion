@@ -242,13 +242,19 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('.projection-managed-input').check();
   assert.match(await page.locator('#purchase-projection-summary').textContent(), /1 ítem\(s\) administrados/);
   await page.locator('#projection-supplier-filter').selectOption('111');
-  assert.equal(await page.getByRole('button', { name: 'Generar orden de compra PDF' }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Generar Orden de Compra PDF' }).isEnabled(), true);
   await page.evaluate(() => {
     window.__purchaseOrderPrintCalled = false;
     window.print = () => { window.__purchaseOrderPrintCalled = true; };
   });
-  await page.getByRole('button', { name: 'Generar orden de compra PDF' }).click();
+  await page.getByRole('button', { name: 'Generar Orden de Compra PDF' }).click();
+  await page.getByRole('dialog', { name: 'Nueva orden de compra' }).waitFor();
+  assert.equal(await page.locator('#purchase-order-editor-body tr[data-key]').count(), 1);
+  await page.getByRole('button', { name: 'Confirmar y guardar orden' }).click();
+  await page.locator('#purchase-order-editor-status').filter({ hasText: /guardada correctamente/i }).waitFor();
+  await page.getByRole('button', { name: 'Imprimir / PDF' }).click();
   assert.equal(await page.evaluate(() => window.__purchaseOrderPrintCalled), true);
+  await page.getByRole('button', { name: 'Cerrar' }).click();
   await page.locator('.projection-min-input').fill('10');
   await page.locator('.projection-max-input').fill('20');
   await page.getByRole('button', { name: 'Guardar criterios' }).click();
