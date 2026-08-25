@@ -90,6 +90,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
 
   assert.equal(await page.locator('#file-loader').isVisible(), true);
   assert.equal(await page.getByRole('button', { name: /New Order/i }).count(), 0);
+  assert.deepEqual(await page.locator('#products-grouping option').allTextContents(), ['Por jerarquía', 'Todos juntos']);
   assert.equal(await page.locator('#week-select').count(), 0);
   assert.match(await page.locator('[data-weekly-field="sales"] .file-upload-state').textContent(), /Último archivo subido/);
   assert.match(await page.locator('[data-weekly-field="sales"] .file-upload-filename').textContent(), /ventas-semana\.csv.*1 carga/i);
@@ -465,6 +466,17 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#week-status').filter({ hasText: /seleccionado como Transacciones de venta.*parece corresponder a Compras/i }).waitFor();
   await page.locator('#file-sales').setInputFiles([]);
 
+  await page.locator('#file-waste').setInputFiles({
+    name: 'kardex_report MER.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: Buffer.from(waste)
+  });
+  await page.locator('#date-confirmation').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#week-status').textContent(), /Kardex y Merma comparten la misma estructura.*archivo correcto.*Merma/i);
+  assert.equal(await page.locator('#inventory-file-confirmation-row').isVisible(), true);
+  assert.match(await page.locator('#inventory-file-confirmation-copy').textContent(), /kardex_report MER\.xlsx.*archivo correcto.*Merma/i);
+  await page.getByRole('button', { name: 'Cancelar' }).click();
+
   await page.getByRole('tab', { name: 'Archivos maestros' }).click();
   assert.equal(await page.getByText('Maestro Productos / Ingredientes / Extras', { exact: true }).count(), 1);
   assert.equal(await page.getByText('Jerarquía Productos', { exact: true }).count(), 1);
@@ -535,7 +547,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const nameInput = page.getByRole('textbox', { name: 'Nombre de Brewit Test' });
   await nameInput.fill('Brewit Renombrado');
   await nameInput.locator('xpath=..').getByRole('button', { name: 'Guardar nombre' }).click();
-  await page.getByText('Nombre actualizado.').waitFor();
+  await page.getByText('Nombre y dirección actualizados.').waitFor();
   const renamedInput = page.getByRole('textbox', { name: 'Nombre de Brewit Renombrado' });
   await renamedInput.locator('xpath=..').getByRole('button', { name: 'Enviar a papelera' }).click();
 

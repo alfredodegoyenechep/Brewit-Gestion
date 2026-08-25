@@ -466,6 +466,12 @@
           <label for="products-location-filter">Cafetería
             <select id="products-location-filter"><option value="all">Todas las cafeterías</option></select>
           </label>
+          <label for="products-grouping">Vista
+            <select id="products-grouping">
+              <option value="hierarchy">Por jerarquía</option>
+              <option value="all">Todos juntos</option>
+            </select>
+          </label>
           <label for="products-search">Buscar producto
             <input id="products-search" type="search" placeholder="Código o nombre" autocomplete="off" />
           </label>
@@ -554,6 +560,10 @@
             <input id="ingredients-only-changed" type="checkbox" /> Solo con variación de costo
           </label>
           <button id="refresh-ingredients" class="icon-button" type="button">Actualizar</button>
+          <div class="ingredients-report-actions">
+            <button id="print-ingredients-report" class="icon-button" type="button" disabled>Imprimir / PDF</button>
+            <button id="export-ingredients-report" class="icon-button" type="button" disabled>Exportar Excel</button>
+          </div>
         </div>
       </div>
       <div id="ingredients-status" class="form-status" aria-live="polite"></div>
@@ -890,6 +900,17 @@
         <div class="inventory-results-table-wrap">
           <table id="inventory-results-table" class="inventory-results-table"></table>
         </div>
+        <section id="inventory-lac001-substitution-report" class="consumption-report-card" hidden>
+          <h4>Sustitución de LAC001 por extras</h4>
+          <p id="inventory-lac001-substitution-period" class="panel-description"></p>
+          <div id="inventory-lac001-substitution-summary" class="consumption-report-summary"></div>
+          <p class="inventory-substitution-method">
+            El volumen corresponde al LAC001 teórico de la receta del producto vendido, convertido a litros y ajustado por su rendimiento.
+          </p>
+          <div class="inventory-results-table-wrap">
+            <table id="inventory-lac001-substitution-table" class="inventory-results-table"></table>
+          </div>
+        </section>
       </dialog>
 
       <dialog id="inventory-preview-dialog" class="preview-dialog">
@@ -1001,6 +1022,10 @@
           <label class="confirmation-check">
             <input type="checkbox" id="dates-confirmed" />
             Confirmo que estas fechas son válidas para los archivos seleccionados.
+          </label>
+          <label id="inventory-file-confirmation-row" class="confirmation-check" hidden>
+            <input type="checkbox" id="inventory-file-confirmed" />
+            <span id="inventory-file-confirmation-copy">Confirmo que seleccioné el archivo correcto.</span>
           </label>
           <div id="transaction-overlap-notice" class="transaction-overlap-notice" hidden></div>
           <div id="transaction-confirmation-status" class="form-status" aria-live="polite"></div>
@@ -1132,10 +1157,26 @@
         </div>
       </div>
 
+      <form id="company-profile-form" class="company-profile-form">
+        <label>
+          <span>Razón social</span>
+          <input id="company-name" type="text" minlength="2" maxlength="100" value="CODE SPA" required />
+        </label>
+        <label>
+          <span>RUT de Brewit para órdenes de compra</span>
+          <input id="company-tax-id" type="text" maxlength="30" placeholder="Ej. 76.123.456-7" />
+        </label>
+        <button class="icon-button" type="submit">Guardar datos de Brewit</button>
+      </form>
+
       <form id="create-location-form" class="create-location-form">
         <label>
           <span>Nombre de la ubicación</span>
           <input id="new-location-name" name="name" type="text" minlength="2" maxlength="80" required placeholder="Ej. Brewit Providencia" />
+        </label>
+        <label>
+          <span>Dirección</span>
+          <input id="new-location-address" name="address" type="text" maxlength="200" placeholder="Dirección para órdenes de compra" />
         </label>
         <label>
           <span>Tipo</span>

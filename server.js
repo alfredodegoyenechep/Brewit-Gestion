@@ -363,9 +363,21 @@ function validateUploadStructure(file) {
       reason: 'Aceptado sin validación estructural porque aún no existe un archivo MercadoPago de referencia.'
     };
   }
-  const sharedInventory = ['kardex', 'waste'].includes(expected) && detected.field === 'inventory';
+  const inventoryFields = ['kardex', 'waste'];
+  const expectedInventory = inventoryFields.includes(expected);
+  const detectedInventory = [...inventoryFields, 'inventory'].includes(detected.field);
+  if (expectedInventory && detectedInventory) {
+    return {
+      ok: true,
+      permissive: true,
+      requiresCategoryConfirmation: true,
+      expected,
+      detected: detected.field,
+      reason: `Kardex y Merma comparten la misma estructura. Confirma que “${file.originalname}” es el archivo correcto para cargar como ${UPLOAD_STRUCTURE_LABELS[expected]}.`
+    };
+  }
   const sharedConsumption = ['marketing', 'employees'].includes(expected) && detected.field === 'consumption';
-  if (detected.field === expected || sharedInventory || sharedConsumption) {
+  if (detected.field === expected || sharedConsumption) {
     return { ok: true, expected, detected: detected.field, reason: detected.reason };
   }
   return {
@@ -1517,6 +1529,8 @@ function createApp(options = {}) {
   const purchaseOrdersRoot = path.join(uploadsRoot, 'reports', 'purchase-orders');
   const trashLocationsRoot = path.join(uploadsRoot, 'trash', 'locations');
   const locationsPath = path.join(configRoot, 'locations.json');
+  const companyProfilePath = path.join(configRoot, 'company-profile.json');
+  const purchaseOrderCounterPath = path.join(configRoot, 'purchase-order-counter.json');
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
   ensureDir(weeksRoot);
   ensureDir(mastersRoot);
@@ -1533,6 +1547,9 @@ function createApp(options = {}) {
       locations: DEFAULT_LOCATIONS.map(location => ({ ...location, status: 'active', createdAt }))
     });
   }
+  if (!fs.existsSync(companyProfilePath)) {
+    writeJsonAtomic(companyProfilePath, { name: 'CODE SPA', taxId: '', logoUrl: 'docs/brewit-final-01.jpg' });
+  }
 
   function readLocations() {
     return readJson(locationsPath, { locations: [] });
@@ -1544,6 +1561,10 @@ function createApp(options = {}) {
 
   function publicLocation(location) {
     return { ...location, label: location.name, fields: fieldsForLocation(location.type) };
+  }
+
+  function readCompanyProfile() {
+    return readJson(companyProfilePath, { name: 'CODE SPA', taxId: '', logoUrl: 'docs/brewit-final-01.jpg' });
   }
 
   function readPurchaseProjectionPolicies() {
@@ -1623,6 +1644,99 @@ function createApp(options = {}) {
       }
     }
     return [...output, ...storedTransactionFiles(locationId, 'sales')];
+  }
+
+  function lac001SubstitutionSummary(locationId, dateFrom, dateTo, recipes, catalog) {
+    const targetCodes = ['BX1010', 'BX1020', 'BX1030'];
+    const targetCodeSet = new Set(targetCodes);
+    const rowsByCode = new Map(targetCodes.map(code => [code, {
+      code,
+      name: catalog?.get(code)?.name || code,
+      orderKeys: new Set(),
+      substitutionCount: 0,
+      matchedSubstitutionCount: 0,
+      lac001VolumeLiters: 0,
+      unresolvedSubstitutionCount: 0
+    }]));
+    const allOrderKeys = new Set();
+    const seenRows = new Set();
+    const warnings = [];
+
+    for (const stored of storedSalesFiles(locationId)) {
+      try {
+        const currentBaseByOrder = new Map();
+        for (const row of readSalesRows(stored.filePath)) {
+          const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+          if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+          const canonicalRow = Object.entries(row)
+            .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+            .sort(([left], [right]) => left.localeCompare(right));
+          const rowKey = `${locationId}:${crypto.createHash('sha256').update(JSON.stringify(canonicalRow)).digest('hex')}`;
+          if (seenRows.has(rowKey)) continue;
+          seenRows.add(rowKey);
+
+          const orderKey = `${locationId}:${salesTransactionKey(row)}`;
+          const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
+          if (!code) continue;
+          if (!code.startsWith('BX')) currentBaseByOrder.set(orderKey, code);
+          if (!targetCodeSet.has(code)) continue;
+
+          const quantity = Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
+          if (!quantity) continue;
+          const detail = rowsByCode.get(code);
+          detail.orderKeys.add(orderKey);
+          detail.substitutionCount += quantity;
+          allOrderKeys.add(orderKey);
+
+          const baseProductCode = currentBaseByOrder.get(orderKey);
+          const lac001Lines = (recipes?.get(baseProductCode) || [])
+            .filter(recipe => String(recipe.ingredientId || '').trim().toUpperCase() === 'LAC001');
+          let volumePerProduct = 0;
+          let recipeResolved = lac001Lines.length > 0;
+          for (const recipe of lac001Lines) {
+            const canonical = canonicalConsumptionUnit(recipe.unit);
+            if (canonical.unit !== 'L') {
+              recipeResolved = false;
+              continue;
+            }
+            const yieldFactor = recipe.yieldRate > 0 ? recipe.yieldRate / 100 : 1;
+            volumePerProduct += recipe.quantity / yieldFactor * canonical.factor;
+          }
+          if (!recipeResolved || !volumePerProduct) {
+            detail.unresolvedSubstitutionCount += quantity;
+            continue;
+          }
+          detail.matchedSubstitutionCount += quantity;
+          detail.lac001VolumeLiters += quantity * volumePerProduct;
+        }
+      } catch {
+        warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name}.`);
+      }
+    }
+
+    const items = targetCodes.map(code => {
+      const item = rowsByCode.get(code);
+      return {
+        code: item.code,
+        name: item.name,
+        salesCount: item.orderKeys.size,
+        substitutionCount: item.substitutionCount,
+        matchedSubstitutionCount: item.matchedSubstitutionCount,
+        lac001VolumeLiters: item.lac001VolumeLiters,
+        unresolvedSubstitutionCount: item.unresolvedSubstitutionCount
+      };
+    });
+    return {
+      dateFrom,
+      dateTo,
+      salesCount: allOrderKeys.size,
+      substitutionCount: items.reduce((sum, item) => sum + item.substitutionCount, 0),
+      matchedSubstitutionCount: items.reduce((sum, item) => sum + item.matchedSubstitutionCount, 0),
+      lac001VolumeLiters: items.reduce((sum, item) => sum + item.lac001VolumeLiters, 0),
+      unresolvedSubstitutionCount: items.reduce((sum, item) => sum + item.unresolvedSubstitutionCount, 0),
+      warnings,
+      items
+    };
   }
 
   function storedWeeklyFiles(locationId, field) {
@@ -1999,16 +2113,32 @@ function createApp(options = {}) {
     });
   });
 
+  app.get('/api/config/company', (req, res) => {
+    res.json(readCompanyProfile());
+  });
+
+  app.patch('/api/config/company', (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    const taxId = String(req.body?.taxId || '').trim();
+    if (name.length < 2 || name.length > 100) return res.status(400).json({ error: 'La razón social debe tener entre 2 y 100 caracteres.' });
+    if (taxId.length > 30) return res.status(400).json({ error: 'El RUT no puede superar 30 caracteres.' });
+    const profile = { ...readCompanyProfile(), name, taxId, updatedAt: new Date().toISOString() };
+    writeJsonAtomic(companyProfilePath, profile);
+    return res.json(profile);
+  });
+
   app.post('/api/config/locations', (req, res) => {
     const name = String(req.body?.name || '').trim();
+    const address = String(req.body?.address || '').trim();
     const type = req.body?.type;
     if (name.length < 2 || name.length > 80) return res.status(400).json({ error: 'Location name must be between 2 and 80 characters.' });
+    if (address.length > 200) return res.status(400).json({ error: 'La dirección no puede superar 200 caracteres.' });
     if (!['store', 'warehouse'].includes(type)) return res.status(400).json({ error: 'Select a valid location type.' });
     const registry = readLocations();
     if (registry.locations.some(location => location.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
       return res.status(409).json({ error: 'A location with this name already exists, including locations in trash.' });
     }
-    const location = { id: `location-${crypto.randomUUID()}`, name, type, status: 'active', createdAt: new Date().toISOString() };
+    const location = { id: `location-${crypto.randomUUID()}`, name, address, type, status: 'active', createdAt: new Date().toISOString() };
     registry.locations.push(location);
     writeJsonAtomic(locationsPath, registry);
     return res.status(201).json(publicLocation(location));
@@ -2016,7 +2146,9 @@ function createApp(options = {}) {
 
   app.patch('/api/config/locations/:id', (req, res) => {
     const name = String(req.body?.name || '').trim();
+    const address = String(req.body?.address || '').trim();
     if (name.length < 2 || name.length > 80) return res.status(400).json({ error: 'Location name must be between 2 and 80 characters.' });
+    if (address.length > 200) return res.status(400).json({ error: 'La dirección no puede superar 200 caracteres.' });
     const registry = readLocations();
     const location = registry.locations.find(item => item.id === req.params.id && item.status === 'active');
     if (!location) return res.status(404).json({ error: 'Active location not found.' });
@@ -2024,6 +2156,7 @@ function createApp(options = {}) {
       return res.status(409).json({ error: 'A location with this name already exists, including locations in trash.' });
     }
     location.name = name;
+    location.address = address;
     location.updatedAt = new Date().toISOString();
     writeJsonAtomic(locationsPath, registry);
     for (const week of fs.readdirSync(weeksRoot)) {
@@ -2554,6 +2687,7 @@ function createApp(options = {}) {
     }).sort((left, right) => left.supplier.localeCompare(right.supplier, 'es') || left.name.localeCompare(right.name, 'es'));
     return {
       location: publicLocation(location),
+      company: readCompanyProfile(),
       period: { from: periodFrom, to: today, dataThrough: latestGroup.date, days: 30 },
       consumptionCriteria: location.type === 'warehouse'
         ? 'Transferencias y transformaciones salientes del Kardex'
@@ -2610,9 +2744,45 @@ function createApp(options = {}) {
     return path.dirname(filePath) === path.resolve(purchaseOrdersRoot) ? filePath : null;
   }
 
+  function purchaseOrderFiles() {
+    return fs.readdirSync(purchaseOrdersRoot)
+      .filter(name => /^OC-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}\.json$/.test(name));
+  }
+
+  function ensurePurchaseOrderSequences() {
+    const orders = purchaseOrderFiles()
+      .map(name => ({ filePath: path.join(purchaseOrdersRoot, name), order: readJson(path.join(purchaseOrdersRoot, name), null) }))
+      .filter(entry => entry.order?.id)
+      .sort((left, right) => String(left.order.createdAt || '').localeCompare(String(right.order.createdAt || '')));
+    const savedCounter = Number(readJson(purchaseOrderCounterPath, { last: 0 }).last) || 0;
+    let last = Math.max(savedCounter, ...orders.map(entry => Number(entry.order.sequence) || 0));
+    for (const entry of orders.filter(item => !Number.isInteger(Number(item.order.sequence)) || Number(item.order.sequence) <= 0)) {
+      last += 1;
+      entry.order.sequence = last;
+      entry.order.orderNumber = `OC-${String(last).padStart(6, '0')}`;
+      writeJsonAtomic(entry.filePath, entry.order);
+    }
+    for (const entry of orders.filter(item => Number.isInteger(Number(item.order.sequence)) && Number(item.order.sequence) > 0)) {
+      const expectedNumber = `OC-${String(Number(entry.order.sequence)).padStart(6, '0')}`;
+      if (entry.order.orderNumber !== expectedNumber) {
+        entry.order.orderNumber = expectedNumber;
+        writeJsonAtomic(entry.filePath, entry.order);
+      }
+    }
+    writeJsonAtomic(purchaseOrderCounterPath, { last });
+  }
+
+  function nextPurchaseOrderSequence() {
+    const counter = readJson(purchaseOrderCounterPath, { last: 0 });
+    const sequence = (Number(counter.last) || 0) + 1;
+    writeJsonAtomic(purchaseOrderCounterPath, { last: sequence });
+    return sequence;
+  }
+
   function purchaseOrderMetadata(order) {
     return {
       id: order.id,
+      sequence: order.sequence,
       orderNumber: order.orderNumber,
       status: order.status,
       createdAt: order.createdAt,
@@ -2625,14 +2795,32 @@ function createApp(options = {}) {
     };
   }
 
+  function purchaseOrderWithCurrentDetails(order) {
+    const currentLocation = readLocations().locations.find(location => location.id === order.location?.id);
+    const company = readCompanyProfile();
+    return {
+      ...order,
+      company: {
+        ...(order.company || {}),
+        ...company
+      },
+      location: {
+        ...(currentLocation ? publicLocation(currentLocation) : {}),
+        ...(order.location || {}),
+        address: order.location?.address || currentLocation?.address || ''
+      }
+    };
+  }
+
   function readPurchaseOrders() {
-    return fs.readdirSync(purchaseOrdersRoot)
-      .filter(name => /^OC-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}\.json$/.test(name))
+    return purchaseOrderFiles()
       .flatMap(name => {
         const order = readJson(path.join(purchaseOrdersRoot, name), null);
-        return order?.id ? [order] : [];
+        return order?.id ? [purchaseOrderWithCurrentDetails(order)] : [];
       });
   }
+
+  ensurePurchaseOrderSequences();
 
   function normalizedPurchaseOrderItems(requested, availableItems, existingItems = null) {
     if (!Array.isArray(requested) || !requested.length) {
@@ -2690,7 +2878,7 @@ function createApp(options = {}) {
     const filePath = purchaseOrderPath(req.params.orderId);
     const order = filePath ? readJson(filePath, null) : null;
     if (!order) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
-    return res.json(order);
+    return res.json(purchaseOrderWithCurrentDetails(order));
   });
 
   app.post('/api/purchase-orders', (req, res) => {
@@ -2706,14 +2894,17 @@ function createApp(options = {}) {
       const now = new Date();
       const stamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
       const id = `OC-${stamp.slice(0, 8)}-${stamp.slice(8)}-${crypto.randomBytes(4).toString('hex')}`;
+      const sequence = nextPurchaseOrderSequence();
       const order = {
         id,
-        orderNumber: id,
+        sequence,
+        orderNumber: `OC-${String(sequence).padStart(6, '0')}`,
         status: 'confirmed',
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
         confirmedAt: now.toISOString(),
         location: projection.location,
+        company: projection.company,
         supplier,
         projectionPeriod: projection.period,
         filters: {
@@ -2742,6 +2933,7 @@ function createApp(options = {}) {
         status: 'confirmed',
         updatedAt,
         confirmedAt: updatedAt,
+        company: readCompanyProfile(),
         items,
         total: items.reduce((sum, item) => sum + item.total, 0)
       };
@@ -2750,6 +2942,17 @@ function createApp(options = {}) {
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo actualizar la orden de compra.' });
     }
+  });
+
+  app.delete('/api/purchase-orders/:orderId', (req, res) => {
+    const filePath = purchaseOrderPath(req.params.orderId);
+    const order = filePath ? readJson(filePath, null) : null;
+    if (!order) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
+    if (String(req.body?.confirmation || '') !== order.orderNumber) {
+      return res.status(400).json({ error: 'Confirma el número exacto de la orden antes de eliminarla.' });
+    }
+    fs.rmSync(filePath);
+    return res.json({ ok: true, deleted: order.id });
   });
 
   function buildProductsPayload(requestedLocation = 'all') {
@@ -2977,9 +3180,9 @@ function createApp(options = {}) {
     }
 
     const usageByIngredient = new Map();
+    const productQuantities = new Map();
     const selectedStores = selectedLocation?.type === 'store' ? [selectedLocation] : selectedLocation ? [] : stores;
     if (selectedStores.length) {
-      const productQuantities = new Map();
       const seenRows = new Set();
       for (const location of selectedStores) {
         for (const stored of storedSalesFiles(location.id)) {
@@ -3065,7 +3268,18 @@ function createApp(options = {}) {
         usageQuantity: usage.quantity,
         usageUnit: usage.unit,
         usageCost,
-        products: (usedBy.get(key) || []).sort((left, right) => left.name.localeCompare(right.name, 'es'))
+        products: (usedBy.get(key) || []).map(product => ({
+          ...product,
+          periodProductQuantity: selectedStores.length ? productQuantities.get(product.code) || 0 : null,
+          periodIngredientQuantity: selectedStores.length
+            ? (productQuantities.get(product.code) || 0) * product.recipeQuantity
+              / (product.yieldRate > 0 ? product.yieldRate / 100 : 1)
+            : null,
+          periodIngredientEffectiveQuantity: selectedStores.length
+            ? (productQuantities.get(product.code) || 0) * product.effectiveQuantity
+            : null,
+          periodIngredientUnit: product.recipeUnit
+        })).sort((left, right) => left.name.localeCompare(right.name, 'es'))
       };
     });
     const suppliers = [...new Map(items.map(item => [item.supplierKey, { key: item.supplierKey, name: item.supplier }])).values()]
@@ -3570,6 +3784,13 @@ function createApp(options = {}) {
         consumption,
         ingredientCatalog
       );
+      const lac001Substitutions = lac001SubstitutionSummary(
+        location.id,
+        movementDateFrom,
+        movementDateTo,
+        recipes,
+        ingredientCatalog
+      );
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       return res.json({
@@ -3577,6 +3798,7 @@ function createApp(options = {}) {
         source,
         waste,
         consumption,
+        lac001Substitutions,
         masterSources: { recipes: publicMaster(recipeMaster), catalog: publicMaster(catalogMaster), error: masterError },
         report
       });
@@ -4171,7 +4393,7 @@ function createApp(options = {}) {
   });
 
   app.post('/api/uploads/transactions/confirm', (req, res) => {
-    const { token, dateFrom, dateTo, confirmed, overlapAction = 'keep' } = req.body || {};
+    const { token, dateFrom, dateTo, confirmed, categoryConfirmed, overlapAction = 'keep' } = req.body || {};
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(token || '')) {
       return res.status(400).json({ error: 'La revisión de carga es inválida o expiró.' });
     }
@@ -4185,6 +4407,10 @@ function createApp(options = {}) {
     const manifest = readJson(path.join(stagingDirectory, 'manifest.json'), null);
     const selectedLocation = manifest && activeLocation(manifest.location);
     if (!manifest || !selectedLocation) return res.status(404).json({ error: 'Esta revisión expiró. Selecciona nuevamente los archivos.' });
+    const requiresCategoryConfirmation = manifest.files.some(file => ['kardex', 'waste'].includes(file.field));
+    if (requiresCategoryConfirmation && categoryConfirmed !== true) {
+      return res.status(400).json({ error: 'Confirma que seleccionaste el archivo correcto para Kardex o Merma antes de guardarlo.' });
+    }
     if (Date.now() - new Date(manifest.createdAt).getTime() > STAGING_MAX_AGE_MS) {
       fs.rmSync(stagingDirectory, { recursive: true, force: true });
       return res.status(410).json({ error: 'Esta revisión expiró. Selecciona nuevamente los archivos.' });

@@ -673,6 +673,16 @@ body {
   font-size: 18px;
 }
 
+#inventory-lac001-substitution-report {
+  margin-top: 20px;
+}
+
+.inventory-substitution-method {
+  margin-top: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 .consumption-report-summary {
   display: flex;
   flex-wrap: wrap;
@@ -1067,6 +1077,72 @@ body {
     break-before: page;
   }
 
+  body.printing-ingredients-report {
+    display: block;
+    background: white;
+  }
+
+  body.printing-ingredients-report .sidebar,
+  body.printing-ingredients-report .main-content > section:not(#ingredients-workspace),
+  body.printing-ingredients-report #ingredients-workspace > *:not(.ingredients-print-report) {
+    display: none !important;
+  }
+
+  body.printing-ingredients-report .main-content,
+  body.printing-ingredients-report #ingredients-workspace,
+  body.printing-ingredients-report .ingredients-print-report {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-ingredients-report .ingredients-print-report > p {
+    margin: 2mm 0 5mm;
+  }
+
+  body.printing-ingredients-report .ingredients-print-report table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7px;
+  }
+
+  body.printing-ingredients-report .ingredients-print-report th,
+  body.printing-ingredients-report .ingredients-print-report td {
+    padding: 2px 3px;
+    border: 1px solid #d8cbbd;
+    text-align: right;
+    white-space: normal;
+  }
+
+  body.printing-ingredients-report .ingredients-print-report th:nth-child(-n+3),
+  body.printing-ingredients-report .ingredients-print-report td:nth-child(-n+3) {
+    text-align: left;
+  }
+
+  body.printing-ingredients-report .ingredients-print-detail {
+    margin-top: 7mm;
+    break-before: page;
+  }
+
+  body.printing-ingredients-report .ingredients-print-detail h2 {
+    margin-bottom: 3mm;
+    font-size: 14px;
+  }
+
+  body.printing-ingredients-report thead {
+    display: table-header-group;
+  }
+
+  body.printing-ingredients-report tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   body.printing-purchases-report {
     display: block;
     background: white;
@@ -1267,13 +1343,41 @@ body {
     margin-bottom: 10mm;
   }
 
+  body.printing-purchase-order .purchase-order-company {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  body.printing-purchase-order .purchase-order-logo {
+    width: 28mm;
+    height: 28mm;
+    object-fit: contain;
+  }
+
   body.printing-purchase-order .purchase-order-heading h2 {
     margin: 4px 0;
     font-size: 24px;
   }
 
   body.printing-purchase-order .purchase-order-heading p {
-    margin: 0;
+    margin: 2px 0 0;
+  }
+
+  body.printing-purchase-order .purchase-order-supplier {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 5mm;
+    padding: 4mm;
+    border: 1px solid #d8cec1;
+  }
+
+  body.printing-purchase-order .purchase-order-supplier > span:first-child {
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0.12em;
   }
 
   body.printing-purchase-order table {
@@ -1296,6 +1400,19 @@ body {
 
   body.printing-purchase-order tfoot td {
     font-weight: 800;
+  }
+
+  body.printing-purchase-order .purchase-order-total-row td:first-child {
+    text-align: right !important;
+    padding-right: 6px !important;
+  }
+
+  body.printing-purchase-order .purchase-order-total-row td:last-child {
+    text-align: right !important;
+  }
+
+  body.printing-purchase-order .purchase-order-total-row td {
+    font-size: 11px;
   }
 
   body.printing-purchase-order .purchase-order-note {
@@ -1655,7 +1772,7 @@ body {
 
 .products-controls {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(140px, 0.75fr) minmax(180px, 1fr) auto;
   align-items: end;
   gap: 10px;
 }
@@ -1742,7 +1859,8 @@ body {
   background: var(--panel);
 }
 
-.product-hierarchy-group > summary {
+.product-hierarchy-group > summary,
+.products-all-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1754,7 +1872,12 @@ body {
   font-size: 13px;
 }
 
-.product-hierarchy-group > summary span {
+.products-all-heading {
+  cursor: default;
+}
+
+.product-hierarchy-group > summary span,
+.products-all-heading span {
   color: var(--text-muted);
   font-size: 11px;
   white-space: nowrap;
@@ -1882,6 +2005,17 @@ body {
   grid-template-columns: repeat(5, minmax(130px, 1fr)) auto;
   align-items: end;
   gap: 9px;
+}
+
+.ingredients-report-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.ingredients-print-report {
+  display: none;
 }
 
 .ingredients-controls label {
@@ -2016,6 +2150,8 @@ body {
 .ingredient-products-detail table { width: 100%; border-collapse: collapse; }
 .ingredient-products-detail th,
 .ingredient-products-detail td { background: transparent; text-align: left; }
+.ingredient-products-detail th:nth-child(n+3),
+.ingredient-products-detail td:nth-child(n+3) { text-align: right; }
 
 .ingredients-empty {
   padding: 24px !important;
@@ -2438,7 +2574,8 @@ body {
   text-align: center;
 }
 
-.purchase-order-editor-table input[type="number"] {
+.purchase-order-editor-table input[type="number"],
+.purchase-order-editor-table input.purchase-order-cost {
   box-sizing: border-box;
   width: 105px;
   padding: 8px;
@@ -2452,6 +2589,16 @@ body {
 .purchase-order-editor-table tfoot td {
   background: var(--chip);
   font-weight: 900;
+  font-size: 14px;
+}
+
+.purchase-order-editor-table tfoot td:first-child {
+  padding-right: 8px;
+  text-align: right !important;
+}
+
+.purchase-order-editor-table tfoot #purchase-order-editor-total {
+  text-align: right !important;
 }
 
 .purchase-order-row-warning {
@@ -3115,6 +3262,10 @@ button.file-upload-state:disabled {
   color: var(--red);
 }
 
+.form-status.warning {
+  color: var(--copper);
+}
+
 .form-status.muted {
   color: var(--text-muted);
 }
@@ -3379,9 +3530,9 @@ button.file-upload-state:disabled {
   color: var(--coffee);
 }
 
-.create-location-form {
+.create-location-form,
+.company-profile-form {
   display: grid;
-  grid-template-columns: minmax(240px, 1.5fr) minmax(180px, 0.7fr) auto;
   align-items: end;
   gap: 14px;
   margin-top: 24px;
@@ -3391,7 +3542,16 @@ button.file-upload-state:disabled {
   background: var(--coffee-soft-2);
 }
 
-.create-location-form label {
+.create-location-form {
+  grid-template-columns: minmax(200px, 1fr) minmax(280px, 1.5fr) minmax(150px, 0.6fr) auto;
+}
+
+.company-profile-form {
+  grid-template-columns: minmax(200px, 0.7fr) minmax(280px, 1fr) auto;
+}
+
+.create-location-form label,
+.company-profile-form label {
   display: grid;
   gap: 7px;
   color: var(--text-soft);
@@ -3401,6 +3561,7 @@ button.file-upload-state:disabled {
 
 .create-location-form input,
 .create-location-form select,
+.company-profile-form input,
 .location-row input,
 .location-trash-dialog input {
   width: 100%;
@@ -3428,7 +3589,7 @@ button.file-upload-state:disabled {
 
 .location-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto auto;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.4fr) auto auto auto;
   align-items: center;
   gap: 10px;
   padding: 14px;
@@ -4314,6 +4475,7 @@ button:disabled {
   }
 
   .create-location-form,
+  .company-profile-form,
   .location-row,
   .trashed-location-row {
     grid-template-columns: 1fr;

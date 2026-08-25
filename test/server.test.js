@@ -57,7 +57,7 @@ async function confirmTransactions(baseUrl, manifest, overlapAction = 'keep', ra
   return fetch(`${baseUrl}/api/uploads/transactions/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: manifest.token, dateFrom: range.from, dateTo: range.to, confirmed: true, overlapAction })
+    body: JSON.stringify({ token: manifest.token, dateFrom: range.from, dateTo: range.to, confirmed: true, categoryConfirmed: true, overlapAction })
   });
 }
 
@@ -130,6 +130,52 @@ test('rejects transaction and master files whose structure does not match the se
   assert.equal(masterError.mismatch.detected, 'master-recipes');
   assert.match(masterError.error, /Maestro Proveedores.*Maestro de recetas/i);
   assert.deepEqual(await fetch(`${baseUrl}/api/masters`).then(response => response.json()), {});
+});
+
+test('requires an explicit category confirmation for Kardex and Merma files', async t => {
+  const baseUrl = await startTestServer(t);
+  const inventoryContents = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'MOV-IN - Transferencias entre Bodegas Entrantes', 'IF - Inventario Final', ''],
+    ['P1', 'Producto prueba', 'UN', 0, 2, 2, '']
+  ].map(row => row.join('\t')).join('\n');
+
+  const kardexAsWaste = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'waste', contents: inventoryContents, filename: 'kardex_report.xlsx'
+  }]);
+  assert.equal(kardexAsWaste.status, 200);
+  const wasteInspection = await kardexAsWaste.json();
+  assert.equal(wasteInspection.files[0].structure.ok, true);
+  assert.equal(wasteInspection.files[0].structure.permissive, true);
+  assert.equal(wasteInspection.files[0].structure.requiresCategoryConfirmation, true);
+  assert.equal(wasteInspection.files[0].structure.detected, 'kardex');
+  assert.match(wasteInspection.files[0].structure.reason, /comparten la misma estructura.*archivo correcto.*Merma/i);
+  const missingConfirmation = await fetch(`${baseUrl}/api/uploads/transactions/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: wasteInspection.token,
+      dateFrom: wasteInspection.detectedRange.from,
+      dateTo: wasteInspection.detectedRange.to,
+      confirmed: true,
+      overlapAction: 'keep'
+    })
+  });
+  assert.equal(missingConfirmation.status, 400);
+  assert.match((await missingConfirmation.json()).error, /archivo correcto.*Kardex o Merma/i);
+  const savedWaste = await confirmTransactions(baseUrl, wasteInspection).then(response => response.json());
+  assert.equal(savedWaste.imports.waste.saved, true);
+
+  const wasteAsKardex = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'kardex', contents: inventoryContents, filename: 'merma.xlsx'
+  }]);
+  assert.equal(wasteAsKardex.status, 200);
+  const kardexInspection = await wasteAsKardex.json();
+  assert.equal(kardexInspection.files[0].structure.ok, true);
+  assert.equal(kardexInspection.files[0].structure.permissive, true);
+  assert.equal(kardexInspection.files[0].structure.requiresCategoryConfirmation, true);
+  assert.equal(kardexInspection.files[0].structure.detected, 'waste');
+  assert.match(kardexInspection.files[0].structure.reason, /comparten la misma estructura.*archivo correcto.*Kardex/i);
 });
 
 test('migrates legacy Sunday week folders to their Monday week key', async t => {
@@ -435,6 +481,10 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(report.items[0].products.length, 1);
   assert.equal(report.items[0].products[0].yieldRate, 80);
   assert.equal(report.items[0].products[0].effectiveQuantity, 0.625);
+  assert.equal(report.items[0].products[0].periodProductQuantity, 4);
+  assert.equal(report.items[0].products[0].periodIngredientQuantity, 2.5);
+  assert.equal(report.items[0].products[0].periodIngredientEffectiveQuantity, 2.5);
+  assert.equal(report.items[0].products[0].periodIngredientUnit, 'kg');
   assert.equal(report.items[0].usageQuantity, 2.5);
   assert.equal(report.items[0].usageCost, 10);
   assert.equal(report.items[0].latestPurchaseCost, 6);
@@ -457,6 +507,8 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(warehouse.scope.type, 'warehouse');
   assert.equal(warehouse.items[0].usageQuantity, 3);
   assert.equal(warehouse.items[0].usageCost, 12);
+  assert.equal(warehouse.items[0].products[0].periodProductQuantity, null);
+  assert.equal(warehouse.items[0].products[0].periodIngredientQuantity, null);
 });
 
 test('reports product sales by selected recipe ingredients and extras hierarchies without duplicating totals', async t => {
@@ -715,6 +767,8 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(createOrder.status, 201);
   const createdOrder = await createOrder.json();
   assert.match(createdOrder.id, /^OC-/);
+  assert.equal(createdOrder.orderNumber, 'OC-000001');
+  assert.equal(createdOrder.sequence, 1);
   assert.equal(createdOrder.items.length, 1);
   assert.equal(createdOrder.items[0].quantity, 2);
   assert.equal(createdOrder.items[0].costModified, true);
@@ -737,6 +791,24 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(updatedOrder.total, 3 * createdOrder.items[0].referenceUnitCost);
   const loadedOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`).then(response => response.json());
   assert.equal(loadedOrder.total, 3 * createdOrder.items[0].referenceUnitCost);
+  const invalidDelete = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: 'incorrecta' })
+  });
+  assert.equal(invalidDelete.status, 400);
+  const deletedOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: createdOrder.orderNumber })
+  });
+  assert.equal(deletedOrder.status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`)).status, 404);
+  const secondOrder = await fetch(`${baseUrl}/api/purchase-orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'main-warehouse', supplierKey: '222',
+      items: [{ key: 'I1', quantity: 1, unitCost: createdOrder.items[0].referenceUnitCost }]
+    })
+  }).then(response => response.json());
+  assert.equal(secondOrder.orderNumber, 'OC-000002');
 });
 
 test('builds cumulative intraday blocks with weekday, month, and historical reference days', async t => {
@@ -941,6 +1013,63 @@ test('consolidates Kardex movements and compares theoretical inventory with next
   })).status, 400);
 });
 
+test('reports LAC001 volume substituted by BX1010, BX1020, and BX1030 sales extras', async t => {
+  const baseUrl = await startTestServer(t);
+  const recipes = [
+    ['Id Producto', 'Nombre Producto*', 'Id Ingrediente', 'Nombre Ingrediente*', 'Cantidad Ingrediente', 'Unidad Medida', 'Tasa Rendimiento'],
+    ['P1', 'Bebida con leche', 'LAC001', 'Leche Semidescremada Sin Lactosa', 200, 'ml', 80],
+    ['P2', 'Bebida sin LAC001', 'I1', 'Otro ingrediente', 1, 'UN', 100]
+  ];
+  const recipeUpload = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{ field: 'master-recipes', contents: recipes.map(row => row.join('\t')).join('\n'), filename: 'recetas.txt' }], {
+      'master-recipes-from': '2026-08-01'
+    })
+  });
+  assert.equal(recipeUpload.status, 200);
+
+  const kardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '2026-08-05', '', '2026-08-06', ''],
+    ['', '', '', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final'],
+    ['LAC001', 'Leche', 'L', 10, 10, 10, 10, 10, 10]
+  ].map(row => row.join('\t')).join('\n');
+  const kardexInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'kardex', contents: kardex, filename: 'kardex.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, kardexInspection)).status, 200);
+
+  const sales = [
+    ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad'],
+    ['o1', '2026-08-04', 1000, 0, 'P1', 'Bebida con leche', 1],
+    ['o1', '2026-08-04', 1000, 0, 'BX1010', 'Leche Vegetal Avena', 1],
+    ['o2', '2026-08-05', 2000, 0, 'P1', 'Bebida con leche', 2],
+    ['o2', '2026-08-05', 2000, 0, 'BX1020', 'Leche Vegetal Almendra', 2],
+    ['o3', '2026-08-05', 1000, 0, 'P2', 'Bebida sin LAC001', 1],
+    ['o3', '2026-08-05', 1000, 0, 'BX1030', 'Leche Proteína', 1]
+  ].map(row => row.join('\t')).join('\n');
+  const salesInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'sales', contents: sales, filename: 'ventas-con-sustituciones.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, salesInspection)).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/inventory/process`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-1', dateFrom: '2026-08-04', dateTo: '2026-08-05' })
+  });
+  assert.equal(response.status, 200);
+  const summary = (await response.json()).lac001Substitutions;
+  assert.equal(summary.salesCount, 3);
+  assert.equal(summary.substitutionCount, 4);
+  assert.equal(summary.matchedSubstitutionCount, 3);
+  assert.equal(summary.unresolvedSubstitutionCount, 1);
+  assert.equal(summary.lac001VolumeLiters, 0.75);
+  assert.deepEqual(summary.items.map(item => ({ code: item.code, sales: item.salesCount, substitutions: item.substitutionCount })), [
+    { code: 'BX1010', sales: 1, substitutions: 1 },
+    { code: 'BX1020', sales: 1, substitutions: 2 },
+    { code: 'BX1030', sales: 1, substitutions: 1 }
+  ]);
+});
+
 test('processes marketing and employee consumption into product and recipe ingredient summaries', async t => {
   const baseUrl = await startTestServer(t);
   const recipeRows = [
@@ -1048,10 +1177,15 @@ test('processes marketing and employee consumption into product and recipe ingre
 
 test('creates, renames, trashes, and restores locations with their weekly data', async t => {
   const baseUrl = await startTestServer(t);
+  const savedCompany = await fetch(`${baseUrl}/api/config/company`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'CODE SPA', taxId: '76.123.456-7' })
+  }).then(response => response.json());
+  assert.equal(savedCompany.name, 'CODE SPA');
+  assert.equal(savedCompany.taxId, '76.123.456-7');
   const createdResponse = await fetch(`${baseUrl}/api/config/locations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Brewit Norte', type: 'store' })
+    body: JSON.stringify({ name: 'Brewit Norte', address: 'Av. Norte 123', type: 'store' })
   });
   assert.equal(createdResponse.status, 201);
   const created = await createdResponse.json();
@@ -1059,7 +1193,7 @@ test('creates, renames, trashes, and restores locations with their weekly data',
   const renamedResponse = await fetch(`${baseUrl}/api/config/locations/${encodeURIComponent(created.id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Brewit Norte Centro' })
+    body: JSON.stringify({ name: 'Brewit Norte Centro', address: 'Av. Centro 456' })
   });
   assert.equal(renamedResponse.status, 200);
 
@@ -1096,6 +1230,7 @@ test('creates, renames, trashes, and restores locations with their weekly data',
   assert.equal((await fetch(`${baseUrl}${fileUrl}`)).status, 200);
   const afterRestore = await fetch(`${baseUrl}/api/config/locations`).then(response => response.json());
   assert.equal(afterRestore.active.find(location => location.id === created.id).name, 'Brewit Norte Centro');
+  assert.equal(afterRestore.active.find(location => location.id === created.id).address, 'Av. Centro 456');
 });
 
 test('detects file dates and requires confirmation before weekly persistence', async t => {

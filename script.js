@@ -42,6 +42,7 @@ let transactionUploadContext = null;
 const expandedUploadHistories = new Set();
 let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
 let ingredientsSort = { key: 'usageCost', direction: 'desc' };
+const ingredientProductSorts = new Map();
 let purchasesSort = { key: 'date', direction: 'desc' };
 let purchaseCostVariationSort = { key: 'product', direction: 'asc' };
 let purchaseProjectionSort = { key: 'supplier', direction: 'asc' };
@@ -317,9 +318,16 @@ async function inspectSelectedTransactionFile(input, locationOverride = null) {
       body: formData
     });
     showInspection(manifest);
-    setStatus(status, manifest.detectedRange
-      ? `Estructura válida. Fechas detectadas: ${formatDetectedRange(manifest.detectedRange)}. Revisa y confirma en la ventana emergente.`
-      : 'La estructura es válida, pero no se detectaron fechas. Ingresa el rango correcto en la ventana emergente.', 'success');
+    const acceptedWarning = manifest.files.find(file => file.structure?.permissive);
+    if (acceptedWarning) {
+      setStatus(status,
+        `${acceptedWarning.structure.reason} Fechas detectadas: ${formatDetectedRange(manifest.detectedRange)}. Revisa y confirma en la ventana emergente.`,
+        'warning');
+    } else {
+      setStatus(status, manifest.detectedRange
+        ? `Estructura válida. Fechas detectadas: ${formatDetectedRange(manifest.detectedRange)}. Revisa y confirma en la ventana emergente.`
+        : 'La estructura es válida, pero no se detectaron fechas. Ingresa el rango correcto en la ventana emergente.', 'success');
+    }
   } catch (error) {
     input.value = '';
     setStatus(status, error.message, 'error');
@@ -349,6 +357,8 @@ function clearInspection(clearStatus = false) {
   const confirmation = document.getElementById('date-confirmation');
   if (confirmation.open) confirmation.close();
   document.getElementById('dates-confirmed').checked = false;
+  document.getElementById('inventory-file-confirmed').checked = false;
+  document.getElementById('inventory-file-confirmation-row').hidden = true;
   document.getElementById('detected-files-list').replaceChildren();
   document.getElementById('transaction-overlap-notice').hidden = true;
   document.getElementById('replace-transactions-btn').hidden = true;
@@ -412,6 +422,20 @@ function formatClp(value) {
     currency: 'CLP',
     maximumFractionDigits: 0
   }).format(value || 0);
+}
+
+function formatPurchaseOrderCost(value) {
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+    .format(Number(value) || 0);
+}
+
+function parseLocalizedNumber(value) {
+  const text = String(value ?? '').trim().replace(/[^0-9,.-]/g, '');
+  if (!text) return NaN;
+  if (text.includes(',') && text.includes('.')) return Number(text.replace(/\./g, '').replace(',', '.'));
+  if (text.includes(',')) return Number(text.replace(',', '.'));
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(text)) return Number(text.replace(/\./g, ''));
+  return Number(text);
 }
 
 function formatReportDate(value) {
@@ -1230,6 +1254,67 @@ function markSortableHeader(cell, key, sortState, label) {
   cell.setAttribute('aria-sort', sortState.key === key ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none');
 }
 
+function productTableNode(products) {
+  const wrap = document.createElement('div');
+  wrap.className = 'products-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'products-table';
+  const headers = [
+    ['code', 'Código'], ['name', 'Producto'], ['price', 'Precio venta'], ['netPrice', 'Precio venta neto'],
+    ['cost', 'Costo'], ['marginPercent', 'Margen'], ['averageWeeklyUnits8', 'Prom. semanal 8 sem.'],
+    ['unitsLast7Days', 'Últimos 7 días'], ['unitsChangePercent', 'Cambio vs. prom. 8 sem.']
+  ];
+  const headRow = document.createElement('tr');
+  for (const [key, label] of headers) {
+    const cell = document.createElement('th');
+    markSortableHeader(cell, key, productsSort, label);
+    headRow.appendChild(cell);
+  }
+  const head = document.createElement('thead');
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  for (const product of sortRows(products, productsSort)) {
+    const row = document.createElement('tr');
+    if (!product.active) row.className = 'inactive-product';
+    const values = [
+      product.code,
+      product.name,
+      formatClp(product.price),
+      formatClp(product.netPrice),
+      formatClp(product.cost),
+      product.marginPercent === null ? '—' : `${product.marginPercent.toFixed(1)}%`,
+      formatWeeklyAverageUnits(product.averageWeeklyUnits8),
+      formatProductUnits(product.unitsLast7Days),
+      product.unitsChangePercent === null
+        ? '—'
+        : `${product.unitsChangePercent >= 0 ? '+' : ''}${product.unitsChangePercent.toFixed(1)}%`
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement('td');
+      if (index === 2 && product.previousPrice !== null && product.previousPrice !== undefined) {
+        const previous = document.createElement('span');
+        previous.className = 'product-previous-price';
+        previous.textContent = `(ant. ${formatClp(product.previousPrice)})`;
+        cell.append(previous, document.createTextNode(value));
+      } else cell.textContent = value;
+      if (index === 1 && !product.active) {
+        const badge = document.createElement('span');
+        badge.className = 'product-inactive-badge';
+        badge.textContent = 'Inactivo';
+        cell.append(' ', badge);
+      }
+      if (index === 8 && product.unitsChangePercent !== null) {
+        cell.classList.add(product.unitsChangePercent >= 0 ? 'product-change-positive' : 'product-change-negative');
+      }
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  }
+  table.append(head, body);
+  wrap.appendChild(table);
+  return wrap;
+}
+
 function productHierarchyNodes(groups, { queryActive = false, openAll = false } = {}) {
   return groups.map((group, groupIndex) => {
     const details = document.createElement('details');
@@ -1241,66 +1326,24 @@ function productHierarchyNodes(groups, { queryActive = false, openAll = false } 
     const count = document.createElement('span');
     count.textContent = `${group.products.length} producto(s)`;
     heading.append(path, count);
-    const wrap = document.createElement('div');
-    wrap.className = 'products-table-wrap';
-    const table = document.createElement('table');
-    table.className = 'products-table';
-    const headers = [
-      ['code', 'Código'], ['name', 'Producto'], ['price', 'Precio venta'], ['netPrice', 'Precio venta neto'],
-      ['cost', 'Costo'], ['marginPercent', 'Margen'], ['averageWeeklyUnits8', 'Prom. semanal 8 sem.'],
-      ['unitsLast7Days', 'Últimos 7 días'], ['unitsChangePercent', 'Cambio vs. prom. 8 sem.']
-    ];
-    const headRow = document.createElement('tr');
-    for (const [key, label] of headers) {
-      const cell = document.createElement('th');
-      markSortableHeader(cell, key, productsSort, label);
-      headRow.appendChild(cell);
-    }
-    const head = document.createElement('thead');
-    head.appendChild(headRow);
-    const body = document.createElement('tbody');
-    for (const product of sortRows(group.products, productsSort)) {
-      const row = document.createElement('tr');
-      if (!product.active) row.className = 'inactive-product';
-      const values = [
-        product.code,
-        product.name,
-        formatClp(product.price),
-        formatClp(product.netPrice),
-        formatClp(product.cost),
-        product.marginPercent === null ? '—' : `${product.marginPercent.toFixed(1)}%`,
-        formatWeeklyAverageUnits(product.averageWeeklyUnits8),
-        formatProductUnits(product.unitsLast7Days),
-        product.unitsChangePercent === null
-          ? '—'
-          : `${product.unitsChangePercent >= 0 ? '+' : ''}${product.unitsChangePercent.toFixed(1)}%`
-      ];
-      values.forEach((value, index) => {
-        const cell = document.createElement('td');
-        if (index === 2 && product.previousPrice !== null && product.previousPrice !== undefined) {
-          const previous = document.createElement('span');
-          previous.className = 'product-previous-price';
-          previous.textContent = `(ant. ${formatClp(product.previousPrice)})`;
-          cell.append(previous, document.createTextNode(value));
-        } else cell.textContent = value;
-        if (index === 1 && !product.active) {
-          const badge = document.createElement('span');
-          badge.className = 'product-inactive-badge';
-          badge.textContent = 'Inactivo';
-          cell.append(' ', badge);
-        }
-        if (index === 8 && product.unitsChangePercent !== null) {
-          cell.classList.add(product.unitsChangePercent >= 0 ? 'product-change-positive' : 'product-change-negative');
-        }
-        row.appendChild(cell);
-      });
-      body.appendChild(row);
-    }
-    table.append(head, body);
-    wrap.appendChild(table);
+    const wrap = productTableNode(group.products);
     details.append(heading, wrap);
     return details;
   });
+}
+
+function allProductsNode(products) {
+  const section = document.createElement('section');
+  section.className = 'product-hierarchy-group products-all-group';
+  const heading = document.createElement('div');
+  heading.className = 'products-all-heading';
+  const title = document.createElement('strong');
+  title.textContent = 'Todos los productos';
+  const count = document.createElement('span');
+  count.textContent = `${products.length} producto(s)`;
+  heading.append(title, count);
+  section.append(heading, productTableNode(products));
+  return section;
 }
 
 function renderProductsView() {
@@ -1316,10 +1359,15 @@ function renderProductsView() {
   const groups = productsViewState.hierarchies
     .map(group => ({ ...group, products: group.products.filter(matches) }))
     .filter(group => group.products.length);
-  const visibleCount = groups.reduce((sum, group) => sum + group.products.length, 0);
+  const grouping = document.getElementById('products-grouping').value;
+  const uniqueProducts = [...new Map(groups.flatMap(group => group.products)
+    .map(product => [product.code || product.name, product])).values()];
+  const visibleCount = grouping === 'all'
+    ? uniqueProducts.length
+    : groups.reduce((sum, group) => sum + group.products.length, 0);
   const summaryTexts = [
     `${visibleCount} de ${productsViewState.productCount} productos`,
-    `${groups.length} jerarquías`,
+    grouping === 'all' ? 'Vista: todos juntos' : `${groups.length} jerarquías`,
     `Últimos 7 días: ${formatReportDate(productsViewState.periods.last7.from)} – ${formatReportDate(productsViewState.periods.last7.to)}`,
     `Promedio 8 semanas: 56 días ÷ 8`
   ];
@@ -1329,7 +1377,12 @@ function renderProductsView() {
     chip.textContent = text;
     return chip;
   }));
-  container.replaceChildren(...productHierarchyNodes(groups, { queryActive: Boolean(query) }));
+  const nodes = !groups.length
+    ? []
+    : grouping === 'all'
+      ? [allProductsNode(uniqueProducts)]
+      : productHierarchyNodes(groups, { queryActive: Boolean(query) });
+  container.replaceChildren(...nodes);
   if (!groups.length) {
     const empty = document.createElement('p');
     empty.className = 'form-status muted';
@@ -1445,6 +1498,156 @@ function exportRelevantProductsReport() {
   }
 }
 
+function filteredIngredientItems() {
+  if (!ingredientsViewState) return [];
+  const supplier = document.getElementById('ingredients-supplier-filter').value || 'all';
+  const query = document.getElementById('ingredients-search').value.trim().toLocaleLowerCase('es');
+  const onlyChanged = document.getElementById('ingredients-only-changed').checked;
+  return sortRows(ingredientsViewState.items.filter(item =>
+    (supplier === 'all' || item.supplierKey === supplier)
+    && (!query || `${item.code} ${item.name}`.toLocaleLowerCase('es').includes(query))
+    && (!onlyChanged || (item.costChangePercent !== null && Math.abs(item.costChangePercent) >= 0.01))), ingredientsSort);
+}
+
+function ingredientReportTable(headers, rows, className = '') {
+  const table = document.createElement('table');
+  table.className = className;
+  const headRow = document.createElement('tr');
+  headers.forEach(header => {
+    const cell = document.createElement('th');
+    cell.textContent = header;
+    headRow.appendChild(cell);
+  });
+  const head = document.createElement('thead');
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  rows.forEach(values => {
+    const row = document.createElement('tr');
+    values.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value ?? '—';
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  table.append(head, body);
+  return table;
+}
+
+function printIngredientsReport() {
+  const items = filteredIngredientItems();
+  if (!items.length) return;
+  const data = ingredientsViewState;
+  const report = document.createElement('article');
+  report.className = 'ingredients-print-report';
+  const title = document.createElement('h1');
+  title.textContent = 'Listado de ingredientes';
+  const context = document.createElement('p');
+  const supplier = document.getElementById('ingredients-supplier-filter').selectedOptions[0]?.textContent || 'Todos los proveedores';
+  context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${supplier} · ${items.length} ingrediente(s).`;
+  report.append(title, context, ingredientReportTable([
+    'Código', 'Ingrediente', 'Proveedor', 'Unidad', 'Costo maestro', 'Último costo compra',
+    'Variación costo', 'Consumo período', 'Costo consumido', 'Productos que lo usan'
+  ], items.map(item => [
+    item.code, item.name, item.supplier, item.unit || '—', formatClp(item.unitCost),
+    item.latestPurchaseCost === null ? '—' : formatClp(item.latestPurchaseCost),
+    item.costChangePercent === null ? '—' : `${item.costChangePercent >= 0 ? '+' : ''}${item.costChangePercent.toFixed(1)}%`,
+    `${formatProductUnits(item.usageQuantity)} ${item.usageUnit || item.unit}`, formatClp(item.usageCost), item.products.length
+  ]), 'ingredients-print-main-table'));
+  items.filter(item => item.products.length).forEach(item => {
+    const section = document.createElement('section');
+    section.className = 'ingredients-print-detail';
+    const heading = document.createElement('h2');
+    heading.textContent = `${item.code} · ${item.name}`;
+    const detailSort = ingredientProductSorts.get(item.code) || { key: 'name', direction: 'asc' };
+    section.append(heading, ingredientReportTable([
+      'Producto', 'Código', 'Cantidad receta', 'Rendimiento', 'Cantidad efectiva por producto',
+      'Productos vendidos período', 'Consumo ingrediente período'
+    ], sortRows(item.products, detailSort).map(product => [
+      product.name, product.code, `${formatProductUnits(product.recipeQuantity)} ${product.recipeUnit}`,
+      `${product.yieldRate.toFixed(1)}%`, `${formatProductUnits(product.effectiveQuantity)} ${product.effectiveUnit}`,
+      product.periodProductQuantity === null ? '—' : formatProductUnits(product.periodProductQuantity),
+      product.periodIngredientQuantity === null ? '—' : `${formatProductUnits(product.periodIngredientQuantity)} ${product.periodIngredientUnit}`
+    ]), 'ingredients-print-detail-table'));
+    report.appendChild(section);
+  });
+  const workspace = document.getElementById('ingredients-workspace');
+  const previousTitle = document.title;
+  workspace.appendChild(report);
+  document.title = `Ingredientes - ${data.scope.label}`;
+  document.body.classList.add('printing-ingredients-report');
+  try {
+    window.print();
+  } finally {
+    document.body.classList.remove('printing-ingredients-report');
+    document.title = previousTitle;
+    report.remove();
+  }
+}
+
+function exportIngredientsReport() {
+  const items = filteredIngredientItems();
+  const status = document.getElementById('ingredients-status');
+  if (!items.length) return;
+  if (!window.XLSX) return setStatus(status, 'No fue posible cargar el generador de archivos Excel.', 'error');
+  try {
+    const data = ingredientsViewState;
+    const supplier = document.getElementById('ingredients-supplier-filter').selectedOptions[0]?.textContent || 'Todos los proveedores';
+    const search = document.getElementById('ingredients-search').value.trim() || 'Todos';
+    const information = XLSX.utils.aoa_to_sheet([
+      ['Reporte', 'Costos, uso y composición de ingredientes'],
+      ['Ubicación', data.scope.label],
+      ['Fecha inicial', data.period.from],
+      ['Fecha final', data.period.to],
+      ['Proveedor', supplier],
+      ['Búsqueda', search],
+      ['Solo con variación de costo', document.getElementById('ingredients-only-changed').checked ? 'Sí' : 'No'],
+      ['Ingredientes incluidos', items.length],
+      ['Costo consumido', items.reduce((sum, item) => sum + item.usageCost, 0)],
+      ['Exportado', new Date().toLocaleString('es-CL')]
+    ]);
+    const ingredientHeaders = [
+      'Código', 'Ingrediente', 'Proveedor', 'Unidad', 'Costo maestro', 'Último costo compra',
+      'Variación costo %', 'Consumo período', 'Unidad consumo', 'Costo consumido', 'Productos que lo usan'
+    ];
+    const ingredientRows = items.map(item => [
+      item.code, item.name, item.supplier, item.unit, item.unitCost, item.latestPurchaseCost,
+      item.costChangePercent, item.usageQuantity, item.usageUnit || item.unit, item.usageCost, item.products.length
+    ]);
+    const ingredientSheet = XLSX.utils.aoa_to_sheet([ingredientHeaders, ...ingredientRows]);
+    ingredientSheet['!autofilter'] = { ref: `A1:K${ingredientRows.length + 1}` };
+    ingredientSheet['!cols'] = ingredientHeaders.map((header, index) => ({
+      wch: index === 1 ? 42 : index === 2 ? 30 : Math.max(12, Math.min(24, header.length + 2))
+    }));
+    const productHeaders = [
+      'Código ingrediente', 'Ingrediente', 'Producto', 'Código producto', 'Cantidad receta', 'Unidad receta',
+      'Rendimiento %', 'Cantidad efectiva', 'Unidad efectiva', 'Productos vendidos período',
+      'Consumo ingrediente período', 'Unidad consumo período'
+    ];
+    const productRows = items.flatMap(item => {
+      const detailSort = ingredientProductSorts.get(item.code) || { key: 'name', direction: 'asc' };
+      return sortRows(item.products, detailSort).map(product => [
+        item.code, item.name, product.name, product.code, product.recipeQuantity, product.recipeUnit,
+        product.yieldRate, product.effectiveQuantity, product.effectiveUnit, product.periodProductQuantity,
+        product.periodIngredientQuantity, product.periodIngredientUnit
+      ]);
+    });
+    const productSheet = XLSX.utils.aoa_to_sheet([productHeaders, ...productRows]);
+    productSheet['!autofilter'] = { ref: `A1:L${productRows.length + 1}` };
+    productSheet['!cols'] = productHeaders.map((header, index) => ({
+      wch: index === 1 || index === 2 ? 42 : Math.max(12, Math.min(26, header.length + 2))
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, information, 'Información');
+    XLSX.utils.book_append_sheet(workbook, ingredientSheet, 'Ingredientes');
+    XLSX.utils.book_append_sheet(workbook, productSheet, 'Productos por ingrediente');
+    XLSX.writeFile(workbook, `ingredientes-${data.period.from}-${data.period.to}.xlsx`, { compression: true });
+    setStatus(status, 'Listado de ingredientes exportado a Excel correctamente.', 'success');
+  } catch (error) {
+    setStatus(status, `No fue posible exportar el listado: ${error.message}`, 'error');
+  }
+}
+
 function renderIngredientsView() {
   const body = document.getElementById('ingredients-table-body');
   const summary = document.getElementById('ingredients-summary');
@@ -1453,15 +1656,13 @@ function renderIngredientsView() {
     body.replaceChildren();
     summary.replaceChildren();
     ranking.replaceChildren();
+    document.getElementById('print-ingredients-report').disabled = true;
+    document.getElementById('export-ingredients-report').disabled = true;
     return;
   }
-  const supplier = document.getElementById('ingredients-supplier-filter').value || 'all';
-  const query = document.getElementById('ingredients-search').value.trim().toLocaleLowerCase('es');
-  const onlyChanged = document.getElementById('ingredients-only-changed').checked;
-  const items = ingredientsViewState.items.filter(item =>
-    (supplier === 'all' || item.supplierKey === supplier)
-    && (!query || `${item.code} ${item.name}`.toLocaleLowerCase('es').includes(query))
-    && (!onlyChanged || (item.costChangePercent !== null && Math.abs(item.costChangePercent) >= 0.01)));
+  const items = filteredIngredientItems();
+  document.getElementById('print-ingredients-report').disabled = items.length === 0;
+  document.getElementById('export-ingredients-report').disabled = items.length === 0;
   summary.replaceChildren(...[
     `${items.length} de ${ingredientsViewState.summary.ingredientCount} ingredientes`,
     `${items.filter(item => item.usageQuantity > 0).length} con consumo`,
@@ -1500,7 +1701,7 @@ function renderIngredientsView() {
     markSortableHeader(cell, cell.dataset.sortKey, ingredientsSort, cell.textContent.replace(/ [▲▼]$/, ''));
   });
   const rows = [];
-  for (const item of sortRows(items, ingredientsSort)) {
+  for (const item of items) {
     const row = document.createElement('tr');
     row.dataset.code = item.code;
     const productCount = item.products.length;
@@ -1532,11 +1733,40 @@ function renderIngredientsView() {
       const detail = document.createElement('td');
       detail.colSpan = 10;
       const table = document.createElement('table');
-      table.innerHTML = '<thead><tr><th>Producto</th><th>Código</th><th>Cantidad receta</th><th>Rendimiento</th><th>Cantidad efectiva</th></tr></thead>';
+      table.dataset.ingredientCode = item.code;
+      const detailSort = ingredientProductSorts.get(item.code) || { key: 'name', direction: 'asc' };
+      const detailHeaders = [
+        ['name', 'Producto'],
+        ['code', 'Código'],
+        ['recipeQuantity', 'Cantidad receta'],
+        ['yieldRate', 'Rendimiento'],
+        ['effectiveQuantity', 'Cantidad efectiva por producto'],
+        ['periodProductQuantity', 'Productos vendidos período'],
+        ['periodIngredientEffectiveQuantity', 'Consumo ingrediente período']
+      ];
+      const detailHeadRow = document.createElement('tr');
+      detailHeaders.forEach(([key, label]) => {
+        const cell = document.createElement('th');
+        markSortableHeader(cell, key, detailSort, label);
+        detailHeadRow.appendChild(cell);
+      });
+      const detailHead = document.createElement('thead');
+      detailHead.appendChild(detailHeadRow);
+      table.appendChild(detailHead);
       const detailBody = document.createElement('tbody');
-      item.products.forEach(product => {
+      sortRows(item.products, detailSort).forEach(product => {
         const productRow = document.createElement('tr');
-        [product.name, product.code, `${formatProductUnits(product.recipeQuantity)} ${product.recipeUnit}`, `${product.yieldRate.toFixed(1)}%`, `${formatProductUnits(product.effectiveQuantity)} ${product.effectiveUnit}`]
+        [
+          product.name,
+          product.code,
+          `${formatProductUnits(product.recipeQuantity)} ${product.recipeUnit}`,
+          `${product.yieldRate.toFixed(1)}%`,
+          `${formatProductUnits(product.effectiveQuantity)} ${product.effectiveUnit}`,
+          product.periodProductQuantity === null ? '—' : formatProductUnits(product.periodProductQuantity),
+          product.periodIngredientQuantity === null
+            ? '—'
+            : `${formatProductUnits(product.periodIngredientQuantity)} ${product.periodIngredientUnit}`
+        ]
           .forEach(value => {
             const cell = document.createElement('td');
             cell.textContent = value;
@@ -2308,7 +2538,7 @@ function updatePurchaseOrderEditorTotals() {
     if (!item) continue;
     item.selected = row.querySelector('.purchase-order-select').checked;
     item.quantity = Number(row.querySelector('.purchase-order-quantity').value);
-    item.unitCost = Number(row.querySelector('.purchase-order-cost').value);
+    item.unitCost = parseLocalizedNumber(row.querySelector('.purchase-order-cost').value);
     const changed = Math.abs(item.unitCost - Number(item.referenceUnitCost || 0)) > 0.005;
     const rowTotal = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
       ? item.quantity * item.unitCost : 0;
@@ -2372,10 +2602,9 @@ function renderPurchaseOrderEditor() {
     row.appendChild(quantityCell);
     const costCell = document.createElement('td');
     const cost = document.createElement('input');
-    cost.type = 'number';
-    cost.min = '0';
-    cost.step = '1';
-    cost.value = String(item.unitCost ?? 0);
+    cost.type = 'text';
+    cost.inputMode = 'decimal';
+    cost.value = formatPurchaseOrderCost(item.unitCost);
     cost.className = 'purchase-order-cost';
     costCell.appendChild(cost);
     row.appendChild(costCell);
@@ -2460,19 +2689,37 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   const heading = document.createElement('div');
   heading.className = 'purchase-order-heading';
   const headingMain = document.createElement('div');
+  headingMain.className = 'purchase-order-company';
+  const logo = document.createElement('img');
+  logo.className = 'purchase-order-logo';
+  logo.src = order.company?.logoUrl || 'docs/brewit-final-01.jpg';
+  logo.alt = 'Brewit';
+  const companyDetail = document.createElement('div');
   const eyebrow = document.createElement('div');
   eyebrow.className = 'panel-eyebrow';
   eyebrow.textContent = `Orden de compra · ${order.orderNumber}`;
-  const supplierName = document.createElement('h2');
-  supplierName.textContent = order.supplier.name;
-  const supplierDetail = document.createElement('p');
-  supplierDetail.textContent = `${order.supplier.taxId ? `RUT ${order.supplier.taxId} · ` : ''}${order.location.name}`;
-  headingMain.append(eyebrow, supplierName, supplierDetail);
+  const companyName = document.createElement('h2');
+  companyName.textContent = order.company?.name || 'Brewit';
+  const companyTaxId = document.createElement('p');
+  companyTaxId.textContent = order.company?.taxId ? `RUT ${order.company.taxId}` : 'RUT no configurado';
+  const locationDetail = document.createElement('p');
+  locationDetail.textContent = `${order.location.name}${order.location.address ? ` · ${order.location.address}` : ' · Dirección no configurada'}`;
+  companyDetail.append(eyebrow, companyName, companyTaxId, locationDetail);
+  headingMain.append(logo, companyDetail);
   const headingMeta = document.createElement('div');
   const orderDate = document.createElement('strong');
   orderDate.textContent = new Date(order.confirmedAt).toLocaleDateString('es-CL');
   headingMeta.append(orderDate, document.createElement('br'), document.createTextNode('Orden confirmada y guardada'));
   heading.append(headingMain, headingMeta);
+  const supplierBlock = document.createElement('div');
+  supplierBlock.className = 'purchase-order-supplier';
+  const supplierLabel = document.createElement('span');
+  supplierLabel.textContent = 'PROVEEDOR';
+  const supplierName = document.createElement('strong');
+  supplierName.textContent = order.supplier.name;
+  const supplierTaxId = document.createElement('span');
+  supplierTaxId.textContent = order.supplier.taxId ? `RUT ${order.supplier.taxId}` : 'RUT no disponible';
+  supplierBlock.append(supplierLabel, supplierName, supplierTaxId);
   const table = document.createElement('table');
   table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDC</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDC</th><th>Total</th></tr></thead>';
   const body = document.createElement('tbody');
@@ -2491,6 +2738,7 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   });
   const footer = document.createElement('tfoot');
   const totalRow = document.createElement('tr');
+  totalRow.className = 'purchase-order-total-row';
   totalRow.innerHTML = `<td colspan="6">TOTAL ORDEN</td><td>${formatClp(order.total)}</td>`;
   footer.appendChild(totalRow);
   table.append(body, footer);
@@ -2499,7 +2747,7 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   note.textContent = order.items.some(item => item.costModified)
     ? 'Esta orden contiene costos modificados manualmente respecto de la estimación original. Verificar impuestos y condiciones comerciales antes de enviarla.'
     : 'Verificar disponibilidad, impuestos y condiciones comerciales antes de enviar la orden al proveedor.';
-  documentSection.replaceChildren(heading, table, note);
+  documentSection.replaceChildren(heading, supplierBlock, table, note);
   documentSection.hidden = false;
   const previousTitle = document.title;
   document.title = `${order.orderNumber} - ${order.supplier.name}`;
@@ -2517,7 +2765,7 @@ async function openPastPurchaseOrders() {
   const dialog = document.getElementById('past-purchase-orders-dialog');
   const list = document.getElementById('past-purchase-orders-list');
   const status = document.getElementById('past-purchase-orders-status');
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
   list.replaceChildren();
   setStatus(status, 'Cargando órdenes guardadas…');
   try {
@@ -2542,10 +2790,29 @@ async function openPastPurchaseOrders() {
       edit.type = 'button'; edit.className = 'primary'; edit.dataset.orderAction = 'edit'; edit.dataset.orderId = order.id; edit.textContent = 'Ver / modificar';
       const print = document.createElement('button');
       print.type = 'button'; print.className = 'icon-button'; print.dataset.orderAction = 'print'; print.dataset.orderId = order.id; print.textContent = 'Imprimir / PDF';
-      actions.append(edit, print);
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.className = 'delete-button'; remove.dataset.orderAction = 'delete'; remove.dataset.orderId = order.id;
+      remove.dataset.orderNumber = order.orderNumber; remove.textContent = 'Eliminar';
+      actions.append(edit, print, remove);
       card.append(detail, actions);
       return card;
     }));
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function deleteSavedPurchaseOrder(orderId, orderNumber) {
+  if (!window.confirm(`¿Eliminar definitivamente la orden ${orderNumber}? Esta acción no se puede deshacer.`)) return;
+  const status = document.getElementById('past-purchase-orders-status');
+  try {
+    await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmation: orderNumber })
+    });
+    await openPastPurchaseOrders();
+    setStatus(status, `Orden ${orderNumber} eliminada.`, 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   }
@@ -3368,6 +3635,71 @@ function renderInventoryKardexTable() {
   document.getElementById('inventory-kardex-visible-count').textContent = `${items.length} de ${report.items.length} filas`;
 }
 
+function renderLac001SubstitutionReport(report) {
+  const section = document.getElementById('inventory-lac001-substitution-report');
+  if (!report) {
+    section.hidden = true;
+    return;
+  }
+  document.getElementById('inventory-lac001-substitution-period').textContent =
+    `${formatReportDate(report.dateFrom)} – ${formatReportDate(report.dateTo)} · ventas con BX1010, BX1020 o BX1030.`;
+  const summary = document.getElementById('inventory-lac001-substitution-summary');
+  const summaryTexts = [
+    `${report.salesCount} venta(s) con sustitución`,
+    `${formatKardexQuantity(report.substitutionCount)} sustitución(es)`,
+    `${formatKardexQuantity(report.lac001VolumeLiters)} L de LAC001 sustituido`
+  ];
+  if (report.unresolvedSubstitutionCount) {
+    summaryTexts.push(`${formatKardexQuantity(report.unresolvedSubstitutionCount)} sin receta LAC001 identificable`);
+  }
+  if (report.warnings?.length) summaryTexts.push(`${report.warnings.length} archivo(s) de ventas no legible(s)`);
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+
+  const table = document.getElementById('inventory-lac001-substitution-table');
+  const columns = [
+    { label: 'Código extra', value: item => item.code },
+    { label: 'Extra', value: item => item.name },
+    { label: 'Ventas con extra', value: item => String(item.salesCount) },
+    { label: 'Cantidad de sustituciones', value: item => formatKardexQuantity(item.substitutionCount) },
+    { label: 'LAC001 sustituido (L)', value: item => formatKardexQuantity(item.lac001VolumeLiters) }
+  ];
+  const headRow = document.createElement('tr');
+  columns.forEach(column => {
+    const cell = document.createElement('th');
+    cell.textContent = column.label;
+    headRow.appendChild(cell);
+  });
+  const head = document.createElement('thead');
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  report.items.forEach(item => {
+    const row = document.createElement('tr');
+    columns.forEach(column => {
+      const cell = document.createElement('td');
+      cell.textContent = column.value(item);
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  const footRow = document.createElement('tr');
+  footRow.className = 'consumption-total-row';
+  ['TOTAL', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), `${formatKardexQuantity(report.lac001VolumeLiters)} L`]
+    .forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      footRow.appendChild(cell);
+    });
+  const foot = document.createElement('tfoot');
+  foot.appendChild(footRow);
+  table.replaceChildren(head, body, foot);
+  section.hidden = false;
+}
+
 function renderInventoryResults(data) {
   const report = data.report;
   renderConsumptionReports(data.consumption);
@@ -3438,6 +3770,7 @@ function renderInventoryResults(data) {
   document.getElementById('inventory-kardex-cost-max').value = '';
   inventoryKardexTableState = { report, columns, sortIndex: 0, direction: 'asc' };
   renderInventoryKardexTable();
+  renderLac001SubstitutionReport(data.lac001Substitutions);
   document.getElementById('inventory-report-results').showModal();
 }
 
@@ -3488,7 +3821,12 @@ async function generateInventoryReport() {
 async function refreshLocationConfiguration() {
   const status = document.getElementById('location-status');
   try {
-    const data = await apiRequest('/api/config/locations');
+    const [data, company] = await Promise.all([
+      apiRequest('/api/config/locations'),
+      apiRequest('/api/config/company')
+    ]);
+    document.getElementById('company-name').value = company.name || 'CODE SPA';
+    document.getElementById('company-tax-id').value = company.taxId || '';
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
@@ -3532,6 +3870,11 @@ function renderLocationManagement(data) {
     nameInput.value = location.name;
     nameInput.maxLength = 80;
     nameInput.setAttribute('aria-label', `Nombre de ${location.name}`);
+    const addressInput = document.createElement('input');
+    addressInput.value = location.address || '';
+    addressInput.maxLength = 200;
+    addressInput.placeholder = 'Dirección para órdenes de compra';
+    addressInput.setAttribute('aria-label', `Dirección de ${location.name}`);
     const type = document.createElement('span');
     type.className = 'location-type-badge';
     type.textContent = location.type === 'warehouse' ? 'Bodega' : 'Cafetería';
@@ -3545,9 +3888,9 @@ function renderLocationManagement(data) {
         await apiRequest(`/api/config/locations/${encodeURIComponent(location.id)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: nameInput.value })
+          body: JSON.stringify({ name: nameInput.value, address: addressInput.value })
         });
-        setStatus(document.getElementById('location-status'), 'Nombre actualizado.', 'success');
+        setStatus(document.getElementById('location-status'), 'Nombre y dirección actualizados.', 'success');
         await refreshLocationConfiguration();
       } catch (error) {
         setStatus(document.getElementById('location-status'), error.message, 'error');
@@ -3559,7 +3902,7 @@ function renderLocationManagement(data) {
     trashButton.className = 'delete-button small';
     trashButton.textContent = 'Enviar a papelera';
     trashButton.addEventListener('click', () => openLocationTrashDialog(location));
-    row.append(nameInput, type, saveButton, trashButton);
+    row.append(nameInput, addressInput, type, saveButton, trashButton);
     activeList.appendChild(row);
   }
 
@@ -3644,6 +3987,15 @@ function showInspection(manifest) {
   document.getElementById('confirmed-date-from').value = manifest.detectedRange?.from || '';
   document.getElementById('confirmed-date-to').value = manifest.detectedRange?.to || '';
   document.getElementById('dates-confirmed').checked = false;
+  const inventoryFile = manifest.files.find(file => file.structure?.requiresCategoryConfirmation);
+  const inventoryConfirmation = document.getElementById('inventory-file-confirmation-row');
+  document.getElementById('inventory-file-confirmed').checked = false;
+  inventoryConfirmation.hidden = !inventoryFile;
+  if (inventoryFile) {
+    const category = inventoryFile.field === 'waste' ? 'Merma' : 'Kardex / tarjeta de inventario';
+    document.getElementById('inventory-file-confirmation-copy').textContent =
+      `Confirmo que “${inventoryFile.originalName}” es el archivo correcto para cargar como ${category}.`;
+  }
   const overlapNotice = document.getElementById('transaction-overlap-notice');
   const replaceButton = document.getElementById('replace-transactions-btn');
   const keepButton = document.getElementById('keep-transactions-btn');
@@ -3823,6 +4175,7 @@ function printInventoryReport(sectionId) {
 function excelSheetLabel(table, index) {
   if (table.id === 'inventory-results-table') return 'Kardex consolidado';
   if (table.id === 'inventory-waste-table' || table.id === 'waste-summary-table') return 'Merma';
+  if (table.id === 'inventory-lac001-substitution-table') return 'Sustitución LAC001';
   const card = table.closest('.consumption-report-card');
   const reportName = card?.querySelector('h4')?.textContent?.trim() || `Reporte ${index + 1}`;
   const part = table.closest('.consumption-report-part')?.querySelector('h5')?.textContent || '';
@@ -4050,9 +4403,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const dateFrom = document.getElementById('confirmed-date-from').value;
     const dateTo = document.getElementById('confirmed-date-to').value;
     const confirmed = document.getElementById('dates-confirmed').checked;
+    const requiresCategoryConfirmation = inspectionState?.files.some(file => file.structure?.requiresCategoryConfirmation);
+    const categoryConfirmed = document.getElementById('inventory-file-confirmed').checked;
     if (!inspectionState) return setStatus(status, 'Vuelve a revisar los archivos antes de confirmar.', 'error');
     if (!dateFrom || !dateTo) return setStatus(status, 'Ingresa las fechas desde y hasta.', 'error');
     if (!confirmed) return setStatus(status, 'Marca la confirmación de fechas antes de guardar.', 'error');
+    if (requiresCategoryConfirmation && !categoryConfirmed) {
+      return setStatus(status, 'Confirma que seleccionaste el archivo correcto para Kardex o Merma.', 'error');
+    }
     button.disabled = true;
     setStatus(status, 'Guardando archivos confirmados…');
     try {
@@ -4060,7 +4418,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const result = await apiRequest('/api/uploads/transactions/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, overlapAction })
+        body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction })
       });
       clearWeeklySelections();
       clearInspection();
@@ -4160,6 +4518,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadProductsView();
   });
   document.getElementById('products-search').addEventListener('input', renderProductsView);
+  document.getElementById('products-grouping').addEventListener('change', renderProductsView);
   document.getElementById('refresh-products').addEventListener('click', loadProductsView);
   document.getElementById('open-relevant-products-report').addEventListener('click', openRelevantProductsReport);
   document.getElementById('close-relevant-products-report').addEventListener('click', () => {
@@ -4191,6 +4550,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('ingredients-search').addEventListener('input', renderIngredientsView);
   document.getElementById('ingredients-only-changed').addEventListener('change', renderIngredientsView);
   document.getElementById('refresh-ingredients').addEventListener('click', loadIngredientsView);
+  document.getElementById('print-ingredients-report').addEventListener('click', printIngredientsReport);
+  document.getElementById('export-ingredients-report').addEventListener('click', exportIngredientsReport);
   document.querySelector('.ingredients-table thead').addEventListener('click', event => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
@@ -4198,6 +4559,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderIngredientsView();
   });
   document.getElementById('ingredients-table-body').addEventListener('click', event => {
+    const detailHeader = event.target.closest('.ingredient-products-detail th[data-sort-key]');
+    if (detailHeader) {
+      const ingredientCode = detailHeader.closest('table')?.dataset.ingredientCode;
+      if (!ingredientCode) return;
+      const sortState = ingredientProductSorts.get(ingredientCode) || { key: 'name', direction: 'asc' };
+      const numericKeys = new Set([
+        'recipeQuantity', 'yieldRate', 'effectiveQuantity', 'periodProductQuantity', 'periodIngredientEffectiveQuantity'
+      ]);
+      applySort(sortState, detailHeader.dataset.sortKey, numericKeys.has(detailHeader.dataset.sortKey) ? 'desc' : 'asc');
+      ingredientProductSorts.set(ingredientCode, sortState);
+      renderIngredientsView();
+      return;
+    }
     const button = event.target.closest('.ingredient-detail-button');
     if (!button) return;
     if (expandedIngredients.has(button.dataset.ingredientCode)) expandedIngredients.delete(button.dataset.ingredientCode);
@@ -4265,12 +4639,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('past-purchase-orders-dialog').close();
   });
   document.getElementById('purchase-order-editor-body').addEventListener('input', updatePurchaseOrderEditorTotals);
-  document.getElementById('purchase-order-editor-body').addEventListener('change', updatePurchaseOrderEditorTotals);
+  document.getElementById('purchase-order-editor-body').addEventListener('change', event => {
+    if (event.target.matches('.purchase-order-cost')) {
+      event.target.value = formatPurchaseOrderCost(parseLocalizedNumber(event.target.value));
+    }
+    updatePurchaseOrderEditorTotals();
+  });
   document.getElementById('confirm-purchase-order').addEventListener('click', confirmPurchaseOrder);
   document.getElementById('print-saved-purchase-order').addEventListener('click', () => printPurchaseOrder());
   document.getElementById('past-purchase-orders-list').addEventListener('click', event => {
     const button = event.target.closest('button[data-order-action]');
-    if (button) openSavedPurchaseOrder(button.dataset.orderId, button.dataset.orderAction === 'print');
+    if (!button) return;
+    if (button.dataset.orderAction === 'delete') {
+      deleteSavedPurchaseOrder(button.dataset.orderId, button.dataset.orderNumber);
+    } else {
+      openSavedPurchaseOrder(button.dataset.orderId, button.dataset.orderAction === 'print');
+    }
   });
   document.getElementById('purchase-projection-body').addEventListener('input', event => {
     const row = event.target.closest('tr[data-key]');
@@ -4370,12 +4754,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: document.getElementById('new-location-name').value,
+          address: document.getElementById('new-location-address').value,
           type: document.getElementById('new-location-type').value
         })
       });
       form.reset();
       setStatus(document.getElementById('location-status'), 'Ubicación creada.', 'success');
       await refreshLocationConfiguration();
+    } catch (error) {
+      setStatus(document.getElementById('location-status'), error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.getElementById('company-profile-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await apiRequest('/api/config/company', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: document.getElementById('company-name').value,
+          taxId: document.getElementById('company-tax-id').value
+        })
+      });
+      setStatus(document.getElementById('location-status'), 'Datos de Brewit actualizados.', 'success');
     } catch (error) {
       setStatus(document.getElementById('location-status'), error.message, 'error');
     } finally {
