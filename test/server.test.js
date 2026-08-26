@@ -761,7 +761,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
       location: 'main-warehouse',
       supplierKey: '222',
       filters: { onlyRequired: true, onlyManaged: true },
-      items: [{ key: 'I1', quantity: 2, unitCost: 12 }]
+      items: [{ key: 'I1', quantity: 2, unitCost: 12.6 }]
     })
   });
   assert.equal(createOrder.status, 201);
@@ -771,8 +771,20 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(createdOrder.sequence, 1);
   assert.equal(createdOrder.items.length, 1);
   assert.equal(createdOrder.items[0].quantity, 2);
+  assert.equal(createdOrder.items[0].unitCost, 13);
   assert.equal(createdOrder.items[0].costModified, true);
-  assert.equal(createdOrder.total, 24);
+  assert.equal(createdOrder.total, 26);
+
+  const projectionWithSelectedOrder = await fetch(
+    `${baseUrl}/api/purchase-projections?location=main-warehouse&orders=${encodeURIComponent(createdOrder.id)}`
+  ).then(response => response.json());
+  assert.deepEqual(projectionWithSelectedOrder.purchaseOrders.selectedOrderIds, [createdOrder.id]);
+  assert.equal(projectionWithSelectedOrder.purchaseOrders.selectedOrderCount, 1);
+  assert.equal(projectionWithSelectedOrder.purchaseOrders.orders[0].selected, true);
+  assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderInternalQuantity, 24);
+  assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderConversionMissing, false);
+  assert.equal(projectionWithSelectedOrder.items[0].inventoryAfterPurchaseOrders, 24);
+  assert.equal(projectionWithSelectedOrder.items[0].coverageAfterPurchaseOrdersDays, 144);
 
   const orderList = await fetch(`${baseUrl}/api/purchase-orders?location=main-warehouse`).then(response => response.json());
   assert.equal(orderList.orders.length, 1);
@@ -809,6 +821,90 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
     })
   }).then(response => response.json());
   assert.equal(secondOrder.orderNumber, 'OC-000002');
+});
+
+test('consolidates selected branch orders to CODE SPA in the main warehouse projection', async t => {
+  const baseUrl = await startTestServer(t, {
+    reportToday: '2026-08-26',
+    beforeCreate(uploadsRoot) {
+      const ordersRoot = path.join(uploadsRoot, 'reports', 'purchase-orders');
+      fs.mkdirSync(ordersRoot, { recursive: true });
+      const order = ({ id, orderNumber, locationId, locationName, supplier, confirmedAt, internalQuantity }) => ({
+        id,
+        sequence: Number(orderNumber.slice(-1)),
+        orderNumber,
+        status: 'confirmed',
+        createdAt: confirmedAt,
+        updatedAt: confirmedAt,
+        confirmedAt,
+        location: { id: locationId, name: locationName, type: 'store' },
+        supplier,
+        items: [{
+          key: 'I1', code: 'I1', name: 'Insumo Uno', internalUnit: 'UN', purchaseUnit: 'CAJ',
+          unitsPerPurchaseUnit: 12, quantity: internalQuantity / 12, internalQuantity,
+          unitCost: 100, total: 100
+        }],
+        total: 100
+      });
+      const fixtures = [
+        order({
+          id: 'OC-20260820-120000-aaaaaaaa', orderNumber: 'OC-000001',
+          locationId: 'store-1', locationName: 'Tienda 1',
+          supplier: { key: '783431955', name: 'CODE SPA', taxId: '783431955' },
+          confirmedAt: '2026-08-20T12:00:00.000Z', internalQuantity: 24
+        }),
+        order({
+          id: 'OC-20260825-120000-bbbbbbbb', orderNumber: 'OC-000002',
+          locationId: 'store-2', locationName: 'Tienda 2',
+          supplier: { key: 'code-spa', name: 'CODE SPA', taxId: '' },
+          confirmedAt: '2026-08-25T12:00:00.000Z', internalQuantity: 12
+        }),
+        order({
+          id: 'OC-20260825-130000-cccccccc', orderNumber: 'OC-000003',
+          locationId: 'store-1', locationName: 'Tienda 1',
+          supplier: { key: 'external', name: 'Proveedor externo', taxId: '' },
+          confirmedAt: '2026-08-25T13:00:00.000Z', internalQuantity: 120
+        })
+      ];
+      fixtures.forEach(item => fs.writeFileSync(path.join(ordersRoot, `${item.id}.json`), JSON.stringify(item)));
+    }
+  });
+  const warehouseKardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-25', '', '', '', '2026-08-26', '', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'BUY - Compras', 'Costo', 'IF - Inventario Final', 'II - Inventario Inicial', 'TRN-OUT - Transformaciones Salientes', 'Costo', 'IF - Inventario Final'],
+    ['I1', 'Insumo Uno', 'UN', 10, 0, 0, 10, 10, 0, 0, 10]
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspect(baseUrl, 'main-warehouse', '2026-08-24', [{
+    field: 'kardex', contents: warehouseKardex, filename: 'bodega-kardex.xls'
+  }]).then(response => response.json());
+  assert.equal((await confirm(baseUrl, inspection)).status, 200);
+
+  const projectionResponse = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`);
+  assert.equal(projectionResponse.status, 200, await projectionResponse.clone().text());
+  const projection = await projectionResponse.json();
+  assert.equal(projection.branchOrders.available, true);
+  assert.deepEqual(projection.branchOrders.selectedLocationIds.sort(), ['store-1', 'store-2']);
+  assert.equal(projection.branchOrders.selectedOrderCount, 2);
+  assert.equal(projection.items[0].branchOrderInternalQuantity, 36);
+  assert.equal(projection.items[0].ownSuggestedInternalQuantity, 0);
+  assert.equal(projection.items[0].suggestedInternalQuantity, 36);
+  assert.equal(projection.items[0].suggestedPurchaseUnits, 36);
+  assert.equal(projection.branchOrders.locations.find(item => item.id === 'store-1').latestOrder.stale, true);
+  assert.equal(projection.branchOrders.locations.find(item => item.id === 'store-2').latestOrder.stale, false);
+
+  const selected = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse&branches=store-2`)
+    .then(response => response.json());
+  assert.deepEqual(selected.branchOrders.selectedLocationIds, ['store-2']);
+  assert.equal(selected.branchOrders.selectedOrderCount, 1);
+  assert.equal(selected.items[0].branchOrderInternalQuantity, 12);
+  assert.equal(selected.items[0].suggestedInternalQuantity, 12);
+
+  const none = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse&branches=`)
+    .then(response => response.json());
+  assert.deepEqual(none.branchOrders.selectedLocationIds, []);
+  assert.equal(none.branchOrders.selectedOrderCount, 0);
+  assert.equal(none.items[0].branchOrderInternalQuantity, 0);
+  assert.equal(none.items[0].needsPurchase, false);
 });
 
 test('builds cumulative intraday blocks with weekday, month, and historical reference days', async t => {

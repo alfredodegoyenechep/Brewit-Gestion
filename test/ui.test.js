@@ -77,8 +77,64 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     })
   });
 
+  const warehouseKardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-05', '', '', '', '2026-08-06', '', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'BUY - Compras', 'Costo', 'IF - Inventario Final', 'II - Inventario Inicial', 'TRN-OUT - Transformaciones Salientes', 'Costo', 'IF - Inventario Final'],
+    ['P1', 'Producto Uno', 'UN', 10, 0, 0, 10, 10, 0, 0, 10]
+  ].map(row => row.join('\t')).join('\n');
+  const warehouseUpload = new FormData();
+  warehouseUpload.append('kardex', new Blob([warehouseKardex]), 'bodega-kardex.csv');
+  const warehouseInspection = await fetch(`http://127.0.0.1:${server.address().port}/api/uploads/weekly/inspect?location=main-warehouse&week=2026-08-03`, {
+    method: 'POST', body: warehouseUpload
+  }).then(response => response.json());
+  await fetch(`http://127.0.0.1:${server.address().port}/api/uploads/weekly/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: warehouseInspection.token,
+      dateFrom: '2026-08-05',
+      dateTo: '2026-08-06',
+      confirmed: true
+    })
+  });
+  const branchOrder = {
+    id: 'OC-20260809-120000-aaaaaaaa', sequence: 1, orderNumber: 'OC-000001', status: 'confirmed',
+    createdAt: '2026-08-09T12:00:00.000Z', updatedAt: '2026-08-09T12:00:00.000Z', confirmedAt: '2026-08-09T12:00:00.000Z',
+    location: { id: 'store-1', name: 'Tienda 1', type: 'store' },
+    supplier: { key: 'code-spa', name: 'CODE SPA', taxId: '' },
+    items: [{
+      key: 'P1', code: 'P1', name: 'Producto Uno', internalUnit: 'UN', purchaseUnit: 'UN',
+      unitsPerPurchaseUnit: 1, quantity: 5, internalQuantity: 5, unitCost: 0, total: 0
+    }],
+    total: 0
+  };
+  fs.writeFileSync(path.join(uploadsRoot, 'reports', 'purchase-orders', `${branchOrder.id}.json`), JSON.stringify(branchOrder));
+  fs.writeFileSync(path.join(uploadsRoot, 'config', 'purchase-order-counter.json'), JSON.stringify({ last: 1 }));
+
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
+  const expandedLayout = await page.evaluate(() => ({
+    sidebarWidth: document.querySelector('.sidebar').getBoundingClientRect().width,
+    mainWidth: document.querySelector('.main-content').getBoundingClientRect().width
+  }));
+  assert.equal(expandedLayout.sidebarWidth, 280);
+  await page.getByRole('button', { name: 'Contraer menú lateral' }).click();
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 76);
+  const collapsedLayout = await page.evaluate(() => ({
+    mainWidth: document.querySelector('.main-content').getBoundingClientRect().width,
+    navTextDisplay: getComputedStyle(document.querySelector('.nav-text')).display,
+    saved: localStorage.getItem('brewit.sidebarCollapsed')
+  }));
+  assert.ok(collapsedLayout.mainWidth > expandedLayout.mainWidth + 190);
+  assert.equal(collapsedLayout.navTextDisplay, 'none');
+  assert.equal(collapsedLayout.saved, 'true');
+  await page.reload();
+  await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 76);
+  assert.equal(await page.getByRole('button', { name: 'Expandir menú lateral' }).getAttribute('aria-expanded'), 'false');
+  await page.getByRole('button', { name: 'Expandir menú lateral' }).click();
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 280);
+  assert.equal(await page.evaluate(() => localStorage.getItem('brewit.sidebarCollapsed')), 'false');
   assert.equal(await page.getByRole('link', { name: 'General', exact: true }).count(), 0);
   await page.getByRole('link', { name: 'Resumen General Ventas' }).evaluate(link => {
     if (!link.classList.contains('active')) throw new Error('Resumen General Ventas no quedó como vista inicial activa.');
@@ -113,8 +169,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('.structure-validation-ok').textContent(), /Estructura verificada/);
   assert.equal(await page.locator('#replace-transactions-btn').isVisible(), true);
   assert.match(await page.locator('#transaction-overlap-notice').textContent(), /2026-08-09.*2026-08-09/);
-  await page.getByRole('button', { name: 'Cancelar' }).click();
-  assert.equal(await page.locator('#date-confirmation').evaluate(dialog => dialog.open), false);
+  assert.equal(await page.locator('#date-confirmation-row').isVisible(), false);
+  await page.getByRole('button', { name: 'Mantener existentes y agregar nuevos' }).click();
+  await page.locator('#date-confirmation').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#file-sales').evaluate(input => input.files.length), 0);
 
   await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
@@ -230,12 +287,17 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#purchase-projection-status').filter({ hasText: /Consumo considerado/i }).waitFor();
   assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 1);
   const projectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
-  assert.equal(await page.locator('.purchase-projection-table th').nth(6).textContent(), 'Consumo y TRN-OUT 30 días');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(4).innerText(), 'Unidad\ninterna');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(6).innerText(), 'Consumo y TRN-OUT\n30 días');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(8).innerText(), 'Cobertura\nactual');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(12).innerText(), 'Sugerencia\ninterna');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(18).innerText(), 'Costo UDC\nestimado');
   assert.equal(await projectionRow.locator('td').nth(5).textContent(), '0,00');
   assert.equal(await projectionRow.locator('td').nth(6).textContent(), '7,00');
   assert.equal(await projectionRow.locator('td').nth(7).textContent(), '0,23');
-  assert.equal(await projectionRow.locator('td').nth(8).textContent(), '0,00 días');
+  assert.equal(await projectionRow.locator('td').nth(8).textContent(), '0,0 días');
   assert.equal(await projectionRow.locator('td').nth(8).getAttribute('class'), 'projection-coverage-low');
+  assert.equal(await projectionRow.locator('td').nth(11).textContent(), '3,3 UN');
   assert.equal(await page.locator('.projection-managed-input').isChecked(), false);
   assert.equal(await page.locator('.projection-min-input').inputValue(), '7');
   assert.equal(await page.locator('.projection-max-input').inputValue(), '14');
@@ -251,20 +313,61 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('button', { name: 'Generar Orden de Compra PDF' }).click();
   await page.getByRole('dialog', { name: 'Nueva orden de compra' }).waitFor();
   assert.equal(await page.locator('#purchase-order-editor-body tr[data-key]').count(), 1);
+  assert.equal(await page.locator('.purchase-order-cost').inputValue(), '500');
+  assert.equal(await page.locator('.purchase-order-cost').getAttribute('inputmode'), 'numeric');
   await page.getByRole('button', { name: 'Confirmar y guardar orden' }).click();
   await page.locator('#purchase-order-editor-status').filter({ hasText: /guardada correctamente/i }).waitFor();
   await page.getByRole('button', { name: 'Imprimir / PDF' }).click();
   assert.equal(await page.evaluate(() => window.__purchaseOrderPrintCalled), true);
   await page.getByRole('button', { name: 'Cerrar' }).click();
+  await page.getByRole('button', { name: 'OC', exact: true }).click();
+  const selectedOrdersDialog = page.getByRole('dialog', { name: 'Órdenes consideradas en la proyección' });
+  await selectedOrdersDialog.waitFor();
+  assert.equal(await page.locator('#projection-purchase-orders-body tr').count(), 1);
+  assert.match(await page.locator('#projection-purchase-orders-body tr').first().textContent(), /OC-000002.*Proveedor Prueba/s);
+  await page.locator('.projection-purchase-order-input').check();
+  await selectedOrdersDialog.getByRole('button', { name: 'Aplicar y actualizar cálculo' }).click();
+  await projectionRow.locator('td').nth(13).filter({ hasText: '4,0 UN' }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(13).getAttribute('class'),
+    'projection-purchase-order-quantity projection-purchase-order-sufficient');
+  await page.locator('.projection-min-input').fill('0');
+  assert.equal(await projectionRow.locator('td').nth(8).getAttribute('class'), null);
   await page.locator('.projection-min-input').fill('10');
   await page.locator('.projection-max-input').fill('20');
+  await projectionRow.locator('td').nth(11).filter({ hasText: '4,7 UN' }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(8).getAttribute('class'), 'projection-coverage-low');
+  assert.equal(await projectionRow.locator('td').nth(13).getAttribute('class'),
+    'projection-purchase-order-quantity projection-purchase-order-short');
   await page.getByRole('button', { name: 'Guardar criterios' }).click();
   await page.locator('#purchase-projection-status').filter({ hasText: /Consumo considerado/i }).waitFor();
   assert.equal(await page.locator('.projection-min-input').inputValue(), '10');
   assert.equal(await page.locator('.projection-max-input').inputValue(), '20');
   assert.equal(await page.locator('.projection-managed-input').isChecked(), true);
+  await projectionRow.locator('td').nth(11).filter({ hasText: '4,7 UN' }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(13).textContent(), '4,0 UN');
+  assert.equal(await projectionRow.locator('td').nth(13).getAttribute('class'),
+    'projection-purchase-order-quantity projection-purchase-order-short');
   await page.locator('#projection-only-managed').check();
   assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 1);
+
+  await page.locator('#projection-only-managed').uncheck();
+  await page.locator('#projection-only-required').uncheck();
+  await page.locator('#projection-location-filter').selectOption('main-warehouse');
+  await page.locator('#purchase-projection-status').filter({ hasText: /Consumo considerado/i }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'OC Suc' }).isVisible(), true);
+  assert.equal(await page.locator('#projection-new-coverage-header').isVisible(), true);
+  const warehouseProjectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
+  assert.equal(await warehouseProjectionRow.locator('td').nth(11).textContent(), '5 UN');
+  assert.equal(await warehouseProjectionRow.locator('td').nth(15).textContent(), '—');
+  await page.getByRole('button', { name: 'OC Suc' }).click();
+  await page.getByRole('dialog', { name: 'Órdenes de compra de sucursales' }).waitFor();
+  assert.equal(await page.locator('#projection-branch-orders-body tr').count(), 2);
+  const storeOneBranchRow = page.locator('#projection-branch-orders-body tr[data-location-id="store-1"]');
+  assert.match(await storeOneBranchRow.textContent(), /Tienda 1.*OC-000001/s);
+  assert.equal(await storeOneBranchRow.locator('.projection-branch-order-date').getAttribute('class'), 'projection-branch-order-date recent');
+  await storeOneBranchRow.locator('.projection-branch-location-input').uncheck();
+  await page.getByRole('button', { name: 'Aplicar y actualizar cálculo' }).click();
+  await warehouseProjectionRow.locator('td').nth(11).filter({ hasText: '0 UN' }).waitFor();
 
   await page.getByRole('link', { name: 'Inventario' }).click();
   await page.getByRole('heading', { name: 'Fuentes para el informe de inventario' }).waitFor();
@@ -473,6 +576,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   });
   await page.locator('#date-confirmation').waitFor({ state: 'visible' });
   assert.match(await page.locator('#week-status').textContent(), /Kardex y Merma comparten la misma estructura.*archivo correcto.*Merma/i);
+  assert.equal(await page.locator('#date-confirmation-row').isVisible(), true);
   assert.equal(await page.locator('#inventory-file-confirmation-row').isVisible(), true);
   assert.match(await page.locator('#inventory-file-confirmation-copy').textContent(), /kardex_report MER\.xlsx.*archivo correcto.*Merma/i);
   await page.getByRole('button', { name: 'Cancelar' }).click();

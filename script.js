@@ -49,6 +49,36 @@ let purchaseProjectionSort = { key: 'supplier', direction: 'asc' };
 const expandedIngredients = new Set();
 const selectedSalesAnalysis = new Set();
 const collapsedSalesAnalysisGroups = new Set();
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'brewit.sidebarCollapsed';
+let sidebarCollapsedPreference = false;
+
+function applySidebarPreference() {
+  const collapsed = sidebarCollapsedPreference && window.matchMedia('(min-width: 901px)').matches;
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  const button = document.getElementById('sidebar-toggle');
+  if (!button) return;
+  const label = collapsed ? 'Expandir menú lateral' : 'Contraer menú lateral';
+  button.setAttribute('aria-expanded', String(!collapsed));
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
+function initializeSidebarToggle() {
+  try {
+    sidebarCollapsedPreference = window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+  } catch {
+    sidebarCollapsedPreference = false;
+  }
+  applySidebarPreference();
+  document.getElementById('sidebar-toggle').addEventListener('click', () => {
+    sidebarCollapsedPreference = !document.body.classList.contains('sidebar-collapsed');
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsedPreference));
+    } catch {}
+    applySidebarPreference();
+  });
+  window.matchMedia('(min-width: 901px)').addEventListener('change', applySidebarPreference);
+}
 
 function setView(view) {
   document.querySelectorAll('.main-content > section').forEach(section => {
@@ -425,8 +455,13 @@ function formatClp(value) {
 }
 
 function formatPurchaseOrderCost(value) {
-  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
     .format(Number(value) || 0);
+}
+
+function roundedPurchaseOrderCost(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric) : NaN;
 }
 
 function parseLocalizedNumber(value) {
@@ -1250,7 +1285,18 @@ function applySort(sortState, key, defaultDirection = 'asc') {
 function markSortableHeader(cell, key, sortState, label) {
   cell.dataset.sortKey = key;
   cell.classList.add('sortable-table-header');
-  cell.textContent = `${label}${sortState.key === key ? (sortState.direction === 'asc' ? ' ▲' : ' ▼') : ''}`;
+  const indicator = sortState.key === key ? (sortState.direction === 'asc' ? ' ▲' : ' ▼') : '';
+  const headerLines = cell.dataset.headerLines?.split('|');
+  if (headerLines?.length) {
+    cell.replaceChildren();
+    headerLines.forEach((line, index) => {
+      if (index) cell.appendChild(document.createElement('br'));
+      cell.appendChild(document.createTextNode(line));
+    });
+    if (indicator) cell.appendChild(document.createTextNode(indicator));
+  } else {
+    cell.textContent = `${label}${indicator}`;
+  }
   cell.setAttribute('aria-sort', sortState.key === key ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none');
 }
 
@@ -2287,6 +2333,11 @@ function formatProjectionMetric(value) {
   return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value));
 }
 
+function formatProjectionOneDecimal(value) {
+  if (value === null || value === undefined) return '—';
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(value));
+}
+
 function filteredPurchaseProjectionItems() {
   if (!purchaseProjectionState) return [];
   const supplier = document.getElementById('projection-supplier-filter').value || 'all';
@@ -2304,18 +2355,41 @@ function updatePurchaseOrderButton() {
   document.getElementById('print-purchase-order').disabled = supplier === 'all' || supplier === 'unassigned' || !eligible;
 }
 
+function recalculatePurchaseProjectionItem(item) {
+  item.minimumStock = item.averageDailyConsumption * item.minDays;
+  item.maximumStock = item.averageDailyConsumption * item.maxDays;
+  item.ownNeedsPurchase = item.averageDailyConsumption > 0 && item.currentInventory <= item.minimumStock;
+  item.ownSuggestedInternalQuantity = item.ownNeedsPurchase
+    ? Math.max(0, item.maximumStock - item.currentInventory) : 0;
+  item.needsPurchase = item.ownNeedsPurchase || item.branchOrderInternalQuantity > 0;
+  item.suggestedInternalQuantity = item.ownSuggestedInternalQuantity + item.branchOrderInternalQuantity;
+  item.suggestedPurchaseUnits = item.suggestedInternalQuantity > 0 && item.unitsPerPurchaseUnit > 0
+    ? Math.ceil(item.suggestedInternalQuantity / item.unitsPerPurchaseUnit) : null;
+  item.projectedInternalQuantity = item.suggestedPurchaseUnits === null
+    ? item.suggestedInternalQuantity : item.suggestedPurchaseUnits * item.unitsPerPurchaseUnit;
+  item.estimatedTotal = item.suggestedPurchaseUnits === null || item.estimatedPurchaseUnitCost === null
+    ? null : item.suggestedPurchaseUnits * item.estimatedPurchaseUnitCost;
+}
+
 function renderPurchaseProjection() {
   const body = document.getElementById('purchase-projection-body');
   const summary = document.getElementById('purchase-projection-summary');
   const saveButton = document.getElementById('save-projection-policies');
+  const branchOrdersHeader = document.getElementById('projection-branch-orders-header');
+  const newCoverageHeader = document.getElementById('projection-new-coverage-header');
   if (!purchaseProjectionState) {
     body.replaceChildren();
     summary.replaceChildren();
+    branchOrdersHeader.hidden = true;
+    newCoverageHeader.hidden = true;
     saveButton.disabled = true;
     updatePurchaseOrderButton();
     return;
   }
   const data = purchaseProjectionState;
+  const showsBranchOrders = data.branchOrders?.available === true;
+  branchOrdersHeader.hidden = !showsBranchOrders;
+  newCoverageHeader.hidden = !showsBranchOrders;
   document.querySelectorAll('.purchase-projection-table thead th[data-sort-key]').forEach(cell => {
     markSortableHeader(cell, cell.dataset.sortKey, purchaseProjectionSort, cell.textContent.replace(/ [▲▼]$/, ''));
   });
@@ -2331,6 +2405,18 @@ function renderPurchaseProjection() {
     `${managedPurchaseItems.filter(item => item.estimatedPurchaseUnitCost === null).length} sin costo histórico`,
     `${managedPurchaseItems.filter(item => item.supplierKey === 'unassigned').length} sin proveedor`
   ];
+  if (showsBranchOrders) {
+    summaryTexts.push(`${data.branchOrders.selectedOrderCount} OC suc. incluidas`);
+    if (data.branchOrders.unconvertedItemCount) {
+      summaryTexts.push(`${data.branchOrders.unconvertedItemCount} OC suc. sin conversión`);
+    }
+  }
+  if (data.purchaseOrders.selectedOrderCount) {
+    summaryTexts.push(`${data.purchaseOrders.selectedOrderCount} OC seleccionada(s)`);
+    if (data.purchaseOrders.unconvertedItemCount) {
+      summaryTexts.push(`${data.purchaseOrders.unconvertedItemCount} OC sin conversión`);
+    }
+  }
   summary.replaceChildren(...summaryTexts.map(text => {
     const chip = document.createElement('span');
     chip.className = 'chip neutral';
@@ -2379,7 +2465,7 @@ function renderPurchaseProjection() {
       { value: formatProjectionMetric(item.consumption30) },
       { value: formatProjectionMetric(item.averageDailyConsumption) },
       {
-        value: item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionMetric(item.currentCoverageDays)} días`,
+        value: item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
         lowCoverage: item.currentCoverageDays !== null && item.currentCoverageDays < item.minDays
       }
     ];
@@ -2402,15 +2488,73 @@ function renderPurchaseProjection() {
       cell.appendChild(input);
       row.appendChild(cell);
     }
-    const resultValues = [
-      item.needsPurchase ? `${formatProjectionQuantity(item.suggestedInternalQuantity)} ${item.internalUnit}` : 'No comprar',
-      item.purchaseUnit || '—',
+    if (showsBranchOrders) {
+      const branchOrdersCell = document.createElement('td');
+      branchOrdersCell.className = 'projection-branch-order-quantity';
+      branchOrdersCell.textContent = `${formatProjectionQuantity(item.branchOrderInternalQuantity)} ${item.internalUnit || ''}`.trim();
+      if (item.branchOrderConversionMissing) {
+        branchOrdersCell.classList.add('projection-branch-order-warning');
+        branchOrdersCell.title = 'Hay cantidades de sucursales cuya unidad no se pudo convertir.';
+      }
+      row.appendChild(branchOrdersCell);
+    }
+    const leadingResultValues = [
+      item.needsPurchase ? `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit}` : 'No comprar',
+      item.purchaseUnit || '—'
+    ];
+    leadingResultValues.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    const purchaseOrderCell = document.createElement('td');
+    purchaseOrderCell.className = 'projection-purchase-order-quantity';
+    if (!data.purchaseOrders.selectedOrderCount) {
+      purchaseOrderCell.textContent = '—';
+      purchaseOrderCell.title = 'Selecciona órdenes de compra desde el botón OC.';
+    } else {
+      purchaseOrderCell.textContent = `${formatProjectionOneDecimal(item.purchaseOrderInternalQuantity)} ${item.internalUnit || ''}`.trim();
+      if (item.purchaseOrderConversionMissing) {
+        purchaseOrderCell.classList.add('projection-purchase-order-warning');
+        purchaseOrderCell.title = 'Hay cantidades de órdenes cuya unidad no se pudo convertir.';
+      } else if (item.purchaseOrderInternalQuantity + 1e-9 >= item.suggestedInternalQuantity) {
+        purchaseOrderCell.classList.add('projection-purchase-order-sufficient');
+        purchaseOrderCell.title = 'La cantidad ordenada cubre la sugerencia interna.';
+      } else {
+        purchaseOrderCell.classList.add('projection-purchase-order-short');
+        purchaseOrderCell.title = 'La cantidad ordenada es menor que la sugerencia interna.';
+      }
+    }
+    row.appendChild(purchaseOrderCell);
+    if (showsBranchOrders) {
+      const newCoverageCell = document.createElement('td');
+      newCoverageCell.className = 'projection-new-coverage';
+      if (!data.purchaseOrders.selectedOrderCount) {
+        newCoverageCell.textContent = '—';
+        newCoverageCell.title = 'Selecciona órdenes de compra desde el botón OC.';
+      } else if (item.purchaseOrderConversionMissing || item.branchOrderConversionMissing) {
+        newCoverageCell.textContent = 'Sin conversión';
+        newCoverageCell.classList.add('projection-purchase-order-warning');
+        newCoverageCell.title = 'No fue posible convertir todas las cantidades a la unidad interna.';
+      } else if (item.coverageAfterPurchaseOrdersDays === null) {
+        newCoverageCell.textContent = 'Sin consumo';
+        newCoverageCell.title = 'No existe consumo diario para calcular la cobertura.';
+      } else {
+        newCoverageCell.textContent = `${formatProjectionOneDecimal(item.coverageAfterPurchaseOrdersDays)} días`;
+        newCoverageCell.title = 'Inventario actual + OC seleccionadas − OC Suc, dividido por el consumo diario.';
+        if (item.coverageAfterPurchaseOrdersDays < item.minDays) {
+          newCoverageCell.classList.add('projection-coverage-low');
+        }
+      }
+      row.appendChild(newCoverageCell);
+    }
+    const trailingResultValues = [
       item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión',
       item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits),
       item.estimatedPurchaseUnitCost === null ? '—' : formatClp(item.estimatedPurchaseUnitCost),
       item.estimatedTotal === null ? '—' : formatClp(item.estimatedTotal)
     ];
-    resultValues.forEach(value => {
+    trailingResultValues.forEach(value => {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.appendChild(cell);
@@ -2420,7 +2564,7 @@ function renderPurchaseProjection() {
   if (!visibleItems.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 17;
+    cell.colSpan = showsBranchOrders ? 20 : 18;
     cell.className = 'projection-empty';
     cell.textContent = 'No hay ítems para los filtros seleccionados.';
     row.appendChild(cell);
@@ -2430,16 +2574,162 @@ function renderPurchaseProjection() {
   updatePurchaseOrderButton();
 }
 
-async function loadPurchaseProjection() {
+function openProjectionBranchOrders() {
+  const branchOrders = purchaseProjectionState?.branchOrders;
+  if (!branchOrders?.available) return;
+  const dialog = document.getElementById('projection-branch-orders-dialog');
+  const description = document.getElementById('projection-branch-orders-description');
+  description.textContent = `Selecciona las sucursales cuyas órdenes dirigidas a ${branchOrders.companySupplier.name} se sumarán a la compra de Bodega Principal.`;
+  const body = document.getElementById('projection-branch-orders-body');
+  body.replaceChildren(...branchOrders.locations.map(location => {
+    const row = document.createElement('tr');
+    row.dataset.locationId = location.id;
+    const selectionCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'projection-branch-location-input';
+    checkbox.checked = location.selected;
+    checkbox.setAttribute('aria-label', `Incluir ${location.name}`);
+    selectionCell.appendChild(checkbox);
+    const locationCell = document.createElement('td');
+    locationCell.textContent = location.name;
+    const orderCell = document.createElement('td');
+    orderCell.textContent = location.latestOrder?.orderNumber || 'Sin órdenes a CODE SPA';
+    const dateCell = document.createElement('td');
+    dateCell.textContent = location.latestOrder ? formatReportDate(location.latestOrder.date) : '—';
+    if (location.latestOrder) {
+      dateCell.className = location.latestOrder.stale
+        ? 'projection-branch-order-date stale'
+        : 'projection-branch-order-date recent';
+    }
+    const countCell = document.createElement('td');
+    countCell.textContent = String(location.orderCount);
+    row.append(selectionCell, locationCell, orderCell, dateCell, countCell);
+    return row;
+  }));
+  dialog.showModal();
+}
+
+async function applyProjectionBranchOrders() {
+  const branchLocationIds = [...document.querySelectorAll('#projection-branch-orders-body tr[data-location-id]')]
+    .filter(row => row.querySelector('.projection-branch-location-input').checked)
+    .map(row => row.dataset.locationId);
+  document.getElementById('projection-branch-orders-dialog').close();
+  await loadPurchaseProjection({ branchLocationIds, preserveDraftCriteria: true });
+}
+
+async function openProjectionPurchaseOrders() {
+  const purchaseOrders = purchaseProjectionState?.purchaseOrders;
+  if (!purchaseOrders?.available) return;
+  const dialog = document.getElementById('projection-purchase-orders-dialog');
+  const status = document.getElementById('projection-purchase-orders-status');
+  const openButton = document.getElementById('open-projection-purchase-orders');
+  document.getElementById('projection-purchase-orders-description').textContent =
+    `Selecciona las órdenes emitidas por ${purchaseProjectionState.location.name} que deseas comparar con la sugerencia interna.`;
+  openButton.disabled = true;
+  try {
+    const latest = await apiRequest(`/api/purchase-orders?location=${encodeURIComponent(purchaseProjectionState.location.id)}`);
+    const selectedIds = new Set(purchaseOrders.selectedOrderIds);
+    purchaseOrders.orders = latest.orders.map(order => ({
+      ...order,
+      date: String(order.confirmedAt || order.updatedAt || order.createdAt || '').slice(0, 10),
+      selected: selectedIds.has(order.id)
+    }));
+  } catch (error) {
+    document.getElementById('projection-purchase-orders-body').replaceChildren();
+    setStatus(status, error.message, 'error');
+    dialog.showModal();
+    return;
+  } finally {
+    openButton.disabled = false;
+  }
+  setStatus(status, purchaseOrders.orders.length
+    ? (purchaseOrders.selectedOrderCount
+      ? `${purchaseOrders.orders.length} orden(es) disponible(s); ${purchaseOrders.selectedOrderCount} seleccionada(s).`
+      : `${purchaseOrders.orders.length} orden(es) disponible(s). La selección comienza vacía para no incluir órdenes antiguas automáticamente.`)
+    : 'Esta ubicación aún no tiene órdenes de compra guardadas.', purchaseOrders.orders.length ? 'success' : 'muted');
+  const body = document.getElementById('projection-purchase-orders-body');
+  body.replaceChildren(...purchaseOrders.orders.map(order => {
+    const row = document.createElement('tr');
+    row.dataset.orderId = order.id;
+    const selectionCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'projection-purchase-order-input projection-branch-location-input';
+    checkbox.checked = order.selected;
+    checkbox.setAttribute('aria-label', `Incluir ${order.orderNumber}`);
+    selectionCell.appendChild(checkbox);
+    const values = [
+      order.orderNumber,
+      order.supplier?.name || 'Proveedor no disponible',
+      formatReportDate(order.date),
+      String(order.itemCount),
+      formatClp(order.total)
+    ];
+    row.appendChild(selectionCell);
+    values.forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    return row;
+  }));
+  dialog.showModal();
+}
+
+async function applyProjectionPurchaseOrders() {
+  const purchaseOrderIds = [...document.querySelectorAll('#projection-purchase-orders-body tr[data-order-id]')]
+    .filter(row => row.querySelector('.projection-purchase-order-input').checked)
+    .map(row => row.dataset.orderId);
+  document.getElementById('projection-purchase-orders-dialog').close();
+  await loadPurchaseProjection({ purchaseOrderIds, preserveDraftCriteria: true });
+}
+
+async function loadPurchaseProjection(options = {}) {
   const status = document.getElementById('purchase-projection-status');
   const button = document.getElementById('refresh-purchase-projection');
   const location = document.getElementById('projection-location-filter').value;
   if (!location) return;
+  const draftCriteria = options.preserveDraftCriteria && purchaseProjectionState?.location.id === location
+    ? new Map(purchaseProjectionState.items.map(item => [item.key, {
+      minDays: item.minDays,
+      maxDays: item.maxDays,
+      managed: item.managed,
+      supplierKey: item.supplierKey
+    }]))
+    : null;
+  const requestedBranchLocationIds = Array.isArray(options.branchLocationIds)
+    ? options.branchLocationIds
+    : (purchaseProjectionState?.location.id === location && purchaseProjectionState.branchOrders?.available
+      ? purchaseProjectionState.branchOrders.selectedLocationIds : null);
+  const requestedPurchaseOrderIds = Array.isArray(options.purchaseOrderIds)
+    ? options.purchaseOrderIds
+    : (purchaseProjectionState?.location.id === location && purchaseProjectionState.purchaseOrders?.available
+      ? purchaseProjectionState.purchaseOrders.selectedOrderIds : null);
   button.disabled = true;
   setStatus(status, 'Calculando inventario, consumos y necesidades de compra…');
   try {
-    const data = await apiRequest(`/api/purchase-projections?location=${encodeURIComponent(location)}`);
+    const query = new URLSearchParams({ location });
+    if (requestedBranchLocationIds !== null) query.set('branches', requestedBranchLocationIds.join(','));
+    if (requestedPurchaseOrderIds !== null) query.set('orders', requestedPurchaseOrderIds.join(','));
+    const data = await apiRequest(`/api/purchase-projections?${query}`);
     if (location !== document.getElementById('projection-location-filter').value) return;
+    if (draftCriteria) {
+      data.items.forEach(item => {
+        const draft = draftCriteria.get(item.key);
+        if (!draft) return;
+        item.minDays = draft.minDays;
+        item.maxDays = draft.maxDays;
+        item.managed = draft.managed;
+        item.supplierKey = draft.supplierKey;
+        const supplier = data.suppliers.find(candidate => candidate.key === draft.supplierKey);
+        if (supplier) {
+          item.supplier = supplier.name;
+          item.supplierTaxId = supplier.taxId || '';
+        }
+        recalculatePurchaseProjectionItem(item);
+      });
+    }
     purchaseProjectionState = data;
     const supplierSelect = document.getElementById('projection-supplier-filter');
     const previousSupplier = supplierSelect.value || 'all';
@@ -2506,7 +2796,7 @@ async function savePurchaseProjectionPolicies() {
 
 function purchaseOrderHasChangedCosts() {
   return purchaseOrderEditorState?.items.some(item => item.selected
-    && Math.abs(Number(item.unitCost) - Number(item.referenceUnitCost || 0)) > 0.005) || false;
+    && Number(item.unitCost) !== roundedPurchaseOrderCost(item.referenceUnitCost || 0)) || false;
 }
 
 function editableSavedPurchaseOrder(order) {
@@ -2514,10 +2804,12 @@ function editableSavedPurchaseOrder(order) {
     ...order,
     items: order.items.map(item => ({
       ...item,
+      referenceUnitCost: roundedPurchaseOrderCost(item.referenceUnitCost || 0),
+      unitCost: roundedPurchaseOrderCost(item.unitCost),
       selected: true,
       savedSelected: true,
       savedQuantity: Number(item.quantity),
-      savedUnitCost: Number(item.unitCost)
+      savedUnitCost: roundedPurchaseOrderCost(item.unitCost)
     }))
   };
 }
@@ -2526,7 +2818,7 @@ function purchaseOrderEditorIsDirty() {
   if (!purchaseOrderEditorState?.id) return true;
   return purchaseOrderEditorState.items.some(item => item.selected !== item.savedSelected
     || Math.abs(Number(item.quantity) - Number(item.savedQuantity)) > 0.000001
-    || Math.abs(Number(item.unitCost) - Number(item.savedUnitCost)) > 0.005);
+    || Number(item.unitCost) !== Number(item.savedUnitCost));
 }
 
 function updatePurchaseOrderEditorTotals() {
@@ -2538,8 +2830,8 @@ function updatePurchaseOrderEditorTotals() {
     if (!item) continue;
     item.selected = row.querySelector('.purchase-order-select').checked;
     item.quantity = Number(row.querySelector('.purchase-order-quantity').value);
-    item.unitCost = parseLocalizedNumber(row.querySelector('.purchase-order-cost').value);
-    const changed = Math.abs(item.unitCost - Number(item.referenceUnitCost || 0)) > 0.005;
+    item.unitCost = roundedPurchaseOrderCost(parseLocalizedNumber(row.querySelector('.purchase-order-cost').value));
+    const changed = item.unitCost !== roundedPurchaseOrderCost(item.referenceUnitCost || 0);
     const rowTotal = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
       ? item.quantity * item.unitCost : 0;
     row.querySelector('.purchase-order-row-total').textContent = formatClp(rowTotal);
@@ -2603,7 +2895,7 @@ function renderPurchaseOrderEditor() {
     const costCell = document.createElement('td');
     const cost = document.createElement('input');
     cost.type = 'text';
-    cost.inputMode = 'decimal';
+    cost.inputMode = 'numeric';
     cost.value = formatPurchaseOrderCost(item.unitCost);
     cost.className = 'purchase-order-cost';
     costCell.appendChild(cost);
@@ -2634,13 +2926,15 @@ function openPurchaseOrderEditor() {
     projectionPeriod: data.period,
     filters: {
       onlyRequired: document.getElementById('projection-only-required').checked,
-      onlyManaged: document.getElementById('projection-only-managed').checked
+      onlyManaged: document.getElementById('projection-only-managed').checked,
+      branchLocationIds: data.branchOrders?.selectedLocationIds || [],
+      selectedPurchaseOrderIds: data.purchaseOrders?.selectedOrderIds || []
     },
     items: visibleItems.map(item => ({
       ...item,
-      referenceUnitCost: Number(item.estimatedPurchaseUnitCost || 0),
+      referenceUnitCost: roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0),
       quantity: Number(item.suggestedPurchaseUnits || 0),
-      unitCost: Number(item.estimatedPurchaseUnitCost || 0),
+      unitCost: roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0),
       selected: Number(item.suggestedPurchaseUnits || 0) > 0
     }))
   };
@@ -3987,6 +4281,8 @@ function showInspection(manifest) {
   document.getElementById('confirmed-date-from').value = manifest.detectedRange?.from || '';
   document.getElementById('confirmed-date-to').value = manifest.detectedRange?.to || '';
   document.getElementById('dates-confirmed').checked = false;
+  const salesOnlyUpload = manifest.files.length > 0 && manifest.files.every(file => file.field === 'sales');
+  document.getElementById('date-confirmation-row').hidden = salesOnlyUpload;
   const inventoryFile = manifest.files.find(file => file.structure?.requiresCategoryConfirmation);
   const inventoryConfirmation = document.getElementById('inventory-file-confirmation-row');
   document.getElementById('inventory-file-confirmed').checked = false;
@@ -4310,8 +4606,12 @@ async function uploadMasterFiles(replace = false) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initializeSidebarToggle();
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
+    const linkLabel = link.querySelector('.nav-text')?.textContent.trim() || '';
+    link.title = linkLabel;
+    link.setAttribute('aria-label', linkLabel);
     link.addEventListener('click', event => {
       event.preventDefault();
       document.querySelectorAll('.nav-link').forEach(item => item.classList.toggle('active', item === link));
@@ -4402,12 +4702,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const pageStatus = transactionUploadStatus();
     const dateFrom = document.getElementById('confirmed-date-from').value;
     const dateTo = document.getElementById('confirmed-date-to').value;
+    const requiresDateConfirmation = !inspectionState?.files?.length
+      || inspectionState.files.some(file => file.field !== 'sales');
     const confirmed = document.getElementById('dates-confirmed').checked;
     const requiresCategoryConfirmation = inspectionState?.files.some(file => file.structure?.requiresCategoryConfirmation);
     const categoryConfirmed = document.getElementById('inventory-file-confirmed').checked;
     if (!inspectionState) return setStatus(status, 'Vuelve a revisar los archivos antes de confirmar.', 'error');
     if (!dateFrom || !dateTo) return setStatus(status, 'Ingresa las fechas desde y hasta.', 'error');
-    if (!confirmed) return setStatus(status, 'Marca la confirmación de fechas antes de guardar.', 'error');
+    if (requiresDateConfirmation && !confirmed) {
+      return setStatus(status, 'Marca la confirmación de fechas antes de guardar.', 'error');
+    }
     if (requiresCategoryConfirmation && !categoryConfirmed) {
       return setStatus(status, 'Confirma que seleccionaste el archivo correcto para Kardex o Merma.', 'error');
     }
@@ -4616,12 +4920,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('projection-location-filter').addEventListener('change', () => {
     document.getElementById('projection-supplier-filter').value = 'all';
+    purchaseProjectionState = null;
     loadPurchaseProjection();
   });
   document.getElementById('projection-supplier-filter').addEventListener('change', renderPurchaseProjection);
   document.getElementById('projection-only-required').addEventListener('change', renderPurchaseProjection);
   document.getElementById('projection-only-managed').addEventListener('change', renderPurchaseProjection);
   document.getElementById('refresh-purchase-projection').addEventListener('click', loadPurchaseProjection);
+  document.getElementById('open-projection-branch-orders').addEventListener('click', openProjectionBranchOrders);
+  document.getElementById('cancel-projection-branch-orders').addEventListener('click', () => {
+    document.getElementById('projection-branch-orders-dialog').close();
+  });
+  document.getElementById('apply-projection-branch-orders').addEventListener('click', applyProjectionBranchOrders);
+  document.getElementById('open-projection-purchase-orders').addEventListener('click', openProjectionPurchaseOrders);
+  document.getElementById('cancel-projection-purchase-orders').addEventListener('click', () => {
+    document.getElementById('projection-purchase-orders-dialog').close();
+  });
+  document.getElementById('apply-projection-purchase-orders').addEventListener('click', applyProjectionPurchaseOrders);
   document.querySelector('.purchase-projection-table thead').addEventListener('click', event => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
@@ -4641,7 +4956,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('purchase-order-editor-body').addEventListener('input', updatePurchaseOrderEditorTotals);
   document.getElementById('purchase-order-editor-body').addEventListener('change', event => {
     if (event.target.matches('.purchase-order-cost')) {
-      event.target.value = formatPurchaseOrderCost(parseLocalizedNumber(event.target.value));
+      event.target.value = formatPurchaseOrderCost(roundedPurchaseOrderCost(parseLocalizedNumber(event.target.value)));
     }
     updatePurchaseOrderEditorTotals();
   });
@@ -4660,8 +4975,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     const row = event.target.closest('tr[data-key]');
     const item = purchaseProjectionState?.items.find(candidate => candidate.key === row?.dataset.key);
     if (!item) return;
-    if (event.target.matches('.projection-min-input')) item.minDays = Number(event.target.value);
-    if (event.target.matches('.projection-max-input')) item.maxDays = Number(event.target.value);
+    const editsMinimum = event.target.matches('.projection-min-input');
+    const editsMaximum = event.target.matches('.projection-max-input');
+    if ((editsMinimum || editsMaximum) && event.target.value !== '') {
+      if (editsMinimum) item.minDays = Number(event.target.value);
+      if (editsMaximum) item.maxDays = Number(event.target.value);
+      recalculatePurchaseProjectionItem(item);
+      const inputClass = editsMinimum ? '.projection-min-input' : '.projection-max-input';
+      renderPurchaseProjection();
+      const replacementRow = [...document.querySelectorAll('#purchase-projection-body tr[data-key]')]
+        .find(candidate => candidate.dataset.key === item.key);
+      replacementRow?.querySelector(inputClass)?.focus();
+      return;
+    }
     if (event.target.matches('.projection-managed-input')) {
       item.managed = event.target.checked;
       renderPurchaseProjection();

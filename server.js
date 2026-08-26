@@ -2572,7 +2572,125 @@ function createApp(options = {}) {
     return { local, global, bySupplier, suppliers };
   }
 
-  function buildPurchaseProjection(locationId) {
+  function normalizedTaxIdentifier(value) {
+    return String(value || '').replace(/[^0-9k]/gi, '').toLowerCase();
+  }
+
+  function supplierIsCompany(supplier, company) {
+    const supplierTaxId = normalizedTaxIdentifier(supplier?.taxId || supplier?.key);
+    const companyTaxId = normalizedTaxIdentifier(company?.taxId);
+    if (supplierTaxId && companyTaxId && supplierTaxId === companyTaxId) return true;
+    return Boolean(normalizeHeader(supplier?.name)
+      && normalizeHeader(supplier?.name) === normalizeHeader(company?.name));
+  }
+
+  function branchPurchaseOrderConsolidation(selectedLocationIds) {
+    const company = readCompanyProfile();
+    const stores = readLocations().locations
+      .filter(location => location.status === 'active' && location.type === 'store')
+      .sort((left, right) => left.name.localeCompare(right.name, 'es'));
+    const allowedIds = new Set(stores.map(store => store.id));
+    const selectedIds = selectedLocationIds === null
+      ? new Set(allowedIds)
+      : new Set(selectedLocationIds.filter(id => allowedIds.has(id)));
+    const orders = readPurchaseOrders().filter(order => order.status === 'confirmed'
+      && allowedIds.has(order.location?.id)
+      && supplierIsCompany(order.supplier, company));
+    const dateForOrder = order => order.confirmedAt || order.updatedAt || order.createdAt || '';
+    const demandByItem = new Map();
+    for (const order of orders.filter(order => selectedIds.has(order.location.id))) {
+      for (const item of order.items || []) {
+        const key = String(item.key || item.code || '').trim().toUpperCase();
+        const internalQuantity = item.internalQuantity === null || item.internalQuantity === undefined
+          ? null : Number(item.internalQuantity);
+        const unitsPerPurchaseUnit = item.unitsPerPurchaseUnit === null || item.unitsPerPurchaseUnit === undefined
+          ? null : Number(item.unitsPerPurchaseUnit);
+        const quantity = item.quantity === null || item.quantity === undefined ? null : Number(item.quantity);
+        const value = Number.isFinite(internalQuantity)
+          ? internalQuantity
+          : (Number.isFinite(quantity) && Number.isFinite(unitsPerPurchaseUnit)
+            ? quantity * unitsPerPurchaseUnit : null);
+        if (!key || value === null) continue;
+        if (!demandByItem.has(key)) demandByItem.set(key, []);
+        demandByItem.get(key).push({ quantity: value, unit: item.internalUnit || '' });
+      }
+    }
+    const staleBefore = addDays(projectionToday(), -3);
+    const locations = stores.map(store => {
+      const storeOrders = orders
+        .filter(order => order.location.id === store.id)
+        .sort((left, right) => dateForOrder(right).localeCompare(dateForOrder(left)));
+      const latestOrder = storeOrders[0] || null;
+      const latestAt = latestOrder ? dateForOrder(latestOrder) : null;
+      return {
+        id: store.id,
+        name: store.name,
+        selected: selectedIds.has(store.id),
+        orderCount: storeOrders.length,
+        latestOrder: latestOrder ? {
+          id: latestOrder.id,
+          orderNumber: latestOrder.orderNumber,
+          confirmedAt: latestAt,
+          date: latestAt.slice(0, 10),
+          stale: latestAt.slice(0, 10) < staleBefore
+        } : null
+      };
+    });
+    return {
+      companySupplier: { name: company.name, taxId: company.taxId || '' },
+      selectedLocationIds: [...selectedIds],
+      locations,
+      selectedOrderCount: orders.filter(order => selectedIds.has(order.location.id)).length,
+      demandByItem
+    };
+  }
+
+  function projectionPurchaseOrderSelection(locationId, selectedOrderIds) {
+    const dateForOrder = order => order.confirmedAt || order.updatedAt || order.createdAt || '';
+    const orders = readPurchaseOrders()
+      .filter(order => order.status === 'confirmed' && order.location?.id === locationId)
+      .sort((left, right) => dateForOrder(right).localeCompare(dateForOrder(left)));
+    const allowedIds = new Set(orders.map(order => order.id));
+    const selectedIds = new Set((selectedOrderIds || []).filter(id => allowedIds.has(id)));
+    const demandByItem = new Map();
+    for (const order of orders.filter(order => selectedIds.has(order.id))) {
+      for (const item of order.items || []) {
+        const key = String(item.key || item.code || '').trim().toUpperCase();
+        const internalQuantity = item.internalQuantity === null || item.internalQuantity === undefined
+          ? null : Number(item.internalQuantity);
+        const unitsPerPurchaseUnit = item.unitsPerPurchaseUnit === null || item.unitsPerPurchaseUnit === undefined
+          ? null : Number(item.unitsPerPurchaseUnit);
+        const quantity = item.quantity === null || item.quantity === undefined ? null : Number(item.quantity);
+        const value = Number.isFinite(internalQuantity)
+          ? internalQuantity
+          : (Number.isFinite(quantity) && Number.isFinite(unitsPerPurchaseUnit)
+            ? quantity * unitsPerPurchaseUnit : null);
+        if (!key || value === null) continue;
+        if (!demandByItem.has(key)) demandByItem.set(key, []);
+        demandByItem.get(key).push({ quantity: value, unit: item.internalUnit || '' });
+      }
+    }
+    return {
+      selectedOrderIds: [...selectedIds],
+      selectedOrderCount: selectedIds.size,
+      orders: orders.map(order => {
+        const confirmedAt = dateForOrder(order);
+        return {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          supplier: order.supplier,
+          confirmedAt,
+          date: confirmedAt.slice(0, 10),
+          itemCount: (order.items || []).length,
+          total: order.total,
+          selected: selectedIds.has(order.id)
+        };
+      }),
+      demandByItem
+    };
+  }
+
+  function buildPurchaseProjection(locationId, selectedBranchLocationIds = null, selectedPurchaseOrderIds = null) {
     const location = activeLocation(locationId);
     if (!location) {
       const error = new Error('Selecciona una cafetería o bodega válida.');
@@ -2597,6 +2715,10 @@ function createApp(options = {}) {
     const consumptionGroups = groups.filter(group => group.date >= periodFrom);
     const policies = readPurchaseProjectionPolicies().locations?.[location.id]?.items || {};
     const references = projectionPurchaseReferences(location.id);
+    const branchOrders = location.type === 'warehouse'
+      ? branchPurchaseOrderConsolidation(selectedBranchLocationIds)
+      : null;
+    const purchaseOrders = projectionPurchaseOrderSelection(location.id, selectedPurchaseOrderIds);
     const catalogMaster = latestMasterFile('master-catalog', today);
     const conversions = catalogMaster ? parsePurchaseUnitConversions(catalogMaster.filePath) : new Map();
     const supplierOptions = new Map(references.suppliers);
@@ -2640,8 +2762,28 @@ function createApp(options = {}) {
       const supplier = configuredSupplier || inferredSupplier || supplierOptions.get('unassigned');
       const minimumStock = averageDailyConsumption * minDays;
       const maximumStock = averageDailyConsumption * maxDays;
-      const needsPurchase = averageDailyConsumption > 0 && currentInventory <= minimumStock;
-      const suggestedInternalQuantity = needsPurchase ? Math.max(0, maximumStock - currentInventory) : 0;
+      const ownNeedsPurchase = averageDailyConsumption > 0 && currentInventory <= minimumStock;
+      const ownSuggestedInternalQuantity = ownNeedsPurchase ? Math.max(0, maximumStock - currentInventory) : 0;
+      let branchOrderConversionMissing = false;
+      const branchOrderInternalQuantity = (branchOrders?.demandByItem.get(key) || []).reduce((sum, demand) => {
+        const converted = convertQuantityUnit(demand.quantity, demand.unit, product.unit);
+        if (converted === null) branchOrderConversionMissing = true;
+        return sum + (converted ?? 0);
+      }, 0);
+      const needsPurchase = ownNeedsPurchase || branchOrderInternalQuantity > 0;
+      const suggestedInternalQuantity = ownSuggestedInternalQuantity + branchOrderInternalQuantity;
+      let purchaseOrderConversionMissing = false;
+      const purchaseOrderInternalQuantity = (purchaseOrders.demandByItem.get(key) || []).reduce((sum, demand) => {
+        const converted = convertQuantityUnit(demand.quantity, demand.unit, product.unit);
+        if (converted === null) purchaseOrderConversionMissing = true;
+        return sum + (converted ?? 0);
+      }, 0);
+      const inventoryAfterPurchaseOrders = currentInventory
+        + purchaseOrderInternalQuantity
+        - branchOrderInternalQuantity;
+      const coverageAfterPurchaseOrdersDays = averageDailyConsumption > 0
+        ? inventoryAfterPurchaseOrders / averageDailyConsumption
+        : null;
       const suggestedPurchaseUnits = suggestedInternalQuantity > 0 && unitsPerPurchaseUnit > 0
         ? Math.ceil(suggestedInternalQuantity / unitsPerPurchaseUnit)
         : null;
@@ -2666,6 +2808,14 @@ function createApp(options = {}) {
         managed,
         minimumStock,
         maximumStock,
+        ownNeedsPurchase,
+        ownSuggestedInternalQuantity,
+        branchOrderInternalQuantity,
+        branchOrderConversionMissing,
+        purchaseOrderInternalQuantity,
+        purchaseOrderConversionMissing,
+        inventoryAfterPurchaseOrders,
+        coverageAfterPurchaseOrdersDays,
         supplierKey: supplier.key,
         supplier: supplier.name,
         supplierTaxId: supplier.taxId || '',
@@ -2692,6 +2842,21 @@ function createApp(options = {}) {
       consumptionCriteria: location.type === 'warehouse'
         ? 'Transferencias y transformaciones salientes del Kardex'
         : 'Consumo por ventas, transferencias y transformaciones salientes del Kardex',
+      branchOrders: branchOrders ? {
+        available: true,
+        companySupplier: branchOrders.companySupplier,
+        selectedLocationIds: branchOrders.selectedLocationIds,
+        selectedOrderCount: branchOrders.selectedOrderCount,
+        locations: branchOrders.locations,
+        unconvertedItemCount: items.filter(item => item.branchOrderConversionMissing).length
+      } : { available: false, selectedLocationIds: [], selectedOrderCount: 0, locations: [] },
+      purchaseOrders: {
+        available: true,
+        selectedOrderIds: purchaseOrders.selectedOrderIds,
+        selectedOrderCount: purchaseOrders.selectedOrderCount,
+        orders: purchaseOrders.orders,
+        unconvertedItemCount: items.filter(item => item.purchaseOrderConversionMissing).length
+      },
       suppliers: [...supplierOptions.values()].sort((left, right) => left.name.localeCompare(right.name, 'es')),
       items,
       summary: {
@@ -2708,7 +2873,15 @@ function createApp(options = {}) {
 
   app.get('/api/purchase-projections', (req, res) => {
     try {
-      return res.json(buildPurchaseProjection(String(req.query.location || '')));
+      const selectedBranchLocationIds = Object.prototype.hasOwnProperty.call(req.query, 'branches')
+        ? String(req.query.branches || '').split(',').map(value => value.trim()).filter(Boolean)
+        : null;
+      const selectedPurchaseOrderIds = Object.prototype.hasOwnProperty.call(req.query, 'orders')
+        ? String(req.query.orders || '').split(',').map(value => value.trim()).filter(Boolean)
+        : null;
+      return res.json(buildPurchaseProjection(
+        String(req.query.location || ''), selectedBranchLocationIds, selectedPurchaseOrderIds
+      ));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo calcular la proyección de compras.' });
     }
@@ -2836,15 +3009,16 @@ function createApp(options = {}) {
       const key = String(requestedItem.key || '').trim().toUpperCase();
       const source = allowed.get(key);
       const quantity = Number(requestedItem.quantity);
-      const unitCost = Number(requestedItem.unitCost);
+      const requestedUnitCost = Number(requestedItem.unitCost);
       if (!source || seen.has(key) || !Number.isFinite(quantity) || quantity <= 0
-        || !Number.isFinite(unitCost) || unitCost < 0) {
+        || !Number.isFinite(requestedUnitCost) || requestedUnitCost < 0) {
         const error = new Error('Cada ítem debe ser válido, no repetirse y tener cantidad y costo correctos.');
         error.status = 400;
         throw error;
       }
       seen.add(key);
-      const referenceCost = Number(source.estimatedPurchaseUnitCost ?? source.referenceUnitCost ?? 0);
+      const unitCost = Math.round(requestedUnitCost);
+      const referenceCost = Math.round(Number(source.estimatedPurchaseUnitCost ?? source.referenceUnitCost ?? 0));
       const unitsPerPurchaseUnit = Number(source.unitsPerPurchaseUnit);
       return {
         key,
@@ -2858,7 +3032,7 @@ function createApp(options = {}) {
         quantity,
         unitCost,
         internalQuantity: Number.isFinite(unitsPerPurchaseUnit) ? quantity * unitsPerPurchaseUnit : null,
-        costModified: Math.abs(unitCost - referenceCost) > 0.005,
+        costModified: unitCost !== referenceCost,
         total: quantity * unitCost
       };
     });
@@ -2909,7 +3083,11 @@ function createApp(options = {}) {
         projectionPeriod: projection.period,
         filters: {
           onlyRequired: req.body?.filters?.onlyRequired === true,
-          onlyManaged: req.body?.filters?.onlyManaged === true
+          onlyManaged: req.body?.filters?.onlyManaged === true,
+          branchLocationIds: Array.isArray(req.body?.filters?.branchLocationIds)
+            ? req.body.filters.branchLocationIds.map(value => String(value)) : [],
+          selectedPurchaseOrderIds: Array.isArray(req.body?.filters?.selectedPurchaseOrderIds)
+            ? req.body.filters.selectedPurchaseOrderIds.map(value => String(value)) : []
         },
         items,
         total: items.reduce((sum, item) => sum + item.total, 0)

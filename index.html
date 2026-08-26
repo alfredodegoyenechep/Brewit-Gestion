@@ -8,6 +8,9 @@
 </head>
 <body>
   <aside class="sidebar">
+    <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-expanded="true" aria-label="Contraer menú lateral" title="Contraer menú lateral">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+    </button>
     <div class="brand">
       <img class="brand-logo" src="docs/brewit-final-01.jpg" alt="Brewit coffee logo" />
     </div>
@@ -21,34 +24,34 @@
           <path d="M12 18v-11" />
           <path d="M17 11v-4" />
         </svg>
-        Resumen General Ventas
+        <span class="nav-text">Resumen General Ventas</span>
       </a>
       <a href="#" class="nav-link" data-view="sales">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M8 2v4M16 2v4M3 10h18" />
         </svg>
-        Ventas
+        <span class="nav-text">Ventas</span>
       </a>
       <a href="#" class="nav-link" data-view="sales-ingredients">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M12 3c4 3 6 6 6 10a6 6 0 0 1-12 0c0-4 2-7 6-10Z" />
           <path d="M9 15c2-1 4-3 5-6M16 5l3-2M18 8h3" />
         </svg>
-        Ventas por Ingredientes
+        <span class="nav-text">Ventas por Ingredientes</span>
       </a>
       <a href="#" class="nav-link" data-view="products">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M6 11h12M6 7h12M6 15h12M6 19h7" />
         </svg>
-        Productos
+        <span class="nav-text">Productos</span>
       </a>
       <a href="#" class="nav-link" data-view="ingredients">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M12 3c4 3 6 6 6 10a6 6 0 0 1-12 0c0-4 2-7 6-10Z" />
           <path d="M9 15c2-1 4-3 5-6" />
         </svg>
-        Ingredientes
+        <span class="nav-text">Ingredientes</span>
       </a>
       <a href="#" class="nav-link" data-view="inventory">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -57,21 +60,21 @@
           <path d="M20 21V10" />
           <path d="M4 10l8-7 8 7" />
         </svg>
-        Inventario
+        <span class="nav-text">Inventario</span>
       </a>
       <a href="#" class="nav-link" data-view="purchases">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M9 16h6M9 12h6M9 8h3" />
         </svg>
-        Compras
+        <span class="nav-text">Compras</span>
       </a>
       <a href="#" class="nav-link" data-view="purchase-projection">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M4 19V9M10 19V5M16 19v-7M3 19h18" />
           <path d="m15 5 2-2 2 2M17 3v6" />
         </svg>
-        Proyección de Compras
+        <span class="nav-text">Proyección de Compras</span>
       </a>
       <a href="#" class="nav-link" data-view="uploads">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -79,21 +82,21 @@
           <path d="m7 10 5 5 5-5" />
           <path d="M4 19h16" />
         </svg>
-        Cargar Archivos
+        <span class="nav-text">Cargar Archivos</span>
       </a>
       <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
           <path d="M19.4 15a7.7 7.7 0 0 0 .1-1 7.7 7.7 0 0 0-.1-1l2.1-1.7-2-3.4-2.6 1a7 7 0 0 0-1.8-1L14.5 2h-5l-.7 2.9a7 7 0 0 0-1.8 1l-2.6-1-2 3.4 2.1 1.7a7.7 7.7 0 0 0-.1 1 7.7 7.7 0 0 0 .1 1l-2.1 1.7 2 3.4 2.6-1a7 7 0 0 0 1.8 1l.7 2.9h5l.7-2.9a7 7 0 0 0 1.8-1l2.6 1 2-3.4Z" />
         </svg>
-        Configuracion
+        <span class="nav-text">Configuracion</span>
       </a>
     </nav>
 
     <div class="workspace-user">
       <div class="user-row">
         <div class="avatar">BS</div>
-        <div>
+        <div class="user-copy">
           <div class="user-name">Brewit Studio</div>
           <div class="user-role">Admin Console</div>
         </div>
@@ -683,15 +686,55 @@
         <table class="purchase-projection-table">
           <thead>
             <tr>
-              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit">Unidad interna</th>
-              <th data-sort-key="currentInventory">Inventario actual</th><th data-sort-key="consumption30">Consumo y TRN-OUT 30 días</th><th data-sort-key="averageDailyConsumption">Promedio diario</th><th data-sort-key="currentCoverageDays">Cobertura actual</th>
-              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th data-sort-key="suggestedInternalQuantity">Sugerencia interna</th><th data-sort-key="purchaseUnit">UDC</th>
-              <th data-sort-key="unitsPerPurchaseUnit">Unidades x UDC</th><th data-sort-key="suggestedPurchaseUnits">UDC sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost">Costo UDC estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
+              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th>
+              <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th data-sort-key="consumption30" data-header-lines="Consumo y TRN-OUT|30 días">Consumo y TRN-OUT<br />30 días</th><th data-sort-key="averageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
+              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th id="projection-branch-orders-header" hidden><button id="open-projection-branch-orders" class="projection-orders-header-button" type="button" title="Seleccionar sucursales para consolidar">OC Suc</button></th><th data-sort-key="suggestedInternalQuantity" data-header-lines="Sugerencia|interna">Sugerencia<br />interna</th><th data-sort-key="purchaseUnit">UDC</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
+              <th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Unidades x|UDC">Unidades x<br />UDC</th><th data-sort-key="suggestedPurchaseUnits" data-header-lines="UDC|sugeridas">UDC<br />sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo UDC|estimado">Costo UDC<br />estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
             </tr>
           </thead>
           <tbody id="purchase-projection-body"></tbody>
         </table>
       </div>
+      <dialog id="projection-branch-orders-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-branch-orders-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Bodega principal</div>
+            <h2 id="projection-branch-orders-title">Órdenes de compra de sucursales</h2>
+            <p id="projection-branch-orders-description" class="panel-description"></p>
+          </div>
+          <button id="cancel-projection-branch-orders" class="icon-button" type="button">Cancelar</button>
+        </div>
+        <div class="projection-branch-orders-table-wrap">
+          <table class="projection-branch-orders-table">
+            <thead><tr><th>Incluir</th><th>Sucursal</th><th>Última orden de compra</th><th>Fecha</th><th>OC incluidas</th></tr></thead>
+            <tbody id="projection-branch-orders-body"></tbody>
+          </table>
+        </div>
+        <p class="form-status muted">Las fechas con más de 3 días de antigüedad se muestran en rojo; las más recientes, en azul.</p>
+        <div class="projection-branch-orders-actions">
+          <button id="apply-projection-branch-orders" class="primary" type="button">Aplicar y actualizar cálculo</button>
+        </div>
+      </dialog>
+      <dialog id="projection-purchase-orders-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-purchase-orders-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Proyección de compras</div>
+            <h2 id="projection-purchase-orders-title">Órdenes consideradas en la proyección</h2>
+            <p id="projection-purchase-orders-description" class="panel-description"></p>
+          </div>
+          <button id="cancel-projection-purchase-orders" class="icon-button" type="button">Cancelar</button>
+        </div>
+        <div id="projection-purchase-orders-status" class="form-status muted"></div>
+        <div class="projection-branch-orders-table-wrap">
+          <table class="projection-branch-orders-table projection-purchase-orders-table">
+            <thead><tr><th>Incluir</th><th>Orden de compra</th><th>Proveedor</th><th>Fecha</th><th>Ítems</th><th>Total</th></tr></thead>
+            <tbody id="projection-purchase-orders-body"></tbody>
+          </table>
+        </div>
+        <div class="projection-branch-orders-actions">
+          <button id="apply-projection-purchase-orders" class="primary" type="button">Aplicar y actualizar cálculo</button>
+        </div>
+      </dialog>
       <dialog id="purchase-order-editor-dialog" class="inventory-report-dialog purchase-order-editor-dialog" aria-labelledby="purchase-order-editor-title">
         <div class="purchase-order-dialog-head">
           <div>
@@ -1019,7 +1062,7 @@
             <label>Desde <input type="date" id="confirmed-date-from" /></label>
             <label>Hasta <input type="date" id="confirmed-date-to" /></label>
           </div>
-          <label class="confirmation-check">
+          <label id="date-confirmation-row" class="confirmation-check">
             <input type="checkbox" id="dates-confirmed" />
             Confirmo que estas fechas son válidas para los archivos seleccionados.
           </label>
