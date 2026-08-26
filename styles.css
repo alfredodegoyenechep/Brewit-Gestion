@@ -2140,6 +2140,24 @@ body {
 
 .ingredient-ranking-panel h3 { margin: 4px 0 0; }
 
+.ingredient-ranking-limit {
+  display: grid;
+  gap: 5px;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.ingredient-ranking-limit select {
+  min-width: 92px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+}
+
 .ingredient-ranking-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -153,6 +153,43 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     if (!link.classList.contains('active')) throw new Error('Resumen General Ventas no quedó como vista inicial activa.');
   });
 
+  const rankingItems = Array.from({ length: 55 }, (_, index) => ({
+    code: `I${String(index + 1).padStart(3, '0')}`,
+    name: `Ingrediente ${index + 1}`,
+    supplierKey: 'unassigned',
+    supplier: 'Proveedor no identificado',
+    unit: 'UN',
+    unitCost: 1,
+    latestPurchaseCost: null,
+    costChangePercent: null,
+    usageQuantity: 55 - index,
+    usageUnit: 'UN',
+    usageCost: 55 - index,
+    products: []
+  }));
+  const ingredientRankingRoute = route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      date: '2026-08-10',
+      period: { from: '2026-07-12', to: '2026-08-10' },
+      scope: { location: 'all', label: 'Todas las cafeterías', type: 'stores' },
+      locations: [],
+      suppliers: [],
+      items: rankingItems,
+      summary: { ingredientCount: 55, usedIngredientCount: 55, totalUsageCost: 1540, changedCostCount: 0 }
+    })
+  });
+  await page.route('**/api/ingredients?**', ingredientRankingRoute);
+  await page.getByRole('link', { name: 'Ingredientes', exact: true }).click();
+  await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').first().waitFor();
+  assert.deepEqual(await page.locator('#ingredients-ranking-limit option').allTextContents(), ['Top 10', 'Top 20', 'Top 50']);
+  assert.equal(await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').count(), 10);
+  await page.locator('#ingredients-ranking-limit').selectOption('20');
+  assert.equal(await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').count(), 20);
+  await page.locator('#ingredients-ranking-limit').selectOption('50');
+  assert.equal(await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').count(), 50);
+  await page.unroute('**/api/ingredients?**', ingredientRankingRoute);
+
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
   await page.getByRole('heading', { name: 'Cargar archivos' }).waitFor({ state: 'visible' });
   await page.locator('[data-weekly-field="sales"] .file-upload-state.uploaded').waitFor();

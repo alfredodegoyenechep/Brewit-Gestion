@@ -1962,7 +1962,9 @@ function renderIngredientsView() {
     chip.textContent = text;
     return chip;
   }));
-  const ranked = [...items].filter(item => item.usageCost > 0).sort((left, right) => right.usageCost - left.usageCost).slice(0, 10);
+  const requestedRankingLimit = Number(document.getElementById('ingredients-ranking-limit').value);
+  const rankingLimit = [10, 20, 50].includes(requestedRankingLimit) ? requestedRankingLimit : 10;
+  const ranked = [...items].filter(item => item.usageCost > 0).sort((left, right) => right.usageCost - left.usageCost).slice(0, rankingLimit);
   const rankingTotal = items.reduce((sum, item) => sum + item.usageCost, 0);
   ranking.replaceChildren(...ranked.map((item, index) => {
     const row = document.createElement('div');
@@ -5464,6 +5466,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('ingredients-supplier-filter').addEventListener('change', renderIngredientsView);
   document.getElementById('ingredients-search').addEventListener('input', renderIngredientsView);
   document.getElementById('ingredients-only-changed').addEventListener('change', renderIngredientsView);
+  document.getElementById('ingredients-ranking-limit').addEventListener('change', renderIngredientsView);
   document.getElementById('refresh-ingredients').addEventListener('click', loadIngredientsView);
   document.getElementById('print-ingredients-report').addEventListener('click', printIngredientsReport);
   document.getElementById('export-ingredients-report').addEventListener('click', exportIngredientsReport);
