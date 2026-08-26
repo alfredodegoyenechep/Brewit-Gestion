@@ -1032,10 +1032,12 @@ function parseProductCatalog(filePath) {
 
 function parseIngredientsCatalog(filePath) {
   const workbook = XLSX.readFile(filePath, { cellDates: true });
-  const sheetNames = workbook.SheetNames.filter(name => /^ingr|ingred/i.test(name));
-  if (!sheetNames.length) throw new Error('El maestro no contiene una hoja de ingredientes.');
+  const ingredientSheetNames = workbook.SheetNames.filter(name => /^ingr|ingred/i.test(name));
+  if (!ingredientSheetNames.length) throw new Error('El maestro no contiene una hoja de ingredientes.');
+  const extraSheetNames = workbook.SheetNames.filter(name => /^extr|extra/i.test(name));
   const ingredients = new Map();
-  for (const sheetName of sheetNames) {
+  for (const sheetName of [...ingredientSheetNames, ...extraSheetNames]) {
+    const isExtraSheet = extraSheetNames.includes(sheetName);
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true, blankrows: false });
     const headerIndex = rows.slice(0, 5).findIndex(row => findHeaderColumn(row, ['ID Producto **', 'ID Producto']) >= 0);
     if (headerIndex < 0) continue;
@@ -1047,8 +1049,9 @@ function parseIngredientsCatalog(filePath) {
     const activeColumn = findHeaderColumn(headers, ['Activo']);
     for (const row of rows.slice(headerIndex + 1)) {
       const code = String(row[codeColumn] ?? '').trim();
-      if (!code) continue;
-      ingredients.set(code.toUpperCase(), {
+      const key = code.toUpperCase();
+      if (!code || (isExtraSheet && (!key.startsWith('SUB') || ingredients.has(key)))) continue;
+      ingredients.set(key, {
         code,
         name: repairMojibake(row[nameColumn]) || code,
         unit: String(row[unitColumn] ?? '').trim(),

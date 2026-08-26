@@ -495,13 +495,19 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
     ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
     ['I1', 'Ingrediente Uno', 4, 'kg']
   ]), 'Ingr');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'ce', 'ub'],
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['SUB005', 'Subreceta en extras', 20, 'kg'],
+    ['EX001', 'Extra común', 100, 'UN']
+  ]), 'Extr');
   const masters = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
     body: fileForm([{
       field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo.xlsx'
     }, {
       field: 'master-recipes',
-      contents: 'Id Producto\tNombre Producto*\tId Ingrediente\tNombre Ingrediente*\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento\nP1\tProducto Uno\tI1\tIngrediente Uno\t0,5\tkg\t80',
+      contents: 'Id Producto\tNombre Producto*\tId Ingrediente\tNombre Ingrediente*\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento\nP1\tProducto Uno\tI1\tIngrediente Uno\t0,5\tkg\t80\nP1\tProducto Uno\tSUB005\tSubreceta en extras\t0,2\tkg\t100',
       filename: 'recetas.txt'
     }, {
       field: 'master-suppliers', contents: 'Nombre*\tRUT/Fiscal ID*\nProveedor Uno\t111', filename: 'proveedores.txt'
@@ -526,7 +532,10 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   const response = await fetch(`${baseUrl}/api/ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`);
   assert.equal(response.status, 200);
   const report = await response.json();
-  assert.equal(report.items.length, 1);
+  assert.equal(report.items.length, 2);
+  assert.equal(report.summary.ingredientCount, 2);
+  assert.equal(report.summary.usedIngredientCount, 2);
+  assert.equal(report.items.some(item => item.code === 'EX001'), false);
   assert.equal(report.items[0].supplier, 'Proveedor Uno');
   assert.equal(report.items[0].products.length, 1);
   assert.equal(report.items[0].products[0].yieldRate, 80);
@@ -539,7 +548,12 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(report.items[0].usageCost, 10);
   assert.equal(report.items[0].latestPurchaseCost, 6);
   assert.equal(Math.round(report.items[0].costChangePercent), 20);
-  assert.equal(report.summary.totalUsageCost, 10);
+  const subrecipe = report.items.find(item => item.code === 'SUB005');
+  assert.equal(subrecipe.name, 'Subreceta en extras');
+  assert.equal(subrecipe.usageQuantity, 0.8);
+  assert.equal(subrecipe.usageCost, 16);
+  assert.equal(subrecipe.products[0].code, 'P1');
+  assert.equal(report.summary.totalUsageCost, 26);
 
   const warehouseKardex = [
     ['Código', 'Nombre', 'Unidad', '2026-08-10', '', '', '', '2026-08-11', '', '', ''],
