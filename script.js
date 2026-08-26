@@ -337,16 +337,16 @@ function transactionUploadStatus() {
   return document.getElementById(transactionUploadContext?.statusId || 'week-status');
 }
 
-async function inspectSelectedTransactionFile(input, locationOverride = null) {
-  if (!input.files.length) return;
+async function inspectTransactionFile(file, field, locationOverride = null, input = null) {
+  if (!file) return;
   const status = transactionUploadStatus();
   clearInspection();
-  setStatus(status, `Validando “${input.files[0].name}” y detectando sus fechas…`);
+  setStatus(status, `Validando “${file.name}” y detectando sus fechas…`);
   document.querySelectorAll('.transaction-upload-button').forEach(button => { button.disabled = true; });
   try {
     const location = locationOverride || transactionUploadContext?.location || document.getElementById('location-select').value;
     const formData = new FormData();
-    formData.append(input.name, input.files[0]);
+    formData.append(field, file);
     const manifest = await apiRequest(`/api/uploads/transactions/inspect?location=${encodeURIComponent(location)}`, {
       method: 'POST',
       body: formData
@@ -363,12 +363,17 @@ async function inspectSelectedTransactionFile(input, locationOverride = null) {
         : 'La estructura es válida, pero no se detectaron fechas. Ingresa el rango correcto en la ventana emergente.', 'success');
     }
   } catch (error) {
-    input.value = '';
+    if (input) input.value = '';
     setStatus(status, error.message, 'error');
     transactionUploadContext = null;
   } finally {
     updateFileUploadControls();
   }
+}
+
+async function inspectSelectedTransactionFile(input, locationOverride = null) {
+  if (!input.files.length) return;
+  return inspectTransactionFile(input.files[0], input.name, locationOverride, input);
 }
 
 function clearWeeklySelections() {
@@ -659,6 +664,60 @@ function startReportSalesUpload() {
     return setStatus(document.getElementById('report-status'), 'No hay cafeterías activas disponibles para cargar ventas.', 'error');
   }
   document.getElementById('report-sales-location-dialog').showModal();
+}
+
+async function downloadReportSalesFromToteat() {
+  const status = document.getElementById('report-status');
+  const button = document.getElementById('report-download-toteat-sales');
+  const location = document.getElementById('report-location-filter').value || 'all';
+  if (location === 'all' || locationRegistry[location]?.type !== 'store') {
+    return setStatus(status, 'Selecciona una cafetería específica antes de descargar sus ventas desde Toteat.', 'error');
+  }
+  button.disabled = true;
+  setStatus(status, `Conectando con Toteat para ${locationRegistry[location].name}…`);
+  try {
+    const response = await fetch('/api/integrations/toteat/download-sales', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location })
+    });
+    if (response.ok) {
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `ventas-toteat-${location}.xlsx`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      transactionUploadContext = { source: 'report', statusId: 'report-status', location, refreshReport: true, downloadedFrom: 'toteat' };
+      setStatus(status, `Reporte ${filename} descargado. Preparando la confirmación de carga…`);
+      await inspectTransactionFile(new File([blob], filename, { type: blob.type || 'text/csv' }), 'sales', location);
+      return;
+    }
+    const error = await response.json().catch(() => ({}));
+    if (response.status !== 409 || error.code !== 'TOTEAT_AUTH_REQUIRED') {
+      throw new Error(error.error || 'No se pudo descargar el reporte desde Toteat.');
+    }
+    setStatus(status, `Abriendo Toteat para conectar ${locationRegistry[location].name}…`);
+    const connectResponse = await fetch('/api/integrations/toteat/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location })
+    });
+    const connection = await connectResponse.json().catch(() => ({}));
+    if (!connectResponse.ok) throw new Error(connection.error || 'No se pudo abrir la sesión de Toteat.');
+    setStatus(status,
+      `Se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`,
+      'muted');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function refreshSalesDashboardLocationFilter() {
@@ -5188,6 +5247,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     inspectSelectedTransactionFile(event.currentTarget, transactionUploadContext?.location);
   });
   document.getElementById('report-upload-sales').addEventListener('click', startReportSalesUpload);
+  document.getElementById('report-download-toteat-sales').addEventListener('click', downloadReportSalesFromToteat);
   document.getElementById('confirm-report-sales-location').addEventListener('click', () => {
     const location = document.getElementById('report-sales-upload-location').value;
     closeReportSalesLocationDialog();

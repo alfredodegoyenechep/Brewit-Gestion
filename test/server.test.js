@@ -310,6 +310,56 @@ test('filters the sales report by cafeteria and defaults to all cafeterias', asy
   assert.equal((await fetch(`${baseUrl}/api/reports/weekly-sales?location=main-warehouse`)).status, 400);
 });
 
+test('downloads Toteat sales for a specific cafeteria and keeps authentication external', async t => {
+  const calls = [];
+  let connected = false;
+  const toteatAutomation = {
+    async connect(location) {
+      calls.push(['connect', location]);
+      connected = true;
+      return { opened: true };
+    },
+    async downloadSales(location) {
+      calls.push(['download', location]);
+      if (!connected) {
+        const error = new Error('Inicia sesión en Toteat.');
+        error.code = 'TOTEAT_AUTH_REQUIRED';
+        error.status = 409;
+        throw error;
+      }
+      return {
+        filename: 'ventas-totales.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('toteat-report')
+      };
+    }
+  };
+  const baseUrl = await startTestServer(t, { toteatAutomation });
+  const invalid = await fetch(`${baseUrl}/api/integrations/toteat/download-sales`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'all' })
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(calls, []);
+
+  const authenticationRequired = await fetch(`${baseUrl}/api/integrations/toteat/download-sales`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
+  });
+  assert.equal(authenticationRequired.status, 409);
+  assert.equal((await authenticationRequired.json()).code, 'TOTEAT_AUTH_REQUIRED');
+
+  const connection = await fetch(`${baseUrl}/api/integrations/toteat/connect`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
+  });
+  assert.equal(connection.status, 200);
+  const download = await fetch(`${baseUrl}/api/integrations/toteat/download-sales`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
+  });
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get('content-disposition'), /ventas-totales\.xlsx/);
+  assert.equal(Buffer.from(await download.arrayBuffer()).toString(), 'toteat-report');
+  assert.deepEqual(calls, [['download', 'store-1'], ['connect', 'store-1'], ['download', 'store-1']]);
+});
+
 test('organizes products by hierarchy and calculates rolling sales by cafeteria', async t => {
   let reportToday = '2026-08-14';
   const baseUrl = await startTestServer(t, { reportToday: () => reportToday });

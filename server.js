@@ -1517,6 +1517,132 @@ function cleanExpiredStaging(stagingRoot) {
   }
 }
 
+const TOTEAT_REPORT_URL = 'https://res8.toteat.com/#/reportes/cierres';
+
+function chromeExecutablePath() {
+  return [
+    process.env.BREWIT_CHROME_PATH,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser'
+  ].filter(Boolean).find(candidate => fs.existsSync(candidate)) || null;
+}
+
+function createToteatAutomation(profilesRoot) {
+  const contexts = new Map();
+  ensureDir(profilesRoot);
+  const automationError = (message, code, status = 500) => {
+    const error = new Error(message);
+    error.code = code;
+    error.status = status;
+    return error;
+  };
+  const launch = async (locationId, headless) => {
+    let chromium;
+    try { ({ chromium } = require('playwright-core')); } catch {
+      throw automationError('La automatización de Toteat no está instalada en este servidor.', 'TOTEAT_BROWSER_UNAVAILABLE');
+    }
+    const executablePath = chromeExecutablePath();
+    if (!executablePath) {
+      throw automationError('No se encontró Google Chrome o Chromium para conectarse a Toteat.', 'TOTEAT_BROWSER_UNAVAILABLE');
+    }
+    const profileRoot = path.join(profilesRoot, locationId);
+    ensureDir(profileRoot);
+    return chromium.launchPersistentContext(profileRoot, {
+      executablePath,
+      headless,
+      acceptDownloads: true,
+      viewport: { width: 1440, height: 960 },
+      args: ['--disable-blink-features=AutomationControlled']
+    });
+  };
+  const reportPage = async context => {
+    const pages = context.pages();
+    const page = pages.find(item => item.url().includes('toteat.com')) || pages[0] || await context.newPage();
+    await page.goto(TOTEAT_REPORT_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    return page;
+  };
+  return {
+    async connect(locationId) {
+      const current = contexts.get(locationId);
+      if (current) {
+        const page = await reportPage(current);
+        await page.bringToFront();
+        return { opened: true };
+      }
+      const context = await launch(locationId, false);
+      contexts.set(locationId, context);
+      context.on('close', () => contexts.delete(locationId));
+      await reportPage(context);
+      return { opened: true };
+    },
+    async downloadSales(locationId) {
+      let context = contexts.get(locationId);
+      const reusedVisibleContext = Boolean(context);
+      if (!context) context = await launch(locationId, true);
+      try {
+        const page = await reportPage(context);
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        const downloadLabel = /(?:Descargar\s+Ventas\s+Totales|Download\s+Total\s+Sales)/i;
+        const candidates = [
+          page.getByRole('button', { name: downloadLabel }).first(),
+          page.locator('button, [role="button"], a').filter({ hasText: downloadLabel }).first(),
+          page.getByText(downloadLabel).first()
+        ];
+        let button = null;
+        for (const [index, candidate] of candidates.entries()) {
+          if (await candidate.isVisible({ timeout: index ? 2000 : 15000 }).catch(() => false)) {
+            button = candidate;
+            break;
+          }
+        }
+        if (!button) {
+          const authenticationVisible = await page.locator('input[type="password"]').first().isVisible().catch(() => false)
+            || await page.getByText(/(?:Iniciar\s+sesión|Ingresar|Sign\s+in|Log\s+in)/i).first().isVisible().catch(() => false)
+            || /login|signin|auth/i.test(page.url());
+          if (!authenticationVisible) {
+            const labels = await page.locator('button, [role="button"]').allTextContents().catch(() => []);
+            const visibleLabels = labels.map(value => value.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 12);
+            throw automationError(
+              `Toteat abrió el reporte, pero no se encontró “Download Total Sales”. Controles visibles: ${visibleLabels.join(' · ') || 'ninguno'}.`,
+              'TOTEAT_BUTTON_NOT_FOUND',
+              502
+            );
+          }
+          throw automationError(
+            'La sesión de Toteat necesita autenticación. Inicia sesión en la ventana que se abrirá y vuelve a intentar.',
+            'TOTEAT_AUTH_REQUIRED',
+            409
+          );
+        }
+        const downloadPromise = page.waitForEvent('download', { timeout: 90000 });
+        await button.click();
+        const download = await downloadPromise;
+        const failure = await download.failure();
+        if (failure) throw automationError(`Toteat no pudo generar el archivo: ${failure}`, 'TOTEAT_DOWNLOAD_FAILED', 502);
+        const stream = await download.createReadStream();
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        const filename = download.suggestedFilename() || `ventas-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        const extension = path.extname(filename).toLowerCase();
+        return {
+          filename,
+          contentType: extension === '.csv'
+            ? 'text/csv; charset=utf-8'
+            : extension === '.xls'
+              ? 'application/vnd.ms-excel'
+              : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: Buffer.concat(chunks)
+        };
+      } finally {
+        if (!reusedVisibleContext) await context.close().catch(() => {});
+      }
+    }
+  };
+}
+
 function createApp(options = {}) {
   const app = express();
   const uploadsRoot = options.uploadsRoot || process.env.BREWIT_UPLOADS_ROOT || path.join(__dirname, 'uploads');
@@ -1528,6 +1654,7 @@ function createApp(options = {}) {
   const productReportsRoot = path.join(uploadsRoot, 'reports', 'products');
   const purchaseOrdersRoot = path.join(uploadsRoot, 'reports', 'purchase-orders');
   const trashLocationsRoot = path.join(uploadsRoot, 'trash', 'locations');
+  const toteatProfilesRoot = path.join(uploadsRoot, '.integrations', 'toteat');
   const locationsPath = path.join(configRoot, 'locations.json');
   const companyProfilePath = path.join(configRoot, 'company-profile.json');
   const purchaseOrderCounterPath = path.join(configRoot, 'purchase-order-counter.json');
@@ -1540,6 +1667,8 @@ function createApp(options = {}) {
   ensureDir(productReportsRoot);
   ensureDir(purchaseOrdersRoot);
   ensureDir(trashLocationsRoot);
+  ensureDir(toteatProfilesRoot);
+  const toteatAutomation = options.toteatAutomation || createToteatAutomation(toteatProfilesRoot);
   migrateLegacySundayWeeks(weeksRoot);
   if (!fs.existsSync(locationsPath)) {
     const createdAt = new Date().toISOString();
@@ -4511,6 +4640,46 @@ function createApp(options = {}) {
       return res.json(buildHourlySalesDemand(String(req.query.location || 'all'), req.query));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la demanda por franja horaria.' });
+    }
+  });
+
+  function toteatStore(locationId) {
+    const location = activeLocation(locationId);
+    if (!location || location.type !== 'store') {
+      const error = new Error('Selecciona una cafetería específica para descargar sus ventas desde Toteat.');
+      error.status = 400;
+      error.code = 'TOTEAT_LOCATION_REQUIRED';
+      throw error;
+    }
+    return location;
+  }
+
+  app.post('/api/integrations/toteat/connect', async (req, res) => {
+    try {
+      const location = toteatStore(String(req.body?.location || ''));
+      await toteatAutomation.connect(location.id);
+      return res.json({ opened: true, location: publicLocation(location), reportUrl: TOTEAT_REPORT_URL });
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        error: error.message || 'No se pudo abrir Toteat.',
+        code: error.code || 'TOTEAT_CONNECTION_FAILED'
+      });
+    }
+  });
+
+  app.post('/api/integrations/toteat/download-sales', async (req, res) => {
+    try {
+      const location = toteatStore(String(req.body?.location || ''));
+      const download = await toteatAutomation.downloadSales(location.id);
+      const filename = path.basename(download.filename || `ventas-toteat-${location.id}.xlsx`).replace(/[\r\n"]/g, '_');
+      res.setHeader('Content-Type', download.contentType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(download.buffer);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        error: error.message || 'No se pudo descargar el reporte de ventas desde Toteat.',
+        code: error.code || 'TOTEAT_DOWNLOAD_FAILED'
+      });
     }
   });
 

@@ -11,7 +11,20 @@ const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrom
 
 test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-ui-test-'));
-  const server = createApp({ uploadsRoot, reportToday: '2026-08-10' }).listen(0, '127.0.0.1');
+  const server = createApp({
+    uploadsRoot,
+    reportToday: '2026-08-10',
+    toteatAutomation: {
+      async connect() { return { opened: true }; },
+      async downloadSales() {
+        return {
+          filename: 'ventas-totales.csv',
+          contentType: 'text/csv; charset=utf-8',
+          buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\norder-toteat\t2026-08-09\t238\t0')
+        };
+      }
+    }
+  }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -216,6 +229,14 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
   await page.locator('#report-location-filter').selectOption('store-1');
   await page.locator('#report-scope-description').filter({ hasText: 'Tienda 1' }).waitFor();
+  const toteatDownloadPromise = page.waitForEvent('download');
+  await page.locator('#report-download-toteat-sales').click();
+  const toteatDownload = await toteatDownloadPromise;
+  assert.equal(toteatDownload.suggestedFilename(), 'ventas-totales.csv');
+  await page.locator('#date-confirmation').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#detected-files-list').textContent(), /ventas-totales\.csv.*2026-08-09/s);
+  assert.equal(await page.locator('#replace-transactions-btn').isVisible(), true);
+  await page.locator('#cancel-transaction-confirmation').click();
   const reportSalesChooserPromise = page.waitForEvent('filechooser');
   await page.locator('#report-upload-sales').click();
   const reportSalesChooser = await reportSalesChooserPromise;
