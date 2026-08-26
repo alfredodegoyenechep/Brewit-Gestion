@@ -389,6 +389,31 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('button', { name: 'Aplicar y actualizar cálculo' }).click();
   await warehouseProjectionRow.locator('td').nth(11).filter({ hasText: '0 UN' }).waitFor();
 
+  await page.getByRole('button', { name: 'Órdenes tentativas' }).click();
+  const tentativeOrdersDialog = page.getByRole('dialog', { name: 'Órdenes de compra tentativas' });
+  await tentativeOrdersDialog.waitFor();
+  assert.equal(await page.locator('#tentative-orders-scope option').count(), 4);
+  await page.locator('#tentative-orders-scope').selectOption('store-2');
+  await tentativeOrdersDialog.getByRole('button', { name: 'Generar tentativas' }).click();
+  await page.locator('#tentative-purchase-orders-status').filter({ hasText: /Nada se ha guardado todavía/i }).waitFor();
+  assert.equal(await page.locator('#tentative-orders-location').inputValue(), 'store-2');
+  assert.equal(await page.locator('#tentative-orders-supplier').inputValue(), '111');
+  await page.locator('#tentative-orders-buying-body tr[data-key]').waitFor();
+  assert.equal(await page.locator('#tentative-orders-buying-body tr[data-key]').count(), 1);
+  assert.match(await page.locator('#tentative-orders-other-body').textContent(), /Todos los productos administrados/i);
+  const ordersBeforeTentativeConfirmation = await page.evaluate(() =>
+    fetch('/api/purchase-orders?location=store-2').then(response => response.json()));
+  assert.equal(ordersBeforeTentativeConfirmation.orders.length, 1);
+  await page.locator('.tentative-order-quantity').fill('6');
+  assert.equal(await page.locator('#tentative-order-total').textContent(), '$3.000');
+  await page.getByRole('button', { name: 'Confirmar orden definitiva' }).click();
+  await page.locator('#tentative-purchase-orders-status').filter({ hasText: /guardada como OC-000003/i }).waitFor();
+  assert.equal(await page.locator('#print-confirmed-tentative-order').isVisible(), true);
+  const ordersAfterTentativeConfirmation = await page.evaluate(() =>
+    fetch('/api/purchase-orders?location=store-2').then(response => response.json()));
+  assert.equal(ordersAfterTentativeConfirmation.orders.length, 2);
+  await tentativeOrdersDialog.getByRole('button', { name: 'Cerrar' }).click();
+
   await page.getByRole('link', { name: 'Inventario' }).click();
   await page.getByRole('heading', { name: 'Fuentes para el informe de inventario' }).waitFor();
   assert.equal(await page.locator('#inventory-location-select option').count(), 3);

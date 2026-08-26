@@ -679,6 +679,7 @@
       <div class="purchase-projection-actions">
         <button id="save-projection-policies" class="icon-button" type="button" disabled>Guardar criterios</button>
         <button id="past-purchase-orders" class="icon-button" type="button">Órdenes de Compra Pasadas</button>
+        <button id="open-tentative-purchase-orders" class="icon-button" type="button">Órdenes tentativas</button>
         <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
       </div>
       <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. Las UDC se redondean hacia arriba.</p>
@@ -759,6 +760,63 @@
           <button id="confirm-purchase-order" class="primary" type="button">Confirmar y guardar orden</button>
           <button id="print-saved-purchase-order" class="icon-button" type="button" disabled>Imprimir / PDF</button>
         </div>
+      </dialog>
+      <dialog id="tentative-purchase-orders-dialog" class="inventory-report-dialog tentative-purchase-orders-dialog" aria-labelledby="tentative-purchase-orders-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Abastecimiento</div>
+            <h2 id="tentative-purchase-orders-title">Órdenes de compra tentativas</h2>
+            <p class="panel-description">Genera borradores temporales por ubicación y proveedor. Nada se guarda como definitivo hasta que confirmes una orden.</p>
+          </div>
+          <button id="close-tentative-purchase-orders" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="tentative-orders-generation-controls">
+          <label>Generar para
+            <select id="tentative-orders-scope"></select>
+          </label>
+          <button id="generate-tentative-purchase-orders" class="primary" type="button">Generar tentativas</button>
+        </div>
+        <div id="tentative-purchase-orders-status" class="form-status" aria-live="polite"></div>
+        <section id="tentative-orders-review" hidden>
+          <div class="tentative-orders-review-controls">
+            <label>Ubicación
+              <select id="tentative-orders-location"></select>
+            </label>
+            <label>Proveedor
+              <select id="tentative-orders-supplier"></select>
+            </label>
+            <div id="tentative-orders-summary" class="products-summary"></div>
+          </div>
+          <div class="tentative-order-section-head">
+            <div>
+              <h3 id="tentative-order-heading">Productos por comprar</h3>
+              <p class="panel-description">Puedes ajustar inclusión, cantidad UDC y costo antes de confirmar.</p>
+            </div>
+            <strong id="tentative-order-total">$0</strong>
+          </div>
+          <div class="tentative-orders-table-wrap">
+            <table class="tentative-orders-table tentative-orders-buying-table">
+              <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Inventario</th><th>Cobertura</th><th>Sugerencia interna</th><th>UDC</th><th>Unidades x UDC</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
+              <tbody id="tentative-orders-buying-body"></tbody>
+            </table>
+          </div>
+          <div class="tentative-order-actions">
+            <button id="confirm-tentative-purchase-order" class="primary" type="button">Confirmar orden definitiva</button>
+            <button id="print-confirmed-tentative-order" class="icon-button" type="button" hidden>Imprimir / PDF</button>
+          </div>
+          <div class="tentative-order-section-head secondary">
+            <div>
+              <h3>Otros productos administrados del proveedor</h3>
+              <p class="panel-description">Estos productos no forman parte de la orden tentativa según los criterios actuales.</p>
+            </div>
+          </div>
+          <div class="tentative-orders-table-wrap">
+            <table class="tentative-orders-table tentative-orders-other-table">
+              <thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Unidad</th><th>Inventario</th><th>Cobertura actual</th><th>Días mín.</th><th>Días máx.</th><th>Motivo para no comprar</th></tr></thead>
+              <tbody id="tentative-orders-other-body"></tbody>
+            </table>
+          </div>
+        </section>
       </dialog>
       <dialog id="past-purchase-orders-dialog" class="inventory-report-dialog past-purchase-orders-dialog" aria-labelledby="past-purchase-orders-title">
         <div class="purchase-order-dialog-head">

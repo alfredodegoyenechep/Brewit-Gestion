@@ -2643,12 +2643,132 @@ body {
 }
 
 .purchase-order-editor-dialog,
-.past-purchase-orders-dialog {
+.past-purchase-orders-dialog,
+.tentative-purchase-orders-dialog {
   box-sizing: border-box;
   width: min(1500px, calc(100vw - 32px));
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: 16px;
+}
+
+.tentative-purchase-orders-dialog {
+  max-height: calc(100vh - 32px);
+}
+
+.tentative-orders-generation-controls,
+.tentative-orders-review-controls {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tentative-orders-generation-controls label,
+.tentative-orders-review-controls label {
+  display: grid;
+  min-width: 230px;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tentative-orders-generation-controls select,
+.tentative-orders-review-controls select {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.tentative-orders-review-controls .products-summary {
+  flex: 1;
+  margin: 0 0 2px;
+}
+
+.tentative-order-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.tentative-order-section-head.secondary {
+  margin-top: 24px;
+}
+
+.tentative-order-section-head h3 {
+  margin: 0 0 4px;
+}
+
+#tentative-order-total {
+  color: var(--coffee);
+  font-size: 18px;
+}
+
+.tentative-orders-table-wrap {
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.tentative-orders-table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.tentative-orders-table th,
+.tentative-orders-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tentative-orders-table th {
+  background: var(--coffee-soft-2);
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.tentative-orders-table th:nth-child(-n + 3),
+.tentative-orders-table td:nth-child(-n + 3),
+.tentative-orders-other-table th:last-child,
+.tentative-orders-other-table td:last-child {
+  text-align: left;
+}
+
+.tentative-orders-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--clay);
+}
+
+.tentative-orders-table input[type="number"],
+.tentative-orders-table input.tentative-order-cost {
+  width: 82px;
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  text-align: right;
+}
+
+.tentative-order-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tentative-order-confirmed {
+  color: var(--green);
+  font-weight: 900;
 }
 
 .projection-branch-orders-dialog {

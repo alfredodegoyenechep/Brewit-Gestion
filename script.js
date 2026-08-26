@@ -31,6 +31,7 @@ let purchasesViewState = null;
 let purchaseCostVariationState = null;
 let purchaseProjectionState = null;
 let purchaseOrderEditorState = null;
+let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
 let salesIngredientsState = null;
 let salesHierarchyPath = [];
@@ -3161,6 +3162,298 @@ async function openSavedPurchaseOrder(orderId, printOnly = false) {
   }
 }
 
+function tentativeNoPurchaseReason(item) {
+  if (item.averageDailyConsumption <= 0) return 'Sin consumo registrado en los últimos 30 días.';
+  if (item.currentCoverageDays !== null && item.currentCoverageDays > item.minDays) {
+    return `Cobertura actual de ${formatProjectionOneDecimal(item.currentCoverageDays)} días, sobre el mínimo de ${formatProjectionOneDecimal(item.minDays)} días.`;
+  }
+  return 'El inventario actual no activa reposición con los criterios guardados.';
+}
+
+function tentativeGroupsForProjection(projection) {
+  const managedBySupplier = new Map();
+  projection.items.filter(item => item.managed).forEach(item => {
+    if (!managedBySupplier.has(item.supplierKey)) managedBySupplier.set(item.supplierKey, []);
+    managedBySupplier.get(item.supplierKey).push(item);
+  });
+  return [...managedBySupplier.entries()].flatMap(([supplierKey, managedItems]) => {
+    const buying = managedItems.filter(item => item.needsPurchase && item.suggestedInternalQuantity > 0);
+    if (!buying.length) return [];
+    const supplier = projection.suppliers.find(item => item.key === supplierKey)
+      || { key: supplierKey, name: managedItems[0]?.supplier || 'Proveedor no asignado', taxId: '' };
+    return [{
+      supplier,
+      confirmedOrder: null,
+      buyingItems: buying.map(item => ({
+        ...item,
+        referenceUnitCost: roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0),
+        unitCost: roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0),
+        quantity: Number(item.suggestedPurchaseUnits || 0),
+        selected: Number(item.suggestedPurchaseUnits || 0) > 0,
+        total: Number(item.suggestedPurchaseUnits || 0) * roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0)
+      })),
+      otherItems: managedItems.filter(item => !item.needsPurchase).map(item => ({
+        ...item,
+        noPurchaseReason: tentativeNoPurchaseReason(item)
+      }))
+    }];
+  }).sort((left, right) => left.supplier.name.localeCompare(right.supplier.name, 'es'));
+}
+
+function currentTentativeOrderGroup() {
+  const locationId = document.getElementById('tentative-orders-location').value;
+  const supplierKey = document.getElementById('tentative-orders-supplier').value;
+  const location = tentativePurchaseOrdersState?.locations.find(item => item.id === locationId);
+  return location?.groups.find(group => group.supplier.key === supplierKey) || null;
+}
+
+function populateTentativeSupplierFilter(preferredSupplier = '') {
+  const locationId = document.getElementById('tentative-orders-location').value;
+  const location = tentativePurchaseOrdersState?.locations.find(item => item.id === locationId);
+  const select = document.getElementById('tentative-orders-supplier');
+  const options = (location?.groups || []).map(group => new Option(group.supplier.name, group.supplier.key));
+  select.replaceChildren(...(options.length ? options : [new Option('Sin órdenes tentativas', '')]));
+  select.disabled = !options.length;
+  select.value = options.some(option => option.value === preferredSupplier) ? preferredSupplier : options[0]?.value || '';
+}
+
+function populateTentativeLocationFilter(preferredLocation = '') {
+  const select = document.getElementById('tentative-orders-location');
+  const locations = tentativePurchaseOrdersState?.locations || [];
+  const options = locations.map(location => new Option(
+    `${location.name}${location.groups.length ? '' : ' · sin compras sugeridas'}`, location.id
+  ));
+  select.replaceChildren(...options);
+  const firstWithOrders = locations.find(location => location.groups.length)?.id || options[0]?.value || '';
+  select.value = options.some(option => option.value === preferredLocation) ? preferredLocation : firstWithOrders;
+  populateTentativeSupplierFilter();
+}
+
+function updateTentativeOrderTotals() {
+  const group = currentTentativeOrderGroup();
+  if (!group) {
+    document.getElementById('tentative-order-total').textContent = '$0';
+    document.getElementById('confirm-tentative-purchase-order').disabled = true;
+    return;
+  }
+  let total = 0;
+  const rows = [...document.querySelectorAll('#tentative-orders-buying-body tr[data-key]')];
+  for (const row of rows) {
+    const item = group.buyingItems.find(candidate => candidate.key === row.dataset.key);
+    if (!item) continue;
+    item.selected = row.querySelector('.tentative-order-select').checked;
+    item.quantity = Number(row.querySelector('.tentative-order-quantity').value);
+    item.unitCost = roundedPurchaseOrderCost(parseLocalizedNumber(row.querySelector('.tentative-order-cost').value));
+    item.total = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
+      ? item.quantity * item.unitCost : 0;
+    row.querySelector('.tentative-order-row-total').textContent = formatClp(item.total);
+    const warnings = [];
+    if (!item.conversionAvailable) warnings.push('Sin conversión UDC');
+    if (item.estimatedPurchaseUnitCost === null) warnings.push('Sin costo histórico');
+    if (item.unitCost !== item.referenceUnitCost) warnings.push('Costo modificado');
+    row.querySelector('.tentative-order-row-warning').textContent = warnings.join(' · ');
+    row.classList.toggle('purchase-order-row-excluded', !item.selected);
+    total += item.total;
+  }
+  document.getElementById('tentative-order-total').textContent = formatClp(total);
+  const selected = group.buyingItems.filter(item => item.selected);
+  const summaryChips = document.querySelectorAll('#tentative-orders-summary .chip');
+  if (summaryChips[1]) summaryChips[1].textContent = `${selected.length} incluido(s)`;
+  document.getElementById('confirm-tentative-purchase-order').disabled = Boolean(group.confirmedOrder)
+    || group.supplier.key === 'unassigned'
+    || !selected.length
+    || selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0
+      || !Number.isFinite(item.unitCost) || item.unitCost < 0);
+}
+
+function renderTentativePurchaseOrderReview() {
+  const review = document.getElementById('tentative-orders-review');
+  if (!tentativePurchaseOrdersState) {
+    review.hidden = true;
+    return;
+  }
+  review.hidden = false;
+  const location = tentativePurchaseOrdersState.locations.find(item =>
+    item.id === document.getElementById('tentative-orders-location').value);
+  const group = currentTentativeOrderGroup();
+  const summary = document.getElementById('tentative-orders-summary');
+  if (!location || !group) {
+    summary.replaceChildren();
+    document.getElementById('tentative-order-heading').textContent = 'Productos por comprar';
+    document.getElementById('tentative-orders-buying-body').replaceChildren();
+    document.getElementById('tentative-orders-other-body').replaceChildren();
+    updateTentativeOrderTotals();
+    return;
+  }
+  const selectedCount = group.buyingItems.filter(item => item.selected).length;
+  summary.replaceChildren(...[
+    `${group.buyingItems.length} ítem(s) sugeridos`,
+    `${selectedCount} incluido(s)`,
+    `${group.otherItems.length} no requieren compra`
+  ].map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+  document.getElementById('tentative-order-heading').textContent = `${location.name} · ${group.supplier.name}`;
+  const disabled = Boolean(group.confirmedOrder);
+  const buyingBody = document.getElementById('tentative-orders-buying-body');
+  buyingBody.replaceChildren(...group.buyingItems.map(item => {
+    const row = document.createElement('tr');
+    row.dataset.key = item.key;
+    const selectCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox'; checkbox.className = 'tentative-order-select'; checkbox.checked = item.selected; checkbox.disabled = disabled;
+    checkbox.setAttribute('aria-label', `Incluir ${item.name}`);
+    selectCell.appendChild(checkbox);
+    row.appendChild(selectCell);
+    [
+      item.code || '—', item.name, formatProjectionMetric(item.currentInventory),
+      item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
+      `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit || ''}`.trim(),
+      item.purchaseUnit || '—',
+      item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión'
+    ].forEach(value => {
+      const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
+    });
+    const quantityCell = document.createElement('td');
+    const quantity = document.createElement('input');
+    quantity.type = 'number'; quantity.min = '0'; quantity.step = '0.01'; quantity.value = String(item.quantity);
+    quantity.className = 'tentative-order-quantity'; quantity.disabled = disabled;
+    quantity.setAttribute('aria-label', `Cantidad UDC de ${item.name}`);
+    quantityCell.appendChild(quantity); row.appendChild(quantityCell);
+    const costCell = document.createElement('td');
+    const cost = document.createElement('input');
+    cost.type = 'text'; cost.inputMode = 'numeric'; cost.value = formatPurchaseOrderCost(item.unitCost);
+    cost.className = 'tentative-order-cost'; cost.disabled = disabled;
+    cost.setAttribute('aria-label', `Costo UDC de ${item.name}`);
+    costCell.appendChild(cost); row.appendChild(costCell);
+    const totalCell = document.createElement('td'); totalCell.className = 'tentative-order-row-total'; row.appendChild(totalCell);
+    const warningCell = document.createElement('td'); warningCell.className = 'tentative-order-row-warning'; row.appendChild(warningCell);
+    return row;
+  }));
+  const otherBody = document.getElementById('tentative-orders-other-body');
+  if (!group.otherItems.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td'); cell.colSpan = 8; cell.textContent = 'Todos los productos administrados de este proveedor están incluidos en la sugerencia de compra.';
+    row.appendChild(cell); otherBody.replaceChildren(row);
+  } else {
+    otherBody.replaceChildren(...group.otherItems.map(item => {
+      const row = document.createElement('tr');
+      [
+        item.code || '—', item.name, item.internalUnit || '—', formatProjectionMetric(item.currentInventory),
+        item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
+        formatProjectionOneDecimal(item.minDays), formatProjectionOneDecimal(item.maxDays), item.noPurchaseReason
+      ].forEach(value => {
+        const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
+      });
+      return row;
+    }));
+  }
+  const confirmButton = document.getElementById('confirm-tentative-purchase-order');
+  confirmButton.textContent = group.confirmedOrder
+    ? `Confirmada como ${group.confirmedOrder.orderNumber}` : 'Confirmar orden definitiva';
+  confirmButton.classList.toggle('tentative-order-confirmed', Boolean(group.confirmedOrder));
+  const printButton = document.getElementById('print-confirmed-tentative-order');
+  printButton.hidden = !group.confirmedOrder;
+  updateTentativeOrderTotals();
+}
+
+function openTentativePurchaseOrders() {
+  const dialog = document.getElementById('tentative-purchase-orders-dialog');
+  const scope = document.getElementById('tentative-orders-scope');
+  const previous = scope.value || 'all';
+  const locations = Object.values(locationRegistry)
+    .sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name, 'es') : left.type === 'store' ? -1 : 1));
+  scope.replaceChildren(new Option('Todas las ubicaciones', 'all'),
+    ...locations.map(location => new Option(location.name, location.id)));
+  scope.value = [...scope.options].some(option => option.value === previous) ? previous : 'all';
+  if (tentativePurchaseOrdersState) renderTentativePurchaseOrderReview();
+  dialog.showModal();
+}
+
+async function generateTentativePurchaseOrders() {
+  const button = document.getElementById('generate-tentative-purchase-orders');
+  const status = document.getElementById('tentative-purchase-orders-status');
+  const scope = document.getElementById('tentative-orders-scope').value;
+  const allLocations = Object.values(locationRegistry)
+    .sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name, 'es') : left.type === 'store' ? -1 : 1));
+  const requestedLocations = scope === 'all' ? allLocations : allLocations.filter(location => location.id === scope);
+  if (!requestedLocations.length) return setStatus(status, 'Selecciona una ubicación válida.', 'error');
+  button.disabled = true;
+  document.getElementById('tentative-orders-review').hidden = true;
+  setStatus(status, `Generando propuestas para ${requestedLocations.length} ubicación(es)…`);
+  try {
+    const results = await Promise.allSettled(requestedLocations.map(async location => ({
+      location,
+      projection: await apiRequest(`/api/purchase-projections?location=${encodeURIComponent(location.id)}`)
+    })));
+    const completed = results.filter(result => result.status === 'fulfilled').map(result => result.value);
+    const failures = results.filter(result => result.status === 'rejected');
+    tentativePurchaseOrdersState = {
+      generatedAt: new Date().toISOString(),
+      scope,
+      locations: completed.map(({ location, projection }) => ({
+        ...location,
+        period: projection.period,
+        branchLocationIds: projection.branchOrders?.selectedLocationIds || [],
+        groups: tentativeGroupsForProjection(projection)
+      }))
+    };
+    const preferredLocation = scope !== 'all' ? scope : document.getElementById('projection-location-filter').value;
+    populateTentativeLocationFilter(preferredLocation);
+    renderTentativePurchaseOrderReview();
+    const orderCount = tentativePurchaseOrdersState.locations.reduce((sum, location) => sum + location.groups.length, 0);
+    const failureNote = failures.length ? ` ${failures.length} ubicación(es) no pudieron calcularse por falta de datos utilizables.` : '';
+    setStatus(status, `${orderCount} orden(es) tentativa(s) generada(s) para ${completed.length} ubicación(es). Nada se ha guardado todavía.${failureNote}`,
+      orderCount ? 'success' : 'muted');
+  } catch (error) {
+    tentativePurchaseOrdersState = null;
+    document.getElementById('tentative-orders-review').hidden = true;
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function confirmTentativePurchaseOrder() {
+  const group = currentTentativeOrderGroup();
+  const locationId = document.getElementById('tentative-orders-location').value;
+  const location = tentativePurchaseOrdersState?.locations.find(item => item.id === locationId);
+  const status = document.getElementById('tentative-purchase-orders-status');
+  if (!group || !location || group.confirmedOrder) return;
+  updateTentativeOrderTotals();
+  const selected = group.buyingItems.filter(item => item.selected);
+  if (!selected.length || selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0
+    || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
+    return setStatus(status, 'Selecciona al menos un ítem y revisa sus cantidades y costos.', 'error');
+  }
+  if (selected.some(item => item.unitCost !== item.referenceUnitCost)
+    && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden?')) return;
+  const button = document.getElementById('confirm-tentative-purchase-order');
+  button.disabled = true;
+  try {
+    const saved = await apiRequest('/api/purchase-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location: location.id,
+        supplierKey: group.supplier.key,
+        filters: { onlyRequired: true, onlyManaged: true, branchLocationIds: location.branchLocationIds },
+        items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
+      })
+    });
+    group.confirmedOrder = saved;
+    renderTentativePurchaseOrderReview();
+    setStatus(status, `Orden tentativa confirmada y guardada como ${saved.orderNumber}.`, 'success');
+    if (purchaseProjectionState?.location.id === location.id) await loadPurchaseProjection();
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+    button.disabled = false;
+  }
+}
+
 async function refreshSavedProductReports(selectId = null) {
   const select = document.getElementById('products-saved-report');
   const compareButton = document.getElementById('compare-products-report');
@@ -5015,6 +5308,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
   document.getElementById('print-purchase-order').addEventListener('click', openPurchaseOrderEditor);
   document.getElementById('past-purchase-orders').addEventListener('click', openPastPurchaseOrders);
+  document.getElementById('open-tentative-purchase-orders').addEventListener('click', openTentativePurchaseOrders);
+  document.getElementById('close-tentative-purchase-orders').addEventListener('click', () => {
+    document.getElementById('tentative-purchase-orders-dialog').close();
+  });
+  document.getElementById('generate-tentative-purchase-orders').addEventListener('click', generateTentativePurchaseOrders);
+  document.getElementById('tentative-orders-location').addEventListener('change', () => {
+    populateTentativeSupplierFilter();
+    renderTentativePurchaseOrderReview();
+  });
+  document.getElementById('tentative-orders-supplier').addEventListener('change', renderTentativePurchaseOrderReview);
+  document.getElementById('tentative-orders-buying-body').addEventListener('input', updateTentativeOrderTotals);
+  document.getElementById('tentative-orders-buying-body').addEventListener('change', event => {
+    if (event.target.matches('.tentative-order-cost')) {
+      event.target.value = formatPurchaseOrderCost(roundedPurchaseOrderCost(parseLocalizedNumber(event.target.value)));
+    }
+    updateTentativeOrderTotals();
+  });
+  document.getElementById('confirm-tentative-purchase-order').addEventListener('click', confirmTentativePurchaseOrder);
+  document.getElementById('print-confirmed-tentative-order').addEventListener('click', () => {
+    const group = currentTentativeOrderGroup();
+    if (group?.confirmedOrder) printPurchaseOrder(group.confirmedOrder);
+  });
   document.getElementById('show-hidden-purchase-orders').addEventListener('change', openPastPurchaseOrders);
   document.getElementById('close-purchase-order-editor').addEventListener('click', () => {
     document.getElementById('purchase-order-editor-dialog').close();
