@@ -28,7 +28,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   page.on('pageerror', error => pageErrors.push(error.message));
 
   const upload = new FormData();
-  upload.append('sales', new Blob(['ID de orden\tFecha de creacion\tPago total\tDescuentos\tID Producto\tNombre\tCantidad\tPrecio a Pagar\tDescuento\tCosto\tCategorías de Productos/Platos\norder-1\t2026-08-09\t119\t0\tP1\tProducto Uno\t1\t119\t0\t20\tBebidas']), 'ventas-semana.csv');
+  upload.append('sales', new Blob(['ID de orden\tFecha de creacion\tHora de creacion\tPago total\tDescuentos\tID Producto\tNombre\tCantidad\tPrecio a Pagar\tDescuento\tCosto\tCategorías de Productos/Platos\norder-1\t2026-08-09\t08:30:00\t119\t0\tP1\tProducto Uno\t1\t119\t0\t20\tBebidas']), 'ventas-semana.csv');
   const inspection = await fetch(`http://127.0.0.1:${server.address().port}/api/uploads/weekly/inspect?location=store-1&week=2026-08-03`, {
     method: 'POST',
     body: upload
@@ -249,6 +249,12 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#sales-hierarchy-back').isVisible(), true);
   await page.locator('#sales-hierarchy-back').click();
   assert.equal(await page.locator('#sales-hierarchy-title').textContent(), 'Venta por jerarquía');
+  await page.locator('#hourly-demand-status').filter({ hasText: /promedio calculado/i }).waitFor();
+  assert.equal(await page.locator('#hourly-demand-body tr').count(), 7);
+  assert.match(await page.locator('#hourly-demand-body tr').first().textContent(), /07:00–09:00.*1.*\$100/s);
+  await page.locator('#hourly-demand-hierarchies .hourly-hierarchy-button').filter({ hasText: 'Bebidas' }).click();
+  assert.match(await page.locator('#hourly-demand-context').textContent(), /Todas las jerarquías.*Bebidas/);
+  assert.match(await page.locator('#hourly-demand-hierarchies').textContent(), /Producto Uno.*P1/);
   assert.equal(await page.locator('.content-layout').isVisible(), false);
 
   await page.getByRole('link', { name: 'Ventas por Ingredientes' }).click();

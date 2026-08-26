@@ -33,8 +33,11 @@ let purchaseProjectionState = null;
 let purchaseOrderEditorState = null;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
+let hourlySalesDemandState = null;
 let salesIngredientsState = null;
 let salesHierarchyPath = [];
+let hourlySalesHierarchyPath = [];
+let hourlySalesProductKey = null;
 let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
 let pendingTransactionDelete = null;
@@ -842,6 +845,183 @@ function renderSalesInsights() {
   }
 }
 
+function hourlyProductIdentity(product) {
+  return `${product.code || ''}\u001f${product.name || ''}`;
+}
+
+function hourlyPathMatches(product, path) {
+  return path.every((name, index) => product.hierarchyPath[index] === name);
+}
+
+function formatDemandQuantity(value) {
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value || 0);
+}
+
+function renderHourlySalesDemand() {
+  const report = hourlySalesDemandState;
+  if (!report) return;
+  const allProducts = report.buckets.flatMap(bucket => bucket.products);
+  const productsInPath = allProducts.filter(product => hourlyPathMatches(product, hourlySalesHierarchyPath));
+  const selectedProducts = hourlySalesProductKey
+    ? productsInPath.filter(product => hourlyProductIdentity(product) === hourlySalesProductKey)
+    : productsInPath;
+  const selectedKeys = new Set(selectedProducts.map(hourlyProductIdentity));
+  const hierarchyList = document.getElementById('hourly-demand-hierarchies');
+  const nextDepth = hourlySalesHierarchyPath.length;
+  const children = new Map();
+  productsInPath.forEach(product => {
+    const name = product.hierarchyPath[nextDepth];
+    if (!name) return;
+    const item = children.get(name) || { name, quantity: 0, netSales: 0 };
+    item.quantity += product.quantity;
+    item.netSales += product.netSales;
+    children.set(name, item);
+  });
+  const pathLabel = ['Todas las jerarquías', ...hourlySalesHierarchyPath];
+  if (hourlySalesProductKey && selectedProducts[0]) pathLabel.push(selectedProducts[0].name);
+  document.getElementById('hourly-demand-context').textContent = pathLabel.join(' › ');
+  document.getElementById('hourly-demand-back').hidden = !hourlySalesHierarchyPath.length && !hourlySalesProductKey;
+  if (children.size && !hourlySalesProductKey) {
+    hierarchyList.className = 'hourly-hierarchy-list';
+    hierarchyList.replaceChildren(...[...children.values()].sort((left, right) => right.netSales - left.netSales).map(item => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'hourly-hierarchy-button';
+      const name = document.createElement('strong');
+      name.textContent = item.name;
+      const values = document.createElement('span');
+      values.textContent = `${formatDemandQuantity(item.quantity)} un. · ${formatClp(item.netSales)} ›`;
+      button.append(name, values);
+      button.addEventListener('click', () => {
+        hourlySalesHierarchyPath = [...hourlySalesHierarchyPath, item.name];
+        renderHourlySalesDemand();
+      });
+      return button;
+    }));
+  } else if (!hourlySalesProductKey) {
+    const productTotals = new Map();
+    productsInPath.forEach(product => {
+      const key = hourlyProductIdentity(product);
+      const item = productTotals.get(key) || { key, code: product.code, name: product.name, quantity: 0, netSales: 0 };
+      item.quantity += product.quantity;
+      item.netSales += product.netSales;
+      productTotals.set(key, item);
+    });
+    hierarchyList.className = 'hourly-hierarchy-list products';
+    hierarchyList.replaceChildren(...[...productTotals.values()].sort((left, right) => right.quantity - left.quantity).map(item => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'hourly-hierarchy-button';
+      const name = document.createElement('strong');
+      name.textContent = item.name;
+      const values = document.createElement('span');
+      values.textContent = `${item.code || 'Sin código'} · ${formatDemandQuantity(item.quantity)} un. · ${formatClp(item.netSales)}`;
+      button.append(name, values);
+      button.addEventListener('click', () => {
+        hourlySalesProductKey = item.key;
+        renderHourlySalesDemand();
+      });
+      return button;
+    }));
+  } else {
+    hierarchyList.replaceChildren();
+  }
+
+  const rows = report.buckets.map(bucket => {
+    const products = bucket.products.filter(product =>
+      hourlyPathMatches(product, hourlySalesHierarchyPath)
+      && (!hourlySalesProductKey || selectedKeys.has(hourlyProductIdentity(product))));
+    return {
+      label: bucket.label,
+      quantity: products.reduce((sum, product) => sum + product.quantity, 0),
+      netSales: products.reduce((sum, product) => sum + product.netSales, 0)
+    };
+  });
+  const totals = {
+    quantity: rows.reduce((sum, row) => sum + row.quantity, 0),
+    netSales: rows.reduce((sum, row) => sum + row.netSales, 0)
+  };
+  document.getElementById('hourly-demand-body').replaceChildren(...rows.map(item => {
+    const row = document.createElement('tr');
+    const values = [
+      item.label,
+      formatDemandQuantity(item.quantity),
+      formatClp(item.netSales),
+      `${totals.quantity ? item.quantity / totals.quantity * 100 : 0}`,
+      `${totals.netSales ? item.netSales / totals.netSales * 100 : 0}`
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement(index ? 'td' : 'th');
+      if (index >= 3) cell.textContent = `${Number(value).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+      else cell.textContent = value;
+      if (index) cell.className = 'numeric-cell';
+      row.appendChild(cell);
+    });
+    return row;
+  }));
+  const totalRow = document.createElement('tr');
+  ['Total 07:00–21:00', formatDemandQuantity(totals.quantity), formatClp(totals.netSales), '100,0%', '100,0%']
+    .forEach((value, index) => {
+      const cell = document.createElement(index ? 'td' : 'th');
+      cell.textContent = value;
+      if (index) cell.className = 'numeric-cell';
+      totalRow.appendChild(cell);
+    });
+  document.getElementById('hourly-demand-foot').replaceChildren(totalRow);
+  const summary = document.getElementById('hourly-demand-summary');
+  const basis = report.isAverage ? `Promedio de ${report.sampleSize} día(s) con venta` : 'Valores del día';
+  summary.replaceChildren(
+    salesAnalysisChip(basis),
+    salesAnalysisChip(`${formatDemandQuantity(totals.quantity)} unidades`),
+    salesAnalysisChip(`${formatClp(totals.netSales)} facturación neta`)
+  );
+}
+
+function syncHourlyDemandControls() {
+  const isSpecificDate = document.getElementById('hourly-demand-mode').value === 'date';
+  const days = document.getElementById('hourly-demand-days');
+  days.disabled = isSpecificDate;
+  document.getElementById('hourly-demand-days-label').classList.toggle('disabled-control', isSpecificDate);
+}
+
+async function loadHourlySalesDemand() {
+  const status = document.getElementById('hourly-demand-status');
+  const button = document.getElementById('refresh-hourly-demand');
+  const location = document.getElementById('sales-dashboard-location').value || 'all';
+  const params = new URLSearchParams({
+    location,
+    mode: document.getElementById('hourly-demand-mode').value,
+    date: document.getElementById('hourly-demand-date').value,
+    days: document.getElementById('hourly-demand-days').value,
+    interval: document.getElementById('hourly-demand-interval').value
+  });
+  button.disabled = true;
+  setStatus(status, 'Calculando demanda por franja horaria…');
+  try {
+    const report = await apiRequest(`/api/sales/hourly-demand?${params}`);
+    if (location !== document.getElementById('sales-dashboard-location').value) return;
+    hourlySalesDemandState = report;
+    hourlySalesHierarchyPath = [];
+    hourlySalesProductKey = null;
+    renderHourlySalesDemand();
+    const dateList = report.selectedDates.map(formatReportDate).join(', ');
+    if (!report.sampleSize) {
+      setStatus(status, report.filters.mode === 'date'
+        ? 'La fecha seleccionada no registra ventas; puede corresponder a un día cerrado.'
+        : 'No hay días abiertos que cumplan los filtros seleccionados.', 'error');
+    } else {
+      setStatus(status, report.isAverage
+        ? `Promedio calculado con ${report.sampleSize} día(s) abierto(s): ${dateList}.`
+        : `Ventas del ${dateList}.`, 'success');
+    }
+  } catch (error) {
+    hourlySalesDemandState = null;
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderMercadoPago(report) {
   const customer = report.mercadoPago.customers;
   const summary = document.getElementById('mercadopago-customer-summary');
@@ -950,6 +1130,8 @@ async function loadSalesDashboard() {
     renderSalesLocations(report);
     renderSalesInsights();
     renderMercadoPago(report);
+    document.getElementById('hourly-demand-date').value = report.date;
+    loadHourlySalesDemand();
     const sourceText = `${report.sales.filesRead} archivo(s) de ventas y ${report.mercadoPago.filesRead} archivo(s) MercadoPago procesado(s).`;
     setStatus(status, report.warnings.length ? `${sourceText} ${report.warnings.join(' ')}` : sourceText, report.warnings.length ? 'error' : 'success');
   } catch (error) {
@@ -4968,6 +5150,7 @@ async function uploadMasterFiles(replace = false) {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initializeSidebarToggle();
+  syncHourlyDemandControls();
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
     const linkLabel = link.querySelector('.nav-text')?.textContent.trim() || '';
@@ -5176,6 +5359,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('sales-hierarchy-back').addEventListener('click', () => {
     salesHierarchyPath = salesHierarchyPath.slice(0, -1);
     renderSalesInsights();
+  });
+  document.getElementById('refresh-hourly-demand').addEventListener('click', loadHourlySalesDemand);
+  document.getElementById('hourly-demand-mode').addEventListener('change', syncHourlyDemandControls);
+  document.getElementById('hourly-demand-back').addEventListener('click', () => {
+    if (hourlySalesProductKey) hourlySalesProductKey = null;
+    else hourlySalesHierarchyPath = hourlySalesHierarchyPath.slice(0, -1);
+    renderHourlySalesDemand();
   });
   document.getElementById('products-location-filter').addEventListener('change', () => {
     document.getElementById('products-comparison').hidden = true;

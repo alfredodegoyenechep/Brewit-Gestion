@@ -4296,6 +4296,97 @@ button:disabled {
   gap: 20px;
 }
 
+.hourly-demand-panel h3 {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.hourly-demand-head {
+  align-items: flex-end;
+  gap: 20px;
+}
+
+.hourly-demand-head p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.hourly-demand-controls {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.5fr) minmax(135px, 1fr) 105px 100px auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.hourly-demand-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hourly-demand-controls label.disabled-control {
+  opacity: .55;
+}
+
+.hourly-demand-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.hourly-demand-selection strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+}
+
+.hourly-hierarchy-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.hourly-hierarchy-button {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--coffee-soft-2);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hourly-hierarchy-button:hover,
+.hourly-hierarchy-button:focus-visible {
+  border-color: var(--coffee);
+}
+
+.hourly-hierarchy-button span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.hourly-demand-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.hourly-demand-table tbody th,
+.hourly-demand-table tfoot th {
+  white-space: nowrap;
+}
+
 .sales-ranked-list,
 .sales-share-list {
   margin-top: 18px;
@@ -4713,6 +4804,7 @@ button:disabled {
   .report-actions,
   .sales-dashboard-heading,
   .sales-insight-heading,
+  .hourly-demand-head,
   .sales-dashboard-controls,
   .mercadopago-head,
   .inventory-workspace-head,
@@ -4725,6 +4817,11 @@ button:disabled {
   .purchase-projection-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .hourly-demand-controls {
+    width: 100%;
+    grid-template-columns: 1fr 1fr;
   }
 
   .products-controls {

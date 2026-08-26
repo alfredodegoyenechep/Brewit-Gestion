@@ -1660,6 +1660,56 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(Math.round(currentWeek.recurringSalesPercent * 10) / 10, 42.9);
 });
 
+test('builds hourly product demand for open days, weekdays and matching weekdays', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-26' });
+  const header = ['ID de orden', 'Fecha de creacion', 'Hora de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'Categorías de Productos/Platos'];
+  const rows = [
+    header,
+    ['wed-now-1', '2026-08-26', '07:30:00', 119, 0, 'P1', 'Café', 2, 119, 0, 'Bebidas'],
+    ['wed-now-2', '2026-08-26', '09:15:00', 238, 0, 'P2', 'Sándwich', 1, 238, 0, 'Comida'],
+    ['mon', '2026-08-24', '08:00:00', 476, 0, 'P1', 'Café', 4, 476, 0, 'Bebidas'],
+    ['sat', '2026-08-22', '08:00:00', 952, 0, 'P1', 'Café', 8, 952, 0, 'Bebidas'],
+    ['wed-prior', '2026-08-19', '08:30:00', 714, 0, 'P1', 'Café', 6, 714, 0, 'Bebidas'],
+    ['early', '2026-08-18', '06:30:00', 1190, 0, 'P1', 'Café', 10, 1190, 0, 'Bebidas']
+  ];
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', contents: rows.map(row => row.join('\t')).join('\n'), filename: 'ventas-horarias.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+
+  const recent = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=recent&date=2026-08-26&days=2&interval=2`)
+    .then(response => response.json());
+  assert.deepEqual(recent.selectedDates, ['2026-08-24', '2026-08-26']);
+  assert.equal(recent.sampleSize, 2);
+  assert.equal(recent.buckets.length, 7);
+  assert.equal(recent.buckets[0].label, '07:00–09:00');
+  assert.equal(recent.buckets[0].quantity, 3);
+  assert.equal(recent.buckets[0].netSales, 250);
+  assert.equal(recent.buckets[1].quantity, 0.5);
+  assert.equal(recent.buckets[1].netSales, 100);
+  assert.deepEqual(recent.buckets[0].products[0].hierarchyPath, ['Bebidas']);
+
+  const matching = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=same-weekday&date=2026-08-26&days=2&interval=1`)
+    .then(response => response.json());
+  assert.deepEqual(matching.selectedDates, ['2026-08-19', '2026-08-26']);
+  assert.equal(matching.buckets.length, 14);
+  assert.equal(matching.buckets[0].quantity, 1);
+  assert.equal(matching.buckets[0].netSales, 50);
+  assert.equal(matching.buckets[1].quantity, 3);
+  assert.equal(matching.buckets[1].netSales, 300);
+
+  const weekdays = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=weekdays&date=2026-08-26&days=3`)
+    .then(response => response.json());
+  assert.deepEqual(weekdays.selectedDates, ['2026-08-19', '2026-08-24', '2026-08-26']);
+  assert.equal(weekdays.selectedDates.includes('2026-08-22'), false);
+
+  const closed = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=date&date=2026-08-25`)
+    .then(response => response.json());
+  assert.equal(closed.sampleSize, 0);
+  assert.equal(closed.totals.quantity, 0);
+  assert.equal((await fetch(`${baseUrl}/api/sales/hourly-demand?location=main-warehouse`)).status, 400);
+});
+
 test('warns on duplicate master start dates and replaces only after confirmation', async t => {
   const baseUrl = await startTestServer(t);
   const oldCatalog = 'ID Producto **\tNombre Producto *\tCosto\nP1\tProducto anterior\t100';

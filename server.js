@@ -4379,6 +4379,141 @@ function createApp(options = {}) {
     }
   });
 
+  function buildHourlySalesDemand(requestedLocation = 'all', query = {}) {
+    const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
+    const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
+    const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const referenceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(query.date || '')) ? String(query.date) : todayKey;
+    const mode = ['date', 'recent', 'same-weekday', 'weekdays'].includes(String(query.mode)) ? String(query.mode) : 'recent';
+    const intervalHours = Number(query.interval) === 1 ? 1 : 2;
+    const requestedDays = Math.min(90, Math.max(1, Math.trunc(Number(query.days) || 7)));
+    const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const selectedStore = requestedLocation === 'all' ? null : activeStores.find(location => location.id === requestedLocation);
+    if (requestedLocation !== 'all' && !selectedStore) {
+      const error = new Error('Selecciona una cafetería válida.');
+      error.status = 400;
+      throw error;
+    }
+    const stores = selectedStore ? [selectedStore] : activeStores;
+    const hierarchyMaster = latestMasterFile('product-hierarchy', referenceDate);
+    let hierarchyLookup = null;
+    if (hierarchyMaster) {
+      try { hierarchyLookup = parseProductHierarchies(hierarchyMaster.filePath); } catch { hierarchyLookup = null; }
+    }
+    const facts = [];
+    const seenRows = new Set();
+    const warnings = [];
+    let filesRead = 0;
+    for (const location of stores) {
+      for (const stored of storedSalesFiles(location.id)) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const dateTime = salesTransactionDateTime(row);
+            const date = dateTime?.slice(0, 10);
+            if (!date || date > referenceDate || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const canonicalRow = Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right));
+            const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonicalRow)).digest('hex')}`;
+            if (seenRows.has(rowKey)) continue;
+            seenRows.add(rowKey);
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim();
+            const name = repairMojibake(rowValue(row, ['Nombre', 'Producto']));
+            if (!code && !name) continue;
+            const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim();
+            const hierarchyNode = hierarchyLookup?.hierarchyMap.get(hierarchyId);
+            const hierarchyPath = hierarchyNode ? hierarchyLookup.pathFor(hierarchyNode.id) : [];
+            const fallbackHierarchy = repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos']))
+              || 'Sin jerarquía';
+            const time = dateTime.slice(11);
+            const hour = Number(time.slice(0, 2)) + Number(time.slice(3, 5)) / 60;
+            facts.push({
+              date,
+              time,
+              hour,
+              code,
+              name: name || code,
+              quantity: numericValue(rowValue(row, ['Cantidad'])) || 0,
+              netSales: ((numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar', 'Precio Lista'])) || 0)
+                + (numericValue(rowValue(row, ['Descuento'])) || 0)) / 1.19,
+              hierarchyPath: hierarchyPath.length ? hierarchyPath : [fallbackHierarchy]
+            });
+          }
+          filesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    const openDates = [...new Set(facts.map(fact => fact.date))].sort().reverse();
+    const weekdayFor = date => new Date(`${date}T12:00:00.000Z`).getUTCDay();
+    let eligibleDates;
+    if (mode === 'date') eligibleDates = openDates.filter(date => date === referenceDate).slice(0, 1);
+    else if (mode === 'same-weekday') {
+      const weekday = weekdayFor(referenceDate);
+      eligibleDates = openDates.filter(date => weekdayFor(date) === weekday).slice(0, requestedDays);
+    } else if (mode === 'weekdays') {
+      eligibleDates = openDates.filter(date => {
+        const weekday = weekdayFor(date);
+        return weekday >= 1 && weekday <= 5;
+      }).slice(0, requestedDays);
+    } else eligibleDates = openDates.slice(0, requestedDays);
+    const selectedDateSet = new Set(eligibleDates);
+    const divisor = mode === 'date' ? 1 : Math.max(1, eligibleDates.length);
+    const buckets = [];
+    for (let fromHour = 7; fromHour < 21; fromHour += intervalHours) {
+      const toHour = Math.min(21, fromHour + intervalHours);
+      const products = new Map();
+      facts.filter(fact => selectedDateSet.has(fact.date) && fact.hour >= fromHour && fact.hour < toHour).forEach(fact => {
+        const key = `${fact.code || normalizeHeader(fact.name)}:${fact.hierarchyPath.join('\u001f')}`;
+        const product = products.get(key) || {
+          code: fact.code,
+          name: fact.name,
+          hierarchyPath: fact.hierarchyPath,
+          quantity: 0,
+          netSales: 0
+        };
+        product.quantity += fact.quantity / divisor;
+        product.netSales += fact.netSales / divisor;
+        products.set(key, product);
+      });
+      const values = [...products.values()];
+      buckets.push({
+        fromHour,
+        toHour,
+        label: `${String(fromHour).padStart(2, '0')}:00–${String(toHour).padStart(2, '0')}:00`,
+        quantity: values.reduce((sum, product) => sum + product.quantity, 0),
+        netSales: values.reduce((sum, product) => sum + product.netSales, 0),
+        products: values.sort((left, right) => right.quantity - left.quantity || right.netSales - left.netSales)
+      });
+    }
+    return {
+      scope: selectedStore
+        ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
+        : { type: 'all', location: null, label: 'Todas las cafeterías' },
+      filters: { mode, date: referenceDate, days: requestedDays, intervalHours },
+      selectedDates: eligibleDates.slice().sort(),
+      sampleSize: eligibleDates.length,
+      isAverage: mode !== 'date',
+      openDateCount: openDates.length,
+      buckets,
+      totals: {
+        quantity: buckets.reduce((sum, bucket) => sum + bucket.quantity, 0),
+        netSales: buckets.reduce((sum, bucket) => sum + bucket.netSales, 0)
+      },
+      filesRead,
+      warnings
+    };
+  }
+
+  app.get('/api/sales/hourly-demand', (req, res) => {
+    try {
+      return res.json(buildHourlySalesDemand(String(req.query.location || 'all'), req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la demanda por franja horaria.' });
+    }
+  });
+
   app.get('/api/reports/weekly-sales', (req, res) => {
     const dailySales = {};
     const transactionsByDate = {};

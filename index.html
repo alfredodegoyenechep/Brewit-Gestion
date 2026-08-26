@@ -171,6 +171,58 @@
         </section>
       </div>
 
+      <section class="panel hourly-demand-panel">
+        <div class="panel-head hourly-demand-head">
+          <div>
+            <div class="panel-eyebrow">Demanda intradía</div>
+            <h3>Venta por franja horaria</h3>
+            <p>Unidades y facturación neta sin IVA entre las 07:00 y las 21:00.</p>
+          </div>
+          <div class="hourly-demand-controls">
+            <label for="hourly-demand-mode">Período
+              <select id="hourly-demand-mode">
+                <option value="date">Día específico</option>
+                <option value="recent" selected>Promedio últimos días abiertos</option>
+                <option value="same-weekday">Promedio mismos días</option>
+                <option value="weekdays">Promedio días hábiles</option>
+              </select>
+            </label>
+            <label for="hourly-demand-date">Fecha de referencia
+              <input id="hourly-demand-date" type="date">
+            </label>
+            <label id="hourly-demand-days-label" for="hourly-demand-days">Cantidad de días
+              <input id="hourly-demand-days" type="number" min="1" max="90" value="7">
+            </label>
+            <label for="hourly-demand-interval">Corte
+              <select id="hourly-demand-interval">
+                <option value="1">1 hora</option>
+                <option value="2" selected>2 horas</option>
+              </select>
+            </label>
+            <button id="refresh-hourly-demand" class="icon-button" type="button">Actualizar franjas</button>
+          </div>
+        </div>
+        <div id="hourly-demand-status" class="form-status" aria-live="polite"></div>
+        <div class="hourly-demand-selection">
+          <div>
+            <div class="panel-eyebrow">Productos considerados</div>
+            <strong id="hourly-demand-context">Todas las jerarquías</strong>
+          </div>
+          <button id="hourly-demand-back" class="icon-button small" type="button" hidden>← Volver</button>
+        </div>
+        <div id="hourly-demand-hierarchies" class="hourly-hierarchy-list"></div>
+        <div id="hourly-demand-summary" class="hourly-demand-summary"></div>
+        <div class="sales-table-wrap">
+          <table class="sales-dashboard-table hourly-demand-table">
+            <thead>
+              <tr><th>Franja horaria</th><th>Unidades</th><th>Facturación</th><th>% unidades</th><th>% facturación</th></tr>
+            </thead>
+            <tbody id="hourly-demand-body"></tbody>
+            <tfoot id="hourly-demand-foot"></tfoot>
+          </table>
+        </div>
+      </section>
+
       <section class="panel mercadopago-panel">
         <div class="panel-head mercadopago-head">
           <div>
