@@ -20,7 +20,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
         return {
           filename: 'ventas-totales.csv',
           contentType: 'text/csv; charset=utf-8',
-          buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\norder-toteat\t2026-08-09\t238\t0')
+          buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\norder-1\t2026-08-09\t119\t0')
         };
       }
     }
@@ -270,10 +270,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-download-toteat-sales').click();
   const toteatDownload = await toteatDownloadPromise;
   assert.equal(toteatDownload.suggestedFilename(), 'ventas-totales.csv');
-  await page.locator('#date-confirmation').waitFor({ state: 'visible' });
-  assert.match(await page.locator('#detected-files-list').textContent(), /ventas-totales\.csv.*2026-08-09/s);
-  assert.equal(await page.locator('#replace-transactions-btn').isVisible(), true);
-  await page.locator('#cancel-transaction-confirmation').click();
+  await page.locator('#report-status').filter({ hasText: /Ventas procesadas sin duplicar datos.*1 ya existía/i }).waitFor();
+  assert.equal(await page.locator('#date-confirmation').evaluate(dialog => dialog.open), false);
   const reportSalesChooserPromise = page.waitForEvent('filechooser');
   await page.locator('#report-upload-sales').click();
   const reportSalesChooser = await reportSalesChooserPromise;
@@ -310,6 +308,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#hourly-demand-status').filter({ hasText: /promedio calculado/i }).waitFor();
   assert.equal(await page.locator('#hourly-demand-body tr').count(), 7);
   assert.match(await page.locator('#hourly-demand-body tr').first().textContent(), /07:00–09:00.*1.*\$100/s);
+  assert.equal(await page.locator('#hourly-demand-body tr').first().locator('td').first().textContent(), '1,0');
+  assert.equal(await page.locator('#hourly-demand-foot td').first().textContent(), '1,0');
   await page.locator('#hourly-demand-hierarchies .hourly-hierarchy-button').filter({ hasText: 'Bebidas' }).click();
   assert.match(await page.locator('#hourly-demand-context').textContent(), /Todas las jerarquías.*Bebidas/);
   assert.match(await page.locator('#hourly-demand-hierarchies').textContent(), /Producto Uno.*P1/);

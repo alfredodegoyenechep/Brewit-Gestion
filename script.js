@@ -351,7 +351,15 @@ async function inspectTransactionFile(file, field, locationOverride = null, inpu
       method: 'POST',
       body: formData
     });
-    showInspection(manifest);
+    const autoConfirm = canAutoConfirmToteatSales(manifest);
+    showInspection(manifest, { openDialog: !autoConfirm });
+    if (autoConfirm) {
+      setStatus(status,
+        `Estructura y fechas válidas (${formatDetectedRange(manifest.detectedRange)}). Procesando automáticamente las ventas nuevas…`,
+        'success');
+      await confirmTransactionUpload('keep', { automatic: true });
+      return;
+    }
     const acceptedWarning = manifest.files.find(file => file.structure?.permissive);
     if (acceptedWarning) {
       setStatus(status,
@@ -411,6 +419,96 @@ function cancelTransactionConfirmation() {
   clearInspection();
   setStatus(status, 'Carga cancelada.', 'muted');
   transactionUploadContext = null;
+}
+
+function hasCompleteDetectedRange(range) {
+  const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+  return Boolean(range && isoDate.test(range.from) && isoDate.test(range.to) && range.from <= range.to);
+}
+
+function canAutoConfirmToteatSales(manifest) {
+  return transactionUploadContext?.downloadedFrom === 'toteat'
+    && manifest?.location === transactionUploadContext.location
+    && manifest.files?.length === 1
+    && manifest.files.every(file => file.field === 'sales'
+      && file.size > 0
+      && file.structure?.ok
+      && !file.structure.permissive
+      && hasCompleteDetectedRange(file.detectedRange))
+    && hasCompleteDetectedRange(manifest.detectedRange);
+}
+
+async function confirmTransactionUpload(overlapAction, { automatic = false } = {}) {
+  const button = overlapAction === 'replace'
+    ? document.getElementById('replace-transactions-btn')
+    : document.getElementById('keep-transactions-btn');
+  const status = document.getElementById('transaction-confirmation-status');
+  const uploadContext = transactionUploadContext;
+  const pageStatus = transactionUploadStatus();
+  const dateFrom = document.getElementById('confirmed-date-from').value;
+  const dateTo = document.getElementById('confirmed-date-to').value;
+  const requiresDateConfirmation = !inspectionState?.files?.length
+    || inspectionState.files.some(file => file.field !== 'sales');
+  const confirmed = document.getElementById('dates-confirmed').checked;
+  const requiresCategoryConfirmation = inspectionState?.files.some(file => file.structure?.requiresCategoryConfirmation);
+  const categoryConfirmed = document.getElementById('inventory-file-confirmed').checked;
+  const fail = message => {
+    setStatus(status, message, 'error');
+    if (automatic) {
+      setStatus(pageStatus, `No se completó la carga automática: ${message} Revisa la confirmación pendiente.`, 'error');
+      const confirmation = document.getElementById('date-confirmation');
+      if (!confirmation.open) confirmation.showModal();
+    }
+    return false;
+  };
+  if (!inspectionState) return fail('Vuelve a revisar los archivos antes de confirmar.');
+  if (!dateFrom || !dateTo) return fail('Ingresa las fechas desde y hasta.');
+  if (requiresDateConfirmation && !confirmed) return fail('Marca la confirmación de fechas antes de guardar.');
+  if (requiresCategoryConfirmation && !categoryConfirmed) {
+    return fail('Confirma que seleccionaste el archivo correcto para Kardex o Merma.');
+  }
+  button.disabled = true;
+  setStatus(automatic ? pageStatus : status, automatic
+    ? 'Validación completa. Agregando automáticamente solo las ventas nuevas…'
+    : 'Guardando archivos confirmados…');
+  try {
+    const savedLocation = inspectionState.location;
+    const result = await apiRequest('/api/uploads/transactions/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction })
+    });
+    clearWeeklySelections();
+    clearInspection();
+    await loadTransactionFiles();
+    if (uploadContext?.refreshReport) await loadWeeklySalesReport();
+    const importMessages = [];
+    if (result.imports?.sales) {
+      const imported = result.imports.sales;
+      importMessages.push(imported.newTransactions
+        ? `${imported.newTransactions} transacción(es) nueva(s) guardada(s); ${imported.duplicateTransactions} ya existente(s) omitida(s).`
+        : `Ventas procesadas sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} ya existía(n).`);
+    }
+    if (result.imports?.mercadopago) {
+      const imported = result.imports.mercadopago;
+      importMessages.push(imported.newTransactions
+        ? `${imported.newTransactions} transacción(es) MercadoPago nueva(s) guardada(s); ${imported.duplicateTransactions} fila(s) repetida(s) omitida(s).`
+        : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
+    }
+    if (importMessages.length) {
+      setStatus(pageStatus, importMessages.join(' '), 'success');
+    } else {
+      setStatus(pageStatus, overlapAction === 'replace'
+        ? `Se reemplazaron los días coincidentes y se conservaron los datos fuera del rango para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`
+        : `Se agregaron los registros nuevos sin duplicar los ya existentes para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`, 'success');
+    }
+    transactionUploadContext = null;
+    return true;
+  } catch (error) {
+    return fail(error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function updateLocationFields() {
@@ -916,6 +1014,10 @@ function formatDemandQuantity(value) {
   return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value || 0);
 }
 
+function formatHourlyTableQuantity(value) {
+  return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value || 0);
+}
+
 function renderHourlySalesDemand() {
   const report = hourlySalesDemandState;
   if (!report) return;
@@ -1004,7 +1106,7 @@ function renderHourlySalesDemand() {
     const row = document.createElement('tr');
     const values = [
       item.label,
-      formatDemandQuantity(item.quantity),
+      formatHourlyTableQuantity(item.quantity),
       formatClp(item.netSales),
       `${totals.quantity ? item.quantity / totals.quantity * 100 : 0}`,
       `${totals.netSales ? item.netSales / totals.netSales * 100 : 0}`
@@ -1019,7 +1121,7 @@ function renderHourlySalesDemand() {
     return row;
   }));
   const totalRow = document.createElement('tr');
-  ['Total 07:00–21:00', formatDemandQuantity(totals.quantity), formatClp(totals.netSales), '100,0%', '100,0%']
+  ['Total 07:00–21:00', formatHourlyTableQuantity(totals.quantity), formatClp(totals.netSales), '100,0%', '100,0%']
     .forEach((value, index) => {
       const cell = document.createElement(index ? 'td' : 'th');
       cell.textContent = value;
@@ -4852,7 +4954,7 @@ function closeLocationTrashDialog() {
   document.getElementById('location-trash-dialog').close();
 }
 
-function showInspection(manifest) {
+function showInspection(manifest, { openDialog = true } = {}) {
   inspectionState = manifest;
   const confirmation = document.getElementById('date-confirmation');
   const list = document.getElementById('detected-files-list');
@@ -4915,7 +5017,7 @@ function showInspection(manifest) {
       'No se encontraron fechas coincidentes. Confirma el rango para agregar estos registros al sistema.';
   }
   setStatus(document.getElementById('transaction-confirmation-status'), '');
-  confirmation.showModal();
+  if (openDialog) confirmation.showModal();
 }
 
 async function renderMasterList() {
@@ -5299,68 +5401,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     cancelTransactionConfirmation();
   });
 
-  async function confirmTransactionUpload(overlapAction) {
-    const button = overlapAction === 'replace'
-      ? document.getElementById('replace-transactions-btn')
-      : document.getElementById('keep-transactions-btn');
-    const status = document.getElementById('transaction-confirmation-status');
-    const uploadContext = transactionUploadContext;
-    const pageStatus = transactionUploadStatus();
-    const dateFrom = document.getElementById('confirmed-date-from').value;
-    const dateTo = document.getElementById('confirmed-date-to').value;
-    const requiresDateConfirmation = !inspectionState?.files?.length
-      || inspectionState.files.some(file => file.field !== 'sales');
-    const confirmed = document.getElementById('dates-confirmed').checked;
-    const requiresCategoryConfirmation = inspectionState?.files.some(file => file.structure?.requiresCategoryConfirmation);
-    const categoryConfirmed = document.getElementById('inventory-file-confirmed').checked;
-    if (!inspectionState) return setStatus(status, 'Vuelve a revisar los archivos antes de confirmar.', 'error');
-    if (!dateFrom || !dateTo) return setStatus(status, 'Ingresa las fechas desde y hasta.', 'error');
-    if (requiresDateConfirmation && !confirmed) {
-      return setStatus(status, 'Marca la confirmación de fechas antes de guardar.', 'error');
-    }
-    if (requiresCategoryConfirmation && !categoryConfirmed) {
-      return setStatus(status, 'Confirma que seleccionaste el archivo correcto para Kardex o Merma.', 'error');
-    }
-    button.disabled = true;
-    setStatus(status, 'Guardando archivos confirmados…');
-    try {
-      const savedLocation = inspectionState.location;
-      const result = await apiRequest('/api/uploads/transactions/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction })
-      });
-      clearWeeklySelections();
-      clearInspection();
-      await loadTransactionFiles();
-      if (uploadContext?.refreshReport) await loadWeeklySalesReport();
-      const importMessages = [];
-      if (result.imports?.sales) {
-        const imported = result.imports.sales;
-        importMessages.push(imported.newTransactions
-          ? `${imported.newTransactions} transacción(es) nueva(s) guardada(s); ${imported.duplicateTransactions} ya existente(s) omitida(s).`
-          : `Ventas procesadas sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} ya existía(n).`);
-      }
-      if (result.imports?.mercadopago) {
-        const imported = result.imports.mercadopago;
-        importMessages.push(imported.newTransactions
-          ? `${imported.newTransactions} transacción(es) MercadoPago nueva(s) guardada(s); ${imported.duplicateTransactions} fila(s) repetida(s) omitida(s).`
-          : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
-      }
-      if (importMessages.length) {
-        setStatus(pageStatus, importMessages.join(' '), 'success');
-      } else {
-        setStatus(pageStatus, overlapAction === 'replace'
-          ? `Se reemplazaron los días coincidentes y se conservaron los datos fuera del rango para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`
-          : `Se agregaron los registros nuevos sin duplicar los ya existentes para ${locationRegistry[savedLocation]?.name || 'la ubicación'}.`, 'success');
-      }
-      transactionUploadContext = null;
-    } catch (error) {
-      setStatus(status, error.message, 'error');
-    } finally {
-      button.disabled = false;
-    }
-  }
   document.getElementById('keep-transactions-btn').addEventListener('click', () => confirmTransactionUpload('keep'));
   document.getElementById('replace-transactions-btn').addEventListener('click', () => confirmTransactionUpload('replace'));
 
