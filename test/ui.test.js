@@ -263,6 +263,11 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#purchases-location-filter option').last().textContent(), /Bodega principal/i);
   assert.equal(await page.locator('#purchases-product-filter').getAttribute('placeholder'), 'Código o nombre');
   await page.locator('.purchases-table tbody tr').waitFor();
+  const purchaseHeaders = page.locator('.purchases-table').first().locator('th');
+  assert.equal(await purchaseHeaders.nth(7).innerText(), 'Unidades x\nUDC');
+  assert.equal(await purchaseHeaders.nth(8).innerText(), 'Unidad\nMedida');
+  assert.equal(await purchaseHeaders.nth(9).innerText(), 'Costo UDC\nregistrado');
+  assert.equal(await purchaseHeaders.nth(12).innerText(), 'Precio Unit.\nefectivo');
   assert.equal(await page.getByRole('button', { name: 'Imprimir / PDF' }).isEnabled(), true);
   assert.equal(await page.getByRole('button', { name: 'Exportar Excel' }).isEnabled(), true);
   await page.evaluate(() => {
@@ -320,6 +325,21 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('button', { name: 'Imprimir / PDF' }).click();
   assert.equal(await page.evaluate(() => window.__purchaseOrderPrintCalled), true);
   await page.getByRole('button', { name: 'Cerrar' }).click();
+  await page.getByRole('button', { name: 'Órdenes de Compra Pasadas' }).click();
+  const pastOrdersDialog = page.getByRole('dialog', { name: 'Órdenes de Compra Pasadas' });
+  await pastOrdersDialog.waitFor();
+  await page.locator('.past-purchase-order-card').waitFor();
+  assert.equal(await page.locator('.past-purchase-order-card').count(), 1);
+  await pastOrdersDialog.getByRole('button', { name: 'Ocultar' }).click();
+  await page.locator('#past-purchase-orders-status').filter({ hasText: /ocultada correctamente/i }).waitFor();
+  assert.equal(await page.locator('.past-purchase-order-card').count(), 0);
+  await page.locator('#show-hidden-purchase-orders').check();
+  await page.locator('.past-purchase-order-card.is-hidden').waitFor();
+  assert.equal(await page.locator('.past-purchase-order-card.is-hidden').count(), 1);
+  await pastOrdersDialog.getByRole('button', { name: 'Mostrar' }).click();
+  await page.locator('#past-purchase-orders-status').filter({ hasText: /mostrada correctamente/i }).waitFor();
+  assert.equal(await page.locator('.past-purchase-order-card.is-hidden').count(), 0);
+  await pastOrdersDialog.getByRole('button', { name: 'Cerrar' }).click();
   await page.getByRole('button', { name: 'OC', exact: true }).click();
   const selectedOrdersDialog = page.getByRole('dialog', { name: 'Órdenes consideradas en la proyección' });
   await selectedOrdersDialog.waitFor();
@@ -468,9 +488,18 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const theoreticalColumn = kardexHeaders.indexOf('Inventario Final Teórico');
   const differenceColumn = kardexHeaders.indexOf('Diferencia de Inventario');
   assert.ok(employeeColumn < marketingColumn && marketingColumn < theoreticalColumn && theoreticalColumn < differenceColumn);
+  assert.match(await page.locator('#inventory-results-table th').nth(employeeColumn).innerText(), /Consumo\s*\n\s*Colaboradores/);
+  assert.equal(await page.locator('#inventory-kardex-decimals option').count(), 4);
+  assert.equal(await page.locator('#inventory-kardex-decimals').inputValue(), '2');
   const differenceCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(differenceColumn);
-  assert.match(await differenceCell.textContent(), /-1,0000/);
+  assert.match(await differenceCell.textContent(), /-1,00/);
   assert.equal(await differenceCell.getAttribute('class'), 'difference-negative');
+  await page.locator('#inventory-kardex-decimals').selectOption('1');
+  assert.match(await differenceCell.textContent(), /-1,0/);
+  await page.locator('#inventory-kardex-decimals').selectOption('3');
+  assert.match(await differenceCell.textContent(), /-1,000/);
+  assert.doesNotMatch(await page.locator('#inventory-results-table tbody tr').first().locator('td').nth(3).textContent(), /,/);
+  await page.locator('#inventory-kardex-decimals').selectOption('4');
   const horizontalScroll = await page.locator('#inventory-results-table').evaluate(table => {
     const wrap = table.parentElement;
     const cells = [...table.querySelectorAll('tbody tr:first-child td')];

@@ -769,7 +769,12 @@
           </div>
           <button id="close-past-purchase-orders" class="icon-button" type="button">Cerrar</button>
         </div>
-        <div id="past-purchase-orders-status" class="form-status" aria-live="polite"></div>
+        <div class="past-purchase-orders-toolbar">
+          <div id="past-purchase-orders-status" class="form-status" aria-live="polite"></div>
+          <label class="past-purchase-orders-hidden-filter">
+            <input id="show-hidden-purchase-orders" type="checkbox" /> Mostrar órdenes ocultas
+          </label>
+        </div>
         <div id="past-purchase-orders-list" class="past-purchase-orders-list"></div>
       </dialog>
       <section id="purchase-order-document" class="purchase-order-document" hidden></section>
@@ -936,6 +941,14 @@
           </label>
           <label>Costo máximo
             <input id="inventory-kardex-cost-max" type="number" step="1" placeholder="Sin máximo" />
+          </label>
+          <label>Decimales
+            <select id="inventory-kardex-decimals">
+              <option value="1">1 decimal</option>
+              <option value="2" selected>2 decimales</option>
+              <option value="3">3 decimales</option>
+              <option value="4">4 decimales</option>
+            </select>
           </label>
           <button id="clear-inventory-kardex-filters" class="icon-button small" type="button">Limpiar filtros</button>
           <span id="inventory-kardex-visible-count" class="chip neutral"></span>

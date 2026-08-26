@@ -2964,7 +2964,9 @@ function createApp(options = {}) {
       location: order.location,
       supplier: order.supplier,
       itemCount: order.items.length,
-      total: order.total
+      total: order.total,
+      hidden: order.hidden === true,
+      hiddenAt: order.hiddenAt || null
     };
   }
 
@@ -3120,6 +3122,24 @@ function createApp(options = {}) {
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo actualizar la orden de compra.' });
     }
+  });
+
+  app.patch('/api/purchase-orders/:orderId/visibility', (req, res) => {
+    const filePath = purchaseOrderPath(req.params.orderId);
+    const order = filePath ? readJson(filePath, null) : null;
+    if (!order) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
+    if (typeof req.body?.hidden !== 'boolean') {
+      return res.status(400).json({ error: 'Indica si la orden debe quedar oculta o visible.' });
+    }
+    const changedAt = new Date().toISOString();
+    const updated = {
+      ...order,
+      hidden: req.body.hidden,
+      hiddenAt: req.body.hidden ? changedAt : null,
+      visibilityUpdatedAt: changedAt
+    };
+    writeJsonAtomic(filePath, updated);
+    return res.json(purchaseOrderMetadata(updated));
   });
 
   app.delete('/api/purchase-orders/:orderId', (req, res) => {

@@ -894,7 +894,7 @@ body {
 
 .inventory-kardex-tools {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.8fr) minmax(130px, 0.65fr) minmax(130px, 0.65fr) auto auto;
+  grid-template-columns: minmax(210px, 1.4fr) minmax(140px, 0.8fr) minmax(120px, 0.65fr) minmax(120px, 0.65fr) minmax(100px, 0.5fr) auto auto;
   align-items: end;
   gap: 10px;
   margin-top: 14px;
@@ -967,7 +967,8 @@ body {
   font: inherit;
   font-weight: 900;
   text-align: inherit;
-  white-space: nowrap;
+  line-height: 1.15;
+  white-space: normal;
   cursor: pointer;
 }
 
@@ -1028,27 +1029,27 @@ body {
 #inventory-results-table th:nth-child(2),
 #inventory-results-table td:nth-child(2) {
   left: 90px;
-  width: 280px;
-  min-width: 280px;
-  max-width: 280px;
+  width: 250px;
+  min-width: 250px;
+  max-width: 250px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 #inventory-results-table th:nth-child(3),
 #inventory-results-table td:nth-child(3) {
-  left: 370px;
-  width: 70px;
-  min-width: 70px;
-  max-width: 70px;
+  left: 340px;
+  width: 65px;
+  min-width: 65px;
+  max-width: 65px;
 }
 
 #inventory-results-table th:nth-child(4),
 #inventory-results-table td:nth-child(4) {
-  left: 440px;
-  width: 120px;
-  min-width: 120px;
-  max-width: 120px;
+  left: 405px;
+  width: 110px;
+  min-width: 110px;
+  max-width: 110px;
   box-shadow: 7px 0 9px -8px rgba(46, 32, 21, 0.7);
 }
 
@@ -2823,6 +2824,29 @@ body {
   margin-top: 14px;
 }
 
+.past-purchase-orders-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.past-purchase-orders-hidden-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.past-purchase-orders-hidden-filter input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--clay);
+}
+
 .past-purchase-order-card {
   display: flex;
   align-items: center;
@@ -2832,6 +2856,20 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-soft);
+}
+
+.past-purchase-order-card.is-hidden {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.past-purchase-order-hidden-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--border-soft);
+  font-size: 10px !important;
+  text-transform: uppercase;
 }
 
 .past-purchase-order-card > div:first-child {
@@ -2846,6 +2884,8 @@ body {
 
 .past-purchase-order-card > div:last-child {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -2996,7 +3036,7 @@ body {
 
 .purchases-table {
   width: 100%;
-  min-width: 1700px;
+  min-width: 1550px;
   border-collapse: collapse;
   background: white;
   font-size: 12px;
@@ -3014,6 +3054,12 @@ body {
   color: var(--text-soft);
   background: #fcfaf6;
   font-size: 11px;
+}
+
+.purchases-table th[data-header-lines] {
+  min-width: 62px;
+  line-height: 1.15;
+  white-space: normal;
 }
 
 .purchases-table th:nth-child(-n+5),

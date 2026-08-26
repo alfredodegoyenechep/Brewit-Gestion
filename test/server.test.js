@@ -790,6 +790,20 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(orderList.orders.length, 1);
   assert.equal(orderList.orders[0].id, createdOrder.id);
   assert.equal(orderList.orders[0].itemCount, 1);
+  assert.equal(orderList.orders[0].hidden, false);
+
+  const hideOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}/visibility`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true })
+  });
+  assert.equal(hideOrder.status, 200);
+  assert.equal((await hideOrder.json()).hidden, true);
+  const hiddenOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`).then(response => response.json());
+  assert.equal(hiddenOrder.hidden, true);
+  const showOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}/visibility`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: false })
+  });
+  assert.equal(showOrder.status, 200);
+  assert.equal((await showOrder.json()).hidden, false);
 
   const updateOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`, {
     method: 'PUT',

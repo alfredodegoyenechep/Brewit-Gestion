@@ -1961,14 +1961,15 @@ function renderPurchasesView() {
       {
         key: 'unitsPerPurchaseUnit',
         label: 'Unidades x UDC',
+        headerLines: 'Unidades x|UDC',
         headerTitle: 'UDC significa Unidad de Compra',
         value: row => formatPurchaseConversion(row.unitsPerPurchaseUnit),
         cellTitle: row => row.baseUnit && row.unitsPerPurchaseUnit !== null
           ? `1 ${row.purchaseUnit || row.unit} = ${formatPurchaseConversion(row.unitsPerPurchaseUnit)} ${row.baseUnit}`
           : 'Conversión no disponible en el maestro vigente'
       },
-      { key: 'baseUnit', label: 'Unidad de Medida', value: row => row.baseUnit || '—' },
-      { key: 'listedUnitPrice', label: 'Costo UDC registrado', value: row => formatClp(row.listedUnitPrice) },
+      { key: 'baseUnit', label: 'Unidad Medida', headerLines: 'Unidad|Medida', value: row => row.baseUnit || '—' },
+      { key: 'listedUnitPrice', label: 'Costo UDC registrado', headerLines: 'Costo UDC|registrado', value: row => formatClp(row.listedUnitPrice) },
       {
         key: 'baseUnitCost',
         label: 'Costo Unitario',
@@ -1976,7 +1977,7 @@ function renderPurchasesView() {
         muted: true
       },
       { key: 'discount', label: 'Descuento', value: row => formatClp(row.discount) },
-      { key: 'effectiveUnitPrice', label: 'Precio unit. efectivo', value: row => formatClp(row.effectiveUnitPrice) },
+      { key: 'effectiveUnitPrice', label: 'Precio Unit. efectivo', headerLines: 'Precio Unit.|efectivo', value: row => formatClp(row.effectiveUnitPrice) },
       { key: 'previousEffectiveUnitPrice', label: 'Precio anterior', value: row => row.previousEffectiveUnitPrice === null ? '—' : formatClp(row.previousEffectiveUnitPrice) },
       {
         key: 'priceChangePercent',
@@ -1991,6 +1992,7 @@ function renderPurchasesView() {
     const headRow = document.createElement('tr');
     columns.forEach(column => {
       const cell = document.createElement('th');
+      if (column.headerLines) cell.dataset.headerLines = column.headerLines;
       markSortableHeader(cell, column.key, purchasesSort, column.label);
       if (column.headerTitle) cell.title = column.headerTitle;
       if (column.muted) cell.classList.add('purchase-muted-column');
@@ -2126,8 +2128,8 @@ function exportPurchasesReport() {
     ]);
     const headers = [
       'Fecha', 'Ubicación', 'Proveedor', 'RUT proveedor', 'Tipo documento', 'Documento', 'Línea',
-      'Código', 'Insumo', 'Cantidad', 'UDC', 'Unidades x UDC', 'Unidad de Medida',
-      'Costo UDC registrado', 'Costo Unitario', 'Descuento', 'Precio unit. efectivo',
+      'Código', 'Insumo', 'Cantidad', 'UDC', 'Unidades x UDC', 'Unidad Medida',
+      'Costo UDC registrado', 'Costo Unitario', 'Descuento', 'Precio Unit. efectivo',
       'Precio anterior', 'Cambio %', 'Monto neto', 'Monto total', 'Fuente'
     ];
     const values = data.rows.map(row => [
@@ -3065,17 +3067,31 @@ async function openPastPurchaseOrders() {
   try {
     const location = document.getElementById('projection-location-filter').value;
     const data = await apiRequest(`/api/purchase-orders?location=${encodeURIComponent(location)}`);
+    const hiddenCount = data.orders.filter(order => order.hidden).length;
+    const showHidden = document.getElementById('show-hidden-purchase-orders').checked;
+    const displayedOrders = data.orders.filter(order => showHidden || !order.hidden);
     if (!data.orders.length) {
       setStatus(status, 'Aún no hay órdenes de compra guardadas para esta ubicación.', 'muted');
       return;
     }
-    setStatus(status, `${data.orders.length} orden(es) guardada(s).`, 'success');
-    list.replaceChildren(...data.orders.map(order => {
+    if (!displayedOrders.length) {
+      setStatus(status, `No hay órdenes visibles. ${hiddenCount} orden(es) oculta(s).`, 'muted');
+      return;
+    }
+    setStatus(status, `${displayedOrders.length} orden(es) mostrada(s)${hiddenCount ? ` · ${hiddenCount} oculta(s)` : ''}.`, 'success');
+    list.replaceChildren(...displayedOrders.map(order => {
       const card = document.createElement('article');
       card.className = 'past-purchase-order-card';
+      if (order.hidden) card.classList.add('is-hidden');
       const detail = document.createElement('div');
       const title = document.createElement('strong');
       title.textContent = `${order.orderNumber} · ${order.supplier.name}`;
+      if (order.hidden) {
+        const badge = document.createElement('span');
+        badge.className = 'past-purchase-order-hidden-badge';
+        badge.textContent = 'Oculta';
+        title.append(' ', badge);
+      }
       const meta = document.createElement('span');
       meta.textContent = `${new Date(order.updatedAt).toLocaleString('es-CL')} · ${order.itemCount} ítem(s) · ${formatClp(order.total)}`;
       detail.append(title, meta);
@@ -3084,13 +3100,32 @@ async function openPastPurchaseOrders() {
       edit.type = 'button'; edit.className = 'primary'; edit.dataset.orderAction = 'edit'; edit.dataset.orderId = order.id; edit.textContent = 'Ver / modificar';
       const print = document.createElement('button');
       print.type = 'button'; print.className = 'icon-button'; print.dataset.orderAction = 'print'; print.dataset.orderId = order.id; print.textContent = 'Imprimir / PDF';
+      const visibility = document.createElement('button');
+      visibility.type = 'button'; visibility.className = 'icon-button'; visibility.dataset.orderAction = 'visibility'; visibility.dataset.orderId = order.id;
+      visibility.dataset.hidden = String(!order.hidden); visibility.dataset.orderNumber = order.orderNumber;
+      visibility.textContent = order.hidden ? 'Mostrar' : 'Ocultar';
       const remove = document.createElement('button');
       remove.type = 'button'; remove.className = 'delete-button'; remove.dataset.orderAction = 'delete'; remove.dataset.orderId = order.id;
       remove.dataset.orderNumber = order.orderNumber; remove.textContent = 'Eliminar';
-      actions.append(edit, print, remove);
+      actions.append(edit, print, visibility, remove);
       card.append(detail, actions);
       return card;
     }));
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function setPurchaseOrderVisibility(orderId, orderNumber, hidden) {
+  const status = document.getElementById('past-purchase-orders-status');
+  try {
+    await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}/visibility`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hidden })
+    });
+    await openPastPurchaseOrders();
+    setStatus(status, `Orden ${orderNumber} ${hidden ? 'ocultada' : 'mostrada'} correctamente.`, 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   }
@@ -3479,11 +3514,33 @@ function formatInventoryQuantity(value) {
   return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 3 }).format(value || 0);
 }
 
-function formatKardexQuantity(value) {
+function formatKardexQuantity(value, fractionDigits = 4) {
   return new Intl.NumberFormat('es-CL', {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits
   }).format(Number(value) || 0);
+}
+
+function formatKardexTableQuantity(value) {
+  const selected = Number(document.getElementById('inventory-kardex-decimals')?.value);
+  return formatKardexQuantity(value, Number.isInteger(selected) && selected >= 1 && selected <= 4 ? selected : 2);
+}
+
+function kardexHeaderLines(label) {
+  const words = String(label || '').trim().split(/\s+/);
+  if (words.length < 2) return words;
+  let bestIndex = 1;
+  let smallestDifference = Infinity;
+  for (let index = 1; index < words.length; index += 1) {
+    const firstLength = words.slice(0, index).join(' ').length;
+    const secondLength = words.slice(index).join(' ').length;
+    const difference = Math.abs(firstLength - secondLength);
+    if (difference < smallestDifference) {
+      smallestDifference = difference;
+      bestIndex = index;
+    }
+  }
+  return [words.slice(0, bestIndex).join(' '), words.slice(bestIndex).join(' ')];
 }
 
 function formatKardexCost(value) {
@@ -3871,7 +3928,18 @@ function renderInventoryKardexTable() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `inventory-sort-button${active ? ' active' : ''}`;
-    button.textContent = `${column.label}${active ? inventoryKardexTableState.direction === 'asc' ? ' ▲' : ' ▼' : ''}`;
+    const headerLines = kardexHeaderLines(column.label);
+    button.replaceChildren();
+    headerLines.forEach((line, lineIndex) => {
+      if (lineIndex) {
+        button.appendChild(document.createElement('br'));
+        button.appendChild(document.createTextNode(` ${line}`));
+      } else {
+        button.appendChild(document.createTextNode(line));
+      }
+    });
+    if (active) button.appendChild(document.createTextNode(inventoryKardexTableState.direction === 'asc' ? ' ▲' : ' ▼'));
+    button.title = column.label;
     button.addEventListener('click', () => {
       if (inventoryKardexTableState.sortIndex === index) {
         inventoryKardexTableState.direction = inventoryKardexTableState.direction === 'asc' ? 'desc' : 'asc';
@@ -4024,34 +4092,34 @@ function renderInventoryResults(data) {
       label: report.selection
         ? `${basisLabel(report.selection.initialBasis)} ${formatReportDate(report.selection.initialDate)}`
         : 'Inventario inicial',
-      value: item => formatKardexQuantity(item.initialInventory),
+      value: item => formatKardexTableQuantity(item.initialInventory),
       sortValue: item => Number(item.initialInventory) || 0
     },
     ...report.movementDefinitions.map(definition => ({
       label: definition.label,
-      value: item => formatKardexQuantity(item.movements[definition.key]),
+      value: item => formatKardexTableQuantity(item.movements[definition.key]),
       sortValue: item => Number(item.movements[definition.key]) || 0
     })),
-    { label: 'Consumo Colaboradores', value: item => formatKardexQuantity(item.employeeConsumption), sortValue: item => Number(item.employeeConsumption) || 0 },
-    { label: 'Consumo Marketing', value: item => formatKardexQuantity(item.marketingConsumption), sortValue: item => Number(item.marketingConsumption) || 0 },
+    { label: 'Consumo Colaboradores', value: item => formatKardexTableQuantity(item.employeeConsumption), sortValue: item => Number(item.employeeConsumption) || 0 },
+    { label: 'Consumo Marketing', value: item => formatKardexTableQuantity(item.marketingConsumption), sortValue: item => Number(item.marketingConsumption) || 0 },
     ...(report.selection ? [
       {
         label: 'Inventario Final Teórico',
-        value: item => formatKardexQuantity(item.theoreticalFinal),
+        value: item => formatKardexTableQuantity(item.theoreticalFinal),
         sortValue: item => Number(item.theoreticalFinal) || 0
       },
       {
         label: `${basisLabel(report.selection.finalBasis)} ${formatReportDate(report.selection.finalDate)}`,
-        value: item => formatKardexQuantity(item.finalInventory),
+        value: item => formatKardexTableQuantity(item.finalInventory),
         sortValue: item => Number(item.finalInventory) || 0
       }
     ] : [
-      { label: 'Inventario final teórico', value: item => formatKardexQuantity(item.theoreticalFinal), sortValue: item => Number(item.theoreticalFinal) || 0 },
-      { label: `Inventario físico ${formatReportDate(report.physicalInventoryDate)}`, value: item => formatKardexQuantity(item.physicalFinal), sortValue: item => Number(item.physicalFinal) || 0 }
+      { label: 'Inventario final teórico', value: item => formatKardexTableQuantity(item.theoreticalFinal), sortValue: item => Number(item.theoreticalFinal) || 0 },
+      { label: `Inventario físico ${formatReportDate(report.physicalInventoryDate)}`, value: item => formatKardexTableQuantity(item.physicalFinal), sortValue: item => Number(item.physicalFinal) || 0 }
     ]),
     {
       label: report.selection ? 'Diferencia de Inventario' : 'Diferencia físico − teórico',
-      value: item => formatKardexQuantity(item.difference),
+      value: item => formatKardexTableQuantity(item.difference),
       sortValue: item => Number(item.difference) || 0,
       signValue: item => item.difference,
       finalDifference: true
@@ -4947,6 +5015,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
   document.getElementById('print-purchase-order').addEventListener('click', openPurchaseOrderEditor);
   document.getElementById('past-purchase-orders').addEventListener('click', openPastPurchaseOrders);
+  document.getElementById('show-hidden-purchase-orders').addEventListener('change', openPastPurchaseOrders);
   document.getElementById('close-purchase-order-editor').addEventListener('click', () => {
     document.getElementById('purchase-order-editor-dialog').close();
   });
@@ -4967,6 +5036,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!button) return;
     if (button.dataset.orderAction === 'delete') {
       deleteSavedPurchaseOrder(button.dataset.orderId, button.dataset.orderNumber);
+    } else if (button.dataset.orderAction === 'visibility') {
+      setPurchaseOrderVisibility(button.dataset.orderId, button.dataset.orderNumber, button.dataset.hidden === 'true');
     } else {
       openSavedPurchaseOrder(button.dataset.orderId, button.dataset.orderAction === 'print');
     }
@@ -5035,6 +5106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById(id).addEventListener('input', renderInventoryKardexTable);
   }
   document.getElementById('inventory-kardex-cost-filter').addEventListener('change', renderInventoryKardexTable);
+  document.getElementById('inventory-kardex-decimals').addEventListener('change', renderInventoryKardexTable);
   document.getElementById('clear-inventory-kardex-filters').addEventListener('click', () => {
     document.getElementById('inventory-kardex-search').value = '';
     document.getElementById('inventory-kardex-cost-filter').value = 'all';
