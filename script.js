@@ -881,11 +881,20 @@ function renderFindingsView() {
     return;
   }
   const data = findingsViewState;
+  const statusFilter = document.getElementById('findings-status-filter')?.value || 'open';
+  const allFindings = data.sections.flatMap(section => section.findings);
+  const openFindings = allFindings.filter(finding => !finding.closed);
+  const closedFindings = allFindings.filter(finding => finding.closed);
+  const visibleSections = data.sections.map(section => ({
+    ...section,
+    findings: statusFilter === 'open' ? section.findings.filter(finding => !finding.closed) : section.findings
+  }));
   summary.replaceChildren(
-    findingsSummaryCard('Total por revisar', data.summary.total),
-    findingsSummaryCard('Prioridad alta', data.summary.high, 'high'),
-    findingsSummaryCard('Prioridad media', data.summary.medium, 'medium'),
-    findingsSummaryCard('Atención', data.summary.low, 'low')
+    findingsSummaryCard('Abiertos por revisar', openFindings.length),
+    findingsSummaryCard('Cerrados', closedFindings.length, 'closed'),
+    findingsSummaryCard('Prioridad alta', openFindings.filter(finding => finding.severity === 'high').length, 'high'),
+    findingsSummaryCard('Prioridad media', openFindings.filter(finding => finding.severity === 'medium').length, 'medium'),
+    findingsSummaryCard('Atención', openFindings.filter(finding => finding.severity === 'low').length, 'low')
   );
   const sourceText = data.sources.length
     ? `Fuentes maestras: ${data.sources.map(source => `${source.type} “${source.name}” (vigente desde ${formatReportDate(source.validFrom)})`).join(' · ')}.`
@@ -893,7 +902,7 @@ function renderFindingsView() {
   const warningText = data.warnings.length ? ` Advertencias de lectura: ${data.warnings.join(' ')}` : '';
   context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${data.summary.salesRowsRead} filas de ventas, ${data.summary.purchaseRowsRead} líneas de compra y ${data.summary.ordersRead} órdenes revisadas. ${sourceText}${warningText}`;
   const severityLabels = { high: 'Alta', medium: 'Media', low: 'Atención' };
-  report.replaceChildren(...data.sections.map(section => {
+  report.replaceChildren(...visibleSections.map(section => {
     const container = document.createElement('section');
     container.className = 'findings-section';
     container.dataset.section = section.key;
@@ -914,7 +923,9 @@ function renderFindingsView() {
     if (!section.findings.length) {
       const empty = document.createElement('div');
       empty.className = 'findings-empty-section';
-      empty.textContent = 'Sin señales que requieran revisión para este período.';
+      empty.textContent = statusFilter === 'open'
+        ? 'Sin hallazgos abiertos para este período.'
+        : 'Sin señales que requieran revisión para este período.';
       container.appendChild(empty);
       return container;
     }
@@ -922,21 +933,26 @@ function renderFindingsView() {
     list.className = 'findings-list';
     section.findings.forEach(finding => {
       const item = document.createElement('article');
-      item.className = 'finding-item';
+      item.className = `finding-item${finding.closed ? ' closed' : ''}`;
+      item.dataset.findingId = finding.id;
       const severity = document.createElement('span');
       severity.className = `finding-severity ${finding.severity}`;
       severity.textContent = severityLabels[finding.severity] || finding.severity;
       const copy = document.createElement('div');
       copy.className = 'finding-copy';
+      const findingNumber = document.createElement('span');
+      findingNumber.className = 'finding-number';
+      findingNumber.textContent = `Hallazgo N.º ${finding.number}`;
       const findingTitle = document.createElement('strong');
       findingTitle.textContent = finding.title;
       const detail = document.createElement('p');
       detail.textContent = finding.detail;
-      copy.append(findingTitle, detail);
+      copy.append(findingNumber, findingTitle, detail);
       const metadata = [
         finding.code ? `Código: ${finding.code}` : null,
         finding.location ? `Ubicación: ${finding.location}` : null,
-        finding.date ? `Fecha: ${formatReportDate(finding.date)}` : null,
+        finding.date || finding.occurrenceDate ? `Fecha del hallazgo: ${formatReportDate(finding.date || finding.occurrenceDate)}` : null,
+        finding.createdAt ? `Registrado: ${formatReportDate(finding.createdAt.slice(0, 10))}` : null,
         finding.observed !== null && finding.observed !== undefined ? `Observado: ${finding.observed}` : null
       ].filter(Boolean);
       if (metadata.length) {
@@ -948,12 +964,77 @@ function renderFindingsView() {
       const action = document.createElement('div');
       action.className = 'finding-action';
       action.textContent = `Revisión sugerida: ${finding.action}`;
-      item.append(severity, copy, action);
+      const reviewControls = document.createElement('div');
+      reviewControls.className = 'finding-review-controls';
+      const closedLabel = document.createElement('label');
+      closedLabel.className = 'finding-closed-toggle';
+      const closed = document.createElement('input');
+      closed.type = 'checkbox';
+      closed.checked = Boolean(finding.closed);
+      closed.setAttribute('aria-label', `Marcar Hallazgo N.º ${finding.number} como cerrado`);
+      closed.addEventListener('change', () => updateStoredFinding(finding.id, { closed: closed.checked }, true));
+      closedLabel.append(closed, document.createTextNode('Cerrado'));
+      const observationsLabel = document.createElement('label');
+      observationsLabel.className = 'finding-observations-label';
+      observationsLabel.appendChild(document.createTextNode('Observaciones'));
+      const observations = document.createElement('textarea');
+      observations.className = 'finding-observations';
+      observations.maxLength = 5000;
+      observations.value = finding.observations || '';
+      observations.placeholder = 'Anota la revisión o solución aplicada';
+      observations.setAttribute('aria-label', `Observaciones del Hallazgo N.º ${finding.number}`);
+      observationsLabel.appendChild(observations);
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'icon-button small';
+      save.textContent = 'Guardar observaciones';
+      const saveStatus = document.createElement('span');
+      saveStatus.className = 'finding-save-status';
+      saveStatus.setAttribute('aria-live', 'polite');
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        saveStatus.textContent = 'Guardando…';
+        const saved = await updateStoredFinding(finding.id, { observations: observations.value }, false);
+        save.disabled = false;
+        saveStatus.textContent = saved ? 'Observaciones guardadas.' : 'No se pudieron guardar.';
+      });
+      reviewControls.append(closedLabel, observationsLabel, save, saveStatus);
+      item.append(severity, copy, action, reviewControls);
       list.appendChild(item);
     });
     container.appendChild(list);
     return container;
   }));
+}
+
+function replaceFindingInView(updatedFinding) {
+  if (!findingsViewState) return;
+  for (const section of findingsViewState.sections) {
+    const index = section.findings.findIndex(finding => finding.id === updatedFinding.id);
+    if (index >= 0) {
+      section.findings[index] = updatedFinding;
+      return;
+    }
+  }
+}
+
+async function updateStoredFinding(id, changes, rerender) {
+  const status = document.getElementById('findings-status');
+  try {
+    const data = await apiRequest(`/api/findings/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes)
+    });
+    replaceFindingInView(data.finding);
+    if (rerender) renderFindingsView();
+    setStatus(status, `Hallazgo N.º ${data.finding.number} actualizado.`, 'success');
+    return true;
+  } catch (error) {
+    if (rerender) renderFindingsView();
+    setStatus(status, error.message, 'error');
+    return false;
+  }
 }
 
 async function loadFindingsView() {
@@ -972,9 +1053,15 @@ async function loadFindingsView() {
     document.getElementById('findings-date-from').value = data.period.from;
     document.getElementById('findings-date-to').value = data.period.to;
     renderFindingsView();
+    const openCount = data.sections.flatMap(section => section.findings).filter(finding => !finding.closed).length;
+    const openHighCount = data.sections.flatMap(section => section.findings)
+      .filter(finding => !finding.closed && finding.severity === 'high').length;
+    const persistenceText = Number.isFinite(data.summary.added)
+      ? ` ${data.summary.added} nuevo(s) agregado(s) y ${data.summary.reused} existente(s) reconocido(s).`
+      : '';
     setStatus(status, data.summary.total
-      ? `Revisión completa: ${data.summary.total} hallazgo(s), ${data.summary.high} de prioridad alta.`
-      : 'Revisión completa: no se detectaron señales que requieran atención.', data.summary.high ? 'warning' : 'success');
+      ? `Revisión completa: ${openCount} hallazgo(s) abierto(s), ${openHighCount} de prioridad alta.${persistenceText}`
+      : 'Revisión completa: no se detectaron señales que requieran atención.', openHighCount ? 'warning' : 'success');
   } catch (error) {
     findingsViewState = null;
     renderFindingsView();
@@ -5866,6 +5953,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
   document.getElementById('run-findings').addEventListener('click', loadFindingsView);
+  document.getElementById('findings-status-filter').addEventListener('change', renderFindingsView);
   document.getElementById('refresh-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
   document.getElementById('sales-ingredients-location').addEventListener('change', loadSalesIngredientsView);
   document.getElementById('run-sales-ingredients').addEventListener('click', loadSalesIngredientsView);

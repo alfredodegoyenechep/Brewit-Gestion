@@ -130,10 +130,18 @@
           <label for="findings-date-to">Hasta
             <input id="findings-date-to" type="date" />
           </label>
-          <button id="run-findings" class="primary findings-run-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5L9 20l-5-5L15 4Z"/><path d="m14 5 5 5M5 4v3M3.5 5.5h3M19 16v4M17 18h4"/></svg>
-            Buscar hallazgos
-          </button>
+          <div class="findings-run-control">
+            <button id="run-findings" class="primary findings-run-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5L9 20l-5-5L15 4Z"/><path d="m14 5 5 5M5 4v3M3.5 5.5h3M19 16v4M17 18h4"/></svg>
+              Buscar hallazgos
+            </button>
+            <label for="findings-status-filter">Mostrar
+              <select id="findings-status-filter">
+                <option value="open">Solo abiertos</option>
+                <option value="all">Todos</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>
       <div id="findings-status" class="form-status" aria-live="polite"></div>
@@ -283,7 +291,7 @@
         <div class="mercadopago-history-heading">
           <div class="panel-eyebrow">Evolución histórica</div>
           <h4>Participación de clientes recurrentes</h4>
-          <p>La frecuencia clasifica a los clientes recurrentes activos en cada período según su comportamiento acumulado hasta ese cierre.</p>
+          <p>La frecuencia clasifica a los clientes recurrentes activos en cada período según su comportamiento acumulado hasta ese cierre. Los valores aquí expresados incluyen IVA y corresponden a datos directos de MercadoPago.</p>
         </div>
         <div class="mercadopago-history-grid">
           <section class="mercadopago-history-card">

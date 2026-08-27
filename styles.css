@@ -340,6 +340,20 @@ body {
   white-space: nowrap;
 }
 
+.findings-run-control {
+  display: grid;
+  gap: 7px;
+}
+
+.findings-run-control label {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.findings-run-control select {
+  padding-block: 7px;
+}
+
 .findings-run-button svg {
   width: 18px;
   height: 18px;
@@ -352,7 +366,7 @@ body {
 
 .findings-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
   gap: 12px;
   margin-top: 18px;
 }
@@ -383,6 +397,7 @@ body {
 .findings-summary-card.high strong { color: #a7422b; }
 .findings-summary-card.medium strong { color: #bd7222; }
 .findings-summary-card.low strong { color: var(--green); }
+.findings-summary-card.closed strong { color: var(--green); }
 
 .findings-context {
   margin-top: 12px;
@@ -439,10 +454,14 @@ body {
 
 .finding-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(190px, .7fr);
+  grid-template-columns: auto minmax(0, 1fr) minmax(190px, .65fr) minmax(230px, .75fr);
   gap: 13px;
   padding: 15px 19px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.finding-item.closed {
+  background: color-mix(in srgb, var(--panel) 92%, var(--green) 8%);
 }
 
 .finding-item:last-child { border-bottom: 0; }
@@ -464,12 +483,69 @@ body {
 
 .finding-copy strong { font-size: 13px; }
 
+.finding-number {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--coffee);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
 .finding-copy p,
 .finding-action {
   margin-top: 5px;
   color: var(--text-soft);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.finding-review-controls {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+
+.finding-closed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.finding-closed-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
+.finding-observations-label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.finding-observations {
+  min-height: 58px;
+  resize: vertical;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.35;
+}
+
+.finding-save-status {
+  min-height: 14px;
+  color: var(--green);
+  font-size: 10px;
 }
 
 .finding-meta {
@@ -5225,6 +5301,10 @@ button:disabled {
   }
 
   .finding-action {
+    grid-column: 2;
+  }
+
+  .finding-review-controls {
     grid-column: 2;
   }
 

@@ -200,9 +200,10 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     label,
     description: `Revisión de ${label}`,
     findings: key === 'sales' ? [{
-      id: 'sales-1', severity: 'high', title: 'Código vendido fuera del catálogo: X1',
+      id: 'H-000001', number: 1, severity: 'high', title: 'Código vendido fuera del catálogo: X1',
       detail: 'Una venta requiere confirmación.', action: 'Revisar el código en Toteat.',
-      code: 'X1', location: 'Tienda 1', date: '2026-08-09', observed: '1 fila'
+      code: 'X1', location: 'Tienda 1', date: '2026-08-09', observed: '1 fila',
+      observations: '', closed: false, closedAt: null
     }] : []
   }));
   const findingsRoute = route => route.fulfill({
@@ -212,20 +213,47 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
       period: { from: '2026-07-12', to: '2026-08-10' },
       scope: { location: 'all', label: 'Todas las ubicaciones', type: 'all' },
       locations: [],
-      summary: { total: 1, high: 1, medium: 0, low: 0, sectionsWithFindings: 1, salesRowsRead: 1, purchaseRowsRead: 0, ordersRead: 0 },
+      summary: { total: 1, open: 1, closed: 0, high: 1, medium: 0, low: 0, sectionsWithFindings: 1, salesRowsRead: 1, purchaseRowsRead: 0, ordersRead: 0, added: 1, reused: 0 },
       sections: findingSections,
       sources: [{ type: 'Catálogo', name: 'catalogo.xlsx', validFrom: '2026-08-01' }],
       warnings: []
     })
   });
   await page.route('**/api/findings?**', findingsRoute);
+  const persistedUiFinding = findingSections.find(section => section.key === 'sales').findings[0];
+  await page.route('**/api/findings/H-000001', async route => {
+    const changes = route.request().postDataJSON();
+    Object.assign(persistedUiFinding, changes, {
+      closedAt: changes.closed ? '2026-08-10T12:05:00.000Z' : null,
+      updatedAt: '2026-08-10T12:05:00.000Z'
+    });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ finding: persistedUiFinding })
+    });
+  });
   await page.getByRole('link', { name: 'Hallazgos', exact: true }).click();
   await page.getByRole('heading', { name: 'Hallazgos que requieren revisión' }).waitFor();
   await page.locator('#findings-status').filter({ hasText: /1 hallazgo.*1 de prioridad alta/i }).waitFor();
   assert.equal(await page.locator('.findings-section').count(), 7);
-  assert.match(await page.locator('[data-section="sales"]').textContent(), /Código vendido fuera del catálogo.*Revisión sugerida/s);
+  assert.equal(await page.locator('#findings-status-filter').inputValue(), 'open');
+  assert.match(await page.locator('[data-section="sales"]').textContent(), /Hallazgo N.º 1.*Código vendido fuera del catálogo.*Revisión sugerida/s);
+  await page.getByLabel('Observaciones del Hallazgo N.º 1').fill('Código revisado en Toteat.');
+  await page.getByRole('button', { name: 'Guardar observaciones' }).click();
+  await page.locator('.finding-save-status').filter({ hasText: 'Observaciones guardadas.' }).waitFor();
+  assert.equal(persistedUiFinding.observations, 'Código revisado en Toteat.');
+  await page.locator('#findings-status-filter').selectOption('all');
+  await page.getByLabel('Marcar Hallazgo N.º 1 como cerrado').check();
+  await page.locator('.finding-item.closed').waitFor();
+  assert.equal(persistedUiFinding.closed, true);
+  await page.locator('#findings-status-filter').selectOption('open');
+  assert.equal(await page.locator('[data-section="sales"] .finding-item').count(), 0);
+  assert.match(await page.locator('[data-section="sales"]').textContent(), /Sin hallazgos abiertos/);
+  await page.locator('#findings-status-filter').selectOption('all');
+  assert.equal(await page.locator('[data-section="sales"] .finding-item.closed').count(), 1);
   assert.equal(await page.locator('#findings-date-from').inputValue(), '2026-07-12');
   await page.unroute('**/api/findings?**', findingsRoute);
+  await page.unroute('**/api/findings/H-000001');
 
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
   await page.getByRole('heading', { name: 'Cargar archivos' }).waitFor({ state: 'visible' });

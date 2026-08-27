@@ -2034,6 +2034,7 @@ function createApp(options = {}) {
   const companyProfilePath = path.join(configRoot, 'company-profile.json');
   const purchaseOrderCounterPath = path.join(configRoot, 'purchase-order-counter.json');
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
+  const findingsRegistryPath = path.join(configRoot, 'findings.json');
   ensureDir(weeksRoot);
   ensureDir(mastersRoot);
   ensureDir(stagingRoot);
@@ -2073,6 +2074,15 @@ function createApp(options = {}) {
 
   function readPurchaseProjectionPolicies() {
     return readJson(purchaseProjectionPoliciesPath, { locations: {} });
+  }
+
+  function readFindingsRegistry() {
+    const registry = readJson(findingsRegistryPath, { version: 1, lastNumber: 0, records: [] });
+    return {
+      version: 1,
+      lastNumber: Math.max(0, Number(registry.lastNumber) || 0),
+      records: Array.isArray(registry.records) ? registry.records : []
+    };
   }
 
   function projectionToday() {
@@ -5456,11 +5466,139 @@ function createApp(options = {}) {
     };
   }
 
+  function findingFingerprint(sectionKey, finding) {
+    const identity = [
+      sectionKey,
+      normalizeHeader(finding.title),
+      String(finding.code || '').trim().toUpperCase(),
+      normalizeHeader(finding.location),
+      String(finding.date || '')
+    ];
+    return crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  }
+
+  function publicStoredFinding(record) {
+    const { fingerprint, affectedLocationId, scopeLocation, ...finding } = record;
+    return finding;
+  }
+
+  function persistFindingsPayload(payload) {
+    const registry = readFindingsRegistry();
+    const now = new Date().toISOString();
+    const locationIdsByName = new Map(payload.locations.map(location => [normalizeHeader(location.name), location.id]));
+    const generated = payload.sections.flatMap(section => section.findings.map(finding => ({ section, finding })));
+    let added = 0;
+    let reused = 0;
+
+    for (const { section, finding } of generated) {
+      const fingerprint = findingFingerprint(section.key, finding);
+      const existing = registry.records.find(record => record.fingerprint === fingerprint
+        && record.occurrenceDate >= payload.period.from && record.occurrenceDate <= payload.period.to);
+      const common = {
+        sectionKey: section.key,
+        severity: finding.severity,
+        title: finding.title,
+        detail: finding.detail,
+        action: finding.action,
+        date: finding.date,
+        location: finding.location,
+        code: finding.code,
+        observed: finding.observed,
+        lastSeenAt: now,
+        lastSeenPeriod: { ...payload.period }
+      };
+      if (existing) {
+        Object.assign(existing, common);
+        reused += 1;
+        continue;
+      }
+      registry.lastNumber += 1;
+      registry.records.push({
+        id: `H-${String(registry.lastNumber).padStart(6, '0')}`,
+        number: registry.lastNumber,
+        fingerprint,
+        affectedLocationId: finding.location ? locationIdsByName.get(normalizeHeader(finding.location)) || null : null,
+        scopeLocation: payload.scope.location,
+        occurrenceDate: finding.date || payload.period.to,
+        observations: '',
+        closed: false,
+        closedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        ...common
+      });
+      added += 1;
+    }
+
+    writeJsonAtomic(findingsRegistryPath, registry);
+    const matchesScope = record => payload.scope.location === 'all'
+      || record.affectedLocationId === payload.scope.location
+      || (!record.affectedLocationId && ['all', payload.scope.location].includes(record.scopeLocation));
+    const records = registry.records.filter(record => record.occurrenceDate >= payload.period.from
+      && record.occurrenceDate <= payload.period.to && matchesScope(record));
+    const severityOrder = { high: 0, medium: 1, low: 2 };
+    const sections = payload.sections.map(section => ({
+      key: section.key,
+      label: section.label,
+      description: section.description,
+      findings: records.filter(record => record.sectionKey === section.key)
+        .sort((left, right) => Number(left.closed) - Number(right.closed)
+          || severityOrder[left.severity] - severityOrder[right.severity]
+          || String(right.occurrenceDate || '').localeCompare(String(left.occurrenceDate || ''))
+          || left.number - right.number)
+        .map(publicStoredFinding)
+    }));
+    const visibleFindings = sections.flatMap(section => section.findings);
+    return {
+      ...payload,
+      sections,
+      summary: {
+        ...payload.summary,
+        total: visibleFindings.length,
+        open: visibleFindings.filter(finding => !finding.closed).length,
+        closed: visibleFindings.filter(finding => finding.closed).length,
+        high: visibleFindings.filter(finding => finding.severity === 'high').length,
+        medium: visibleFindings.filter(finding => finding.severity === 'medium').length,
+        low: visibleFindings.filter(finding => finding.severity === 'low').length,
+        sectionsWithFindings: sections.filter(section => section.findings.length).length,
+        generated: generated.length,
+        added,
+        reused
+      }
+    };
+  }
+
   app.get('/api/findings', (req, res) => {
     try {
-      return res.json(buildFindingsPayload(req.query));
+      return res.json(persistFindingsPayload(buildFindingsPayload(req.query)));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No fue posible buscar hallazgos.' });
+    }
+  });
+
+  app.patch('/api/findings/:id', express.json(), (req, res) => {
+    try {
+      const registry = readFindingsRegistry();
+      const finding = registry.records.find(record => record.id === req.params.id);
+      if (!finding) return res.status(404).json({ error: 'No se encontró el hallazgo solicitado.' });
+      if (Object.hasOwn(req.body || {}, 'observations')) {
+        if (typeof req.body.observations !== 'string' || req.body.observations.length > 5000) {
+          return res.status(400).json({ error: 'Las observaciones deben contener hasta 5.000 caracteres.' });
+        }
+        finding.observations = req.body.observations.trim();
+      }
+      if (Object.hasOwn(req.body || {}, 'closed')) {
+        if (typeof req.body.closed !== 'boolean') {
+          return res.status(400).json({ error: 'El estado cerrado debe ser verdadero o falso.' });
+        }
+        finding.closed = req.body.closed;
+        finding.closedAt = finding.closed ? new Date().toISOString() : null;
+      }
+      finding.updatedAt = new Date().toISOString();
+      writeJsonAtomic(findingsRegistryPath, registry);
+      return res.json({ finding: publicStoredFinding(finding) });
+    } catch (error) {
+      return res.status(500).json({ error: error.message || 'No se pudo actualizar el hallazgo.' });
     }
   });
 

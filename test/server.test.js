@@ -726,10 +726,44 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
     'products', 'recipes', 'costs', 'inventory', 'purchase-orders', 'purchases', 'sales'
   ]);
   assert.ok(findings.summary.total > 0);
+  assert.equal(findings.summary.added, findings.summary.total);
+  assert.equal(findings.summary.reused, 0);
+  const storedFindings = findings.sections.flatMap(section => section.findings);
+  assert.ok(storedFindings.every(finding => Number.isInteger(finding.number) && finding.number > 0));
+  assert.ok(storedFindings.every(finding => finding.observations === '' && finding.closed === false));
   assert.ok(findings.sections.find(section => section.key === 'costs').findings
     .some(finding => /Costo maestro desalineado/.test(finding.title)));
   assert.ok(findings.sections.find(section => section.key === 'inventory').findings
     .some(finding => /Sin Kardex utilizable/.test(finding.title)));
+
+  const reviewedFinding = storedFindings[0];
+  const reviewedResponse = await fetch(`${baseUrl}/api/findings/${reviewedFinding.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ observations: 'Dato confirmado y corregido.', closed: true })
+  });
+  assert.equal(reviewedResponse.status, 200);
+  const reviewed = (await reviewedResponse.json()).finding;
+  assert.equal(reviewed.number, reviewedFinding.number);
+  assert.equal(reviewed.observations, 'Dato confirmado y corregido.');
+  assert.equal(reviewed.closed, true);
+  assert.ok(reviewed.closedAt);
+
+  const repeated = await fetch(`${baseUrl}/api/findings?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`)
+    .then(response => response.json());
+  assert.equal(repeated.summary.added, 0);
+  assert.equal(repeated.summary.reused, findings.summary.total);
+  assert.equal(repeated.summary.total, findings.summary.total);
+  const repeatedReviewed = repeated.sections.flatMap(section => section.findings)
+    .find(finding => finding.id === reviewedFinding.id);
+  assert.equal(repeatedReviewed.number, reviewedFinding.number);
+  assert.equal(repeatedReviewed.observations, 'Dato confirmado y corregido.');
+  assert.equal(repeatedReviewed.closed, true);
+  assert.equal(repeated.summary.open, findings.summary.total - 1);
+  assert.equal(repeated.summary.closed, 1);
+  assert.equal((await fetch(`${baseUrl}/api/findings/${reviewedFinding.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closed: 'yes' })
+  })).status, 400);
 });
 
 test('reports product sales by selected recipe ingredients and extras hierarchies without duplicating totals', async t => {
