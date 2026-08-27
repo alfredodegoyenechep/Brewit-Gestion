@@ -8,8 +8,8 @@ const fs = require('fs');
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
-const PREVIEW_MAX_ROWS = 200;
-const PREVIEW_MAX_COLUMNS = 300;
+const PREVIEW_MAX_ROWS = 400;
+const PREVIEW_MAX_COLUMNS = 400;
 const STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const ALLOWED_EXTENSIONS = new Set(['.csv', '.xls', '.xlsx', '.txt']);
 const DEFAULT_LOCATIONS = [
@@ -429,6 +429,16 @@ function filterPreviewRowsByDate(allRows, field, dateFrom, dateTo) {
   return allRows;
 }
 
+function previewFrozenRowCount(rows, field) {
+  if (!rows.length) return 0;
+  if (['kardex', 'waste'].includes(field)) return Math.min(2, rows.length);
+  if (rows.length < 2) return 1;
+  const headerPattern = /(?:id\s+producto|nombre\s+producto|id\s+ingrediente|id\s+jerarquia|id\s+jerarquía|fecha\s+emision|fecha\s+emisión|id\s+de\s+orden)/i;
+  const firstLooksLikeHeader = rows[0].some(value => headerPattern.test(String(value ?? '')));
+  const secondLooksLikeHeader = rows[1].some(value => headerPattern.test(String(value ?? '')));
+  return secondLooksLikeHeader && !firstLooksLikeHeader ? 2 : 1;
+}
+
 function buildSpreadsheetPreview(filePath, originalName, options = {}) {
   const workbook = XLSX.readFile(filePath, { cellDates: true });
   const sheets = workbook.SheetNames.map(sheetName => {
@@ -448,6 +458,7 @@ function buildSpreadsheetPreview(filePath, originalName, options = {}) {
       name: sheetName,
       rows: allRows.slice(0, PREVIEW_MAX_ROWS).map(row => row.slice(0, PREVIEW_MAX_COLUMNS)),
       totalRows: allRows.length,
+      frozenRows: previewFrozenRowCount(allRows, options.field),
       truncated: allRows.length > PREVIEW_MAX_ROWS || allRows.some(row => row.length > PREVIEW_MAX_COLUMNS)
     };
   });
@@ -489,6 +500,7 @@ function buildCombinedSalesPreview(destination, record) {
       name: 'Ventas consolidadas',
       rows,
       totalRows: totalDataRows + (rows.length ? 1 : 0),
+      frozenRows: rows.length ? 1 : 0,
       truncated: totalDataRows > PREVIEW_MAX_ROWS - 1 || hasWideRows
     }]
   };
@@ -632,6 +644,50 @@ function buildKardexInventoryReport(parsed, dateFrom, dateTo, selection = null) 
     physicalInventoryDate: physicalGroup.date,
     movementDefinitions: parsed.movementDefinitions,
     itemCount: items.length,
+    items
+  };
+}
+
+function buildCurrentTheoreticalInventoryReport(parsed, referenceDate, catalog, assignments, hierarchyLookups) {
+  const latestGroup = parsed.groups.filter(group => group.date <= referenceDate).at(-1);
+  if (!latestGroup) throw new Error(`No hay un saldo de Kardex disponible al ${referenceDate} o en una fecha anterior.`);
+  const usesFinalInventory = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
+  const categoryLabels = { product: 'Productos', ingredient: 'Ingredientes', extra: 'Extras' };
+  const items = parsed.products.map(product => {
+    const codeKey = String(product.code || '').toUpperCase();
+    const quantity = kardexMetricValue(product, latestGroup,
+      metric => metric.startsWith(usesFinalInventory ? 'if -' : 'ii -'));
+    const catalogItem = catalog?.get(product.code) || catalog?.get(codeKey);
+    const catalogUnitCost = unitCostForRecipeUnit(catalogItem, product.unit);
+    const assignment = assignments?.get(codeKey);
+    const category = categoryLabels[assignment?.type];
+    const nestedPath = assignment?.hierarchyId
+      ? hierarchyLookups?.[assignment.type]?.pathFor(assignment.hierarchyId) || []
+      : [];
+    const hierarchyPath = category
+      ? [category, ...(nestedPath.length ? nestedPath : ['Sin jerarquía'])]
+      : ['Sin jerarquía'];
+    const unitCost = catalogUnitCost ?? 0;
+    return {
+      code: product.code,
+      name: product.name,
+      unit: product.unit,
+      hierarchyPath,
+      quantity,
+      unitCost,
+      costAvailable: catalogUnitCost !== null,
+      valuation: quantity * unitCost
+    };
+  }).sort((left, right) => left.hierarchyPath.join('\u001f').localeCompare(right.hierarchyPath.join('\u001f'), 'es', { sensitivity: 'base' })
+    || left.name.localeCompare(right.name, 'es', { sensitivity: 'base' })
+    || left.code.localeCompare(right.code, 'es', { numeric: true }));
+  return {
+    date: latestGroup.date,
+    balanceBasis: usesFinalInventory ? 'final' : 'initial',
+    itemCount: items.length,
+    hierarchyCount: new Set(items.map(item => item.hierarchyPath.join('\u001f'))).size,
+    itemsWithoutCost: items.filter(item => !item.costAvailable).map(item => item.code || item.name),
+    totalValue: items.reduce((sum, item) => sum + item.valuation, 0),
     items
   };
 }
@@ -1101,6 +1157,37 @@ function parseSalesAnalysisCatalog(filePath) {
   return { products, ingredients, recipeExtras };
 }
 
+function parseInventoryHierarchyAssignments(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true });
+  const assignments = new Map();
+  for (const sheetName of workbook.SheetNames) {
+    const type = /^prod|producto/i.test(sheetName)
+      ? 'product'
+      : /^ingr|ingred/i.test(sheetName)
+        ? 'ingredient'
+        : /^extr|extra/i.test(sheetName) ? 'extra' : null;
+    if (!type) continue;
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true, blankrows: false });
+    const headerIndex = rows.slice(0, 5).findIndex(row => findHeaderColumn(row, ['ID Producto **', 'ID Producto']) >= 0);
+    if (headerIndex < 0) continue;
+    const headers = rows[headerIndex];
+    const codeColumn = findHeaderColumn(headers, ['ID Producto **', 'ID Producto']);
+    const hierarchyHeaders = type === 'product'
+      ? ['Jerarquías de Producto *', 'Jerarquía de Producto', 'Jerarquias de Producto *']
+      : type === 'ingredient'
+        ? ['Jerarquías de Ingredientes *', 'Jerarquía de Ingredientes']
+        : ['Jerarquías de Extras *', 'Jerarquía de Extras'];
+    const hierarchyColumn = findHeaderColumn(headers, hierarchyHeaders);
+    for (const row of rows.slice(headerIndex + 1)) {
+      const code = String(row[codeColumn] ?? '').trim();
+      if (!code) continue;
+      const hierarchyId = String(row[hierarchyColumn] ?? '').split(',').map(value => value.trim()).find(Boolean) || null;
+      assignments.set(code.toUpperCase(), { type, hierarchyId });
+    }
+  }
+  return assignments;
+}
+
 function parseNamedHierarchies(filePath, nameHeaders) {
   const workbook = XLSX.readFile(filePath, { cellDates: true });
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
@@ -1425,16 +1512,16 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
   };
 }
 
-function buildIntradayReport(dailySales, transactionsByDate, todayKey) {
-  const todayWeekday = new Date(`${todayKey}T00:00:00.000Z`).getUTCDay();
-  const completedDates = Object.keys(dailySales).filter(date => date < todayKey);
+function buildIntradayReport(dailySales, transactionsByDate, referenceDate) {
+  const referenceWeekday = new Date(`${referenceDate}T00:00:00.000Z`).getUTCDay();
+  const completedDates = Object.keys(dailySales).filter(date => date < referenceDate);
   const bestDate = dates => dates.sort((left, right) => {
     const difference = dailySales[right].net - dailySales[left].net;
     return difference || right.localeCompare(left);
   })[0] || null;
   const sameWeekdayDate = bestDate(completedDates.filter(date =>
-    new Date(`${date}T00:00:00.000Z`).getUTCDay() === todayWeekday));
-  const monthDate = bestDate(completedDates.filter(date => date.startsWith(todayKey.slice(0, 7))));
+    new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceWeekday));
+  const monthDate = bestDate(completedDates.filter(date => date.startsWith(referenceDate.slice(0, 7))));
   const historicalDate = bestDate([...completedDates]);
   const blocks = [
     { label: '07:00–09:00', end: '08:59:59' },
@@ -1451,18 +1538,18 @@ function buildIntradayReport(dailySales, transactionsByDate, todayKey) {
       .filter(transaction => transaction.time <= end)
       .reduce((sum, transaction) => sum + transaction.net, 0);
   };
-  const todayTransactions = transactionsByDate[todayKey] || [];
-  const cutoffTime = todayTransactions.reduce((latest, transaction) =>
+  const referenceTransactions = transactionsByDate[referenceDate] || [];
+  const cutoffTime = referenceTransactions.reduce((latest, transaction) =>
     !latest || transaction.time > latest ? transaction.time : latest, null);
-  const todayNetSales = cutoffTime ? cumulativeAt(todayKey, cutoffTime) : 0;
+  const referenceNetSales = cutoffTime ? cumulativeAt(referenceDate, cutoffTime) : 0;
   const rankingAtCutoff = dates => ({
     position: cutoffTime
-      ? 1 + dates.filter(date => date !== todayKey && cumulativeAt(date, cutoffTime) > todayNetSales).length
+      ? 1 + dates.filter(date => date !== referenceDate && cumulativeAt(date, cutoffTime) > referenceNetSales).length
       : null,
     total: cutoffTime ? dates.length : 0
   });
   const priorSameWeekdays = completedDates
-    .filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === todayWeekday)
+    .filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceWeekday)
     .sort()
     .reverse();
   const priorEight = priorSameWeekdays.slice(0, 8);
@@ -1471,14 +1558,14 @@ function buildIntradayReport(dailySales, transactionsByDate, todayKey) {
     : 0;
   return {
     today: {
-      date: todayKey,
+      date: referenceDate,
       cutoffTime,
-      netSales: todayNetSales,
-      generalRank: rankingAtCutoff([...completedDates, ...(cutoffTime ? [todayKey] : [])]),
-      sameWeekdayRank: rankingAtCutoff([...priorSameWeekdays, ...(cutoffTime ? [todayKey] : [])]),
+      netSales: referenceNetSales,
+      generalRank: rankingAtCutoff([...completedDates, ...(cutoffTime ? [referenceDate] : [])]),
+      sameWeekdayRank: rankingAtCutoff([...priorSameWeekdays, ...(cutoffTime ? [referenceDate] : [])]),
       sameWeekdayAverage,
       comparisonToAveragePercent: cutoffTime && sameWeekdayAverage
-        ? ((todayNetSales / sameWeekdayAverage) - 1) * 100
+        ? ((referenceNetSales / sameWeekdayAverage) - 1) * 100
         : null,
       averageSampleSize: priorEight.length
     },
@@ -1490,7 +1577,7 @@ function buildIntradayReport(dailySales, transactionsByDate, todayKey) {
     blocks: blocks.map(block => ({
       label: block.label,
       end: block.end,
-      today: cumulativeAt(todayKey, block.end),
+      today: cumulativeAt(referenceDate, block.end),
       sameWeekday: cumulativeAt(sameWeekdayDate, block.end),
       month: cumulativeAt(monthDate, block.end),
       historical: cumulativeAt(historicalDate, block.end)
@@ -1520,7 +1607,11 @@ function cleanExpiredStaging(stagingRoot) {
   }
 }
 
-const TOTEAT_REPORT_URL = 'https://res8.toteat.com/#/reportes/cierres';
+const TOTEAT_REPORT_URL = 'https://res8.toteat.com/#/reportes/cierre';
+const TOTEAT_REPORT_URLS = [
+  TOTEAT_REPORT_URL,
+  'https://res8.toteat.com/#/reportes/cierres'
+];
 
 function chromeExecutablePath() {
   return [
@@ -1533,21 +1624,241 @@ function chromeExecutablePath() {
   ].filter(Boolean).find(candidate => fs.existsSync(candidate)) || null;
 }
 
-function createToteatAutomation(profilesRoot) {
+function createToteatAutomation(profilesRoot, factoryOptions = {}) {
   const contexts = new Map();
+  const diagnosticsRoot = path.join(profilesRoot, 'diagnostics');
+  const reportUrls = Array.isArray(factoryOptions.reportUrls) && factoryOptions.reportUrls.length
+    ? factoryOptions.reportUrls
+    : factoryOptions.reportUrl ? [factoryOptions.reportUrl] : TOTEAT_REPORT_URLS;
+  const reportUrl = reportUrls[0];
+  const readyTimeout = Number(factoryOptions.readyTimeout) > 0 ? Number(factoryOptions.readyTimeout) : 10000;
+  const transitionDelay = Number(factoryOptions.transitionDelay) >= 0 ? Number(factoryOptions.transitionDelay) : 900;
   ensureDir(profilesRoot);
+  ensureDir(diagnosticsRoot);
   const automationError = (message, code, status = 500) => {
     const error = new Error(message);
     error.code = code;
     error.status = status;
     return error;
   };
+  const normalizeToteatText = value => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  const downloadLabel = /(?:Descargar|Download|Exportar|Export)\s+(?:las?\s+)?(?:Ventas(?:\s+Totales)?|Total\s+Sales|Sales)/i;
+  const loginLabel = /^(?:Iniciar\s+sesión|Iniciar\s+sesion|Ingresar|Sign\s+in|Log\s+in)$/i;
+  const logoutLabel = /^(?:Cerrar\s+sesión|Cerrar\s+sesion|Salir|Sign\s+out|Log\s+out)$/i;
+  const restaurantTriggerLabel = /^(?:Seleccionar|Select|Cambiar|Change)(?:\s+(?:el|a))?\s+(?:Restaurante|Restaurant)(?:\s+Info)?$/i;
+  const reportsLabel = /^(?:Reportes|Reports)$/i;
+  const salesReportLabel = /^(?:Resumen(?:\s+general)?\s+de\s+ventas|Sales\s+Summary|Cierres?|Closures?|Ventas\s+consolidadas|Consolidated\s+Sales)$/i;
+  const expiredSessionText = /(?:sesion.*(?:caducad|invalida)|session.*(?:invalid|expired|has problems)|abrir una nueva sesion|close.*(?:log on|log in).*toteat)/i;
+  const elementLabel = async locator => {
+    const text = await locator.innerText().catch(() => '');
+    const ariaLabel = await locator.getAttribute('aria-label').catch(() => '');
+    const title = await locator.getAttribute('title').catch(() => '');
+    return String(ariaLabel || title || text || '').replace(/\s+/g, ' ').trim();
+  };
+  const findVisibleControl = async (page, pattern, selector = 'button, [role="button"], a, [role="menuitem"], [role="option"]') => {
+    for (const frame of page.frames()) {
+      const controls = frame.locator(selector);
+      const count = Math.min(await controls.count().catch(() => 0), 160);
+      for (let index = 0; index < count; index += 1) {
+        const control = controls.nth(index);
+        if (!await control.isVisible().catch(() => false)) continue;
+        const label = await elementLabel(control);
+        if (label.length <= 120 && pattern.test(label)) return control;
+      }
+    }
+    return null;
+  };
+  const findDownloadButton = async page => {
+    const attributeSelector = [
+      '[data-testid*="download-total-sales" i]', '[data-testid*="sales-download" i]',
+      '[aria-label*="total sales" i]', '[aria-label*="ventas totales" i]',
+      '[title*="total sales" i]', '[title*="ventas totales" i]'
+    ].join(', ');
+    return findVisibleControl(page, downloadLabel, `${attributeSelector}, button, [role="button"], a`);
+  };
+  const waitForDownloadButton = async (page, timeout = 12000) => {
+    const deadline = Date.now() + timeout;
+    do {
+      const button = await findDownloadButton(page);
+      if (button) return button;
+      await page.waitForTimeout(500);
+    } while (Date.now() < deadline);
+    return null;
+  };
+  const expiredSessionDialog = async page => {
+    for (const frame of page.frames()) {
+      const dialogs = frame.locator('.ds-modal-container, [role="dialog"], .modal-dialog, .modal-content');
+      const count = Math.min(await dialogs.count().catch(() => 0), 30);
+      for (let index = 0; index < count; index += 1) {
+        const dialog = dialogs.nth(index);
+        if (!await dialog.isVisible().catch(() => false)) continue;
+        const text = normalizeToteatText(await dialog.innerText().catch(() => ''));
+        if (expiredSessionText.test(text)) return { dialog, text };
+      }
+    }
+    return null;
+  };
+  const dismissExpiredSession = async page => {
+    const expired = await expiredSessionDialog(page);
+    if (!expired) return { detected: false, dismissed: false };
+    const buttons = expired.dialog.locator('button, [role="button"], a');
+    const count = Math.min(await buttons.count().catch(() => 0), 20);
+    let confirmation = null;
+    for (let index = 0; index < count; index += 1) {
+      const candidate = buttons.nth(index);
+      if (!await candidate.isVisible().catch(() => false)) continue;
+      const label = await elementLabel(candidate);
+      if (/^(?:OK|Aceptar|Continuar|Continue)$/i.test(label)) {
+        confirmation = candidate;
+        break;
+      }
+    }
+    if (confirmation) {
+      await confirmation.click({ timeout: 10000 });
+      await page.waitForTimeout(transitionDelay);
+      return { detected: true, dismissed: true };
+    }
+    return { detected: true, dismissed: false };
+  };
+  const ensureActiveSession = async (page, attempts) => {
+    const expired = await dismissExpiredSession(page);
+    if (!expired.detected) return;
+    attempts.push({ action: 'expired-session-dialog', dismissed: expired.dismissed });
+    const error = automationError(
+      expired.dismissed
+        ? 'La sesión de Toteat estaba vencida y fue cerrada. Inicia la nueva sesión en la ventana que se abrirá.'
+        : 'La sesión de Toteat está vencida. Confirma el cierre de sesión en la ventana que se abrirá.',
+      'TOTEAT_AUTH_REQUIRED', 409
+    );
+    error.state = 'session_expired';
+    error.attempts = attempts;
+    throw error;
+  };
+  const authenticationRequired = async page => {
+    if (await expiredSessionDialog(page)) return true;
+    if (/login|signin|auth/i.test(page.url())) return true;
+    if (await page.locator('input[type="password"]').first().isVisible().catch(() => false)) return true;
+    const logout = await findVisibleControl(page, logoutLabel);
+    if (logout) return false;
+    return Boolean(await findVisibleControl(page, loginLabel));
+  };
+  const selectRestaurant = async (page, restaurantName, attempts) => {
+    const attempt = { action: 'restaurant-selection', restaurantName, required: false, selected: false };
+    attempts.push(attempt);
+    await ensureActiveSession(page, attempts);
+    const trigger = await findVisibleControl(page, restaurantTriggerLabel);
+    if (!trigger) return attempt;
+    attempt.required = true;
+    await trigger.click();
+    await page.waitForTimeout(transitionDelay);
+    await ensureActiveSession(page, attempts);
+    const wanted = normalizeToteatText(restaurantName);
+    for (const frame of page.frames()) {
+      const options = frame.locator('[role="option"], [role="menuitem"], [role="menuitemradio"], li, button, a');
+      const count = Math.min(await options.count().catch(() => 0), 200);
+      for (let index = 0; index < count; index += 1) {
+        const option = options.nth(index);
+        if (!await option.isVisible().catch(() => false)) continue;
+        const label = await elementLabel(option);
+        const normalizedLabel = normalizeToteatText(label);
+        if (!normalizedLabel || normalizedLabel.length > wanted.length + 45) continue;
+        if (normalizedLabel === wanted || normalizedLabel.includes(wanted)) {
+          await option.click();
+          await page.waitForTimeout(transitionDelay);
+          attempt.selected = true;
+          attempt.label = label;
+          return attempt;
+        }
+      }
+    }
+    return attempt;
+  };
+  const navigateThroughMenus = async (page, attempts) => {
+    const attempt = { action: 'menu-navigation', path: null };
+    attempts.push(attempt);
+    await ensureActiveSession(page, attempts);
+    const reportLink = await findVisibleControl(page, /./,
+      'a[href*="reportes/cierre" i], a[href*="reportes/cierres" i], a[href*="reports/closure" i], a[href*="reports/closures" i]');
+    if (reportLink) {
+      attempt.path = 'direct-link';
+      await reportLink.click();
+      await page.waitForTimeout(transitionDelay);
+      await ensureActiveSession(page, attempts);
+      return attempt.path;
+    }
+    const reports = await findVisibleControl(page, reportsLabel);
+    if (reports) {
+      attempt.path = 'reports-menu';
+      await reports.click();
+      await page.waitForTimeout(transitionDelay);
+      await ensureActiveSession(page, attempts);
+    }
+    const salesReport = await findVisibleControl(page, salesReportLabel);
+    if (!salesReport) return null;
+    attempt.path = reports ? 'reports-menu' : 'sales-report-link';
+    await salesReport.click();
+    await page.waitForTimeout(transitionDelay);
+    await ensureActiveSession(page, attempts);
+    return attempt.path;
+  };
+  const pageState = async page => {
+    if (await expiredSessionDialog(page)) return 'session_expired';
+    if (await authenticationRequired(page)) return 'authentication_required';
+    if (await findDownloadButton(page)) return 'report_ready';
+    if (await findVisibleControl(page, restaurantTriggerLabel)) return 'restaurant_required';
+    if (/reportes\/cierres?\b|reports\/closures?\b/i.test(page.url())) return 'report_unavailable';
+    return 'unexpected_view';
+  };
+  const captureDiagnostic = async (page, locationId, state, attempts) => {
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+    const id = `TOTEAT-${stamp}-${String(locationId).replace(/[^a-z0-9-]/gi, '')}-${crypto.randomBytes(2).toString('hex')}`;
+    const controls = [];
+    for (const frame of page.frames()) {
+      const candidates = frame.locator('button, [role="button"], a, [role="menuitem"], [role="option"]');
+      const count = Math.min(await candidates.count().catch(() => 0), 160);
+      for (let index = 0; index < count && controls.length < 24; index += 1) {
+        const candidate = candidates.nth(index);
+        if (!await candidate.isVisible().catch(() => false)) continue;
+        const label = await elementLabel(candidate);
+        if (label && label.length <= 120 && !controls.includes(label)) controls.push(label);
+      }
+    }
+    const diagnostic = {
+      id,
+      capturedAt: new Date().toISOString(),
+      locationId,
+      state,
+      url: page.url(),
+      title: await page.title().catch(() => ''),
+      attempts,
+      visibleControls: controls
+    };
+    writeJsonAtomic(path.join(diagnosticsRoot, `${id}.json`), diagnostic);
+    await page.screenshot({ path: path.join(diagnosticsRoot, `${id}.png`), fullPage: false }).catch(() => {});
+    return diagnostic;
+  };
+  const attachDiagnostic = async (error, page, locationId, attempts) => {
+    if (error.diagnosticId) return error;
+    const state = error.state || await pageState(page).catch(() => 'unknown');
+    const diagnostic = await captureDiagnostic(page, locationId, state, attempts).catch(() => null);
+    error.state = state;
+    if (diagnostic) {
+      error.diagnosticId = diagnostic.id;
+      error.message = `${error.message} Estado: ${state}. Diagnóstico: ${diagnostic.id}.`;
+    }
+    return error;
+  };
   const launch = async (locationId, headless) => {
-    let chromium;
-    try { ({ chromium } = require('playwright-core')); } catch {
+    let chromium = factoryOptions.chromium;
+    try { if (!chromium) ({ chromium } = require('playwright-core')); } catch {
       throw automationError('La automatización de Toteat no está instalada en este servidor.', 'TOTEAT_BROWSER_UNAVAILABLE');
     }
-    const executablePath = chromeExecutablePath();
+    const executablePath = factoryOptions.executablePath || chromeExecutablePath();
     if (!executablePath) {
       throw automationError('No se encontró Google Chrome o Chromium para conectarse a Toteat.', 'TOTEAT_BROWSER_UNAVAILABLE');
     }
@@ -1564,8 +1875,89 @@ function createToteatAutomation(profilesRoot) {
   const reportPage = async context => {
     const pages = context.pages();
     const page = pages.find(item => item.url().includes('toteat.com')) || pages[0] || await context.newPage();
-    await page.goto(TOTEAT_REPORT_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     return page;
+  };
+  const prepareReport = async (page, restaurantName) => {
+    const attempts = [{ action: 'direct-url', url: page.url() }];
+    const requireAuthentication = async () => {
+      await ensureActiveSession(page, attempts);
+      if (!await authenticationRequired(page)) return;
+      const error = automationError(
+        'La sesión de Toteat necesita autenticación. Inicia sesión en la ventana que se abrirá y vuelve a intentar.',
+        'TOTEAT_AUTH_REQUIRED', 409
+      );
+      error.state = 'authentication_required';
+      error.attempts = attempts;
+      throw error;
+    };
+    const visitReportUrl = async (url, action) => {
+      const attempt = { action, url };
+      attempts.push(attempt);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      await requireAuthentication();
+      const found = await waitForDownloadButton(page, readyTimeout);
+      await ensureActiveSession(page, attempts);
+      attempt.ready = Boolean(found);
+      return found;
+    };
+    try {
+      await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+      await requireAuthentication();
+      let button = await waitForDownloadButton(page, readyTimeout);
+      await ensureActiveSession(page, attempts);
+      if (button) return { button, attempts };
+      const restaurant = await selectRestaurant(page, restaurantName, attempts);
+      if (restaurant.required && !restaurant.selected) {
+        const error = automationError(
+          `Toteat solicita seleccionar un restaurante, pero no se encontró “${restaurantName}”.`,
+          'TOTEAT_RESTAURANT_NOT_FOUND', 422
+        );
+        error.state = 'restaurant_required';
+        throw error;
+      }
+      const urlsToTry = restaurant.selected ? reportUrls : reportUrls.slice(1);
+      for (const [index, url] of urlsToTry.entries()) {
+        button = await visitReportUrl(url, restaurant.selected && index === 0 ? 'report-after-restaurant' : 'alternate-report-url');
+        if (button) return { button, attempts };
+        const routeRestaurant = await selectRestaurant(page, restaurantName, attempts);
+        if (routeRestaurant.required && !routeRestaurant.selected) {
+          const error = automationError(
+            `Toteat solicita seleccionar un restaurante, pero no se encontró “${restaurantName}”.`,
+            'TOTEAT_RESTAURANT_NOT_FOUND', 422
+          );
+          error.state = 'restaurant_required';
+          throw error;
+        }
+        if (routeRestaurant.selected) {
+          button = await visitReportUrl(url, 'report-after-restaurant');
+          if (button) return { button, attempts };
+        }
+      }
+      const menuPath = await navigateThroughMenus(page, attempts);
+      button = await waitForDownloadButton(page, readyTimeout);
+      await ensureActiveSession(page, attempts);
+      if (button) return { button, attempts };
+      const reloadAttempt = { action: 'reload', url: page.url(), menuPath };
+      attempts.push(reloadAttempt);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      await requireAuthentication();
+      button = await waitForDownloadButton(page, readyTimeout);
+      await ensureActiveSession(page, attempts);
+      reloadAttempt.ready = Boolean(button);
+      if (button) return { button, attempts };
+      const error = automationError(
+        'Toteat está autenticado, pero no fue posible llegar al reporte de ventas ni encontrar su control de descarga.',
+        'TOTEAT_REPORT_NOT_READY', 502
+      );
+      error.state = await pageState(page);
+      throw error;
+    } catch (error) {
+      error.attempts ||= attempts;
+      throw error;
+    }
   };
   return {
     async connect(locationId) {
@@ -1581,45 +1973,19 @@ function createToteatAutomation(profilesRoot) {
       await reportPage(context);
       return { opened: true };
     },
-    async downloadSales(locationId) {
+    async downloadSales(locationId, options = {}) {
       let context = contexts.get(locationId);
       const reusedVisibleContext = Boolean(context);
       if (!context) context = await launch(locationId, true);
+      let page = null;
+      let attempts = [];
       try {
-        const page = await reportPage(context);
-        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
-        const downloadLabel = /(?:Descargar\s+Ventas\s+Totales|Download\s+Total\s+Sales)/i;
-        const candidates = [
-          page.getByRole('button', { name: downloadLabel }).first(),
-          page.locator('button, [role="button"], a').filter({ hasText: downloadLabel }).first(),
-          page.getByText(downloadLabel).first()
-        ];
-        let button = null;
-        for (const [index, candidate] of candidates.entries()) {
-          if (await candidate.isVisible({ timeout: index ? 2000 : 15000 }).catch(() => false)) {
-            button = candidate;
-            break;
-          }
-        }
-        if (!button) {
-          const authenticationVisible = await page.locator('input[type="password"]').first().isVisible().catch(() => false)
-            || await page.getByText(/(?:Iniciar\s+sesión|Ingresar|Sign\s+in|Log\s+in)/i).first().isVisible().catch(() => false)
-            || /login|signin|auth/i.test(page.url());
-          if (!authenticationVisible) {
-            const labels = await page.locator('button, [role="button"]').allTextContents().catch(() => []);
-            const visibleLabels = labels.map(value => value.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 12);
-            throw automationError(
-              `Toteat abrió el reporte, pero no se encontró “Download Total Sales”. Controles visibles: ${visibleLabels.join(' · ') || 'ninguno'}.`,
-              'TOTEAT_BUTTON_NOT_FOUND',
-              502
-            );
-          }
-          throw automationError(
-            'La sesión de Toteat necesita autenticación. Inicia sesión en la ventana que se abrirá y vuelve a intentar.',
-            'TOTEAT_AUTH_REQUIRED',
-            409
-          );
-        }
+        page = await reportPage(context);
+        const prepared = await prepareReport(page, options.restaurantName || locationId);
+        attempts = prepared.attempts;
+        const button = prepared.button;
+        attempts.push({ action: 'download-click' });
+        await ensureActiveSession(page, attempts);
         const downloadPromise = page.waitForEvent('download', { timeout: 90000 });
         await button.click();
         const download = await downloadPromise;
@@ -1639,6 +2005,12 @@ function createToteatAutomation(profilesRoot) {
               : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           buffer: Buffer.concat(chunks)
         };
+      } catch (caught) {
+        const error = caught?.code ? caught : automationError(
+          caught?.message || 'La automatización de Toteat falló inesperadamente.', 'TOTEAT_AUTOMATION_FAILED', 502
+        );
+        if (page) throw await attachDiagnostic(error, page, locationId, error.attempts || attempts);
+        throw error;
       } finally {
         if (!reusedVisibleContext) await context.close().catch(() => {});
       }
@@ -2822,6 +3194,33 @@ function createApp(options = {}) {
     };
   }
 
+  function roundUpToPackageMultiple(quantity, unitsPerPackage) {
+    const value = Number(quantity);
+    const packageSize = Number(unitsPerPackage);
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(packageSize) || packageSize <= 0) return value;
+    return Number((Math.ceil((value / packageSize) - 1e-9) * packageSize).toPrecision(12));
+  }
+
+  function greatestCommonDivisor(left, right) {
+    let first = Math.abs(left);
+    let second = Math.abs(right);
+    while (second) [first, second] = [second, first % second];
+    return first || 1;
+  }
+
+  function purchaseUnitsRespectingPackage(quantity, unitsPerPurchaseUnit, unitsPerPackage) {
+    const value = Number(quantity);
+    const conversion = Number(unitsPerPurchaseUnit);
+    const packageSize = Number(unitsPerPackage);
+    if (!(value > 0) || !(conversion > 0) || !(packageSize > 0)) return null;
+    const minimumPurchaseUnits = Math.ceil((value / conversion) - 1e-9);
+    const scale = 1000000;
+    const conversionInteger = Math.max(1, Math.round(conversion * scale));
+    const packageInteger = Math.max(1, Math.round(packageSize * scale));
+    const purchaseUnitMultiple = packageInteger / greatestCommonDivisor(conversionInteger, packageInteger);
+    return Math.ceil(minimumPurchaseUnits / purchaseUnitMultiple) * purchaseUnitMultiple;
+  }
+
   function buildPurchaseProjection(locationId, selectedBranchLocationIds = null, selectedPurchaseOrderIds = null) {
     const location = activeLocation(locationId);
     if (!location) {
@@ -2860,6 +3259,8 @@ function createApp(options = {}) {
       const policy = policies[key] || {};
       const minDays = Number.isFinite(Number(policy.minDays)) ? Number(policy.minDays) : 7;
       const maxDays = Number.isFinite(Number(policy.maxDays)) ? Number(policy.maxDays) : 14;
+      const unitsPerPackage = Number.isFinite(Number(policy.unitsPerPackage)) && Number(policy.unitsPerPackage) > 0
+        ? Number(policy.unitsPerPackage) : 1;
       const managed = policy.managed === true;
       const metricMatcher = metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
         || metric.startsWith('mov-out -') || metric.startsWith('trn-out -');
@@ -2903,7 +3304,8 @@ function createApp(options = {}) {
         return sum + (converted ?? 0);
       }, 0);
       const needsPurchase = ownNeedsPurchase || branchOrderInternalQuantity > 0;
-      const suggestedInternalQuantity = ownSuggestedInternalQuantity + branchOrderInternalQuantity;
+      const rawSuggestedInternalQuantity = ownSuggestedInternalQuantity + branchOrderInternalQuantity;
+      const suggestedInternalQuantity = roundUpToPackageMultiple(rawSuggestedInternalQuantity, unitsPerPackage);
       let purchaseOrderConversionMissing = false;
       const purchaseOrderInternalQuantity = (purchaseOrders.demandByItem.get(key) || []).reduce((sum, demand) => {
         const converted = convertQuantityUnit(demand.quantity, demand.unit, product.unit);
@@ -2916,9 +3318,9 @@ function createApp(options = {}) {
       const coverageAfterPurchaseOrdersDays = averageDailyConsumption > 0
         ? inventoryAfterPurchaseOrders / averageDailyConsumption
         : null;
-      const suggestedPurchaseUnits = suggestedInternalQuantity > 0 && unitsPerPurchaseUnit > 0
-        ? Math.ceil(suggestedInternalQuantity / unitsPerPurchaseUnit)
-        : null;
+      const suggestedPurchaseUnits = purchaseUnitsRespectingPackage(
+        suggestedInternalQuantity, unitsPerPurchaseUnit, unitsPerPackage
+      );
       const projectedInternalQuantity = suggestedPurchaseUnits === null
         ? suggestedInternalQuantity
         : suggestedPurchaseUnits * unitsPerPurchaseUnit;
@@ -2937,11 +3339,13 @@ function createApp(options = {}) {
         currentCoverageDays: averageDailyConsumption > 0 ? currentInventory / averageDailyConsumption : null,
         minDays,
         maxDays,
+        unitsPerPackage,
         managed,
         minimumStock,
         maximumStock,
         ownNeedsPurchase,
         ownSuggestedInternalQuantity,
+        rawSuggestedInternalQuantity,
         branchOrderInternalQuantity,
         branchOrderConversionMissing,
         purchaseOrderInternalQuantity,
@@ -3031,13 +3435,16 @@ function createApp(options = {}) {
       const key = String(item.key || '').trim().toUpperCase();
       const minDays = Number(item.minDays);
       const maxDays = Number(item.maxDays);
+      const unitsPerPackage = item.unitsPerPackage === undefined ? 1 : Number(item.unitsPerPackage);
       const managed = item.managed === true;
       const supplierKey = String(item.supplierKey || 'unassigned').trim();
-      if (!key || !Number.isFinite(minDays) || !Number.isFinite(maxDays)
-        || minDays < 0 || maxDays < minDays || maxDays > 365) {
-        return res.status(400).json({ error: 'Cada ítem debe tener días mínimos y máximos válidos; el máximo no puede ser menor que el mínimo.' });
+      if (!key || !Number.isFinite(minDays) || !Number.isFinite(maxDays) || !Number.isFinite(unitsPerPackage)
+        || minDays < 0 || maxDays < minDays || maxDays > 365 || unitsPerPackage <= 0 || unitsPerPackage > 1000000) {
+        return res.status(400).json({ error: 'Cada ítem debe tener días mínimos, días máximos y unidades por empaque válidos; el máximo no puede ser menor que el mínimo.' });
       }
-      registry.locations[location.id].items[key] = { minDays, maxDays, supplierKey, managed, updatedAt: new Date().toISOString() };
+      registry.locations[location.id].items[key] = {
+        minDays, maxDays, unitsPerPackage, supplierKey, managed, updatedAt: new Date().toISOString()
+      };
     }
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
     return res.json({ ok: true, saved: requested.length });
@@ -3154,6 +3561,7 @@ function createApp(options = {}) {
       const unitCost = Math.round(requestedUnitCost);
       const referenceCost = Math.round(Number(source.estimatedPurchaseUnitCost ?? source.referenceUnitCost ?? 0));
       const unitsPerPurchaseUnit = Number(source.unitsPerPurchaseUnit);
+      const unitsPerPackage = Number(source.unitsPerPackage);
       return {
         key,
         code: source.code || '',
@@ -3161,6 +3569,7 @@ function createApp(options = {}) {
         internalUnit: source.internalUnit || '',
         purchaseUnit: source.purchaseUnit || '',
         unitsPerPurchaseUnit: Number.isFinite(unitsPerPurchaseUnit) ? unitsPerPurchaseUnit : null,
+        unitsPerPackage: Number.isFinite(unitsPerPackage) && unitsPerPackage > 0 ? unitsPerPackage : 1,
         suggestedPurchaseUnits: source.suggestedPurchaseUnits ?? null,
         referenceUnitCost: referenceCost,
         quantity,
@@ -3980,6 +4389,70 @@ function createApp(options = {}) {
       });
     } catch (error) {
       return res.status(500).json({ error: 'Could not determine the inventory source files.' });
+    }
+  });
+
+  app.get('/api/inventory/current', (req, res) => {
+    const location = activeLocation(req.query.location);
+    if (!location) return res.status(400).json({ error: 'Selecciona una ubicación activa válida.' });
+    const kardex = latestWeeklyFile(location.id, 'kardex');
+    if (!kardex) return res.status(404).json({ error: 'No hay un archivo de Kardex disponible para esta ubicación.' });
+    try {
+      const today = projectionToday();
+      const referenceDate = String(req.query.date || today);
+      if (!isValidDate(referenceDate)) throw new Error('Selecciona una fecha de referencia válida.');
+      if (referenceDate > today) throw new Error('La fecha de referencia no puede ser posterior a hoy.');
+      const parsed = mergedKardexData(location.id, 'kardex');
+      const balanceDate = parsed.groups.filter(group => group.date <= referenceDate).at(-1)?.date;
+      if (!balanceDate) throw new Error(`No hay un saldo de Kardex disponible al ${referenceDate} o en una fecha anterior.`);
+      const warnings = [];
+      const catalogMaster = latestMasterFile('master-catalog', balanceDate);
+      let catalog = null;
+      let assignments = new Map();
+      if (catalogMaster) {
+        try {
+          catalog = parseIngredientCatalog(catalogMaster.filePath);
+          assignments = parseInventoryHierarchyAssignments(catalogMaster.filePath);
+        } catch (error) {
+          warnings.push(`Maestro de productos: ${error.message}`);
+        }
+      } else {
+        warnings.push('No hay un maestro de productos, ingredientes y extras vigente para valorizar el inventario.');
+      }
+      const hierarchyLookups = {};
+      const hierarchyDefinitions = [
+        ['product', 'product-hierarchy', 'Jerarquía de productos', filePath => parseProductHierarchies(filePath)],
+        ['ingredient', 'ingredient-hierarchy', 'Jerarquía de ingredientes', filePath => parseNamedHierarchies(filePath, ['Nombre Jerarquía *', 'Nombre Jerarquia *', 'Nombre Jerarquía Producto *'])],
+        ['extra', 'extras-hierarchy', 'Jerarquía de extras', filePath => parseNamedHierarchies(filePath, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Nombre Jerarquía *'])]
+      ];
+      const hierarchyMasters = {};
+      hierarchyDefinitions.forEach(([type, field, label, parser]) => {
+        const master = latestMasterFile(field, balanceDate);
+        hierarchyMasters[field] = master;
+        if (!master) return;
+        try {
+          hierarchyLookups[type] = parser(master.filePath);
+        } catch (error) {
+          warnings.push(`${label}: ${error.message}`);
+        }
+      });
+      const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
+      const { filePath, ...source } = kardex;
+      return res.json({
+        location: publicLocation(location),
+        source,
+        masterSources: {
+          catalog: publicMaster(catalogMaster),
+          productHierarchy: publicMaster(hierarchyMasters['product-hierarchy']),
+          ingredientHierarchy: publicMaster(hierarchyMasters['ingredient-hierarchy']),
+          extrasHierarchy: publicMaster(hierarchyMasters['extras-hierarchy'])
+        },
+        warnings,
+        referenceDate,
+        report: buildCurrentTheoreticalInventoryReport(parsed, referenceDate, catalog, assignments, hierarchyLookups)
+      });
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'No se pudo obtener el inventario teórico al día.' });
     }
   });
 
@@ -5140,12 +5613,16 @@ function createApp(options = {}) {
   app.post('/api/integrations/toteat/connect', async (req, res) => {
     try {
       const location = toteatStore(String(req.body?.location || ''));
-      await toteatAutomation.connect(location.id);
+      await toteatAutomation.connect(location.id, {
+        restaurantName: location.toteatRestaurantName || location.name
+      });
       return res.json({ opened: true, location: publicLocation(location), reportUrl: TOTEAT_REPORT_URL });
     } catch (error) {
       return res.status(error.status || 500).json({
         error: error.message || 'No se pudo abrir Toteat.',
-        code: error.code || 'TOTEAT_CONNECTION_FAILED'
+        code: error.code || 'TOTEAT_CONNECTION_FAILED',
+        state: error.state || null,
+        diagnosticId: error.diagnosticId || null
       });
     }
   });
@@ -5153,7 +5630,9 @@ function createApp(options = {}) {
   app.post('/api/integrations/toteat/download-sales', async (req, res) => {
     try {
       const location = toteatStore(String(req.body?.location || ''));
-      const download = await toteatAutomation.downloadSales(location.id);
+      const download = await toteatAutomation.downloadSales(location.id, {
+        restaurantName: location.toteatRestaurantName || location.name
+      });
       const filename = path.basename(download.filename || `ventas-toteat-${location.id}.xlsx`).replace(/[\r\n"]/g, '_');
       res.setHeader('Content-Type', download.contentType || 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -5161,7 +5640,9 @@ function createApp(options = {}) {
     } catch (error) {
       return res.status(error.status || 500).json({
         error: error.message || 'No se pudo descargar el reporte de ventas desde Toteat.',
-        code: error.code || 'TOTEAT_DOWNLOAD_FAILED'
+        code: error.code || 'TOTEAT_DOWNLOAD_FAILED',
+        state: error.state || null,
+        diagnosticId: error.diagnosticId || null
       });
     }
   });
@@ -5216,9 +5697,10 @@ function createApp(options = {}) {
       const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
       const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
       const includeToday = String(req.query.includeToday || '').toLowerCase() === 'true';
+      const report = buildSalesReport(dailySales, todayKey, includeToday);
       return res.json({
-        ...buildSalesReport(dailySales, todayKey, includeToday),
-        intraday: buildIntradayReport(dailySales, transactionsByDate, todayKey),
+        ...report,
+        intraday: buildIntradayReport(dailySales, transactionsByDate, report.previousDay.date),
         scope: selectedStore
           ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
           : { type: 'all', location: null, label: 'Todas las cafeterías' },
@@ -5869,7 +6351,7 @@ function createApp(options = {}) {
         return res.status(404).json({ error: 'Stored master file not found.' });
       }
 
-      return res.json(buildSpreadsheetPreview(filePath, record.originalName || record.name));
+      return res.json(buildSpreadsheetPreview(filePath, record.originalName || record.name, { field: req.params.field }));
     } catch (error) {
       return res.status(422).json({ error: 'Could not preview this master file.' });
     }
@@ -5906,4 +6388,12 @@ if (require.main === module) {
   createApp().listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
 }
 
-module.exports = { createApp, isValidWeekKey, detectFileDateRange, detectUploadStructure, validateUploadStructure, DEFAULT_LOCATIONS };
+module.exports = {
+  createApp,
+  createToteatAutomation,
+  isValidWeekKey,
+  detectFileDateRange,
+  detectUploadStructure,
+  validateUploadStructure,
+  DEFAULT_LOCATIONS
+};

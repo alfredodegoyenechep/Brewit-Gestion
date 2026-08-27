@@ -387,10 +387,10 @@
         <div class="intraday-heading">
           <div>
             <div class="panel-eyebrow">Seguimiento intradía</div>
-            <h3>Venta acumulada de hoy</h3>
+            <h3 id="intraday-title">Venta acumulada de hoy</h3>
             <p class="panel-description">Comparación acumulada hasta el cierre de cada tramo horario.</p>
           </div>
-          <div class="intraday-indicators" aria-label="Indicadores de venta acumulada de hoy">
+          <div id="intraday-indicators" class="intraday-indicators" aria-label="Indicadores de venta acumulada de hoy">
             <article class="intraday-indicator-card">
               <span>Ranking general</span>
               <strong id="intraday-general-rank">—</strong>
@@ -413,7 +413,7 @@
             <thead>
               <tr>
                 <th>Tramo</th>
-                <th><strong>Hoy</strong><span id="intraday-today-date">—</span></th>
+                <th><strong id="intraday-reference-title">Hoy</strong><span id="intraday-today-date">—</span></th>
                 <th><strong id="intraday-weekday-title">Mejor mismo día</strong><span id="intraday-weekday-date">—</span></th>
                 <th><strong>Mejor día del mes</strong><span id="intraday-month-date">—</span></th>
                 <th><strong>Mejor día histórico</strong><span id="intraday-historical-date">—</span></th>
@@ -779,12 +779,12 @@
         <button id="open-tentative-purchase-orders" class="icon-button" type="button">Órdenes tentativas</button>
         <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
       </div>
-      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. Las UDC se redondean hacia arriba.</p>
+      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. La cantidad interna se redondea al empaque y luego las UDC se redondean hacia arriba.</p>
       <div class="purchase-projection-table-wrap">
         <table class="purchase-projection-table">
           <thead>
             <tr>
-              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th>
+              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th><th data-sort-key="unitsPerPackage" data-header-lines="Unidades x|empaque">Unidades x<br />empaque</th>
               <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th data-sort-key="consumption30" data-header-lines="Consumo y TRN-OUT|30 días">Consumo y TRN-OUT<br />30 días</th><th data-sort-key="averageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
               <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th id="projection-branch-orders-header" hidden><button id="open-projection-branch-orders" class="projection-orders-header-button" type="button" title="Seleccionar sucursales para consolidar">OC Suc</button></th><th data-sort-key="suggestedInternalQuantity" data-header-lines="Sugerencia|interna">Sugerencia<br />interna</th><th data-sort-key="purchaseUnit">UDC</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
               <th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Unidades x|UDC">Unidades x<br />UDC</th><th data-sort-key="suggestedPurchaseUnits" data-header-lines="UDC|sugeridas">UDC<br />sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo UDC|estimado">Costo UDC<br />estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
@@ -848,9 +848,9 @@
         </div>
         <div class="purchase-order-editor-table-wrap">
           <table class="purchase-order-editor-table">
-            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>UDC</th><th>Unidades x UDC</th><th>UDC sugeridas</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
+            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>UDC</th><th>Unidades x UDC</th><th>Unidades x empaque</th><th>UDC sugeridas</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
             <tbody id="purchase-order-editor-body"></tbody>
-            <tfoot><tr><td colspan="8">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
+            <tfoot><tr><td colspan="9">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
           </table>
         </div>
         <div class="purchase-order-editor-actions">
@@ -863,7 +863,7 @@
           <div>
             <div class="panel-eyebrow">Abastecimiento</div>
             <h2 id="tentative-purchase-orders-title">Órdenes de compra tentativas</h2>
-            <p class="panel-description">Genera borradores temporales por ubicación y proveedor. Nada se guarda como definitivo hasta que confirmes una orden.</p>
+            <p class="panel-description">Genera un único borrador temporal por ubicación y proveedor. Al regenerar una ubicación, sus tentativas anteriores se reemplazan. Nada se guarda como definitivo hasta que confirmes una orden.</p>
           </div>
           <button id="close-tentative-purchase-orders" class="icon-button" type="button">Cerrar</button>
         </div>
@@ -893,7 +893,7 @@
           </div>
           <div class="tentative-orders-table-wrap">
             <table class="tentative-orders-table tentative-orders-buying-table">
-              <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Inventario</th><th>Cobertura</th><th>Sugerencia interna</th><th>UDC</th><th>Unidades x UDC</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
+              <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Inventario</th><th>Cobertura</th><th>Sugerencia interna</th><th>Unidades x empaque</th><th>UDC</th><th>Unidades x UDC</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
               <tbody id="tentative-orders-buying-body"></tbody>
             </table>
           </div>
@@ -954,6 +954,7 @@
       <div class="inventory-report-actions">
         <button id="inventory-upload-files" class="icon-button" type="button">Cargar archivos actualizados</button>
         <button id="process-inventory-report" class="primary" type="button" disabled>Procesar informe de inventario</button>
+        <button id="current-inventory-report" class="primary" type="button" disabled>Inventario teórico al día</button>
       </div>
       <p id="inventory-process-note" class="panel-description">Primero deben estar disponibles todos los archivos requeridos.</p>
 
@@ -997,6 +998,26 @@
         <div class="conflict-actions">
           <button id="confirm-inventory-process" class="primary" type="button">Confirmar y procesar</button>
           <button id="cancel-inventory-process" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+
+      <dialog id="current-inventory-date-dialog" class="inventory-criteria-dialog" aria-labelledby="current-inventory-date-title">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Inventario teórico</div>
+            <h3 id="current-inventory-date-title">Selecciona la fecha de referencia</h3>
+            <p class="panel-description">Hoy se propone automáticamente. También puedes consultar cualquier fecha anterior.</p>
+          </div>
+          <button id="close-current-inventory-date-dialog" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="inventory-summary-period current-inventory-date-field">
+          <label>Fecha de referencia<input id="current-inventory-date" type="date" required /></label>
+        </div>
+        <p class="panel-description">Si el Kardex no tiene un saldo exactamente ese día, se utilizará el último saldo disponible anterior.</p>
+        <div id="current-inventory-date-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-current-inventory-report" class="primary" type="button">Ver inventario teórico</button>
+          <button id="cancel-current-inventory-date-dialog" class="icon-button" type="button">Cancelar</button>
         </div>
       </dialog>
 
@@ -1120,6 +1141,42 @@
           </p>
           <div class="inventory-results-table-wrap">
             <table id="inventory-lac001-substitution-table" class="inventory-results-table"></table>
+          </div>
+        </section>
+      </dialog>
+
+      <dialog id="current-inventory-results" class="inventory-report-results inventory-report-dialog" aria-labelledby="current-inventory-title">
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Saldo vigente del Kardex</div>
+            <h3 id="current-inventory-title">Inventario teórico al día</h3>
+            <p id="current-inventory-period" class="panel-description"></p>
+          </div>
+          <div class="inventory-source-actions">
+            <span id="current-inventory-item-count" class="chip neutral"></span>
+            <span id="current-inventory-total" class="chip neutral"></span>
+            <button class="icon-button small inventory-print-report" data-report-target="current-inventory-results" type="button">Imprimir / PDF</button>
+            <button class="icon-button small inventory-export-report" data-report-target="current-inventory-results" type="button">Exportar Excel</button>
+            <button id="close-current-inventory-report" class="icon-button small" type="button">Cerrar</button>
+          </div>
+        </div>
+        <p id="current-inventory-warning" class="form-status muted" hidden></p>
+        <div class="current-inventory-tools">
+          <label>Buscar producto o código
+            <input id="current-inventory-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+          </label>
+          <button id="clear-current-inventory-search" class="icon-button small" type="button">Limpiar búsqueda</button>
+          <span id="current-inventory-visible-count" class="chip neutral"></span>
+        </div>
+        <h4 class="current-inventory-section-title">Inventario valorizado</h4>
+        <div class="inventory-results-table-wrap">
+          <table id="current-inventory-table" class="inventory-results-table current-inventory-table"></table>
+        </div>
+        <section id="current-inventory-missing-cost" class="current-inventory-missing-cost" hidden>
+          <h4>Productos e insumos sin costo</h4>
+          <p id="current-inventory-missing-cost-note" class="panel-description"></p>
+          <div class="inventory-results-table-wrap">
+            <table id="current-inventory-missing-cost-table" class="inventory-results-table current-inventory-table"></table>
           </div>
         </section>
       </dialog>

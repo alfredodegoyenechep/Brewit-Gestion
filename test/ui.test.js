@@ -272,6 +272,10 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-yesterday-value').filter({ hasText: '100' }).waitFor();
   assert.match(await page.locator('#report-general-rank').textContent(), /#1 de 1/);
   assert.match(await page.locator('#report-week-range').textContent(), /03.*ago.*2026.*09.*ago.*2026/i);
+  assert.equal(await page.locator('#intraday-title').textContent(), 'Venta acumulada del día anterior');
+  assert.equal(await page.locator('#intraday-reference-title').textContent(), 'Día anterior');
+  assert.match(await page.locator('#intraday-today-date').textContent(), /09.*ago.*2026/i);
+  assert.match(await page.locator('#intraday-indicators').getAttribute('aria-label'), /día anterior/i);
   assert.equal(await page.locator('#intraday-sales-body tr').count(), 7);
   assert.match(await page.locator('#intraday-sales-body tr').first().locator('td').first().textContent(), /07:00.*09:00/);
   assert.match(await page.locator('#intraday-sales-body tr').last().locator('td').first().textContent(), /19:00.*cierre/);
@@ -289,6 +293,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('.report-cutoff-toggle').click();
   await page.locator('#report-reference-label').filter({ hasText: 'Venta de hoy' }).waitFor();
   assert.equal(await page.locator('#report-include-today').isChecked(), true);
+  assert.equal(await page.locator('#intraday-title').textContent(), 'Venta acumulada de hoy');
+  assert.equal(await page.locator('#intraday-reference-title').textContent(), 'Hoy');
+  assert.match(await page.locator('#intraday-today-date').textContent(), /10.*ago.*2026/i);
   assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta hoy');
   assert.equal(await page.locator('#report-week-chip').textContent(), 'Lun–hoy');
   assert.equal(await page.locator('#report-month-chip').textContent(), 'Mes–hoy');
@@ -394,16 +401,18 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 1);
   const projectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
   assert.equal(await page.locator('.purchase-projection-table th').nth(4).innerText(), 'Unidad\ninterna');
-  assert.equal(await page.locator('.purchase-projection-table th').nth(6).innerText(), 'Consumo y TRN-OUT\n30 días');
-  assert.equal(await page.locator('.purchase-projection-table th').nth(8).innerText(), 'Cobertura\nactual');
-  assert.equal(await page.locator('.purchase-projection-table th').nth(12).innerText(), 'Sugerencia\ninterna');
-  assert.equal(await page.locator('.purchase-projection-table th').nth(18).innerText(), 'Costo UDC\nestimado');
-  assert.equal(await projectionRow.locator('td').nth(5).textContent(), '0,00');
-  assert.equal(await projectionRow.locator('td').nth(6).textContent(), '7,00');
-  assert.equal(await projectionRow.locator('td').nth(7).textContent(), '0,23');
-  assert.equal(await projectionRow.locator('td').nth(8).textContent(), '0,0 días');
-  assert.equal(await projectionRow.locator('td').nth(8).getAttribute('class'), 'projection-coverage-low');
-  assert.equal(await projectionRow.locator('td').nth(11).textContent(), '3,3 UN');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(7).innerText(), 'Consumo y TRN-OUT\n30 días');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(9).innerText(), 'Cobertura\nactual');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(13).innerText(), 'Sugerencia\ninterna');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(19).innerText(), 'Costo UDC\nestimado');
+  assert.match(await page.locator('.purchase-projection-table thead th').nth(5).textContent(), /Unidades x\s*empaque/);
+  assert.equal(await page.locator('.projection-package-input').inputValue(), '1');
+  assert.equal(await projectionRow.locator('td').nth(6).textContent(), '0,00');
+  assert.equal(await projectionRow.locator('td').nth(7).textContent(), '7,00');
+  assert.equal(await projectionRow.locator('td').nth(8).textContent(), '0,23');
+  assert.equal(await projectionRow.locator('td').nth(9).textContent(), '0,0 días');
+  assert.equal(await projectionRow.locator('td').nth(9).getAttribute('class'), 'projection-coverage-low');
+  assert.equal(await projectionRow.locator('td').nth(12).textContent(), '4,0 UN');
   assert.equal(await page.locator('.projection-managed-input').isChecked(), false);
   assert.equal(await page.locator('.projection-min-input').inputValue(), '7');
   assert.equal(await page.locator('.projection-max-input').inputValue(), '14');
@@ -421,6 +430,16 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#purchase-order-editor-body tr[data-key]').count(), 1);
   assert.equal(await page.locator('.purchase-order-cost').inputValue(), '500');
   assert.equal(await page.locator('.purchase-order-cost').getAttribute('inputmode'), 'numeric');
+  assert.equal(await page.locator('.purchase-order-quantity').getAttribute('step'), '1');
+  await page.locator('.purchase-order-quantity').fill('4');
+  await page.locator('.purchase-order-quantity').press('ArrowUp');
+  assert.equal(await page.locator('.purchase-order-quantity').inputValue(), '5');
+  await page.locator('.purchase-order-quantity').press('ArrowDown');
+  assert.equal(await page.locator('.purchase-order-quantity').inputValue(), '4');
+  await page.locator('.purchase-order-quantity').fill('4.5');
+  assert.match(await page.locator('.purchase-order-row-warning').textContent(), /no múltiplo del empaque.*1 UN/i);
+  await page.locator('.purchase-order-quantity').fill('4');
+  assert.doesNotMatch(await page.locator('.purchase-order-row-warning').textContent(), /no múltiplo del empaque/i);
   await page.getByRole('button', { name: 'Confirmar y guardar orden' }).click();
   await page.locator('#purchase-order-editor-status').filter({ hasText: /guardada correctamente/i }).waitFor();
   await page.getByRole('button', { name: 'Imprimir / PDF' }).click();
@@ -448,25 +467,27 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#projection-purchase-orders-body tr').first().textContent(), /OC-000002.*Proveedor Prueba/s);
   await page.locator('.projection-purchase-order-input').check();
   await selectedOrdersDialog.getByRole('button', { name: 'Aplicar y actualizar cálculo' }).click();
-  await projectionRow.locator('td').nth(13).filter({ hasText: '4,0 UN' }).waitFor();
-  assert.equal(await projectionRow.locator('td').nth(13).getAttribute('class'),
+  await projectionRow.locator('td').nth(14).filter({ hasText: '4,0 UN' }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(14).getAttribute('class'),
     'projection-purchase-order-quantity projection-purchase-order-sufficient');
   await page.locator('.projection-min-input').fill('0');
-  assert.equal(await projectionRow.locator('td').nth(8).getAttribute('class'), null);
+  assert.equal(await projectionRow.locator('td').nth(9).getAttribute('class'), null);
   await page.locator('.projection-min-input').fill('10');
   await page.locator('.projection-max-input').fill('20');
-  await projectionRow.locator('td').nth(11).filter({ hasText: '4,7 UN' }).waitFor();
-  assert.equal(await projectionRow.locator('td').nth(8).getAttribute('class'), 'projection-coverage-low');
-  assert.equal(await projectionRow.locator('td').nth(13).getAttribute('class'),
+  await page.locator('.projection-package-input').fill('6');
+  await projectionRow.locator('td').nth(12).filter({ hasText: '6,0 UN' }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(9).getAttribute('class'), 'projection-coverage-low');
+  assert.equal(await projectionRow.locator('td').nth(14).getAttribute('class'),
     'projection-purchase-order-quantity projection-purchase-order-short');
   await page.getByRole('button', { name: 'Guardar criterios' }).click();
   await page.locator('#purchase-projection-status').filter({ hasText: /Consumo considerado/i }).waitFor();
   assert.equal(await page.locator('.projection-min-input').inputValue(), '10');
   assert.equal(await page.locator('.projection-max-input').inputValue(), '20');
+  assert.equal(await page.locator('.projection-package-input').inputValue(), '6');
   assert.equal(await page.locator('.projection-managed-input').isChecked(), true);
-  await projectionRow.locator('td').nth(11).filter({ hasText: '4,7 UN' }).waitFor();
-  assert.equal(await projectionRow.locator('td').nth(13).textContent(), '4,0 UN');
-  assert.equal(await projectionRow.locator('td').nth(13).getAttribute('class'),
+  await projectionRow.locator('td').nth(12).filter({ hasText: '6,0 UN' }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(14).textContent(), '4,0 UN');
+  assert.equal(await projectionRow.locator('td').nth(14).getAttribute('class'),
     'projection-purchase-order-quantity projection-purchase-order-short');
   await page.locator('#projection-only-managed').check();
   assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 1);
@@ -478,8 +499,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.getByRole('button', { name: 'OC Suc' }).isVisible(), true);
   assert.equal(await page.locator('#projection-new-coverage-header').isVisible(), true);
   const warehouseProjectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
-  assert.equal(await warehouseProjectionRow.locator('td').nth(11).textContent(), '5 UN');
-  assert.equal(await warehouseProjectionRow.locator('td').nth(15).textContent(), '—');
+  assert.equal(await warehouseProjectionRow.locator('td').nth(12).textContent(), '5 UN');
+  assert.equal(await warehouseProjectionRow.locator('td').nth(16).textContent(), '—');
   await page.getByRole('button', { name: 'OC Suc' }).click();
   await page.getByRole('dialog', { name: 'Órdenes de compra de sucursales' }).waitFor();
   assert.equal(await page.locator('#projection-branch-orders-body tr').count(), 2);
@@ -488,24 +509,40 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await storeOneBranchRow.locator('.projection-branch-order-date').getAttribute('class'), 'projection-branch-order-date recent');
   await storeOneBranchRow.locator('.projection-branch-location-input').uncheck();
   await page.getByRole('button', { name: 'Aplicar y actualizar cálculo' }).click();
-  await warehouseProjectionRow.locator('td').nth(11).filter({ hasText: '0 UN' }).waitFor();
+  await warehouseProjectionRow.locator('td').nth(12).filter({ hasText: '0 UN' }).waitFor();
 
   await page.getByRole('button', { name: 'Órdenes tentativas' }).click();
   const tentativeOrdersDialog = page.getByRole('dialog', { name: 'Órdenes de compra tentativas' });
   await tentativeOrdersDialog.waitFor();
   assert.equal(await page.locator('#tentative-orders-scope option').count(), 4);
-  await page.locator('#tentative-orders-scope').selectOption('store-2');
+  await page.locator('#tentative-orders-scope').selectOption('all');
   await tentativeOrdersDialog.getByRole('button', { name: 'Generar tentativas' }).click();
   await page.locator('#tentative-purchase-orders-status').filter({ hasText: /Nada se ha guardado todavía/i }).waitFor();
+  const locationsFromAllScope = await page.evaluate(() => tentativePurchaseOrdersState.locations.map(location => location.id));
+  assert.equal(locationsFromAllScope.includes('store-2'), true);
+  assert.equal(locationsFromAllScope.includes('main-warehouse'), true);
+  await page.locator('#tentative-orders-scope').selectOption('store-2');
+  await tentativeOrdersDialog.getByRole('button', { name: 'Generar tentativas' }).click();
+  await page.locator('#tentative-purchase-orders-status').filter({ hasText: /Se reemplazaron 1 tentativa.*ubicaciones seleccionadas/i }).waitFor();
+  const regeneratedTentativeState = await page.evaluate(() => ({
+    locationIds: tentativePurchaseOrdersState.locations.map(location => location.id),
+    storeTwoSuppliers: tentativePurchaseOrdersState.locations.find(location => location.id === 'store-2').groups.map(group => group.supplier.key)
+  }));
+  assert.equal(regeneratedTentativeState.locationIds.includes('main-warehouse'), true);
+  assert.equal(new Set(regeneratedTentativeState.storeTwoSuppliers).size, regeneratedTentativeState.storeTwoSuppliers.length);
   assert.equal(await page.locator('#tentative-orders-location').inputValue(), 'store-2');
   assert.equal(await page.locator('#tentative-orders-supplier').inputValue(), '111');
   await page.locator('#tentative-orders-buying-body tr[data-key]').waitFor();
   assert.equal(await page.locator('#tentative-orders-buying-body tr[data-key]').count(), 1);
+  assert.equal(await page.locator('.tentative-order-quantity').getAttribute('step'), '1');
   assert.match(await page.locator('#tentative-orders-other-body').textContent(), /Todos los productos administrados/i);
   const ordersBeforeTentativeConfirmation = await page.evaluate(() =>
     fetch('/api/purchase-orders?location=store-2').then(response => response.json()));
   assert.equal(ordersBeforeTentativeConfirmation.orders.length, 1);
+  await page.locator('.tentative-order-quantity').fill('5');
+  assert.match(await page.locator('.tentative-order-row-warning').textContent(), /no múltiplo del empaque.*6 UN/i);
   await page.locator('.tentative-order-quantity').fill('6');
+  assert.doesNotMatch(await page.locator('.tentative-order-row-warning').textContent(), /no múltiplo del empaque/i);
   assert.equal(await page.locator('#tentative-order-total').textContent(), '$3.000');
   await page.getByRole('button', { name: 'Confirmar orden definitiva' }).click();
   await page.locator('#tentative-purchase-orders-status').filter({ hasText: /guardada como OC-000003/i }).waitFor();
@@ -513,6 +550,15 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const ordersAfterTentativeConfirmation = await page.evaluate(() =>
     fetch('/api/purchase-orders?location=store-2').then(response => response.json()));
   assert.equal(ordersAfterTentativeConfirmation.orders.length, 2);
+  await tentativeOrdersDialog.getByRole('button', { name: 'Generar tentativas' }).click();
+  await page.locator('#tentative-purchase-orders-status').filter({ hasText: /1 orden.*tentativa.*generada/i }).waitFor();
+  assert.equal(await page.evaluate(() => {
+    const location = tentativePurchaseOrdersState.locations.find(item => item.id === 'store-2');
+    return location.groups.length === 1 && location.groups[0].confirmedOrder === null;
+  }), true);
+  const definitiveOrdersAfterRegeneration = await page.evaluate(() =>
+    fetch('/api/purchase-orders?location=store-2').then(response => response.json()));
+  assert.equal(definitiveOrdersAfterRegeneration.orders.length, 2);
   await tentativeOrdersDialog.getByRole('button', { name: 'Cerrar' }).click();
 
   await page.getByRole('link', { name: 'Inventario' }).click();
@@ -525,9 +571,68 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#inventory-location-select').selectOption('store-2');
   await page.locator('#inventory-source-status').filter({ hasText: /todas las fuentes requeridas/i }).waitFor();
   assert.equal(await page.locator('#process-inventory-report').isEnabled(), true);
+  assert.equal(await page.locator('#current-inventory-report').isEnabled(), true);
   assert.equal(await page.locator('#inventory-date-from').count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Ver resumen marketing' }).count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Ver resumen colaboradores' }).count(), 1);
+  await page.locator('#current-inventory-report').click();
+  await page.locator('#current-inventory-date-dialog').waitFor({ state: 'visible' });
+  const browserToday = await page.evaluate(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  });
+  assert.equal(await page.locator('#current-inventory-date').inputValue(), browserToday);
+  assert.equal(await page.locator('#current-inventory-date').getAttribute('max'), browserToday);
+  await page.locator('#current-inventory-date').fill('2026-08-05');
+  await page.locator('#confirm-current-inventory-report').click();
+  await page.locator('#current-inventory-results').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#current-inventory-period').textContent(), /Inventario Final.*Fecha solicitada.*05.*ago.*2026.*Fecha del inventario utilizada.*05.*ago.*2026/i);
+  assert.deepEqual(await page.locator('#current-inventory-table .inventory-sort-button').evaluateAll(buttons =>
+    buttons.map(button => button.title.replace('Ordenar por ', ''))), [
+    'Jerarquía', 'Código', 'Producto', 'Unidad', 'Inventario teórico', 'Costo unitario', 'Valorización'
+  ]);
+  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /No hay productos/);
+  assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
+  assert.match(await page.locator('#current-inventory-missing-cost-table tbody').textContent(), /Sin jerarquía.*P1.*Producto Uno.*UN.*10,00.*Sin costo/s);
+  assert.match(await page.locator('#current-inventory-missing-cost-table tfoot').textContent(), /TOTAL SIN COSTO.*Sin valorizar/s);
+  await page.evaluate(() => {
+    const data = currentInventoryTableState.data;
+    data.report.items.push(
+      { code: 'P2', name: 'Producto Beta', unit: 'UN', hierarchyPath: ['Productos', 'Bebidas'], quantity: 2.5, unitCost: 100, costAvailable: true, valuation: 250 },
+      { code: 'P3', name: 'Producto Alfa', unit: 'UN', hierarchyPath: ['Productos', 'Bebidas'], quantity: 3, unitCost: 100, costAvailable: true, valuation: 300 }
+    );
+    data.report.itemCount = 3;
+    data.report.hierarchyCount = 2;
+    data.report.totalValue = 550;
+    renderCurrentInventoryReport(data);
+  });
+  assert.equal(await page.locator('#current-inventory-table tbody tr').count(), 2);
+  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /Producto Alfa.*3,00.*\$100.*\$300.*Producto Beta.*2,50.*\$100.*\$250/s);
+  assert.match(await page.locator('#current-inventory-table tfoot').textContent(), /TOTAL VALORIZADO.*\$550/s);
+  assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
+  await page.locator('#current-inventory-search').fill('P1');
+  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /No hay productos/);
+  assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
+  assert.equal(await page.locator('#current-inventory-visible-count').textContent(), '0 valorizado(s) · 1 sin costo');
+  await page.locator('#clear-current-inventory-search').click();
+  const currentProductHeader = page.locator('#current-inventory-table th').nth(2);
+  await currentProductHeader.locator('button').click();
+  assert.equal(await currentProductHeader.getAttribute('aria-sort'), 'ascending');
+  assert.match(await page.locator('#current-inventory-table tbody tr').first().textContent(), /Producto Alfa/);
+  await currentProductHeader.locator('button').click();
+  assert.equal(await currentProductHeader.getAttribute('aria-sort'), 'descending');
+  assert.match(await page.locator('#current-inventory-table tbody tr').first().textContent(), /Producto Beta/);
+  assert.equal(await page.locator('#current-inventory-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
+  const currentInventoryDownloadPromise = page.waitForEvent('download');
+  await page.locator('#current-inventory-results').getByRole('button', { name: 'Exportar Excel' }).click();
+  const currentInventoryDownload = await currentInventoryDownloadPromise;
+  const currentInventoryWorkbook = XLSX.readFile(await currentInventoryDownload.path());
+  assert.equal(currentInventoryWorkbook.SheetNames.includes('Inventario valorizado'), true);
+  assert.equal(currentInventoryWorkbook.SheetNames.includes('Productos sin costo'), true);
+  assert.match(currentInventoryWorkbook.Sheets['Inventario valorizado'].A1.v, /Jerarquía/);
+  assert.match(currentInventoryWorkbook.Sheets['Productos sin costo'].A1.v, /Jerarquía/);
+  await page.locator('#close-current-inventory-report').click();
+  assert.equal(await page.locator('#current-inventory-results').evaluate(dialog => dialog.open), false);
   await page.locator('#inventory-source-list .inventory-source-card').first().getByRole('button', { name: 'Previsualizar' }).click();
   await page.locator('#inventory-preview-range-dialog').waitFor({ state: 'visible' });
   const previewDefaults = await page.evaluate(() => {
@@ -549,6 +654,31 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#inventory-preview-dialog').waitFor({ state: 'visible' });
   await page.locator('#inventory-preview-content').getByText(/Período mostrado.*04.*ago.*2026/i).waitFor();
   assert.equal((await page.locator('#inventory-preview-content').textContent()).includes('2026-08-06'), false);
+  const frozenPreviewLayout = await page.locator('#inventory-preview-content .preview-table').evaluate(table => {
+    const rows = [...table.rows];
+    const firstHeader = rows[0].cells[0];
+    const secondHeader = rows[1].cells[0];
+    const dataCells = [...rows[2].cells];
+    return {
+      headerTags: [firstHeader.tagName, secondHeader.tagName],
+      firstHeader: { position: getComputedStyle(firstHeader).position, top: getComputedStyle(firstHeader).top },
+      secondHeader: { position: getComputedStyle(secondHeader).position, top: getComputedStyle(secondHeader).top },
+      firstColumns: dataCells.slice(0, 3).map(cell => ({
+        position: getComputedStyle(cell).position,
+        left: getComputedStyle(cell).left
+      })),
+      fourthPosition: getComputedStyle(dataCells[3]).position
+    };
+  });
+  assert.deepEqual(frozenPreviewLayout.headerTags, ['TH', 'TH']);
+  assert.deepEqual(frozenPreviewLayout.firstHeader, { position: 'sticky', top: '0px' });
+  assert.deepEqual(frozenPreviewLayout.secondHeader, { position: 'sticky', top: '34px' });
+  assert.deepEqual(frozenPreviewLayout.firstColumns, [
+    { position: 'sticky', left: '0px' },
+    { position: 'sticky', left: '120px' },
+    { position: 'sticky', left: '400px' }
+  ]);
+  assert.equal(frozenPreviewLayout.fourthPosition, 'static');
   await page.locator('#close-inventory-preview').click();
   await page.getByRole('button', { name: 'Ver resumen merma' }).click();
   await page.locator('#source-summary-dialog').waitFor({ state: 'visible' });
@@ -601,19 +731,28 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#confirm-inventory-process').click();
   await page.locator('#inventory-source-status').filter({ hasText: /procesado correctamente/i }).waitFor();
   assert.equal(await page.locator('#inventory-results-table tbody tr').count(), 1);
-  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Inventario Final Teórico' }).count(), 1);
+  assert.equal(await page.locator('#inventory-results-table th', { hasText: /^Inventario Final Teórico$/ }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencia de Inventario' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Costo unitario' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Consumo Colaboradores' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Consumo Marketing' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencia ajustada por consumos' }).count(), 0);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Costo Total' }).count(), 1);
+  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Valor Inventario Final Teórico' }).count(), 1);
+  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Valor Inventario Físico' }).count(), 1);
   const kardexHeaders = await page.locator('#inventory-results-table th').allTextContents();
   const employeeColumn = kardexHeaders.indexOf('Consumo Colaboradores');
   const marketingColumn = kardexHeaders.indexOf('Consumo Marketing');
   const theoreticalColumn = kardexHeaders.indexOf('Inventario Final Teórico');
   const differenceColumn = kardexHeaders.indexOf('Diferencia de Inventario');
+  const totalCostColumn = kardexHeaders.indexOf('Costo Total');
+  const theoreticalValueColumn = kardexHeaders.indexOf('Valor Inventario Final Teórico');
+  const physicalValueColumn = kardexHeaders.indexOf('Valor Inventario Físico');
   assert.ok(employeeColumn < marketingColumn && marketingColumn < theoreticalColumn && theoreticalColumn < differenceColumn);
+  assert.deepEqual(
+    [totalCostColumn, theoreticalValueColumn, physicalValueColumn],
+    [kardexHeaders.length - 3, kardexHeaders.length - 2, kardexHeaders.length - 1]
+  );
   assert.match(await page.locator('#inventory-results-table th').nth(employeeColumn).innerText(), /Consumo\s*\n\s*Colaboradores/);
   assert.equal(await page.locator('#inventory-kardex-decimals option').count(), 4);
   assert.equal(await page.locator('#inventory-kardex-decimals').inputValue(), '2');
@@ -657,7 +796,16 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#clear-inventory-kardex-filters').click();
   assert.equal(await page.locator('#inventory-results-table tbody tr').count(), 1);
   assert.match(await page.locator('#inventory-results-table tbody tr').first().textContent(), /10,0000/);
-  assert.match(await page.locator('#inventory-results-table tfoot').textContent(), /TOTAL.*\$0/s);
+  await page.evaluate(() => {
+    const item = inventoryKardexTableState.report.items[0];
+    item.costAvailable = true;
+    item.unitCost = 500;
+    renderInventoryKardexTable();
+  });
+  const inventoryResultCells = page.locator('#inventory-results-table tbody tr').first().locator('td');
+  assert.match(await inventoryResultCells.nth(theoreticalValueColumn).textContent(), /\$5\.000/);
+  assert.match(await inventoryResultCells.nth(physicalValueColumn).textContent(), /\$4\.500/);
+  assert.match(await page.locator('#inventory-results-table tfoot').textContent(), /TOTAL.*\$0.*\$5\.000.*\$4\.500/s);
   assert.equal(await page.locator('#inventory-report-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
   assert.equal(await page.locator('#inventory-report-results').getByRole('button', { name: 'Exportar Excel' }).count(), 1);
   await page.emulateMedia({ media: 'print' });

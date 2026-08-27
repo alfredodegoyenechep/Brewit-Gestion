@@ -43,6 +43,7 @@ let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
 let pendingTransactionDelete = null;
 let inventoryKardexTableState = null;
+let currentInventoryTableState = null;
 let transactionUploadContext = null;
 const expandedUploadHistories = new Set();
 let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
@@ -599,10 +600,17 @@ function rankText(label, ranking) {
   return ranking?.position ? `${label}: #${ranking.position} de ${ranking.total}` : `${label}: —`;
 }
 
-function renderIntradayReport(intraday) {
+function renderIntradayReport(intraday, includeToday = true) {
   const referenceText = value => value ? formatReportDate(value) : 'Sin referencia';
+  const intradayTitle = includeToday ? 'Venta acumulada de hoy' : 'Venta acumulada del día anterior';
+  const referenceTitle = includeToday ? 'Hoy' : 'Día anterior';
+  document.getElementById('intraday-title').textContent = intradayTitle;
+  document.getElementById('intraday-reference-title').textContent = referenceTitle;
+  document.getElementById('intraday-indicators').setAttribute('aria-label', `Indicadores de ${intradayTitle.toLowerCase()}`);
   document.getElementById('intraday-today-date').textContent = formatReportDate(intraday.today.date);
-  const cutoffLabel = intraday.today.cutoffTime ? `Corte ${intraday.today.cutoffTime.slice(0, 5)}` : 'Sin ventas de hoy';
+  const cutoffLabel = intraday.today.cutoffTime
+    ? `Corte ${intraday.today.cutoffTime.slice(0, 5)}`
+    : includeToday ? 'Sin ventas de hoy' : 'Sin ventas del día anterior';
   const setIntradayRank = (valueId, detailId, ranking, fallback) => {
     document.getElementById(valueId).textContent = ranking?.position ? `#${ranking.position}` : '—';
     document.getElementById(detailId).textContent = ranking?.position
@@ -718,7 +726,7 @@ async function loadWeeklySalesReport() {
     document.getElementById('report-weekday-average').textContent = formatClp(report.previousDay.sameWeekdayAverage);
     const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(report.previousDay.date));
     document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
-    renderIntradayReport(report.intraday);
+    renderIntradayReport(report.intraday, report.includeToday);
     renderSalesStatistics(report.statistics);
     if (!report.filesRead) {
       setStatus(status, 'No hay archivos de ventas cargados para las ubicaciones activas.', 'muted');
@@ -808,7 +816,10 @@ async function downloadReportSalesFromToteat() {
     if (response.status !== 409 || error.code !== 'TOTEAT_AUTH_REQUIRED') {
       throw new Error(error.error || 'No se pudo descargar el reporte desde Toteat.');
     }
-    setStatus(status, `Abriendo Toteat para conectar ${locationRegistry[location].name}…`);
+    const expiredSession = error.state === 'session_expired';
+    setStatus(status, expiredSession
+      ? `La sesión vencida de Toteat fue detectada. Abriendo una nueva sesión para ${locationRegistry[location].name}…`
+      : `Abriendo Toteat para conectar ${locationRegistry[location].name}…`);
     const connectResponse = await fetch('/api/integrations/toteat/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -816,9 +827,10 @@ async function downloadReportSalesFromToteat() {
     });
     const connection = await connectResponse.json().catch(() => ({}));
     if (!connectResponse.ok) throw new Error(connection.error || 'No se pudo abrir la sesión de Toteat.');
-    setStatus(status,
-      `Se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`,
-      'muted');
+    setStatus(status, expiredSession
+      ? `Se cerró la sesión vencida y se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`
+      : `Se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`,
+    'muted');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
@@ -2829,6 +2841,45 @@ function formatProjectionOneDecimal(value) {
   return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(value));
 }
 
+function roundUpToPackageMultiple(quantity, unitsPerPackage) {
+  const value = Number(quantity);
+  const packageSize = Number(unitsPerPackage);
+  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(packageSize) || packageSize <= 0) return value;
+  return Number((Math.ceil((value / packageSize) - 1e-9) * packageSize).toPrecision(12));
+}
+
+function greatestCommonDivisor(left, right) {
+  let first = Math.abs(left);
+  let second = Math.abs(right);
+  while (second) [first, second] = [second, first % second];
+  return first || 1;
+}
+
+function purchaseUnitsRespectingPackage(quantity, unitsPerPurchaseUnit, unitsPerPackage) {
+  const value = Number(quantity);
+  const conversion = Number(unitsPerPurchaseUnit);
+  const packageSize = Number(unitsPerPackage);
+  if (!(value > 0) || !(conversion > 0) || !(packageSize > 0)) return null;
+  const minimumPurchaseUnits = Math.ceil((value / conversion) - 1e-9);
+  const scale = 1000000;
+  const conversionInteger = Math.max(1, Math.round(conversion * scale));
+  const packageInteger = Math.max(1, Math.round(packageSize * scale));
+  const purchaseUnitMultiple = packageInteger / greatestCommonDivisor(conversionInteger, packageInteger);
+  return Math.ceil(minimumPurchaseUnits / purchaseUnitMultiple) * purchaseUnitMultiple;
+}
+
+function purchaseQuantityPackageWarning(item, purchaseQuantity) {
+  const quantity = Number(purchaseQuantity);
+  const packageSize = Number(item.unitsPerPackage);
+  const conversion = Number(item.unitsPerPurchaseUnit);
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(packageSize) || packageSize <= 0
+    || !Number.isFinite(conversion) || conversion <= 0) return '';
+  const internalQuantity = quantity * conversion;
+  const nearestMultiple = Math.round(internalQuantity / packageSize) * packageSize;
+  if (Math.abs(internalQuantity - nearestMultiple) <= Math.max(1, Math.abs(internalQuantity)) * 1e-8) return '';
+  return `Cantidad no múltiplo del empaque (${formatProjectionQuantity(packageSize)} ${item.internalUnit || 'un.'})`;
+}
+
 function filteredPurchaseProjectionItems() {
   if (!purchaseProjectionState) return [];
   const supplier = document.getElementById('projection-supplier-filter').value || 'all';
@@ -2853,9 +2904,11 @@ function recalculatePurchaseProjectionItem(item) {
   item.ownSuggestedInternalQuantity = item.ownNeedsPurchase
     ? Math.max(0, item.maximumStock - item.currentInventory) : 0;
   item.needsPurchase = item.ownNeedsPurchase || item.branchOrderInternalQuantity > 0;
-  item.suggestedInternalQuantity = item.ownSuggestedInternalQuantity + item.branchOrderInternalQuantity;
-  item.suggestedPurchaseUnits = item.suggestedInternalQuantity > 0 && item.unitsPerPurchaseUnit > 0
-    ? Math.ceil(item.suggestedInternalQuantity / item.unitsPerPurchaseUnit) : null;
+  item.rawSuggestedInternalQuantity = item.ownSuggestedInternalQuantity + item.branchOrderInternalQuantity;
+  item.suggestedInternalQuantity = roundUpToPackageMultiple(item.rawSuggestedInternalQuantity, item.unitsPerPackage);
+  item.suggestedPurchaseUnits = purchaseUnitsRespectingPackage(
+    item.suggestedInternalQuantity, item.unitsPerPurchaseUnit, item.unitsPerPackage
+  );
   item.projectedInternalQuantity = item.suggestedPurchaseUnits === null
     ? item.suggestedInternalQuantity : item.suggestedPurchaseUnits * item.unitsPerPurchaseUnit;
   item.estimatedTotal = item.suggestedPurchaseUnits === null || item.estimatedPurchaseUnitCost === null
@@ -2950,8 +3003,21 @@ function renderPurchaseProjection() {
       supplierCell.appendChild(note);
     }
     row.appendChild(supplierCell);
+    const internalUnitCell = document.createElement('td');
+    internalUnitCell.textContent = item.internalUnit || '—';
+    row.appendChild(internalUnitCell);
+    const packageCell = document.createElement('td');
+    const packageInput = document.createElement('input');
+    packageInput.type = 'number';
+    packageInput.min = '0.0001';
+    packageInput.max = '1000000';
+    packageInput.step = 'any';
+    packageInput.value = String(item.unitsPerPackage ?? 1);
+    packageInput.className = 'projection-package-input';
+    packageInput.setAttribute('aria-label', `Unidades por empaque de ${item.name}`);
+    packageCell.appendChild(packageInput);
+    row.appendChild(packageCell);
     const plainValues = [
-      { value: item.internalUnit || '—' },
       { value: formatProjectionMetric(item.currentInventory) },
       { value: formatProjectionMetric(item.consumption30) },
       { value: formatProjectionMetric(item.averageDailyConsumption) },
@@ -3055,7 +3121,7 @@ function renderPurchaseProjection() {
   if (!visibleItems.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = showsBranchOrders ? 20 : 18;
+    cell.colSpan = showsBranchOrders ? 21 : 19;
     cell.className = 'projection-empty';
     cell.textContent = 'No hay ítems para los filtros seleccionados.';
     row.appendChild(cell);
@@ -3185,6 +3251,7 @@ async function loadPurchaseProjection(options = {}) {
     ? new Map(purchaseProjectionState.items.map(item => [item.key, {
       minDays: item.minDays,
       maxDays: item.maxDays,
+      unitsPerPackage: item.unitsPerPackage,
       managed: item.managed,
       supplierKey: item.supplierKey
     }]))
@@ -3211,6 +3278,7 @@ async function loadPurchaseProjection(options = {}) {
         if (!draft) return;
         item.minDays = draft.minDays;
         item.maxDays = draft.maxDays;
+        item.unitsPerPackage = draft.unitsPerPackage;
         item.managed = draft.managed;
         item.supplierKey = draft.supplierKey;
         const supplier = data.suppliers.find(candidate => candidate.key === draft.supplierKey);
@@ -3256,13 +3324,15 @@ async function savePurchaseProjectionPolicies() {
     if (!row) continue;
     item.minDays = Number(row.querySelector('.projection-min-input').value);
     item.maxDays = Number(row.querySelector('.projection-max-input').value);
+    item.unitsPerPackage = Number(row.querySelector('.projection-package-input').value);
     item.supplierKey = row.querySelector('.projection-supplier-input').value;
     item.managed = row.querySelector('.projection-managed-input').checked;
   }
   const invalid = purchaseProjectionState.items.find(item =>
-    !Number.isFinite(item.minDays) || !Number.isFinite(item.maxDays)
-    || item.minDays < 0 || item.maxDays < item.minDays || item.maxDays > 365);
-  if (invalid) return setStatus(status, `Revisa los días mínimos y máximos de ${invalid.name}.`, 'error');
+    !Number.isFinite(item.minDays) || !Number.isFinite(item.maxDays) || !Number.isFinite(item.unitsPerPackage)
+    || item.minDays < 0 || item.maxDays < item.minDays || item.maxDays > 365
+    || item.unitsPerPackage <= 0 || item.unitsPerPackage > 1000000);
+  if (invalid) return setStatus(status, `Revisa los días mínimos, máximos y las unidades por empaque de ${invalid.name}.`, 'error');
   button.disabled = true;
   try {
     await apiRequest('/api/purchase-projections/policies', {
@@ -3271,12 +3341,12 @@ async function savePurchaseProjectionPolicies() {
       body: JSON.stringify({
         location: purchaseProjectionState.location.id,
         items: purchaseProjectionState.items.map(item => ({
-          key: item.key, minDays: item.minDays, maxDays: item.maxDays,
+          key: item.key, minDays: item.minDays, maxDays: item.maxDays, unitsPerPackage: item.unitsPerPackage,
           supplierKey: item.supplierKey, managed: item.managed
         }))
       })
     });
-    setStatus(status, 'Criterios de inventario y proveedores guardados correctamente.', 'success');
+    setStatus(status, 'Criterios de compra guardados correctamente.', 'success');
     await loadPurchaseProjection();
   } catch (error) {
     setStatus(status, error.message, 'error');
@@ -3295,6 +3365,7 @@ function editableSavedPurchaseOrder(order) {
     ...order,
     items: order.items.map(item => ({
       ...item,
+      unitsPerPackage: Number(item.unitsPerPackage) > 0 ? Number(item.unitsPerPackage) : 1,
       referenceUnitCost: roundedPurchaseOrderCost(item.referenceUnitCost || 0),
       unitCost: roundedPurchaseOrderCost(item.unitCost),
       selected: true,
@@ -3323,11 +3394,15 @@ function updatePurchaseOrderEditorTotals() {
     item.quantity = Number(row.querySelector('.purchase-order-quantity').value);
     item.unitCost = roundedPurchaseOrderCost(parseLocalizedNumber(row.querySelector('.purchase-order-cost').value));
     const changed = item.unitCost !== roundedPurchaseOrderCost(item.referenceUnitCost || 0);
+    const packageWarning = purchaseQuantityPackageWarning(item, item.quantity);
     const rowTotal = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
       ? item.quantity * item.unitCost : 0;
     row.querySelector('.purchase-order-row-total').textContent = formatClp(rowTotal);
-    row.querySelector('.purchase-order-row-warning').textContent = changed ? 'Costo modificado' : '';
+    row.querySelector('.purchase-order-row-warning').textContent = [
+      changed ? 'Costo modificado' : '', packageWarning
+    ].filter(Boolean).join(' · ');
     row.classList.toggle('purchase-order-cost-modified', changed);
+    row.classList.toggle('purchase-order-package-warning', Boolean(packageWarning));
     row.classList.toggle('purchase-order-row-excluded', !item.selected);
     total += rowTotal;
   }
@@ -3368,6 +3443,7 @@ function renderPurchaseOrderEditor() {
     row.appendChild(selectCell);
     [item.code || '—', item.name, item.purchaseUnit || '—',
       item.unitsPerPurchaseUnit === null ? '—' : formatProjectionQuantity(item.unitsPerPurchaseUnit),
+      formatProjectionQuantity(item.unitsPerPackage || 1),
       item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits)]
       .forEach(value => {
         const cell = document.createElement('td');
@@ -3378,7 +3454,7 @@ function renderPurchaseOrderEditor() {
     const quantity = document.createElement('input');
     quantity.type = 'number';
     quantity.min = '0';
-    quantity.step = '0.01';
+    quantity.step = '1';
     quantity.value = String(item.quantity ?? 0);
     quantity.className = 'purchase-order-quantity';
     quantityCell.appendChild(quantity);
@@ -3739,7 +3815,10 @@ function updateTentativeOrderTotals() {
     if (!item.conversionAvailable) warnings.push('Sin conversión UDC');
     if (item.estimatedPurchaseUnitCost === null) warnings.push('Sin costo histórico');
     if (item.unitCost !== item.referenceUnitCost) warnings.push('Costo modificado');
+    const packageWarning = purchaseQuantityPackageWarning(item, item.quantity);
+    if (packageWarning) warnings.push(packageWarning);
     row.querySelector('.tentative-order-row-warning').textContent = warnings.join(' · ');
+    row.classList.toggle('purchase-order-package-warning', Boolean(packageWarning));
     row.classList.toggle('purchase-order-row-excluded', !item.selected);
     total += item.total;
   }
@@ -3800,6 +3879,7 @@ function renderTentativePurchaseOrderReview() {
       item.code || '—', item.name, formatProjectionMetric(item.currentInventory),
       item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
       `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit || ''}`.trim(),
+      formatProjectionQuantity(item.unitsPerPackage || 1),
       item.purchaseUnit || '—',
       item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión'
     ].forEach(value => {
@@ -3807,7 +3887,7 @@ function renderTentativePurchaseOrderReview() {
     });
     const quantityCell = document.createElement('td');
     const quantity = document.createElement('input');
-    quantity.type = 'number'; quantity.min = '0'; quantity.step = '0.01'; quantity.value = String(item.quantity);
+    quantity.type = 'number'; quantity.min = '0'; quantity.step = '1'; quantity.value = String(item.quantity);
     quantity.className = 'tentative-order-quantity'; quantity.disabled = disabled;
     quantity.setAttribute('aria-label', `Cantidad UDC de ${item.name}`);
     quantityCell.appendChild(quantity); row.appendChild(quantityCell);
@@ -3869,6 +3949,12 @@ async function generateTentativePurchaseOrders() {
     .sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name, 'es') : left.type === 'store' ? -1 : 1));
   const requestedLocations = scope === 'all' ? allLocations : allLocations.filter(location => location.id === scope);
   if (!requestedLocations.length) return setStatus(status, 'Selecciona una ubicación válida.', 'error');
+  const requestedLocationIds = new Set(requestedLocations.map(location => location.id));
+  const previousLocations = tentativePurchaseOrdersState?.locations || [];
+  const replacedTentativeCount = previousLocations
+    .filter(location => requestedLocationIds.has(location.id))
+    .reduce((sum, location) => sum + location.groups.filter(group => !group.confirmedOrder).length, 0);
+  const retainedLocations = previousLocations.filter(location => !requestedLocationIds.has(location.id));
   button.disabled = true;
   document.getElementById('tentative-orders-review').hidden = true;
   setStatus(status, `Generando propuestas para ${requestedLocations.length} ubicación(es)…`);
@@ -3879,26 +3965,43 @@ async function generateTentativePurchaseOrders() {
     })));
     const completed = results.filter(result => result.status === 'fulfilled').map(result => result.value);
     const failures = results.filter(result => result.status === 'rejected');
-    tentativePurchaseOrdersState = {
-      generatedAt: new Date().toISOString(),
-      scope,
-      locations: completed.map(({ location, projection }) => ({
+    const regeneratedLocations = completed.map(({ location, projection }) => {
+      const uniqueGroups = [...new Map(tentativeGroupsForProjection(projection)
+        .map(group => [group.supplier.key, group])).values()];
+      return {
         ...location,
         period: projection.period,
         branchLocationIds: projection.branchOrders?.selectedLocationIds || [],
-        groups: tentativeGroupsForProjection(projection)
-      }))
+        groups: uniqueGroups
+      };
+    });
+    const locationOrder = new Map(allLocations.map((location, index) => [location.id, index]));
+    tentativePurchaseOrdersState = {
+      generatedAt: new Date().toISOString(),
+      scope,
+      locations: [...retainedLocations, ...regeneratedLocations]
+        .sort((left, right) => (locationOrder.get(left.id) ?? 9999) - (locationOrder.get(right.id) ?? 9999))
     };
     const preferredLocation = scope !== 'all' ? scope : document.getElementById('projection-location-filter').value;
     populateTentativeLocationFilter(preferredLocation);
     renderTentativePurchaseOrderReview();
-    const orderCount = tentativePurchaseOrdersState.locations.reduce((sum, location) => sum + location.groups.length, 0);
+    const orderCount = regeneratedLocations.reduce((sum, location) => sum + location.groups.length, 0);
+    const replacementNote = replacedTentativeCount
+      ? ` Se reemplazaron ${replacedTentativeCount} tentativa(s) anterior(es) de las ubicaciones seleccionadas.`
+      : '';
     const failureNote = failures.length ? ` ${failures.length} ubicación(es) no pudieron calcularse por falta de datos utilizables.` : '';
-    setStatus(status, `${orderCount} orden(es) tentativa(s) generada(s) para ${completed.length} ubicación(es). Nada se ha guardado todavía.${failureNote}`,
+    setStatus(status, `${orderCount} orden(es) tentativa(s) generada(s) para ${completed.length} ubicación(es). Nada se ha guardado todavía.${replacementNote}${failureNote}`,
       orderCount ? 'success' : 'muted');
   } catch (error) {
-    tentativePurchaseOrdersState = null;
-    document.getElementById('tentative-orders-review').hidden = true;
+    tentativePurchaseOrdersState = retainedLocations.length
+      ? { ...tentativePurchaseOrdersState, locations: retainedLocations }
+      : null;
+    if (tentativePurchaseOrdersState) {
+      populateTentativeLocationFilter();
+      renderTentativePurchaseOrderReview();
+    } else {
+      document.getElementById('tentative-orders-review').hidden = true;
+    }
     setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
@@ -4089,10 +4192,12 @@ async function loadInventorySources() {
   const status = document.getElementById('inventory-source-status');
   const list = document.getElementById('inventory-source-list');
   const processButton = document.getElementById('process-inventory-report');
+  const currentButton = document.getElementById('current-inventory-report');
   if (!location) {
     inventorySourceState = null;
     list.replaceChildren();
     processButton.disabled = true;
+    currentButton.disabled = true;
     return setStatus(status, 'No hay ubicaciones activas disponibles.', 'muted');
   }
   setStatus(status, 'Buscando los archivos más recientes…');
@@ -4176,6 +4281,7 @@ async function loadInventorySources() {
       return card;
     }));
     processButton.disabled = !data.ready || !data.kardexPeriod;
+    currentButton.disabled = !data.kardexPeriod;
     document.getElementById('inventory-process-note').textContent = data.ready
       ? data.kardexPeriod
         ? 'Al procesar, confirma por separado los saldos inicial y final y el período inclusivo de movimientos.'
@@ -4188,6 +4294,7 @@ async function loadInventorySources() {
     inventorySourceState = null;
     list.replaceChildren();
     processButton.disabled = true;
+    currentButton.disabled = true;
     setStatus(status, error.message, 'error');
   }
 }
@@ -4202,7 +4309,7 @@ function closeInventoryResultDialog(id) {
 }
 
 function closeInventoryResultDialogs() {
-  ['waste-summary-results', 'consumption-summary-results', 'inventory-report-results']
+  ['waste-summary-results', 'consumption-summary-results', 'inventory-report-results', 'current-inventory-results']
     .forEach(closeInventoryResultDialog);
 }
 
@@ -4767,9 +4874,7 @@ function renderInventoryKardexTable() {
   columns.forEach((column, index) => {
     const cell = document.createElement('td');
     if (index === 0) cell.textContent = 'TOTAL';
-    else if (index === columns.length - 1) {
-      cell.textContent = formatKardexCost(items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0));
-    }
+    else if (column.totalValue) cell.textContent = column.totalValue(items);
     totalRow.appendChild(cell);
   });
   foot.appendChild(totalRow);
@@ -4845,6 +4950,12 @@ function renderLac001SubstitutionReport(report) {
 
 function renderInventoryResults(data) {
   const report = data.report;
+  const physicalInventoryQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
+  const inventoryValue = (item, quantity) => (Number(quantity) || 0) * (Number(item.unitCost) || 0);
+  const totalInventoryValue = (items, quantity) => formatKardexCost(items.reduce(
+    (sum, item) => item.costAvailable ? sum + inventoryValue(item, quantity(item)) : sum,
+    0
+  ));
   renderConsumptionReports(data.consumption);
   const wasteSection = document.getElementById('inventory-waste-report');
   if (data.waste?.available && data.waste.report) {
@@ -4905,7 +5016,24 @@ function renderInventoryResults(data) {
       signValue: item => item.difference,
       finalDifference: true
     },
-    { label: 'Costo Total', value: item => item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.totalCost) || 0 : null }
+    {
+      label: 'Costo Total',
+      value: item => item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo',
+      sortValue: item => item.costAvailable ? Number(item.totalCost) || 0 : null,
+      totalValue: items => formatKardexCost(items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0))
+    },
+    {
+      label: 'Valor Inventario Final Teórico',
+      value: item => item.costAvailable ? formatKardexCost(inventoryValue(item, item.theoreticalFinal)) : 'Sin costo',
+      sortValue: item => item.costAvailable ? inventoryValue(item, item.theoreticalFinal) : null,
+      totalValue: items => totalInventoryValue(items, item => item.theoreticalFinal)
+    },
+    {
+      label: 'Valor Inventario Físico',
+      value: item => item.costAvailable ? formatKardexCost(inventoryValue(item, physicalInventoryQuantity(item))) : 'Sin costo',
+      sortValue: item => item.costAvailable ? inventoryValue(item, physicalInventoryQuantity(item)) : null,
+      totalValue: items => totalInventoryValue(items, physicalInventoryQuantity)
+    }
   ];
   document.getElementById('inventory-kardex-search').value = '';
   document.getElementById('inventory-kardex-cost-filter').value = 'all';
@@ -4915,6 +5043,169 @@ function renderInventoryResults(data) {
   renderInventoryKardexTable();
   renderLac001SubstitutionReport(data.lac001Substitutions);
   document.getElementById('inventory-report-results').showModal();
+}
+
+function currentInventoryColumns() {
+  return [
+    { label: 'Jerarquía', value: item => item.hierarchyPath.join(' › '), sortValue: item => item.hierarchyPath.join(' › ') },
+    { label: 'Código', value: item => item.code, sortValue: item => item.code },
+    { label: 'Producto', value: item => item.name, sortValue: item => item.name },
+    { label: 'Unidad', value: item => item.unit, sortValue: item => item.unit },
+    { label: 'Inventario teórico', value: item => formatKardexQuantity(item.quantity, 2), sortValue: item => Number(item.quantity) || 0 },
+    { label: 'Costo unitario', value: item => item.costAvailable ? formatKardexCost(item.unitCost) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.unitCost) || 0 : null },
+    { label: 'Valorización', value: item => item.costAvailable ? formatKardexCost(item.valuation) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.valuation) || 0 : null }
+  ];
+}
+
+function renderCurrentInventoryTable(table, items, missingCost = false) {
+  const { columns, sortIndex, direction } = currentInventoryTableState;
+  const headRow = document.createElement('tr');
+  columns.forEach((column, index) => {
+    const cell = document.createElement('th');
+    const active = index === sortIndex;
+    cell.setAttribute('aria-sort', active ? direction === 'asc' ? 'ascending' : 'descending' : 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `inventory-sort-button${active ? ' active' : ''}`;
+    button.textContent = `${column.label}${active ? direction === 'asc' ? ' ▲' : ' ▼' : ''}`;
+    button.title = `Ordenar por ${column.label}`;
+    button.addEventListener('click', () => {
+      if (currentInventoryTableState.sortIndex === index) {
+        currentInventoryTableState.direction = currentInventoryTableState.direction === 'asc' ? 'desc' : 'asc';
+      } else {
+        currentInventoryTableState.sortIndex = index;
+        currentInventoryTableState.direction = 'asc';
+      }
+      renderCurrentInventoryTables();
+    });
+    cell.appendChild(button);
+    headRow.appendChild(cell);
+  });
+  const head = document.createElement('thead');
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  let previousHierarchy = null;
+  items.forEach(item => {
+    const hierarchy = item.hierarchyPath.join(' › ');
+    const row = document.createElement('tr');
+    if (hierarchy !== previousHierarchy) row.classList.add('current-inventory-group-start');
+    columns.forEach(column => {
+      const cell = document.createElement('td');
+      cell.textContent = column.value(item);
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+    previousHierarchy = hierarchy;
+  });
+  if (!items.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns.length;
+    cell.className = 'inventory-empty-result';
+    cell.textContent = 'No hay productos que coincidan con la búsqueda.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+  const totalRow = document.createElement('tr');
+  totalRow.className = 'consumption-total-row';
+  columns.forEach((column, index) => {
+    const cell = document.createElement('td');
+    if (index === 0) cell.textContent = missingCost ? 'TOTAL SIN COSTO' : 'TOTAL VALORIZADO';
+    if (index === columns.length - 1) {
+      cell.textContent = missingCost
+        ? 'Sin valorizar'
+        : formatKardexCost(items.reduce((sum, item) => sum + (Number(item.valuation) || 0), 0));
+    }
+    totalRow.appendChild(cell);
+  });
+  const foot = document.createElement('tfoot');
+  foot.appendChild(totalRow);
+  table.replaceChildren(head, body, foot);
+}
+
+function renderCurrentInventoryTables() {
+  if (!currentInventoryTableState) return;
+  const { data, columns, sortIndex, direction } = currentInventoryTableState;
+  const query = normalizedInventorySearch(document.getElementById('current-inventory-search').value);
+  const matches = item => !query || normalizedInventorySearch(`${item.code} ${item.name}`).includes(query);
+  const compareItems = (left, right) => {
+    const leftValue = columns[sortIndex].sortValue(left);
+    const rightValue = columns[sortIndex].sortValue(right);
+    const leftMissing = leftValue === null || leftValue === undefined || leftValue === '';
+    const rightMissing = rightValue === null || rightValue === undefined || rightValue === '';
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), 'es', { numeric: true, sensitivity: 'base' });
+    return (comparison || left.name.localeCompare(right.name, 'es', { sensitivity: 'base' })
+      || left.code.localeCompare(right.code, 'es', { numeric: true })) * (direction === 'desc' ? -1 : 1);
+  };
+  const visibleItems = data.report.items.filter(matches).sort(compareItems);
+  const valuedItems = visibleItems.filter(item => item.costAvailable);
+  const missingItems = visibleItems.filter(item => !item.costAvailable);
+  renderCurrentInventoryTable(document.getElementById('current-inventory-table'), valuedItems);
+  renderCurrentInventoryTable(document.getElementById('current-inventory-missing-cost-table'), missingItems, true);
+  document.getElementById('current-inventory-visible-count').textContent =
+    `${valuedItems.length} valorizado(s) · ${missingItems.length} sin costo`;
+  document.getElementById('current-inventory-missing-cost-note').textContent =
+    `${data.report.itemsWithoutCost.length} producto(s) o insumo(s) no participan de la valorización porque no tienen un costo maestro compatible.`;
+}
+
+function renderCurrentInventoryReport(data) {
+  const report = data.report;
+  const valuedCount = report.items.filter(item => item.costAvailable).length;
+  const missingCount = report.itemCount - valuedCount;
+  currentInventoryTableState = { data, columns: currentInventoryColumns(), sortIndex: 0, direction: 'asc' };
+  document.getElementById('current-inventory-search').value = '';
+  document.getElementById('current-inventory-missing-cost').hidden = missingCount === 0;
+  renderCurrentInventoryTables();
+  const basis = report.balanceBasis === 'final' ? 'Inventario Final (IF)' : 'Inventario Inicial (II)';
+  document.getElementById('current-inventory-period').textContent =
+    `${basis} · Fecha solicitada: ${formatReportDate(data.referenceDate)} · Fecha del inventario utilizada: ${formatReportDate(report.date)} · ${report.hierarchyCount} jerarquía(s).`;
+  document.getElementById('current-inventory-item-count').textContent = `${valuedCount} valorizados · ${missingCount} sin costo`;
+  document.getElementById('current-inventory-total').textContent = `Valor total: ${formatKardexCost(report.totalValue)}`;
+  const warning = document.getElementById('current-inventory-warning');
+  warning.textContent = (data.warnings || []).join(' ');
+  warning.hidden = !warning.textContent;
+  closeInventoryResultDialogs();
+  document.getElementById('current-inventory-results').showModal();
+}
+
+function openCurrentInventoryDateDialog() {
+  const today = isoLocalDate(new Date());
+  const input = document.getElementById('current-inventory-date');
+  const firstKardexDate = inventorySourceState?.kardexPeriod?.firstDate || '';
+  input.value = today;
+  input.max = today;
+  input.min = firstKardexDate && firstKardexDate <= today ? firstKardexDate : '';
+  setStatus(document.getElementById('current-inventory-date-status'), '');
+  document.getElementById('current-inventory-date-dialog').showModal();
+}
+
+async function generateCurrentInventoryReport() {
+  const status = document.getElementById('inventory-source-status');
+  const dialog = document.getElementById('current-inventory-date-dialog');
+  const dialogStatus = document.getElementById('current-inventory-date-status');
+  const button = document.getElementById('confirm-current-inventory-report');
+  const location = document.getElementById('inventory-location-select').value;
+  const referenceDate = document.getElementById('current-inventory-date').value;
+  const today = isoLocalDate(new Date());
+  if (!referenceDate) return setStatus(dialogStatus, 'Selecciona una fecha de referencia.', 'error');
+  if (referenceDate > today) return setStatus(dialogStatus, 'La fecha de referencia no puede ser posterior a hoy.', 'error');
+  button.disabled = true;
+  setStatus(status, `Leyendo el saldo teórico disponible al ${formatReportDate(referenceDate)}…`);
+  setStatus(dialogStatus, 'Generando inventario…');
+  try {
+    const data = await apiRequest(`/api/inventory/current?location=${encodeURIComponent(location)}&date=${encodeURIComponent(referenceDate)}`);
+    dialog.close();
+    renderCurrentInventoryReport(data);
+    setStatus(status, `Inventario teórico al ${formatReportDate(data.report.date)} generado correctamente.`, 'success');
+  } catch (error) {
+    setStatus(dialogStatus, error.message, 'error');
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function generateInventoryReport() {
@@ -5262,10 +5553,13 @@ async function openSpreadsheetPreview(endpoint, fallbackTitle, ids = {}) {
       const tableWrap = document.createElement('div');
       tableWrap.className = 'preview-table-wrap';
       const table = document.createElement('table');
+      table.className = 'preview-table';
+      const frozenRows = Math.min(2, Math.max(0, Number(sheet.frozenRows) || 0));
       sheet.rows.forEach((values, rowIndex) => {
         const row = document.createElement('tr');
+        if (rowIndex < frozenRows) row.dataset.frozenRow = String(rowIndex);
         values.forEach(value => {
-          const cell = document.createElement(rowIndex === 0 ? 'th' : 'td');
+          const cell = document.createElement(rowIndex < frozenRows ? 'th' : 'td');
           cell.textContent = value ?? '';
           row.appendChild(cell);
         });
@@ -5276,7 +5570,7 @@ async function openSpreadsheetPreview(endpoint, fallbackTitle, ids = {}) {
       if (sheet.truncated) {
         const notice = document.createElement('p');
         notice.className = 'subtle';
-        notice.textContent = 'Vista limitada a 200 filas y 300 columnas.';
+        notice.textContent = 'Vista limitada a 400 filas y 400 columnas.';
         section.appendChild(notice);
       }
       content.appendChild(section);
@@ -5320,6 +5614,8 @@ function printInventoryReport(sectionId) {
 
 function excelSheetLabel(table, index) {
   if (table.id === 'inventory-results-table') return 'Kardex consolidado';
+  if (table.id === 'current-inventory-table') return 'Inventario valorizado';
+  if (table.id === 'current-inventory-missing-cost-table') return 'Productos sin costo';
   if (table.id === 'inventory-waste-table' || table.id === 'waste-summary-table') return 'Merma';
   if (table.id === 'inventory-lac001-substitution-table') return 'Sustitución LAC001';
   const card = table.closest('.consumption-report-card');
@@ -5740,7 +6036,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
     applySort(purchaseProjectionSort, header.dataset.sortKey,
-      ['managed', 'currentInventory', 'consumption30', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+      ['managed', 'unitsPerPackage', 'currentInventory', 'consumption30', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderPurchaseProjection();
   });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
@@ -5801,11 +6097,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!item) return;
     const editsMinimum = event.target.matches('.projection-min-input');
     const editsMaximum = event.target.matches('.projection-max-input');
-    if ((editsMinimum || editsMaximum) && event.target.value !== '') {
+    const editsPackage = event.target.matches('.projection-package-input');
+    if ((editsMinimum || editsMaximum || editsPackage) && event.target.value !== '') {
       if (editsMinimum) item.minDays = Number(event.target.value);
       if (editsMaximum) item.maxDays = Number(event.target.value);
+      if (editsPackage) item.unitsPerPackage = Number(event.target.value);
       recalculatePurchaseProjectionItem(item);
-      const inputClass = editsMinimum ? '.projection-min-input' : '.projection-max-input';
+      const inputClass = editsMinimum ? '.projection-min-input'
+        : editsMaximum ? '.projection-max-input' : '.projection-package-input';
       renderPurchaseProjection();
       const replacementRow = [...document.querySelectorAll('#purchase-projection-body tr[data-key]')]
         .find(candidate => candidate.dataset.key === item.key);
@@ -5833,6 +6132,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('inventory-location-select').addEventListener('change', loadInventorySources);
   document.getElementById('process-inventory-report').addEventListener('click', openInventoryProcessDialog);
+  document.getElementById('current-inventory-report').addEventListener('click', openCurrentInventoryDateDialog);
+  document.getElementById('confirm-current-inventory-report').addEventListener('click', generateCurrentInventoryReport);
+  for (const id of ['close-current-inventory-date-dialog', 'cancel-current-inventory-date-dialog']) {
+    document.getElementById(id).addEventListener('click', () => {
+      document.getElementById('current-inventory-date-dialog').close();
+    });
+  }
   document.getElementById('confirm-inventory-process').addEventListener('click', generateInventoryReport);
   for (const id of ['close-inventory-process-dialog', 'cancel-inventory-process']) {
     document.getElementById(id).addEventListener('click', () => {
@@ -5854,6 +6160,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('close-inventory-report').addEventListener('click', () => {
     closeInventoryResultDialog('inventory-report-results');
+  });
+  document.getElementById('close-current-inventory-report').addEventListener('click', () => {
+    closeInventoryResultDialog('current-inventory-results');
+  });
+  document.getElementById('current-inventory-search').addEventListener('input', renderCurrentInventoryTables);
+  document.getElementById('clear-current-inventory-search').addEventListener('click', () => {
+    document.getElementById('current-inventory-search').value = '';
+    renderCurrentInventoryTables();
   });
   for (const id of ['inventory-kardex-search', 'inventory-kardex-cost-min', 'inventory-kardex-cost-max']) {
     document.getElementById(id).addEventListener('input', renderInventoryKardexTable);

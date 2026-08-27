@@ -1,10 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const XLSX = require('xlsx');
-const { createApp } = require('../server');
+const { createApp, createToteatAutomation } = require('../server');
+
+const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 async function startTestServer(t, options = {}) {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-test-'));
@@ -314,17 +317,19 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
   const calls = [];
   let connected = false;
   const toteatAutomation = {
-    async connect(location) {
-      calls.push(['connect', location]);
+    async connect(location, options) {
+      calls.push(['connect', location, options.restaurantName]);
       connected = true;
       return { opened: true };
     },
-    async downloadSales(location) {
-      calls.push(['download', location]);
+    async downloadSales(location, options) {
+      calls.push(['download', location, options.restaurantName]);
       if (!connected) {
         const error = new Error('Inicia sesión en Toteat.');
         error.code = 'TOTEAT_AUTH_REQUIRED';
         error.status = 409;
+        error.state = 'authentication_required';
+        error.diagnosticId = 'TOTEAT-TEST';
         throw error;
       }
       return {
@@ -345,7 +350,10 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
   });
   assert.equal(authenticationRequired.status, 409);
-  assert.equal((await authenticationRequired.json()).code, 'TOTEAT_AUTH_REQUIRED');
+  const authenticationError = await authenticationRequired.json();
+  assert.equal(authenticationError.code, 'TOTEAT_AUTH_REQUIRED');
+  assert.equal(authenticationError.state, 'authentication_required');
+  assert.equal(authenticationError.diagnosticId, 'TOTEAT-TEST');
 
   const connection = await fetch(`${baseUrl}/api/integrations/toteat/connect`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
@@ -357,7 +365,143 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
   assert.equal(download.status, 200);
   assert.match(download.headers.get('content-disposition'), /ventas-totales\.xlsx/);
   assert.equal(Buffer.from(await download.arrayBuffer()).toString(), 'toteat-report');
-  assert.deepEqual(calls, [['download', 'store-1'], ['connect', 'store-1'], ['download', 'store-1']]);
+  assert.deepEqual(calls, [
+    ['download', 'store-1', 'Tienda 1'],
+    ['connect', 'store-1', 'Tienda 1'],
+    ['download', 'store-1', 'Tienda 1']
+  ]);
+});
+
+test('Toteat automation selects the restaurant, uses translated menu fallbacks, and records useful diagnostics', {
+  skip: !fs.existsSync(CHROME_PATH)
+}, async t => {
+  const fakeToteat = http.createServer((req, res) => {
+    if (req.url === '/sales.csv') {
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="ventas-totales.csv"'
+      });
+      return res.end('ID de orden\tFecha de creacion\n1\t2026-08-27');
+    }
+    const url = new URL(req.url, 'http://localhost');
+    const spanish = url.searchParams.get('lang') === 'es';
+    const mode = url.searchParams.get('mode') || '';
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(`<!doctype html><html><body><main id="app"></main><script>
+      const spanish = ${JSON.stringify(spanish)};
+      const mode = ${JSON.stringify(mode)};
+      const app = document.getElementById('app');
+      function renderHome() {
+        if (mode === 'fail' || (mode === 'plural-only' && location.hash.endsWith('/cierre'))) {
+          app.innerHTML = '<button>${spanish ? 'Cerrar sesión' : 'Sign Out'}</button><p>Inicio</p>'; return;
+        }
+        if (mode === 'expired') {
+          app.innerHTML = '<button>Sign Out</button><button>Reports</button><div class="ds-modal-container" role="dialog"><p>Su sesión está caducada o es inválida.</p><p>¿Desea cerrar esta sesión y abrir una nueva sesión?</p><button>Cancelar</button><button id="expired-ok">OK</button></div>';
+          document.getElementById('expired-ok').onclick = () => { document.title = 'expired-dismissed'; document.querySelector('[role="dialog"]').remove(); };
+          return;
+        }
+        if (!localStorage.getItem('restaurant')) {
+          app.innerHTML = '<button id="restaurant">${spanish ? 'Seleccionar Restaurante Info' : 'Select Restaurant Info'}</button>';
+          document.getElementById('restaurant').onclick = () => {
+            app.innerHTML = '<button role="option" id="location">La Concepción</button>';
+            document.getElementById('location').onclick = () => { localStorage.setItem('restaurant', 'La Concepción'); renderHome(); };
+          };
+          return;
+        }
+        app.innerHTML = '<button>${spanish ? 'Cerrar sesión' : 'Sign Out'}</button><button id="reports">${spanish ? 'Reportes' : 'Reports'}</button>';
+        document.getElementById('reports').onclick = () => {
+          app.innerHTML += '<button id="sales">${spanish ? 'Resumen de ventas' : 'Sales Summary'}</button>';
+          document.getElementById('sales').onclick = () => {
+            app.innerHTML += '<a href="/sales.csv" download="ventas-totales.csv">${spanish ? 'Descargar Ventas Totales' : 'Download Total Sales'}</a>';
+          };
+        };
+      }
+      renderHome();
+      window.addEventListener('hashchange', renderHome);
+    </script></body></html>`);
+  });
+  await new Promise((resolve, reject) => {
+    fakeToteat.listen(0, '127.0.0.1', resolve);
+    fakeToteat.once('error', reject);
+  });
+  t.after(() => new Promise(resolve => fakeToteat.close(resolve)));
+  const profilesRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-toteat-automation-'));
+  t.after(() => fs.rmSync(profilesRoot, { recursive: true, force: true }));
+  const origin = `http://127.0.0.1:${fakeToteat.address().port}`;
+
+  for (const language of ['en', 'es']) {
+    const automation = createToteatAutomation(profilesRoot, {
+      reportUrl: `${origin}/?lang=${language}#/reportes/cierres`,
+      executablePath: CHROME_PATH,
+      readyTimeout: 100,
+      transitionDelay: 20
+    });
+    const download = await automation.downloadSales(`store-${language}`, { restaurantName: 'La Concepcion' });
+    assert.equal(download.filename, 'ventas-totales.csv');
+    assert.match(download.buffer.toString(), /ID de orden.*2026-08-27/s);
+  }
+
+  const routeFallbackAutomation = createToteatAutomation(profilesRoot, {
+    reportUrls: [
+      `${origin}/?mode=plural-only#/reportes/cierre`,
+      `${origin}/?mode=plural-only#/reportes/cierres`
+    ],
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  const routeFallbackDownload = await routeFallbackAutomation.downloadSales(
+    'store-route-fallback', { restaurantName: 'La Concepcion' }
+  );
+  assert.equal(routeFallbackDownload.filename, 'ventas-totales.csv');
+
+  const expiredAutomation = createToteatAutomation(profilesRoot, {
+    reportUrl: `${origin}/?mode=expired#/reportes/cierre`,
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  await assert.rejects(
+    expiredAutomation.downloadSales('store-expired', { restaurantName: 'La Concepcion' }),
+    error => {
+      assert.equal(error.code, 'TOTEAT_AUTH_REQUIRED');
+      assert.equal(error.state, 'session_expired');
+      assert.match(error.message, /estaba vencida y fue cerrada/i);
+      const diagnostic = JSON.parse(fs.readFileSync(
+        path.join(profilesRoot, 'diagnostics', `${error.diagnosticId}.json`), 'utf8'
+      ));
+      assert.equal(diagnostic.title, 'expired-dismissed');
+      assert.deepEqual(diagnostic.attempts.map(attempt => attempt.action), [
+        'direct-url', 'expired-session-dialog'
+      ]);
+      return true;
+    }
+  );
+
+  const failingAutomation = createToteatAutomation(profilesRoot, {
+    reportUrl: `${origin}/?mode=fail#/reportes/cierres`,
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  await assert.rejects(
+    failingAutomation.downloadSales('store-fail', { restaurantName: 'La Concepcion' }),
+    error => {
+      assert.equal(error.code, 'TOTEAT_REPORT_NOT_READY');
+      assert.equal(error.state, 'report_unavailable');
+      assert.match(error.diagnosticId, /^TOTEAT-/);
+      assert.equal(fs.existsSync(path.join(profilesRoot, 'diagnostics', `${error.diagnosticId}.json`)), true);
+      assert.equal(fs.existsSync(path.join(profilesRoot, 'diagnostics', `${error.diagnosticId}.png`)), true);
+      const diagnostic = JSON.parse(fs.readFileSync(
+        path.join(profilesRoot, 'diagnostics', `${error.diagnosticId}.json`), 'utf8'
+      ));
+      assert.deepEqual(diagnostic.visibleControls, ['Sign Out']);
+      assert.deepEqual(diagnostic.attempts.map(attempt => attempt.action), [
+        'direct-url', 'restaurant-selection', 'menu-navigation', 'reload'
+      ]);
+      return true;
+    }
+  );
 });
 
 test('organizes products by hierarchy and calculates rolling sales by cafeteria', async t => {
@@ -797,6 +941,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(projection.items[0].currentInventory, 0);
   assert.equal(projection.items[0].minDays, 7);
   assert.equal(projection.items[0].maxDays, 14);
+  assert.equal(projection.items[0].unitsPerPackage, 1);
   assert.equal(projection.items[0].managed, false);
   assert.equal(projection.summary.managedItemCount, 0);
   assert.equal(projection.items[0].suggestedPurchaseUnits, 1);
@@ -811,13 +956,16 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       location: 'main-warehouse',
-      items: [{ key: 'I1', minDays: 10, maxDays: 20, supplierKey: '222', managed: true }]
+      items: [{ key: 'I1', minDays: 10, maxDays: 20, unitsPerPackage: 6, supplierKey: '222', managed: true }]
     })
   });
   assert.equal(savePolicy.status, 200);
   const configuredProjection = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`).then(response => response.json());
   assert.equal(configuredProjection.items[0].minDays, 10);
   assert.equal(configuredProjection.items[0].maxDays, 20);
+  assert.equal(configuredProjection.items[0].unitsPerPackage, 6);
+  assert.ok(Math.abs(configuredProjection.items[0].rawSuggestedInternalQuantity - (10 / 3)) < 1e-12);
+  assert.equal(configuredProjection.items[0].suggestedInternalQuantity, 6);
   assert.equal(configuredProjection.items[0].managed, true);
   assert.equal(configuredProjection.summary.managedItemCount, 1);
   assert.equal(configuredProjection.summary.purchaseItemCount, 1);
@@ -830,6 +978,15 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
     body: JSON.stringify({ location: 'main-warehouse', items: [{ key: 'I1', minDays: 20, maxDays: 10 }] })
   });
   assert.equal(invalidPolicy.status, 400);
+  const invalidPackagePolicy = await fetch(`${baseUrl}/api/purchase-projections/policies`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'main-warehouse',
+      items: [{ key: 'I1', minDays: 10, maxDays: 20, unitsPerPackage: 0 }]
+    })
+  });
+  assert.equal(invalidPackagePolicy.status, 400);
 
   const createOrder = await fetch(`${baseUrl}/api/purchase-orders`, {
     method: 'POST',
@@ -848,6 +1005,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(createdOrder.sequence, 1);
   assert.equal(createdOrder.items.length, 1);
   assert.equal(createdOrder.items[0].quantity, 2);
+  assert.equal(createdOrder.items[0].unitsPerPackage, 6);
   assert.equal(createdOrder.items[0].unitCost, 13);
   assert.equal(createdOrder.items[0].costModified, true);
   assert.equal(createdOrder.total, 26);
@@ -1006,8 +1164,11 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
     ['today-first-limit', '2026-08-14', '08:59:59', 119, 0],
     ['today-next-block', '2026-08-14', '09:00:00', 119, 0],
     ['today-last-block', '2026-08-14', '19:00:00', 119, 0],
+    ['previous-weekday', '2026-08-06', '08:00:00', 119, 0],
     ['same-weekday-morning', '2026-08-07', '08:00:00', 238, 0],
     ['same-weekday-noon', '2026-08-07', '12:00:00', 357, 0],
+    ['yesterday-morning', '2026-08-13', '08:30:00', 238, 0],
+    ['yesterday-next', '2026-08-13', '10:00:00', 119, 0],
     ['month-morning', '2026-08-12', '08:00:00', 119, 0],
     ['month-afternoon', '2026-08-12', '16:00:00', 595, 0],
     ['historical-morning', '2026-07-01', '08:00:00', 357, 0],
@@ -1018,11 +1179,11 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
     .then(response => response.json());
   assert.equal((await confirm(baseUrl, inspection, { from: '2026-07-01', to: '2026-08-14' })).status, 200);
 
-  const report = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1`).then(response => response.json());
+  const report = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1&includeToday=true`).then(response => response.json());
   assert.equal(report.intraday.today.date, '2026-08-14');
   assert.equal(report.intraday.today.cutoffTime, '19:00:00');
   assert.equal(Math.round(report.intraday.today.netSales), 400);
-  assert.deepEqual(report.intraday.today.generalRank, { position: 3, total: 4 });
+  assert.deepEqual(report.intraday.today.generalRank, { position: 3, total: 6 });
   assert.deepEqual(report.intraday.today.sameWeekdayRank, { position: 2, total: 2 });
   assert.equal(Math.round(report.intraday.today.sameWeekdayAverage), 500);
   assert.equal(Math.round(report.intraday.today.comparisonToAveragePercent), -20);
@@ -1039,6 +1200,24 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
   assert.equal(Math.round(report.intraday.blocks.at(-1).today), 400);
   assert.equal(Math.round(report.intraday.blocks.at(-1).month), 600);
   assert.equal(Math.round(report.intraday.blocks.at(-1).historical), 700);
+
+  const previousDayReport = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1`)
+    .then(response => response.json());
+  assert.equal(previousDayReport.includeToday, false);
+  assert.equal(previousDayReport.intraday.today.date, '2026-08-13');
+  assert.equal(previousDayReport.intraday.today.cutoffTime, '10:00:00');
+  assert.equal(Math.round(previousDayReport.intraday.today.netSales), 300);
+  assert.deepEqual(previousDayReport.intraday.today.generalRank, { position: 1, total: 5 });
+  assert.deepEqual(previousDayReport.intraday.today.sameWeekdayRank, { position: 1, total: 2 });
+  assert.equal(Math.round(previousDayReport.intraday.today.sameWeekdayAverage), 100);
+  assert.equal(Math.round(previousDayReport.intraday.today.comparisonToAveragePercent), 200);
+  assert.equal(previousDayReport.intraday.today.averageSampleSize, 1);
+  assert.equal(previousDayReport.intraday.references.sameWeekday.date, '2026-08-06');
+  assert.equal(previousDayReport.intraday.references.month.date, '2026-08-12');
+  assert.equal(previousDayReport.intraday.references.historical.date, '2026-07-01');
+  assert.equal(Math.round(previousDayReport.intraday.blocks[0].today), 200);
+  assert.equal(Math.round(previousDayReport.intraday.blocks[1].today), 300);
+  assert.equal(Math.round(previousDayReport.intraday.blocks.at(-1).today), 300);
 });
 
 test('selects the most recent inventory source files for an active location', async t => {
@@ -1086,6 +1265,7 @@ test('selects the most recent inventory source files for an active location', as
   const previewSeparator = kardexPreviewUrl.includes('?') ? '&' : '?';
   const filteredPreview = await fetch(`${baseUrl}${kardexPreviewUrl}${previewSeparator}dateFrom=2026-08-12&dateTo=2026-08-12`).then(response => response.json());
   assert.deepEqual(filteredPreview.selectedRange, { from: '2026-08-12', to: '2026-08-12' });
+  assert.equal(filteredPreview.sheets[0].frozenRows, 2);
   assert.equal(filteredPreview.sheets[0].rows[0].length, 6);
   assert.equal(filteredPreview.sheets[0].rows[0][3], '2026-08-12');
   assert.equal(filteredPreview.sheets[0].rows[0].includes('2026-08-13'), false);
@@ -1198,6 +1378,80 @@ test('consolidates Kardex movements and compares theoretical inventory with next
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ location: 'store-1', dateFrom: '2026-08-04', dateTo: '2026-08-06' })
   })).status, 400);
+});
+
+test('reports the latest theoretical inventory grouped by hierarchy and valued at master cost', async t => {
+  const baseUrl = await startTestServer(t);
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base', 'Jerarquías de Producto *'],
+    ['P2', 'Producto Zeta', 200, 'UN', 'AB.010'],
+    ['P1', 'Producto Alfa', 100, 'UN', 'AB.010']
+  ]), 'Productos');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base', 'Jerarquías de Ingredientes *'],
+    ['I1', 'Ingrediente Uno', 4000, 'KG', 'IC.010']
+  ]), 'Ingredientes');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base', 'Jerarquías de Extras *'],
+    ['SUB1', 'Extra Uno', 50, 'UN', 'BA.010']
+  ]), 'Extras');
+  const hierarchyFile = (prefix, rootName, childName, nameHeader) => [
+    ['ID Jerarquia', 'ID Nodo **', nameHeader, 'ID nodo padre', 'Orden'],
+    [`${prefix}.`, 0, rootName, '', 1],
+    [`${prefix}.010`, 10, childName, `${prefix}.`, 1]
+  ].map(row => row.join('\t')).join('\n');
+  const masterUpload = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([
+      { field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo.xlsx' },
+      { field: 'product-hierarchy', contents: hierarchyFile('AB', 'Productos', 'Bebidas', 'Nombre Jerarquía Producto *'), filename: 'jerarquia-productos.txt' },
+      { field: 'ingredient-hierarchy', contents: hierarchyFile('IC', 'Ingredientes', 'Materias primas', 'Nombre Jerarquía *'), filename: 'jerarquia-ingredientes.txt' },
+      { field: 'extras-hierarchy', contents: hierarchyFile('BA', 'Extras', 'Preparaciones', 'Nombre Jerarquía Producto *'), filename: 'jerarquia-extras.txt' }
+    ], {
+      'master-catalog-from': '2026-08-01',
+      'product-hierarchy-from': '2026-08-01',
+      'ingredient-hierarchy-from': '2026-08-01',
+      'extras-hierarchy-from': '2026-08-01'
+    })
+  });
+  assert.equal(masterUpload.status, 200);
+  const kardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-05', '', '2026-08-06', ''],
+    ['', '', '', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final'],
+    ['P2', 'Producto Zeta', 'UN', 3, 3, 2, 2],
+    ['P1', 'Producto Alfa', 'UN', 4, 4, 3, 3],
+    ['I1', 'Ingrediente Uno', 'KG', 2, 2, 1.5, 1.5],
+    ['SUB1', 'Extra Uno', 'UN', 5, 5, 4, 4],
+    ['X1', 'Sin Maestro', 'UN', 6, 6, 5, 5]
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspect(baseUrl, 'store-1', '2026-08-03', [
+    { field: 'kardex', contents: kardex, filename: 'kardex.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirm(baseUrl, inspection)).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/inventory/current?location=store-1`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.report.date, '2026-08-06');
+  assert.equal(payload.report.balanceBasis, 'final');
+  assert.equal(payload.report.itemCount, 5);
+  assert.equal(payload.report.totalValue, 6900);
+  assert.deepEqual(payload.report.itemsWithoutCost, ['X1']);
+  assert.deepEqual(payload.report.items.filter(item => item.hierarchyPath[0] === 'Productos').map(item => item.name), [
+    'Producto Alfa', 'Producto Zeta'
+  ]);
+  assert.deepEqual(payload.report.items.find(item => item.code === 'P1').hierarchyPath, ['Productos', 'Bebidas']);
+  assert.deepEqual(payload.report.items.find(item => item.code === 'I1').hierarchyPath, ['Ingredientes', 'Materias primas']);
+  assert.deepEqual(payload.report.items.find(item => item.code === 'SUB1').hierarchyPath, ['Extras', 'Preparaciones']);
+  assert.equal(payload.report.items.find(item => item.code === 'I1').valuation, 6000);
+  const previousPayload = await fetch(`${baseUrl}/api/inventory/current?location=store-1&date=2026-08-05`).then(result => result.json());
+  assert.equal(previousPayload.referenceDate, '2026-08-05');
+  assert.equal(previousPayload.report.date, '2026-08-05');
+  assert.equal(previousPayload.report.items.find(item => item.code === 'P1').quantity, 4);
+  assert.equal((await fetch(`${baseUrl}/api/inventory/current?location=store-1&date=2026-08-01`)).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/inventory/current?location=store-1&date=2999-01-01`)).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/inventory/current?location=unknown`)).status, 400);
 });
 
 test('reports LAC001 volume substituted by BX1010, BX1020, and BX1030 sales extras', async t => {
@@ -1843,11 +2097,11 @@ test('warns on duplicate master start dates and replaces only after confirmation
   assert.equal((await supplier.json()).saved['master-suppliers'].originalName, 'suppliers.xlsx');
 });
 
-test('limits spreadsheet previews to 200 rows and 300 columns', async t => {
+test('limits spreadsheet previews to 400 rows and 400 columns', async t => {
   const baseUrl = await startTestServer(t);
   const workbook = XLSX.utils.book_new();
-  const matrix = Array.from({ length: 205 }, (_, row) =>
-    Array.from({ length: 305 }, (_, column) => `R${row + 1}C${column + 1}`));
+  const matrix = Array.from({ length: 405 }, (_, row) =>
+    Array.from({ length: 405 }, (_, column) => `R${row + 1}C${column + 1}`));
   matrix[0][0] = 'pl';
   matrix[0][1] = 'np';
   matrix[0][2] = 'ce';
@@ -1866,9 +2120,10 @@ test('limits spreadsheet previews to 200 rows and 300 columns', async t => {
   const version = Object.keys(versions)[0];
   const preview = await fetch(`${baseUrl}/api/masters/${encodeURIComponent(version)}/master-catalog/preview`)
     .then(response => response.json());
-  assert.equal(preview.sheets[0].rows.length, 200);
-  assert.equal(preview.sheets[0].rows[0].length, 300);
-  assert.equal(preview.sheets[0].rows[0].at(-1), 'R1C300');
-  assert.equal(preview.sheets[0].totalRows, 205);
+  assert.equal(preview.sheets[0].rows.length, 400);
+  assert.equal(preview.sheets[0].rows[0].length, 400);
+  assert.equal(preview.sheets[0].rows[0].at(-1), 'R1C400');
+  assert.equal(preview.sheets[0].totalRows, 405);
+  assert.equal(preview.sheets[0].frozenRows, 2);
   assert.equal(preview.sheets[0].truncated, true);
 });
