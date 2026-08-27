@@ -185,6 +185,57 @@
         </div>
       </section>
 
+      <section class="panel sales-service-mode-panel">
+        <div class="panel-head sales-service-mode-head">
+          <div>
+            <div class="panel-eyebrow">Modalidad de consumo</div>
+            <h3>Para llevar, servir en el local y sin información</h3>
+            <p>Clasificación estimada desde “Comentario General” / “General Comment”. El monto usa “A Pagar” / “Due” y se muestra neto sin IVA; los pedidos mixtos o ambiguos se incluyen en “Sin información”.</p>
+          </div>
+          <div class="sales-service-mode-controls">
+            <label for="sales-service-mode-period">Período
+              <select id="sales-service-mode-period">
+                <option value="month" selected>Mes actual</option>
+                <option value="week">Semana actual</option>
+                <option value="previousWeek">Semana anterior</option>
+                <option value="last30">Últimos 30 días</option>
+                <option value="custom">Definir rango de fechas</option>
+              </select>
+            </label>
+            <div id="sales-service-mode-custom-range" class="sales-service-mode-custom-range" hidden>
+              <label for="sales-service-mode-from">Desde
+                <input id="sales-service-mode-from" type="date">
+              </label>
+              <label for="sales-service-mode-to">Hasta
+                <input id="sales-service-mode-to" type="date">
+              </label>
+              <button id="apply-sales-service-mode-range" type="button" class="secondary-button">Aplicar</button>
+            </div>
+          </div>
+        </div>
+        <div id="sales-service-mode-status" class="form-status muted"></div>
+        <div id="sales-service-mode-summary" class="sales-service-mode-summary"></div>
+        <div class="sales-service-mode-details">
+          <section>
+            <div class="panel-eyebrow">Venta por jerarquía</div>
+            <h4>Composición según modalidad</h4>
+            <div class="sales-table-wrap sales-service-mode-table-wrap">
+              <table class="sales-dashboard-table sales-service-mode-table">
+                <thead><tr><th>Jerarquía</th><th>Para llevar</th><th>Servir en local</th><th>Sin información</th><th>Total</th></tr></thead>
+                <tbody id="sales-service-mode-hierarchies"></tbody>
+                <tfoot id="sales-service-mode-hierarchy-totals"></tfoot>
+              </table>
+            </div>
+          </section>
+          <section class="avoided-cups-section">
+            <div class="panel-eyebrow">Consumo de packaging</div>
+            <h4>Vasos y tapas desechables no utilizados</h4>
+            <p>Estimación para pedidos servidos en el local, usando las cantidades de las recetas y los costos maestros vigentes.</p>
+            <div id="sales-avoided-cups" class="sales-avoided-cups"></div>
+          </section>
+        </div>
+      </section>
+
       <div class="sales-insight-heading">
         <div>
           <div class="panel-eyebrow">Composición de ventas</div>
@@ -1151,6 +1202,28 @@
             <table id="inventory-lac001-substitution-table" class="inventory-results-table"></table>
           </div>
         </section>
+        <section id="inventory-syrup-substitution-report" class="consumption-report-card inventory-analysis-report" hidden>
+          <h4>Sustituciones de syrup y salsas</h4>
+          <p id="inventory-syrup-substitution-period" class="panel-description"></p>
+          <div id="inventory-syrup-substitution-summary" class="consumption-report-summary"></div>
+          <p class="inventory-substitution-method">
+            Cada extra de BA.090 se cruza con la receta original: los syrups con sabor reemplazan syrups con sabor, las salsas reemplazan salsas y los demás casos usan la alternativa más probable de la receta.
+          </p>
+          <div class="inventory-results-table-wrap">
+            <table id="inventory-syrup-substitution-table" class="inventory-results-table"></table>
+          </div>
+        </section>
+        <section id="inventory-avoided-packaging-report" class="consumption-report-card inventory-analysis-report" hidden>
+          <h4>Vasos y tapas desechables no utilizados</h4>
+          <p id="inventory-avoided-packaging-period" class="panel-description"></p>
+          <div id="inventory-avoided-packaging-summary" class="consumption-report-summary"></div>
+          <p class="inventory-substitution-method">
+            Estimación para pedidos servidos en el local, usando las cantidades definidas en las recetas y los costos maestros vigentes.
+          </p>
+          <div class="inventory-results-table-wrap">
+            <table id="inventory-avoided-packaging-table" class="inventory-results-table"></table>
+          </div>
+        </section>
       </dialog>
 
       <dialog id="current-inventory-results" class="inventory-report-results inventory-report-dialog" aria-labelledby="current-inventory-title">
@@ -1274,6 +1347,10 @@
           <div class="file-row store-only" data-weekly-field="sales">
             <label for="file-sales">Transacciones de venta</label>
             <input type="file" id="file-sales" name="sales" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="payment-details">
+            <label for="file-payment-details">Detalle Pagos</label>
+            <input type="file" id="file-payment-details" name="payment-details" accept=".csv,.xls,.xlsx,.txt" />
           </div>
           <div class="file-row store-only" data-weekly-field="mercadopago">
             <label for="file-mercadopago">Transacciones MercadoPago</label>

@@ -6,6 +6,7 @@ const FIELD_LABELS = {
   employees: 'Consumo de colaboradores',
   purchases: 'Compras',
   sales: 'Ventas',
+  'payment-details': 'Detalle Pagos',
   mercadopago: 'Transacciones MercadoPago'
 };
 const MASTER_FIELD_LABELS = {
@@ -360,14 +361,13 @@ async function inspectTransactionFile(file, field, locationOverride = null, inpu
       method: 'POST',
       body: formData
     });
-    const autoConfirm = canAutoConfirmToteatSales(manifest);
+    const autoConfirm = canAutoConfirmToteatReport(manifest);
     showInspection(manifest, { openDialog: !autoConfirm });
     if (autoConfirm) {
       setStatus(status,
-        `Estructura y fechas válidas (${formatDetectedRange(manifest.detectedRange)}). Procesando automáticamente las ventas nuevas…`,
+        `Estructura y fechas válidas (${formatDetectedRange(manifest.detectedRange)}). Procesando automáticamente ${FIELD_LABELS[manifest.files[0].field] || 'el reporte'}…`,
         'success');
-      await confirmTransactionUpload('keep', { automatic: true });
-      return;
+      return confirmTransactionUpload('keep', { automatic: true });
     }
     const acceptedWarning = manifest.files.find(file => file.structure?.permissive);
     if (acceptedWarning) {
@@ -383,6 +383,7 @@ async function inspectTransactionFile(file, field, locationOverride = null, inpu
     if (input) input.value = '';
     setStatus(status, error.message, 'error');
     transactionUploadContext = null;
+    return false;
   } finally {
     updateFileUploadControls();
   }
@@ -435,11 +436,12 @@ function hasCompleteDetectedRange(range) {
   return Boolean(range && isoDate.test(range.from) && isoDate.test(range.to) && range.from <= range.to);
 }
 
-function canAutoConfirmToteatSales(manifest) {
+function canAutoConfirmToteatReport(manifest) {
+  const expectedField = transactionUploadContext?.toteatField || 'sales';
   return transactionUploadContext?.downloadedFrom === 'toteat'
     && manifest?.location === transactionUploadContext.location
     && manifest.files?.length === 1
-    && manifest.files.every(file => file.field === 'sales'
+    && manifest.files.every(file => file.field === expectedField
       && file.size > 0
       && file.structure?.ok
       && !file.structure.permissive
@@ -456,8 +458,8 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
   const pageStatus = transactionUploadStatus();
   const dateFrom = document.getElementById('confirmed-date-from').value;
   const dateTo = document.getElementById('confirmed-date-to').value;
-  const requiresDateConfirmation = !inspectionState?.files?.length
-    || inspectionState.files.some(file => file.field !== 'sales');
+  const requiresDateConfirmation = !automatic && (!inspectionState?.files?.length
+    || inspectionState.files.some(file => file.field !== 'sales'));
   const confirmed = document.getElementById('dates-confirmed').checked;
   const requiresCategoryConfirmation = inspectionState?.files.some(file => file.structure?.requiresCategoryConfirmation);
   const categoryConfirmed = document.getElementById('inventory-file-confirmed').checked;
@@ -478,7 +480,7 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
   }
   button.disabled = true;
   setStatus(automatic ? pageStatus : status, automatic
-    ? 'Validación completa. Agregando automáticamente solo las ventas nuevas…'
+    ? 'Validación completa. Manteniendo los datos existentes y agregando automáticamente los nuevos…'
     : 'Guardando archivos confirmados…');
   try {
     const savedLocation = inspectionState.location;
@@ -503,6 +505,12 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
       importMessages.push(imported.newTransactions
         ? `${imported.newTransactions} transacción(es) MercadoPago nueva(s) guardada(s); ${imported.duplicateTransactions} fila(s) repetida(s) omitida(s).`
         : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
+    }
+    if (result.imports?.['payment-details']) {
+      const imported = result.imports['payment-details'];
+      importMessages.push(imported.newTransactions
+        ? `Detalle Pagos actualizado: ${imported.newTransactions} fila(s) nueva(s) guardada(s) y ${imported.duplicateTransactions} repetida(s) omitida(s).`
+        : `Detalle Pagos procesado sin duplicar datos: ${imported.duplicateTransactions} fila(s) ya existía(n).`);
     }
     if (importMessages.length) {
       setStatus(pageStatus, importMessages.join(' '), 'success');
@@ -537,7 +545,7 @@ function updateLocationFields() {
     ? 'Crea o recupera una ubicación en Configuración para cargar archivos.'
     : isWarehouse
       ? 'Esta bodega solo requiere su Kardex de inventario.'
-      : 'Esta cafetería recibe Kardex, merma, consumos de marketing y colaboradores, compras, ventas y transacciones MercadoPago.';
+      : 'Esta cafetería recibe Kardex, merma, consumos de marketing y colaboradores, compras, ventas, Detalle Pagos y transacciones MercadoPago.';
   currentWeekFiles = {};
   clearWeeklySelections();
   clearInspection(true);
@@ -594,6 +602,14 @@ function formatReportDate(value) {
   const [year, month, day] = value.split('-').map(Number);
   return new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short', year: 'numeric' })
     .format(new Date(year, month - 1, day));
+}
+
+function offsetIsoDate(value, amount) {
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
 }
 
 function rankText(label, ranking) {
@@ -790,15 +806,23 @@ async function downloadReportSalesFromToteat() {
   button.disabled = true;
   setStatus(status, `Conectando con Toteat para ${locationRegistry[location].name}…`);
   try {
-    const response = await fetch('/api/integrations/toteat/download-sales', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location })
-    });
-    if (response.ok) {
+    const downloadReport = async (endpoint, fallbackFilename) => {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const error = new Error(payload.error || 'No se pudo descargar el reporte desde Toteat.');
+        error.code = payload.code;
+        error.state = payload.state;
+        error.status = response.status;
+        throw error;
+      }
       const blob = await response.blob();
       const disposition = response.headers.get('Content-Disposition') || '';
-      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `ventas-toteat-${location}.xlsx`;
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -807,14 +831,35 @@ async function downloadReportSalesFromToteat() {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      transactionUploadContext = { source: 'report', statusId: 'report-status', location, refreshReport: true, downloadedFrom: 'toteat' };
-      setStatus(status, `Reporte ${filename} descargado. Preparando la confirmación de carga…`);
-      await inspectTransactionFile(new File([blob], filename, { type: blob.type || 'text/csv' }), 'sales', location);
-      return;
-    }
-    const error = await response.json().catch(() => ({}));
-    if (response.status !== 409 || error.code !== 'TOTEAT_AUTH_REQUIRED') {
-      throw new Error(error.error || 'No se pudo descargar el reporte desde Toteat.');
+      return { blob, filename };
+    };
+    const validateAndSave = async (download, field) => {
+      transactionUploadContext = {
+        source: 'report', statusId: 'report-status', location, refreshReport: true,
+        downloadedFrom: 'toteat', toteatField: field
+      };
+      setStatus(status, `${download.filename} descargado. Validando estructura y fechas…`);
+      const saved = await inspectTransactionFile(
+        new File([download.blob], download.filename, { type: download.blob.type || 'text/csv' }),
+        field,
+        location
+      );
+      if (!saved) throw new Error(status.textContent || `No se pudo validar y guardar ${FIELD_LABELS[field] || field}.`);
+    };
+
+    const sales = await downloadReport('/api/integrations/toteat/download-sales', `ventas-toteat-${location}.xlsx`);
+    await validateAndSave(sales, 'sales');
+    setStatus(status, 'Ventas procesadas correctamente. Descargando ahora Detalle Pagos desde Toteat…', 'success');
+    const paymentDetails = await downloadReport(
+      '/api/integrations/toteat/download-payment-details',
+      `detalle-pagos-toteat-${location}.csv`
+    );
+    await validateAndSave(paymentDetails, 'payment-details');
+    setStatus(status, 'Ventas y Detalle Pagos fueron descargados, validados y actualizados correctamente.', 'success');
+    return;
+  } catch (error) {
+    if (error.status !== 409 || error.code !== 'TOTEAT_AUTH_REQUIRED') {
+      return setStatus(status, error.message, 'error');
     }
     const expiredSession = error.state === 'session_expired';
     setStatus(status, expiredSession
@@ -831,8 +876,6 @@ async function downloadReportSalesFromToteat() {
       ? `Se cerró la sesión vencida y se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`
       : `Se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`,
     'muted');
-  } catch (error) {
-    setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
   }
@@ -1133,6 +1176,170 @@ function renderSalesLocations(report) {
       row.appendChild(cell);
     });
   document.getElementById('sales-location-foot').replaceChildren(row);
+}
+
+function syncSalesServiceModeControls() {
+  const custom = document.getElementById('sales-service-mode-period').value === 'custom';
+  document.getElementById('sales-service-mode-custom-range').hidden = !custom;
+  return custom;
+}
+
+function alignSalesServiceModeTableHeight() {
+  const tableWrap = document.querySelector('.sales-service-mode-table-wrap');
+  const packagingSection = document.querySelector('.avoided-cups-section');
+  if (!tableWrap || !packagingSection) return;
+  tableWrap.style.maxHeight = '';
+  if (window.matchMedia('(max-width: 900px)').matches) return;
+  window.requestAnimationFrame(() => {
+    const availableHeight = packagingSection.getBoundingClientRect().bottom - tableWrap.getBoundingClientRect().top;
+    tableWrap.style.maxHeight = `${Math.max(360, Math.min(720, Math.round(availableHeight)))}px`;
+  });
+}
+
+function renderSalesServiceModes() {
+  if (!salesDashboardState) return;
+  const serviceModes = salesDashboardState.sales.serviceModes;
+  const periodKey = document.getElementById('sales-service-mode-period').value;
+  const period = serviceModes?.periods?.[periodKey];
+  const summary = document.getElementById('sales-service-mode-summary');
+  const hierarchyBody = document.getElementById('sales-service-mode-hierarchies');
+  const hierarchyFoot = document.getElementById('sales-service-mode-hierarchy-totals');
+  const cups = document.getElementById('sales-avoided-cups');
+  const status = document.getElementById('sales-service-mode-status');
+  if (!period) {
+    summary.replaceChildren();
+    hierarchyBody.replaceChildren();
+    hierarchyFoot.replaceChildren();
+    cups.textContent = 'No hay información disponible para este período.';
+    setStatus(status, periodKey === 'custom'
+      ? 'Define las fechas Desde y Hasta, y luego presiona Aplicar.'
+      : 'No fue posible construir la estadística de modalidad.', periodKey === 'custom' ? 'muted' : 'error');
+    return;
+  }
+  summary.replaceChildren(...period.groups.map(group => {
+    const card = document.createElement('article');
+    card.className = `sales-service-mode-card ${group.key}`;
+    const title = document.createElement('h4');
+    title.textContent = group.label;
+    const value = document.createElement('strong');
+    value.textContent = `${group.orders.toLocaleString('es-CL')} pedido${group.orders === 1 ? '' : 's'}`;
+    const sales = document.createElement('p');
+    sales.textContent = `${formatClp(group.netSales)} venta neta · ${group.orderPercent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de pedidos · ${group.salesPercent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de ventas`;
+    const ticket = document.createElement('p');
+    ticket.className = 'sales-service-mode-ticket';
+    ticket.textContent = `Ticket promedio ${formatClp(group.averageTicket ?? (group.orders ? group.netSales / group.orders : 0))}`;
+    card.append(title, value, sales, ticket);
+    return card;
+  }));
+  if (period.hierarchies.length) {
+    hierarchyBody.replaceChildren(...period.hierarchies.map(hierarchy => {
+      const row = document.createElement('tr');
+      const name = document.createElement('th');
+      name.scope = 'row';
+      name.textContent = hierarchy.name;
+      row.appendChild(name);
+      for (const key of ['takeaway', 'dineIn', 'unknown']) {
+        const cell = document.createElement('td');
+        const value = document.createElement('div');
+        value.className = 'service-mode-table-value';
+        const sales = document.createElement('strong');
+        sales.textContent = formatClp(hierarchy.groups[key].netSales);
+        const orders = document.createElement('small');
+        orders.textContent = `${hierarchy.groups[key].orders} pedido${hierarchy.groups[key].orders === 1 ? '' : 's'}`;
+        value.append(sales, orders);
+        cell.appendChild(value);
+        row.appendChild(cell);
+      }
+      const total = document.createElement('td');
+      total.className = 'numeric-cell';
+      total.textContent = formatClp(hierarchy.totalNetSales);
+      row.appendChild(total);
+      return row;
+    }));
+  } else {
+    const row = document.createElement('tr');
+    const empty = document.createElement('td');
+    empty.colSpan = 5;
+    empty.className = 'sales-service-mode-empty';
+    empty.textContent = 'No hay ventas por jerarquía en el período seleccionado.';
+    row.appendChild(empty);
+    hierarchyBody.replaceChildren(row);
+  }
+  const hierarchyTotals = period.hierarchyTotals || {
+    takeaway: period.hierarchies.reduce((sum, item) => sum + item.groups.takeaway.netSales, 0),
+    dineIn: period.hierarchies.reduce((sum, item) => sum + item.groups.dineIn.netSales, 0),
+    unknown: period.hierarchies.reduce((sum, item) => sum + item.groups.unknown.netSales, 0),
+    total: period.hierarchies.reduce((sum, item) => sum + item.totalNetSales, 0)
+  };
+  const totalRow = document.createElement('tr');
+  const totalHeading = document.createElement('th');
+  totalHeading.scope = 'row';
+  totalHeading.textContent = 'Total jerarquías';
+  totalRow.appendChild(totalHeading);
+  for (const key of ['takeaway', 'dineIn', 'unknown', 'total']) {
+    const cell = document.createElement('td');
+    cell.className = 'numeric-cell';
+    cell.textContent = formatClp(hierarchyTotals[key] || 0);
+    totalRow.appendChild(cell);
+  }
+  hierarchyFoot.replaceChildren(totalRow);
+  const packaging = period.avoidedDisposablePackaging || period.avoidedDisposableCups || [];
+  if (packaging.length) {
+    cups.className = 'sales-avoided-cups';
+    const items = packaging.map(itemData => {
+      const item = document.createElement('div');
+      item.className = 'sales-avoided-cup';
+      const identity = document.createElement('div');
+      identity.className = 'sales-avoided-packaging-identity';
+      const type = document.createElement('small');
+      type.textContent = itemData.kind === 'lid' ? 'Tapa' : 'Vaso';
+      const name = document.createElement('span');
+      name.textContent = `${itemData.name}${itemData.code ? ` · ${itemData.code}` : ''}`;
+      identity.append(type, name);
+      const values = document.createElement('div');
+      values.className = 'sales-avoided-packaging-values';
+      const quantity = document.createElement('strong');
+      quantity.textContent = `${Number(itemData.quantity).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${itemData.unit || 'UN'}`;
+      const cost = document.createElement('small');
+      cost.textContent = itemData.hasCost
+        ? `Costo unitario ${formatClp(itemData.unitCost)} · Ahorro ${formatClp(itemData.totalCost)}`
+        : 'Costo maestro no disponible';
+      values.append(quantity, cost);
+      item.append(identity, values);
+      return item;
+    });
+    const total = document.createElement('div');
+    total.className = 'sales-avoided-packaging-total';
+    const totalLabel = document.createElement('span');
+    totalLabel.textContent = 'Ahorro total valorizado';
+    const totalValue = document.createElement('strong');
+    totalValue.textContent = formatClp(period.totalAvoidedPackagingCost || 0);
+    total.append(totalLabel, totalValue);
+    if (period.packagingWithoutCost?.length) {
+      const warning = document.createElement('small');
+      warning.textContent = `${period.packagingWithoutCost.length} tipo(s) sin costo maestro no están incluidos en el total.`;
+      total.appendChild(warning);
+    }
+    cups.replaceChildren(...items, total);
+  } else {
+    cups.className = 'sales-avoided-cups sales-service-mode-empty';
+    cups.textContent = serviceModes.recipeSource
+      ? 'No se identificaron vasos ni tapas desechables evitados en las recetas para este período.'
+      : 'No hay un maestro de recetas vigente para estimar el packaging evitado.';
+  }
+  alignSalesServiceModeTableHeight();
+  const coverage = period.totalOrders ? period.matchedOrders / period.totalOrders * 100 : 0;
+  const coverageText = `${formatReportDate(period.period.from)} – ${formatReportDate(period.period.to)} · ${period.matchedOrders} de ${period.totalOrders} pedidos relacionados con Detalle Pagos (${coverage.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%).`;
+  const ambiguityText = period.ambiguousOrders
+    ? ` ${period.ambiguousOrders} pedido(s) contenían indicaciones mixtas y se clasificaron sin información.`
+    : '';
+  const recipeText = period.productsWithoutRecipe.length
+      ? ` ${period.productsWithoutRecipe.length} producto(s) servidos no tenían receta y no pudieron aportar al cálculo de packaging.`
+      : '';
+  setStatus(status, serviceModes.paymentDetailsFilesRead
+    ? `${coverageText}${ambiguityText}${recipeText}`
+    : 'No hay archivos de Detalle Pagos disponibles; todos los pedidos se muestran sin información.',
+  serviceModes.paymentDetailsFilesRead ? 'success' : 'muted');
 }
 
 function renderSalesInsights() {
@@ -1521,21 +1728,41 @@ async function loadSalesDashboard() {
   const button = document.getElementById('refresh-sales-dashboard');
   const select = document.getElementById('sales-dashboard-location');
   const location = select.value || 'all';
+  const periodKey = document.getElementById('sales-service-mode-period').value;
+  const dateFrom = document.getElementById('sales-service-mode-from').value;
+  const dateTo = document.getElementById('sales-service-mode-to').value;
+  if (periodKey === 'custom' && (!dateFrom || !dateTo || dateFrom > dateTo)) {
+    setStatus(document.getElementById('sales-service-mode-status'), 'Selecciona un rango de fechas válido.', 'error');
+    return;
+  }
   button.disabled = true;
   setStatus(status, 'Calculando indicadores de ventas y recurrencia…');
   try {
-    const report = await apiRequest(`/api/sales/dashboard?location=${encodeURIComponent(location)}`);
+    const params = new URLSearchParams({ location });
+    if (periodKey === 'custom') {
+      params.set('serviceDateFrom', dateFrom);
+      params.set('serviceDateTo', dateTo);
+    }
+    const report = await apiRequest(`/api/sales/dashboard?${params}`);
     if (location !== select.value) return;
     salesDashboardState = report;
     salesHierarchyPath = [];
+    const customFrom = document.getElementById('sales-service-mode-from');
+    const customTo = document.getElementById('sales-service-mode-to');
+    customFrom.max = report.date;
+    customTo.max = report.date;
+    if (!customTo.value) customTo.value = report.date;
+    if (!customFrom.value) customFrom.value = offsetIsoDate(report.date, -29);
+    syncSalesServiceModeControls();
     document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
     renderSalesDashboardMetrics(report.sales.metrics);
     renderSalesLocations(report);
+    renderSalesServiceModes();
     renderSalesInsights();
     renderMercadoPago(report);
     document.getElementById('hourly-demand-date').value = report.date;
     loadHourlySalesDemand();
-    const sourceText = `${report.sales.filesRead} archivo(s) de ventas y ${report.mercadoPago.filesRead} archivo(s) MercadoPago procesado(s).`;
+    const sourceText = `${report.sales.filesRead} archivo(s) de ventas, ${report.sales.serviceModes.paymentDetailsFilesRead} archivo(s) de Detalle Pagos y ${report.mercadoPago.filesRead} archivo(s) MercadoPago procesado(s).`;
     setStatus(status, report.warnings.length ? `${sourceText} ${report.warnings.join(' ')}` : sourceText, report.warnings.length ? 'error' : 'success');
   } catch (error) {
     salesDashboardState = null;
@@ -4982,7 +5209,8 @@ function renderLac001SubstitutionReport(report) {
   const summaryTexts = [
     `${report.salesCount} venta(s) con sustitución`,
     `${formatKardexQuantity(report.substitutionCount)} sustitución(es)`,
-    `${formatKardexQuantity(report.lac001VolumeLiters)} L de LAC001 sustituido`
+    `${formatKardexQuantity(report.lac001VolumeLiters)} L de LAC001 sustituido`,
+    report.hasCost ? `${formatClp(report.totalSubstitutedCost || 0)} de costo sustituido` : 'LAC001 sin costo maestro compatible'
   ];
   if (report.unresolvedSubstitutionCount) {
     summaryTexts.push(`${formatKardexQuantity(report.unresolvedSubstitutionCount)} sin receta LAC001 identificable`);
@@ -5001,7 +5229,8 @@ function renderLac001SubstitutionReport(report) {
     { label: 'Extra', value: item => item.name },
     { label: 'Ventas con extra', value: item => String(item.salesCount) },
     { label: 'Cantidad de sustituciones', value: item => formatKardexQuantity(item.substitutionCount) },
-    { label: 'LAC001 sustituido (L)', value: item => formatKardexQuantity(item.lac001VolumeLiters) }
+    { label: 'LAC001 sustituido (L)', value: item => formatKardexQuantity(item.lac001VolumeLiters) },
+    { label: 'Costo LAC001 sustituido', value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
   ];
   const headRow = document.createElement('tr');
   columns.forEach(column => {
@@ -5023,13 +5252,220 @@ function renderLac001SubstitutionReport(report) {
   });
   const footRow = document.createElement('tr');
   footRow.className = 'consumption-total-row';
-  ['TOTAL', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), `${formatKardexQuantity(report.lac001VolumeLiters)} L`]
+  ['TOTAL', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), `${formatKardexQuantity(report.lac001VolumeLiters)} L`, report.hasCost ? formatClp(report.totalSubstitutedCost || 0) : 'Sin costo']
     .forEach(value => {
       const cell = document.createElement('td');
       cell.textContent = value;
       footRow.appendChild(cell);
     });
   const foot = document.createElement('tfoot');
+  foot.appendChild(footRow);
+  table.replaceChildren(head, body, foot);
+  section.hidden = false;
+}
+
+function appendExpandableTableText(cell, value) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'inventory-expandable-text';
+  const text = document.createElement('span');
+  text.className = 'inventory-expandable-value';
+  text.textContent = value;
+  text.title = value;
+  const toggle = document.createElement('button');
+  toggle.className = 'inventory-expandable-toggle';
+  toggle.type = 'button';
+  toggle.hidden = true;
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.setAttribute('aria-label', 'Mostrar todos los productos');
+  toggle.addEventListener('click', () => {
+    const expanded = wrapper.classList.toggle('expanded');
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-label', expanded ? 'Contraer productos' : 'Mostrar todos los productos');
+  });
+  wrapper.append(text, toggle);
+  cell.appendChild(wrapper);
+  requestAnimationFrame(() => {
+    toggle.hidden = text.scrollWidth <= text.clientWidth;
+  });
+}
+
+function renderSyrupSauceSubstitutionReport(report) {
+  const section = document.getElementById('inventory-syrup-substitution-report');
+  if (!report) {
+    section.hidden = true;
+    return;
+  }
+  document.getElementById('inventory-syrup-substitution-period').textContent =
+    `${formatReportDate(report.dateFrom)} – ${formatReportDate(report.dateTo)} · extras de ${report.targetHierarchy || 'BA.090'}.`;
+  const summaryTexts = [
+    `${report.salesCount} venta(s) con sustitución`,
+    `${formatKardexQuantity(report.substitutionCount)} sustitución(es)`,
+    `${formatKardexQuantity(report.matchedSubstitutionCount)} con ingrediente original identificado`,
+    `${formatClp(report.totalSubstitutedCost || 0)} de costo sustituido`
+  ];
+  if (report.unresolvedSubstitutionCount) {
+    summaryTexts.push(`${formatKardexQuantity(report.unresolvedSubstitutionCount)} sin ingrediente identificable`);
+  }
+  if (report.itemsWithoutCost?.length) {
+    summaryTexts.push(`${report.itemsWithoutCost.length} ingrediente(s) sin costo maestro compatible`);
+  }
+  const summary = document.getElementById('inventory-syrup-substitution-summary');
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+
+  const columns = [
+    { label: 'Código extra', value: item => item.replacementCode },
+    { label: 'Extra sustituto', value: item => item.replacementName },
+    { label: 'Ingrediente original', value: item => `${item.originalCode ? `${item.originalCode} · ` : ''}${item.originalName}` },
+    {
+      label: 'Producto(s)',
+      value: item => item.baseProducts.map(product => `${product.code} · ${product.name}`).join(', ') || 'Sin producto base identificable',
+      expandable: true
+    },
+    { label: 'Ventas', value: item => String(item.salesCount) },
+    { label: 'Sustituciones', value: item => formatKardexQuantity(item.substitutionCount) },
+    {
+      label: 'Cantidad teórica sustituida',
+      value: item => item.status === 'resolved'
+        ? `${formatKardexQuantity(item.theoreticalQuantity)} ${item.unit}`
+        : 'Sin cantidad identificable'
+    },
+    { label: 'Costo sustituido', value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
+  ];
+  const table = document.getElementById('inventory-syrup-substitution-table');
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  columns.forEach(column => {
+    const cell = document.createElement('th');
+    cell.textContent = column.label;
+    headRow.appendChild(cell);
+  });
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  if (report.items.length) {
+    report.items.forEach(item => {
+      const row = document.createElement('tr');
+      columns.forEach(column => {
+        const cell = document.createElement('td');
+        const value = column.value(item);
+        if (column.expandable) {
+          cell.className = 'inventory-products-cell';
+          appendExpandableTableText(cell, value);
+        } else {
+          cell.textContent = value;
+        }
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    });
+  } else {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns.length;
+    cell.className = 'inventory-empty-result';
+    cell.textContent = 'No se registraron extras BA.090 durante este período.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+  const totals = (report.totalsByUnit || [])
+    .map(item => `${formatKardexQuantity(item.quantity)} ${item.unit}`).join(' · ');
+  const foot = document.createElement('tfoot');
+  const footRow = document.createElement('tr');
+  footRow.className = 'consumption-total-row';
+  ['TOTAL', '', '', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), totals || 'Sin cantidad conciliada', formatClp(report.totalSubstitutedCost || 0)]
+    .forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      footRow.appendChild(cell);
+    });
+  foot.appendChild(footRow);
+  table.replaceChildren(head, body, foot);
+  section.hidden = false;
+}
+
+function renderInventoryAvoidedPackagingReport(report) {
+  const section = document.getElementById('inventory-avoided-packaging-report');
+  if (!report) {
+    section.hidden = true;
+    return;
+  }
+  const coverage = report.totalOrders ? report.matchedOrders / report.totalOrders * 100 : 0;
+  document.getElementById('inventory-avoided-packaging-period').textContent =
+    `${formatReportDate(report.dateFrom)} – ${formatReportDate(report.dateTo)} · ${report.matchedOrders} de ${report.totalOrders} pedidos relacionados con Detalle Pagos (${coverage.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%).`;
+  const packaging = report.avoidedDisposablePackaging || report.avoidedDisposableCups || [];
+  const totalQuantity = packaging.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  const summaryTexts = [
+    `${report.dineInOrders} pedido(s) servido(s) en el local`,
+    `${formatKardexQuantity(totalQuantity)} unidad(es) desechable(s) no utilizada(s)`,
+    `${formatClp(report.totalAvoidedPackagingCost || 0)} de ahorro valorizado`
+  ];
+  if (report.packagingWithoutCost?.length) {
+    summaryTexts.push(`${report.packagingWithoutCost.length} tipo(s) sin costo maestro`);
+  }
+  if (report.productsWithoutRecipe?.length) {
+    summaryTexts.push(`${report.productsWithoutRecipe.length} producto(s) sin receta`);
+  }
+  if (!report.paymentDetailsFilesRead) summaryTexts.push('Sin archivo de Detalle Pagos');
+  const summary = document.getElementById('inventory-avoided-packaging-summary');
+  summary.replaceChildren(...summaryTexts.map(text => {
+    const chip = document.createElement('span');
+    chip.className = 'chip neutral';
+    chip.textContent = text;
+    return chip;
+  }));
+
+  const columns = [
+    { label: 'Tipo', value: item => item.kind === 'lid' ? 'Tapa' : 'Vaso' },
+    { label: 'Código', value: item => item.code || '' },
+    { label: 'Insumo desechable', value: item => item.name },
+    { label: 'Cantidad no utilizada', value: item => `${formatKardexQuantity(item.quantity)} ${item.unit || 'UN'}` },
+    { label: 'Costo unitario', value: item => item.hasCost ? formatClp(item.unitCost) : 'Sin costo' },
+    { label: 'Ahorro valorizado', value: item => item.hasCost ? formatClp(item.totalCost) : 'Sin costo' }
+  ];
+  const table = document.getElementById('inventory-avoided-packaging-table');
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  columns.forEach(column => {
+    const cell = document.createElement('th');
+    cell.textContent = column.label;
+    headRow.appendChild(cell);
+  });
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  if (packaging.length) {
+    packaging.forEach(item => {
+      const row = document.createElement('tr');
+      columns.forEach(column => {
+        const cell = document.createElement('td');
+        cell.textContent = column.value(item);
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    });
+  } else {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns.length;
+    cell.className = 'inventory-empty-result';
+    cell.textContent = report.paymentDetailsFilesRead
+      ? 'No se identificaron vasos ni tapas evitados durante este período.'
+      : 'No hay Detalle Pagos disponible para identificar pedidos servidos en el local.';
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+  const foot = document.createElement('tfoot');
+  const footRow = document.createElement('tr');
+  footRow.className = 'consumption-total-row';
+  ['TOTAL', '', '', `${formatKardexQuantity(totalQuantity)} UN`, '', formatClp(report.totalAvoidedPackagingCost || 0)]
+    .forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      footRow.appendChild(cell);
+    });
   foot.appendChild(footRow);
   table.replaceChildren(head, body, foot);
   section.hidden = false;
@@ -5129,6 +5565,8 @@ function renderInventoryResults(data) {
   inventoryKardexTableState = { report, columns, sortIndex: 0, direction: 'asc' };
   renderInventoryKardexTable();
   renderLac001SubstitutionReport(data.lac001Substitutions);
+  renderSyrupSauceSubstitutionReport(data.syrupSauceSubstitutions);
+  renderInventoryAvoidedPackagingReport(data.avoidedPackaging);
   document.getElementById('inventory-report-results').showModal();
 }
 
@@ -5705,6 +6143,8 @@ function excelSheetLabel(table, index) {
   if (table.id === 'current-inventory-missing-cost-table') return 'Productos sin costo';
   if (table.id === 'inventory-waste-table' || table.id === 'waste-summary-table') return 'Merma';
   if (table.id === 'inventory-lac001-substitution-table') return 'Sustitución LAC001';
+  if (table.id === 'inventory-syrup-substitution-table') return 'Sustitución syrup-salsas';
+  if (table.id === 'inventory-avoided-packaging-table') return 'Packaging no utilizado';
   const card = table.closest('.consumption-report-card');
   const reportName = card?.querySelector('h4')?.textContent?.trim() || `Reporte ${index + 1}`;
   const part = table.closest('.consumption-report-part')?.querySelector('h5')?.textContent || '';
@@ -5987,6 +6427,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     salesHierarchyPath = [];
     renderSalesInsights();
   });
+  document.getElementById('sales-service-mode-period').addEventListener('change', () => {
+    syncSalesServiceModeControls();
+    renderSalesServiceModes();
+  });
+  document.getElementById('apply-sales-service-mode-range').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-hierarchy-back').addEventListener('click', () => {
     salesHierarchyPath = salesHierarchyPath.slice(0, -1);
     renderSalesInsights();

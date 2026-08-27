@@ -1064,7 +1064,8 @@ body {
   font-size: 18px;
 }
 
-#inventory-lac001-substitution-report {
+#inventory-lac001-substitution-report,
+.inventory-analysis-report {
   margin-top: 20px;
 }
 
@@ -1072,6 +1073,55 @@ body {
   margin-top: 10px;
   color: var(--text-soft);
   font-size: 12px;
+}
+
+#inventory-syrup-substitution-table th:nth-child(4),
+#inventory-syrup-substitution-table td:nth-child(4) {
+  width: 350px;
+  max-width: 350px;
+  text-align: left;
+}
+
+.inventory-expandable-text {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.inventory-expandable-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventory-expandable-toggle {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0 3px;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.inventory-expandable-toggle::before {
+  content: '…';
+}
+
+.inventory-expandable-text.expanded {
+  align-items: flex-end;
+}
+
+.inventory-expandable-text.expanded .inventory-expandable-value {
+  overflow: visible;
+  white-space: normal;
+}
+
+.inventory-expandable-text.expanded .inventory-expandable-toggle::before {
+  content: 'Ocultar';
 }
 
 .consumption-report-summary {
@@ -4752,6 +4802,215 @@ button:disabled {
   font-weight: 900;
 }
 
+.sales-service-mode-head {
+  align-items: flex-end;
+  gap: 20px;
+}
+
+.sales-service-mode-head h3 {
+  margin-top: 5px;
+  font-size: 22px;
+}
+
+.sales-service-mode-head p,
+.avoided-cups-section p {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.sales-service-mode-head label {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sales-service-mode-controls {
+  display: grid;
+  gap: 9px;
+  min-width: 220px;
+}
+
+.sales-service-mode-custom-range {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.sales-service-mode-custom-range[hidden] {
+  display: none;
+}
+
+.sales-service-mode-custom-range label {
+  min-width: 0;
+}
+
+.sales-service-mode-custom-range .secondary-button {
+  min-height: 42px;
+  padding-inline: 15px;
+}
+
+.sales-service-mode-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.sales-service-mode-card {
+  padding: 15px 17px;
+  border: 1px solid var(--border-soft);
+  border-radius: 13px;
+  background: var(--bg-soft);
+}
+
+.sales-service-mode-card.takeaway { border-top: 3px solid var(--clay); }
+.sales-service-mode-card.dineIn { border-top: 3px solid var(--green); }
+.sales-service-mode-card.unknown { border-top: 3px solid var(--text-muted); }
+
+.sales-service-mode-card h4 {
+  font-size: 15px;
+}
+
+.sales-service-mode-card strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 23px;
+}
+
+.sales-service-mode-card p {
+  margin-top: 5px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.sales-service-mode-card .sales-service-mode-ticket {
+  color: var(--cream);
+  font-weight: 900;
+}
+
+.sales-service-mode-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, .65fr);
+  gap: 18px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.sales-service-mode-details h4 {
+  margin-top: 5px;
+  font-size: 16px;
+}
+
+.sales-service-mode-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.sales-service-mode-table td:not(:first-child) {
+  text-align: right;
+}
+
+.sales-service-mode-table tfoot th,
+.sales-service-mode-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  border-top: 1px solid var(--border);
+  background: var(--coffee-soft);
+}
+
+.sales-service-mode-table tfoot td {
+  text-align: right;
+}
+
+.service-mode-table-value {
+  display: grid;
+  gap: 2px;
+}
+
+.service-mode-table-value small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.sales-avoided-cups {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.sales-avoided-cup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  font-size: 11px;
+}
+
+.sales-avoided-cup strong {
+  color: var(--green);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.sales-avoided-packaging-identity,
+.sales-avoided-packaging-values {
+  display: grid;
+  gap: 3px;
+}
+
+.sales-avoided-packaging-identity small,
+.sales-avoided-packaging-values small,
+.sales-avoided-packaging-total small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.sales-avoided-packaging-values {
+  text-align: right;
+}
+
+.sales-avoided-packaging-total {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--coffee-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sales-avoided-packaging-total strong {
+  color: var(--green);
+  font-size: 17px;
+}
+
+.sales-avoided-packaging-total small {
+  grid-column: 1 / -1;
+  font-weight: 600;
+}
+
+.sales-service-mode-empty {
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .sales-insight-heading {
   margin-top: 8px;
 }
@@ -5270,6 +5529,7 @@ button:disabled {
   .report-actions,
   .sales-dashboard-heading,
   .sales-insight-heading,
+  .sales-service-mode-head,
   .hourly-demand-head,
   .sales-dashboard-controls,
   .mercadopago-head,
@@ -5311,6 +5571,18 @@ button:disabled {
   .hourly-demand-controls {
     width: 100%;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .sales-service-mode-controls {
+    width: 100%;
+  }
+
+  .sales-service-mode-custom-range {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .sales-service-mode-custom-range .secondary-button {
+    grid-column: 1 / -1;
   }
 
   .products-controls {
@@ -5460,6 +5732,8 @@ button:disabled {
   .lower-grid,
   .sales-dashboard-metrics,
   .sales-insights-grid,
+  .sales-service-mode-summary,
+  .sales-service-mode-details,
   .frequency-grid,
   .sales-statistics-grid {
     grid-template-columns: 1fr;

@@ -76,8 +76,93 @@ test('serves the app and exposes the three upload locations', async t => {
   assert.ok((await excelLibrary.arrayBuffer()).byteLength > 0);
   assert.match(await page.text(), /Cargar Archivos/);
   assert.deepEqual(Object.keys(locations), ['store-1', 'store-2', 'main-warehouse']);
-  assert.deepEqual(locations['store-1'].fields, ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'mercadopago']);
+  assert.deepEqual(locations['store-1'].fields, [
+    'kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'
+  ]);
   assert.deepEqual(locations['main-warehouse'].fields, ['kardex']);
+  assert.match(await (await fetch(`${baseUrl}/`)).text(), /Detalle Pagos/);
+});
+
+test('stores Detalle Pagos as an independent transaction source with preview history', async t => {
+  const baseUrl = await startTestServer(t);
+  const rows = [
+    ['Fecha', 'ID Transacción', 'Forma de pago', 'Monto', 'Propina'],
+    ['2026-08-04', 'trx-1', 'Tarjeta', 11900, 1000],
+    ['2026-08-05', 'trx-2', 'Efectivo', 8500, 0]
+  ];
+  const inspectionResponse = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details', contents: rows.map(row => row.join('\t')).join('\n'), filename: 'detalle_pagos.xlsx'
+  }]);
+  assert.equal(inspectionResponse.status, 200);
+  const inspection = await inspectionResponse.json();
+  assert.equal(inspection.files[0].field, 'payment-details');
+  assert.equal(inspection.files[0].structure.ok, true);
+  assert.equal(inspection.files[0].structure.permissive, true);
+  assert.match(inspection.files[0].structure.reason, /planilla de Detalle Pagos es legible/i);
+  assert.deepEqual(inspection.detectedRange, { from: '2026-08-04', to: '2026-08-05' });
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+
+  const stored = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
+  assert.equal(stored.files['payment-details'].fileCount, 1);
+  assert.equal(stored.files['payment-details'].latest.originalName, 'detalle_pagos.xlsx');
+  assert.deepEqual(stored.files['payment-details'].dataRange, { from: '2026-08-04', to: '2026-08-05' });
+  assert.equal(stored.files.sales.fileCount, 0);
+  assert.equal(stored.files.mercadopago.fileCount, 0);
+  const preview = await fetch(`${baseUrl}${stored.files['payment-details'].latest.previewUrl}`).then(response => response.json());
+  assert.match(preview.sheets[0].rows[1].join(' '), /trx-1.*Tarjeta/);
+
+  const incrementalRows = [
+    rows[0],
+    rows[2],
+    ['2026-08-06', 'trx-3', 'Tarjeta', 9900, 500]
+  ];
+  const incrementalInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details',
+    contents: incrementalRows.map(row => row.join('\t')).join('\n'),
+    filename: 'detalle_pagos_actualizado.csv'
+  }]).then(response => response.json());
+  const incrementalImport = await confirmTransactions(baseUrl, incrementalInspection, 'keep').then(response => response.json());
+  assert.equal(incrementalImport.imports['payment-details'].newTransactions, 1);
+  assert.equal(incrementalImport.imports['payment-details'].duplicateTransactions, 1);
+  const afterIncremental = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
+  assert.equal(afterIncremental.files['payment-details'].fileCount, 2);
+  const incrementalPreview = await fetch(`${baseUrl}${afterIncremental.files['payment-details'].latest.previewUrl}`).then(response => response.json());
+  assert.match(incrementalPreview.sheets[0].rows.flat().join(' '), /trx-3/);
+  assert.doesNotMatch(incrementalPreview.sheets[0].rows.flat().join(' '), /trx-2/);
+
+  const warehouseUpload = await inspectTransactions(baseUrl, 'main-warehouse', [{
+    field: 'payment-details', contents: rows.map(row => row.join('\t')).join('\n'), filename: 'detalle_pagos.xlsx'
+  }]);
+  assert.equal(warehouseUpload.status, 400);
+  const emptyUpload = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details', contents: '', filename: 'detalle_pagos_vacio.csv'
+  }]);
+  assert.equal(emptyUpload.status, 422);
+});
+
+test('detects Detalle Pagos dates according to the language of its headers', async t => {
+  const baseUrl = await startTestServer(t);
+  const english = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details',
+    contents: 'DateClosing\tTicket\tGeneral Comment\n8/9/26 4:28 PM\torder-en\tTake away',
+    filename: 'payment-details-en.csv'
+  }]);
+  assert.equal(english.status, 200);
+  const englishManifest = await english.json();
+  assert.deepEqual(englishManifest.detectedRange, { from: '2026-08-09', to: '2026-08-09' });
+  assert.equal(englishManifest.files[0].structure.dateOrder, 'mdy');
+  assert.equal(englishManifest.files[0].structure.permissive, undefined);
+
+  const spanish = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details',
+    contents: 'FechaCierre\tComanda\tComentario General\n08/09/26 4:28 p. m.\torder-es\tPara llevar',
+    filename: 'detalle-pagos-es.csv'
+  }]);
+  assert.equal(spanish.status, 200);
+  const spanishManifest = await spanish.json();
+  assert.deepEqual(spanishManifest.detectedRange, { from: '2026-09-08', to: '2026-09-08' });
+  assert.equal(spanishManifest.files[0].structure.dateOrder, 'dmy');
+  assert.equal(spanishManifest.files[0].structure.permissive, undefined);
 });
 
 test('stores waste as its own weekly cafeteria file', async t => {
@@ -337,6 +422,14 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         buffer: Buffer.from('toteat-report')
       };
+    },
+    async downloadPaymentDetails(location, options) {
+      calls.push(['download-payment-details', location, options.restaurantName]);
+      return {
+        filename: 'detalle-pagos.csv',
+        contentType: 'text/csv; charset=utf-8',
+        buffer: Buffer.from('payment-details-report')
+      };
     }
   };
   const baseUrl = await startTestServer(t, { toteatAutomation });
@@ -365,10 +458,17 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
   assert.equal(download.status, 200);
   assert.match(download.headers.get('content-disposition'), /ventas-totales\.xlsx/);
   assert.equal(Buffer.from(await download.arrayBuffer()).toString(), 'toteat-report');
+  const paymentDetails = await fetch(`${baseUrl}/api/integrations/toteat/download-payment-details`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
+  });
+  assert.equal(paymentDetails.status, 200);
+  assert.match(paymentDetails.headers.get('content-disposition'), /detalle-pagos\.csv/);
+  assert.equal(Buffer.from(await paymentDetails.arrayBuffer()).toString(), 'payment-details-report');
   assert.deepEqual(calls, [
     ['download', 'store-1', 'Tienda 1'],
     ['connect', 'store-1', 'Tienda 1'],
-    ['download', 'store-1', 'Tienda 1']
+    ['download', 'store-1', 'Tienda 1'],
+    ['download-payment-details', 'store-1', 'Tienda 1']
   ]);
 });
 
@@ -382,6 +482,13 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
         'Content-Disposition': 'attachment; filename="ventas-totales.csv"'
       });
       return res.end('ID de orden\tFecha de creacion\n1\t2026-08-27');
+    }
+    if (req.url === '/details.csv') {
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="detalle-pagos.csv"'
+      });
+      return res.end('FechaCierre\tComanda\tComentario General\n27-08-26 10:00 a. m.\t1\tPara llevar');
     }
     const url = new URL(req.url, 'http://localhost');
     const spanish = url.searchParams.get('lang') === 'es';
@@ -406,6 +513,10 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
             app.innerHTML = '<button role="option" id="location">La Concepción</button>';
             document.getElementById('location').onclick = () => { localStorage.setItem('restaurant', 'La Concepción'); renderHome(); };
           };
+          return;
+        }
+        if (location.hash.includes('/reportes/detallepagos')) {
+          app.innerHTML = '<button>${spanish ? 'Cerrar sesión' : 'Sign Out'}</button><a href="/details.csv" download="detalle-pagos.csv">CSV</a>';
           return;
         }
         app.innerHTML = '<button>${spanish ? 'Cerrar sesión' : 'Sign Out'}</button><button id="reports">${spanish ? 'Reportes' : 'Reports'}</button>';
@@ -440,6 +551,19 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
     assert.equal(download.filename, 'ventas-totales.csv');
     assert.match(download.buffer.toString(), /ID de orden.*2026-08-27/s);
   }
+
+  const paymentDetailsAutomation = createToteatAutomation(profilesRoot, {
+    reportUrl: `${origin}/?lang=es#/reportes/cierres`,
+    paymentDetailsReportUrl: `${origin}/?lang=es#/reportes/detallepagos`,
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  const paymentDetailsDownload = await paymentDetailsAutomation.downloadPaymentDetails(
+    'store-payment-details', { restaurantName: 'La Concepcion' }
+  );
+  assert.equal(paymentDetailsDownload.filename, 'detalle-pagos.csv');
+  assert.match(paymentDetailsDownload.buffer.toString(), /FechaCierre.*Comentario General/s);
 
   const routeFallbackAutomation = createToteatAutomation(profilesRoot, {
     reportUrls: [
@@ -1495,10 +1619,19 @@ test('reports LAC001 volume substituted by BX1010, BX1020, and BX1030 sales extr
     ['P1', 'Bebida con leche', 'LAC001', 'Leche Semidescremada Sin Lactosa', 200, 'ml', 80],
     ['P2', 'Bebida sin LAC001', 'I1', 'Otro ingrediente', 1, 'UN', 100]
   ];
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base', 'Jerarquías de Ingredientes *'],
+    ['LAC001', 'Leche Semidescremada Sin Lactosa', 2000, 'L', 'IC.010']
+  ]), 'Ingr');
   const recipeUpload = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
-    body: fileForm([{ field: 'master-recipes', contents: recipes.map(row => row.join('\t')).join('\n'), filename: 'recetas.txt' }], {
-      'master-recipes-from': '2026-08-01'
+    body: fileForm([
+      { field: 'master-recipes', contents: recipes.map(row => row.join('\t')).join('\n'), filename: 'recetas.txt' },
+      { field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo-lac001.xlsx' }
+    ], {
+      'master-recipes-from': '2026-08-01',
+      'master-catalog-from': '2026-08-01'
     })
   });
   assert.equal(recipeUpload.status, 200);
@@ -1538,11 +1671,107 @@ test('reports LAC001 volume substituted by BX1010, BX1020, and BX1030 sales extr
   assert.equal(summary.matchedSubstitutionCount, 3);
   assert.equal(summary.unresolvedSubstitutionCount, 1);
   assert.equal(summary.lac001VolumeLiters, 0.75);
+  assert.equal(summary.lac001UnitCost, 2000);
+  assert.equal(summary.totalSubstitutedCost, 1500);
   assert.deepEqual(summary.items.map(item => ({ code: item.code, sales: item.salesCount, substitutions: item.substitutionCount })), [
     { code: 'BX1010', sales: 1, substitutions: 1 },
     { code: 'BX1020', sales: 1, substitutions: 2 },
     { code: 'BX1030', sales: 1, substitutions: 1 }
   ]);
+});
+
+test('reports BA.090 syrup substitutions and avoided dine-in packaging in the inventory period', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-05' });
+  const recipes = [
+    ['Id Producto', 'Nombre Producto*', 'Id Ingrediente', 'Nombre Ingrediente*', 'Cantidad Ingrediente', 'Unidad Medida', 'Tasa Rendimiento'],
+    ['P1', 'Latte Vainilla', 'SSR005', 'syrup vainilla', 20, 'ml', 100],
+    ['P1', 'Latte Vainilla', 'SSR015', 'Syrup Goma', 10, 'ml', 100],
+    ['P1', 'Latte Vainilla', 'SSR014', 'Salsa caramelo', 5, 'g', 100],
+    ['P1', 'Latte Vainilla', 'PAC003', 'Vaso Caliente 12 oz', 1, 'UN', 100],
+    ['P1', 'Latte Vainilla', 'PAC008', 'Tapa Vaso Caliente', 1, 'UN', 100]
+  ];
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Unidad Base', 'Jerarquías de Producto *'],
+    ['P1', 'Latte Vainilla', 500, 'UN', 'AB.1']
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base', 'Jerarquías de Ingredientes *'],
+    ['SSR005', 'syrup vainilla', 1000, 'L', 'IC.030'],
+    ['SSR015', 'Syrup Goma', 500, 'L', 'IC.030'],
+    ['SSR014', 'Salsa caramelo', 800, 'KG', 'IC.030'],
+    ['PAC003', 'Vaso Caliente 12 oz', 137, 'UN', 'IC.080'],
+    ['PAC008', 'Tapa Vaso Caliente', 36, 'UN', 'IC.080']
+  ]), 'Ingr');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Unidad Base', 'Jerarquías de Extras *'],
+    ['BX1060', 'syrup_avellana', 0, 'UN', 'BA.030']
+  ]), 'Extr');
+  const masterUpload = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([
+      { field: 'master-recipes', contents: recipes.map(row => row.join('\t')).join('\n'), filename: 'recetas-sustituciones.txt' },
+      { field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo-sustituciones.xlsx' }
+    ], {
+      'master-recipes-from': '2026-08-01',
+      'master-catalog-from': '2026-08-01'
+    })
+  });
+  assert.equal(masterUpload.status, 200);
+
+  const kardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '2026-08-05', '', '2026-08-06', ''],
+    ['', '', '', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final'],
+    ['PAC003', 'Vaso Caliente 12 oz', 'UN', 10, 10, 8, 8, 8, 8]
+  ].map(row => row.join('\t')).join('\n');
+  const kardexInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'kardex', contents: kardex, filename: 'kardex.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, kardexInspection)).status, 200);
+
+  const salesRows = [
+    ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'BA.', 'Jerarquía de Extras'],
+    ['order-1', '2026-08-05', 1190, 0, 'P1', 'Latte Vainilla', 2, 1190, 0, '', ''],
+    ['order-1', '2026-08-05', '', '', 'BX1060', 'syrup_avellana', 2, 0, 0, 'BA.090', 'Sustitucion Syrup/Salsa']
+  ];
+  const salesInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', contents: salesRows.map(row => row.join('\t')).join('\n'), filename: 'ventas-sustitucion-syrup.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, salesInspection)).status, 200);
+
+  const paymentRows = [
+    ['DateClosing', 'Ticket', 'General Comment', 'Due'],
+    ['8/5/26 10:00 AM', 'order-1', 'Servir en el local', 1.19]
+  ];
+  const paymentInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details', contents: paymentRows.map(row => row.join('\t')).join('\n'), filename: 'detalle-pagos-local.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, paymentInspection)).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/inventory/process`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-1', dateFrom: '2026-08-04', dateTo: '2026-08-05' })
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200, payload.error);
+  assert.equal(payload.syrupSauceSubstitutions.salesCount, 1);
+  assert.equal(payload.syrupSauceSubstitutions.substitutionCount, 2);
+  assert.equal(payload.syrupSauceSubstitutions.matchedSubstitutionCount, 2);
+  assert.equal(payload.syrupSauceSubstitutions.ambiguousSubstitutionCount, 0);
+  assert.equal(payload.syrupSauceSubstitutions.items[0].replacementCode, 'BX1060');
+  assert.equal(payload.syrupSauceSubstitutions.items[0].originalCode, 'SSR005');
+  assert.equal(payload.syrupSauceSubstitutions.items[0].unit, 'L');
+  assert.equal(payload.syrupSauceSubstitutions.items[0].theoreticalQuantity, 0.04);
+  assert.equal(payload.syrupSauceSubstitutions.items[0].substitutedCost, 40);
+  assert.equal(payload.syrupSauceSubstitutions.totalSubstitutedCost, 40);
+  assert.equal(payload.avoidedPackaging.dineInOrders, 1);
+  assert.deepEqual(payload.avoidedPackaging.avoidedDisposablePackaging.map(item => [
+    item.code, item.quantity, item.unitCost, item.totalCost
+  ]), [
+    ['PAC003', 2, 137, 274],
+    ['PAC008', 2, 36, 72]
+  ]);
+  assert.equal(payload.avoidedPackaging.totalAvoidedPackagingCost, 346);
 });
 
 test('processes marketing and employee consumption into product and recipe ingredient summaries', async t => {
@@ -1971,6 +2200,45 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   }]).then(response => response.json());
   assert.equal((await confirmTransactions(baseUrl, salesInspection)).status, 200);
 
+  const paymentDetailsRows = [
+    ['DateClosing', 'Ticket', 'General Comment', 'Due'],
+    ['8/8/26 10:00 AM', 'order-prior', 'Cliente llevar', 0.119],
+    ['8/15/26 11:00 AM', 'order-today', 'serbir en mesa', 0.238]
+  ];
+  const paymentDetailsInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details', contents: paymentDetailsRows.map(row => row.join('\t')).join('\n'), filename: 'detalle-pagos-dashboard.csv'
+  }]).then(response => response.json());
+  assert.deepEqual(paymentDetailsInspection.detectedRange, { from: '2026-08-08', to: '2026-08-15' });
+  assert.equal((await confirmTransactions(baseUrl, paymentDetailsInspection)).status, 200);
+
+  const recipes = [
+    ['Id Producto', 'Nombre Producto', 'Id Ingrediente', 'Nombre Ingrediente', 'Cantidad Ingrediente', 'Unidad Medida', 'Tasa Rendimiento'],
+    ['B1', 'Café', 'PAC003', 'Vaso Caliente 12 oz', 1, 'UN', 97],
+    ['B1', 'Café', 'PAC008', 'Tapa Vaso Caliente', 1, 'UN', 97]
+  ].map(row => row.join('\t')).join('\n');
+  const packagingCatalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(packagingCatalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['B1', 'Café', 100, 'UN'],
+    ['PAC003', 'Vaso Caliente 12 oz', 10, 'UN'],
+    ['PAC008', 'Tapa Vaso Caliente', 5, 'UN']
+  ]), 'Prod');
+  const recipeUpload = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([
+      { field: 'master-recipes', contents: recipes, filename: 'recetas-dashboard.txt' },
+      {
+        field: 'master-catalog',
+        contents: XLSX.write(packagingCatalog, { type: 'buffer', bookType: 'xlsx' }),
+        filename: 'catalogo-packaging.xlsx'
+      }
+    ], {
+      'master-recipes-from': '2026-08-01',
+      'master-catalog-from': '2026-08-01'
+    })
+  });
+  assert.equal(recipeUpload.status, 200);
+
   const mpHeader = ['TRANSACTION_DATE', 'SOURCE_ID', 'TRANSACTION_TYPE', 'TRANSACTION_AMOUNT', 'CARD_INITIAL_NUMBER', 'LAST_FOUR_DIGITS'];
   const mpRows = [
     mpHeader,
@@ -2000,6 +2268,42 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 66.7);
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].totalCost, 100);
   assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].contributionMarginPercent * 10) / 10, 66.7);
+  assert.equal(dashboard.sales.serviceModes.paymentDetailsFilesRead, 1);
+  assert.equal(dashboard.sales.serviceModes.classificationField, 'Comentario General / General Comment');
+  assert.deepEqual(dashboard.sales.serviceModes.amountFields, ['Due']);
+  assert.deepEqual(dashboard.sales.serviceModes.periods.month.groups.map(group => [group.key, group.orders, group.netSales]), [
+    ['takeaway', 1, 100], ['dineIn', 1, 200], ['unknown', 1, 200]
+  ]);
+  assert.deepEqual(dashboard.sales.serviceModes.periods.month.groups.map(group => [group.key, group.averageTicket]), [
+    ['takeaway', 100], ['dineIn', 200], ['unknown', 200]
+  ]);
+  assert.equal(dashboard.sales.serviceModes.periods.month.matchedOrders, 2);
+  assert.equal(dashboard.sales.serviceModes.periods.month.totalOrders, 3);
+  assert.equal(dashboard.sales.serviceModes.periods.month.hierarchies[0].groups.takeaway.orders, 1);
+  assert.equal(dashboard.sales.serviceModes.periods.month.hierarchies[0].groups.dineIn.orders, 1);
+  assert.equal(dashboard.sales.serviceModes.periods.month.hierarchies[0].groups.unknown.orders, 1);
+  assert.deepEqual(dashboard.sales.serviceModes.periods.month.hierarchyTotals, {
+    takeaway: 100, dineIn: 200, unknown: 200, total: 500
+  });
+  assert.deepEqual(dashboard.sales.serviceModes.periods.day.avoidedDisposablePackaging.map(item => [
+    item.code, item.kind, item.quantity, item.unitCost, item.totalCost
+  ]), [
+    ['PAC003', 'cup', 2, 10, 20],
+    ['PAC008', 'lid', 2, 5, 10]
+  ]);
+  assert.equal(dashboard.sales.serviceModes.periods.day.totalAvoidedPackagingCost, 30);
+  assert.deepEqual(dashboard.sales.serviceModes.periods.day.packagingWithoutCost, []);
+  assert.deepEqual(dashboard.sales.serviceModes.periods.previousWeek.period, { from: '2026-08-03', to: '2026-08-09' });
+  assert.deepEqual(dashboard.sales.serviceModes.periods.last30.period, { from: '2026-07-17', to: '2026-08-15' });
+
+  const customDashboardResponse = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1&serviceDateFrom=2026-08-08&serviceDateTo=2026-08-14`);
+  assert.equal(customDashboardResponse.status, 200);
+  const customDashboard = await customDashboardResponse.json();
+  assert.deepEqual(customDashboard.sales.serviceModes.periods.custom.period, { from: '2026-08-08', to: '2026-08-14' });
+  assert.deepEqual(customDashboard.sales.serviceModes.periods.custom.groups.map(group => [group.key, group.orders, group.netSales]), [
+    ['takeaway', 1, 100], ['dineIn', 0, 0], ['unknown', 1, 200]
+  ]);
+  assert.equal((await fetch(`${baseUrl}/api/sales/dashboard?location=store-1&serviceDateFrom=2026-08-14`)).status, 400);
   assert.equal(dashboard.mercadoPago.metrics.day.transactions, 2);
   assert.equal(dashboard.mercadoPago.metrics.day.sales, 700);
   assert.equal(dashboard.mercadoPago.metrics.day.recurringTransactions, 1);
@@ -2023,6 +2327,39 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(currentWeek.totalSales, 700);
   assert.equal(currentWeek.recurringSales, 300);
   assert.equal(Math.round(currentWeek.recurringSalesPercent * 10) / 10, 42.9);
+});
+
+test('does not subtract product discounts twice when distributing sales by hierarchy', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const salesRows = [
+    ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'Costo', 'Categorías de Productos/Platos'],
+    ['promo-order', '2026-08-15', 11200, -5600, 'B1', 'Producto promoción A', 1, 2800, -2800, 1000, 'Jerarquía A'],
+    ['promo-order', '2026-08-15', '', '', 'B2', 'Producto promoción B', 1, 2800, -2800, 1000, 'Jerarquía B']
+  ];
+  const salesInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', contents: salesRows.map(row => row.join('\t')).join('\n'), filename: 'ventas-promocion.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, salesInspection)).status, 200);
+
+  const paymentDetailsRows = [
+    ['DateClosing', 'Ticket', 'General Comment', 'Due'],
+    ['8/15/26 11:00 AM', 'promo-order', 'Para llevar', 5.6]
+  ];
+  const paymentDetailsInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details', contents: paymentDetailsRows.map(row => row.join('\t')).join('\n'), filename: 'detalle-pagos-promocion.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, paymentDetailsInspection)).status, 200);
+
+  const dashboard = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1`).then(response => response.json());
+  const month = dashboard.sales.serviceModes.periods.month;
+  const expectedNet = 5600 / 1.19;
+  assert.equal(Math.round(dashboard.sales.metrics.month.netSales), Math.round(expectedNet));
+  assert.equal(Math.round(month.totalNetSales), Math.round(expectedNet));
+  assert.equal(Math.round(month.hierarchyTotals.total), Math.round(expectedNet));
+  assert.deepEqual(month.hierarchies.map(item => [item.name, Math.round(item.totalNetSales)]), [
+    ['Jerarquía A', Math.round(2800 / 1.19)],
+    ['Jerarquía B', Math.round(2800 / 1.19)]
+  ]);
 });
 
 test('builds hourly product demand for open days, weekdays and matching weekdays', async t => {

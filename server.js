@@ -17,7 +17,8 @@ const DEFAULT_LOCATIONS = [
   { id: 'store-2', name: 'Tienda 2', type: 'store' },
   { id: 'main-warehouse', name: 'Bodega principal', type: 'warehouse' }
 ];
-const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'mercadopago'].map(name => ({ name, maxCount: 1 }));
+const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago']
+  .map(name => ({ name, maxCount: 1 }));
 const MASTER_FIELDS = [
   { name: 'master-catalog', maxCount: 1 },
   { name: 'product-hierarchy', maxCount: 1 },
@@ -135,7 +136,9 @@ function migrateLegacySundayWeeks(weeksRoot) {
 }
 
 function fieldsForLocation(type) {
-  return type === 'warehouse' ? ['kardex'] : ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'mercadopago'];
+  return type === 'warehouse'
+    ? ['kardex']
+    : ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'];
 }
 
 function safeFilename(file) {
@@ -190,7 +193,25 @@ function toIsoDate(year, month, day) {
   return isValidDate(value) && year >= 2020 && year <= 2100 ? value : null;
 }
 
-function datesInText(value) {
+function localizedDate(year, first, second, dateOrder = 'dmy') {
+  let day = dateOrder === 'mdy' ? second : first;
+  let month = dateOrder === 'mdy' ? first : second;
+  if (first > 12 && second <= 12) {
+    day = first;
+    month = second;
+  } else if (second > 12 && first <= 12) {
+    day = second;
+    month = first;
+  }
+  return toIsoDate(year, month, day);
+}
+
+function dateOrderForHeaders(headers = []) {
+  const normalized = headers.map(normalizeHeader);
+  return normalized.some(header => ['dateclosing', 'date closing', 'closing date'].includes(header)) ? 'mdy' : 'dmy';
+}
+
+function datesInText(value, dateOrder = 'dmy') {
   const text = String(value || '');
   const dates = [];
   for (const match of text.matchAll(/(?<!\d)(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g)) {
@@ -198,7 +219,11 @@ function datesInText(value) {
     if (parsed) dates.push(parsed);
   }
   for (const match of text.matchAll(/(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})(?!\d)/g)) {
-    const parsed = toIsoDate(Number(match[3]), Number(match[2]), Number(match[1]));
+    const parsed = localizedDate(Number(match[3]), Number(match[1]), Number(match[2]), dateOrder);
+    if (parsed) dates.push(parsed);
+  }
+  for (const match of text.matchAll(/(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?!\d)/g)) {
+    const parsed = localizedDate(2000 + Number(match[3]), Number(match[1]), Number(match[2]), dateOrder);
     if (parsed) dates.push(parsed);
   }
   return dates;
@@ -219,15 +244,17 @@ function detectFileDateRange(file) {
     const workbook = XLSX.readFile(file.path, { cellDates: true });
     for (const sheetName of workbook.SheetNames) {
       const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true, blankrows: false });
+      const dateOrder = dateOrderForHeaders(rows.slice(0, 5).flat());
       for (const [address, cell] of Object.entries(sheet)) {
         if (address.startsWith('!')) continue;
         if (cell.v instanceof Date && !Number.isNaN(cell.v.getTime())) {
           const parsed = toIsoDate(cell.v.getUTCFullYear(), cell.v.getUTCMonth() + 1, cell.v.getUTCDate());
           if (parsed) dates.add(parsed);
         } else if (typeof cell.v === 'string') {
-          datesInText(cell.v).forEach(date => dates.add(date));
+          datesInText(cell.v, dateOrder).forEach(date => dates.add(date));
         }
-        if (typeof cell.w === 'string') datesInText(cell.w).forEach(date => dates.add(date));
+        if (typeof cell.w === 'string') datesInText(cell.w, dateOrder).forEach(date => dates.add(date));
       }
     }
   } catch (error) {
@@ -244,6 +271,7 @@ const UPLOAD_STRUCTURE_LABELS = {
   employees: 'Consumo de colaboradores',
   purchases: 'Compras',
   sales: 'Transacciones de venta',
+  'payment-details': 'Detalle Pagos',
   mercadopago: 'Transacciones MercadoPago',
   'master-catalog': 'Maestro Productos / Ingredientes / Extras',
   'product-hierarchy': 'Jerarquía Productos',
@@ -288,13 +316,27 @@ function detectUploadStructure(file) {
   try {
     sheets = workbookStructure(file.path);
   } catch {
-    return { field: 'unknown', reason: 'El archivo no pudo leerse como CSV, XLS, XLSX o TXT.' };
+    return { field: 'unknown', invalidFile: true, reason: 'El archivo no pudo leerse como CSV, XLS, XLSX o TXT.' };
   }
   if (!sheets.length || !sheets.some(sheet => sheet.rows.length)) {
-    return { field: 'unknown', reason: 'El archivo está vacío.' };
+    return { field: 'unknown', invalidFile: true, reason: 'El archivo está vacío.' };
   }
   if (structureHasHeader(sheets, ['ID de orden', 'Fecha de creacion', 'Pago total'])) {
     return { field: 'sales', reason: 'Se detectaron columnas de órdenes, fecha de creación y pago total.' };
+  }
+  if (structureHasHeader(sheets, ['FechaCierre', 'Comanda', 'Comentario General'])) {
+    return {
+      field: 'payment-details',
+      dateOrder: 'dmy',
+      reason: 'Se detectaron los encabezados en español de Detalle Pagos; sus fechas se interpretan como día/mes/año.'
+    };
+  }
+  if (structureHasHeader(sheets, ['DateClosing', 'Ticket', 'General Comment'])) {
+    return {
+      field: 'payment-details',
+      dateOrder: 'mdy',
+      reason: 'Se detectaron los encabezados en inglés de Detalle Pagos; sus fechas se interpretan como mes/día/año.'
+    };
   }
   if (structureHasHeader(sheets, ['Fecha emisión', 'Documento', 'Proveedor/Para', 'PRODUCTO'])) {
     return { field: 'purchases', reason: 'Se detectaron columnas de fecha de emisión, proveedor, documento y producto.' };
@@ -354,6 +396,15 @@ function detectUploadStructure(file) {
 function validateUploadStructure(file) {
   const expected = file.fieldname;
   const detected = detectUploadStructure(file);
+  if (expected === 'payment-details' && detected.invalidFile) {
+    return {
+      ok: false,
+      expected,
+      detected: detected.field,
+      error: `El archivo seleccionado como ${UPLOAD_STRUCTURE_LABELS[expected]} no es una planilla legible o está vacío.`,
+      reason: detected.reason
+    };
+  }
   if (expected === 'mercadopago') {
     return {
       ok: true,
@@ -361,6 +412,18 @@ function validateUploadStructure(file) {
       expected,
       detected: detected.field,
       reason: 'Aceptado sin validación estructural porque aún no existe un archivo MercadoPago de referencia.'
+    };
+  }
+  if (expected === 'payment-details') {
+    if (detected.field === expected) {
+      return { ok: true, expected, detected: detected.field, dateOrder: detected.dateOrder, reason: detected.reason };
+    }
+    return {
+      ok: true,
+      permissive: true,
+      expected,
+      detected: detected.field,
+      reason: `Se verificó que la planilla de ${UPLOAD_STRUCTURE_LABELS[expected]} es legible. Sus encabezados quedarán disponibles para definir análisis posteriores.`
     };
   }
   const inventoryFields = ['kardex', 'waste'];
@@ -1290,7 +1353,7 @@ function numericValue(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function cellDate(value) {
+function cellDate(value, dateOrder = 'dmy') {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return toIsoDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
   }
@@ -1298,7 +1361,7 @@ function cellDate(value) {
     const parsed = XLSX.SSF.parse_date_code(value);
     return parsed ? toIsoDate(parsed.y, parsed.m, parsed.d) : null;
   }
-  return datesInText(value)[0] || null;
+  return datesInText(value, dateOrder)[0] || null;
 }
 
 function cellTime(value) {
@@ -1612,6 +1675,11 @@ const TOTEAT_REPORT_URLS = [
   TOTEAT_REPORT_URL,
   'https://res8.toteat.com/#/reportes/cierres'
 ];
+const TOTEAT_PAYMENT_DETAILS_REPORT_URL = 'https://res8.toteat.com/#/reportes/detallepagos';
+const TOTEAT_PAYMENT_DETAILS_REPORT_URLS = [
+  TOTEAT_PAYMENT_DETAILS_REPORT_URL,
+  'https://res8.toteat.com/#/reportes/detalle-pagos'
+];
 
 function chromeExecutablePath() {
   return [
@@ -1630,7 +1698,11 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
   const reportUrls = Array.isArray(factoryOptions.reportUrls) && factoryOptions.reportUrls.length
     ? factoryOptions.reportUrls
     : factoryOptions.reportUrl ? [factoryOptions.reportUrl] : TOTEAT_REPORT_URLS;
-  const reportUrl = reportUrls[0];
+  const paymentDetailsReportUrls = Array.isArray(factoryOptions.paymentDetailsReportUrls) && factoryOptions.paymentDetailsReportUrls.length
+    ? factoryOptions.paymentDetailsReportUrls
+    : factoryOptions.paymentDetailsReportUrl
+      ? [factoryOptions.paymentDetailsReportUrl]
+      : TOTEAT_PAYMENT_DETAILS_REPORT_URLS;
   const readyTimeout = Number(factoryOptions.readyTimeout) > 0 ? Number(factoryOptions.readyTimeout) : 10000;
   const transitionDelay = Number(factoryOptions.transitionDelay) >= 0 ? Number(factoryOptions.transitionDelay) : 900;
   ensureDir(profilesRoot);
@@ -1648,12 +1720,46 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     .trim()
     .toLowerCase();
   const downloadLabel = /(?:Descargar|Download|Exportar|Export)\s+(?:las?\s+)?(?:Ventas(?:\s+Totales)?|Total\s+Sales|Sales)/i;
+  const paymentDetailsDownloadLabel = /^(?:(?:Descargar|Download|Exportar|Export)\s+)?CSV$/i;
   const loginLabel = /^(?:Iniciar\s+sesión|Iniciar\s+sesion|Ingresar|Sign\s+in|Log\s+in)$/i;
   const logoutLabel = /^(?:Cerrar\s+sesión|Cerrar\s+sesion|Salir|Sign\s+out|Log\s+out)$/i;
   const restaurantTriggerLabel = /^(?:Seleccionar|Select|Cambiar|Change)(?:\s+(?:el|a))?\s+(?:Restaurante|Restaurant)(?:\s+Info)?$/i;
   const reportsLabel = /^(?:Reportes|Reports)$/i;
   const salesReportLabel = /^(?:Resumen(?:\s+general)?\s+de\s+ventas|Sales\s+Summary|Cierres?|Closures?|Ventas\s+consolidadas|Consolidated\s+Sales)$/i;
+  const paymentDetailsReportLabel = /^(?:Detalle(?:\s+de)?\s+Pagos|Payment(?:s)?\s+Details?)$/i;
   const expiredSessionText = /(?:sesion.*(?:caducad|invalida)|session.*(?:invalid|expired|has problems)|abrir una nueva sesion|close.*(?:log on|log in).*toteat)/i;
+  const reports = {
+    sales: {
+      key: 'sales',
+      label: 'ventas',
+      urls: reportUrls,
+      downloadLabel,
+      attributeSelector: [
+        '[data-testid*="download-total-sales" i]', '[data-testid*="sales-download" i]',
+        '[aria-label*="total sales" i]', '[aria-label*="ventas totales" i]',
+        '[title*="total sales" i]', '[title*="ventas totales" i]'
+      ].join(', '),
+      directLinkSelector: 'a[href*="reportes/cierre" i], a[href*="reportes/cierres" i], a[href*="reports/closure" i], a[href*="reports/closures" i]',
+      menuLabel: salesReportLabel,
+      menuPath: 'sales-report-link',
+      routePattern: /reportes\/cierres?\b|reports\/closures?\b/i,
+      defaultFilename: () => `ventas-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+    },
+    paymentDetails: {
+      key: 'payment-details',
+      label: 'Detalle Pagos',
+      urls: paymentDetailsReportUrls,
+      downloadLabel: paymentDetailsDownloadLabel,
+      attributeSelector: [
+        '[data-testid*="csv" i]', '[aria-label="CSV" i]', '[title="CSV" i]', 'a[download$=".csv" i]'
+      ].join(', '),
+      directLinkSelector: 'a[href*="reportes/detallepagos" i], a[href*="reportes/detalle-pagos" i], a[href*="reports/payment-details" i]',
+      menuLabel: paymentDetailsReportLabel,
+      menuPath: 'payment-details-report-link',
+      routePattern: /reportes\/detalle-?pagos\b|reports\/payment-details\b/i,
+      defaultFilename: () => `detalle-pagos-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+    }
+  };
   const elementLabel = async locator => {
     const text = await locator.innerText().catch(() => '');
     const ariaLabel = await locator.getAttribute('aria-label').catch(() => '');
@@ -1673,18 +1779,13 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     }
     return null;
   };
-  const findDownloadButton = async page => {
-    const attributeSelector = [
-      '[data-testid*="download-total-sales" i]', '[data-testid*="sales-download" i]',
-      '[aria-label*="total sales" i]', '[aria-label*="ventas totales" i]',
-      '[title*="total sales" i]', '[title*="ventas totales" i]'
-    ].join(', ');
-    return findVisibleControl(page, downloadLabel, `${attributeSelector}, button, [role="button"], a`);
+  const findDownloadButton = async (page, report) => {
+    return findVisibleControl(page, report.downloadLabel, `${report.attributeSelector}, button, [role="button"], a`);
   };
-  const waitForDownloadButton = async (page, timeout = 12000) => {
+  const waitForDownloadButton = async (page, report, timeout = 12000) => {
     const deadline = Date.now() + timeout;
     do {
-      const button = await findDownloadButton(page);
+      const button = await findDownloadButton(page, report);
       if (button) return button;
       await page.waitForTimeout(500);
     } while (Date.now() < deadline);
@@ -1778,12 +1879,11 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     }
     return attempt;
   };
-  const navigateThroughMenus = async (page, attempts) => {
+  const navigateThroughMenus = async (page, attempts, report) => {
     const attempt = { action: 'menu-navigation', path: null };
     attempts.push(attempt);
     await ensureActiveSession(page, attempts);
-    const reportLink = await findVisibleControl(page, /./,
-      'a[href*="reportes/cierre" i], a[href*="reportes/cierres" i], a[href*="reports/closure" i], a[href*="reports/closures" i]');
+    const reportLink = await findVisibleControl(page, /./, report.directLinkSelector);
     if (reportLink) {
       attempt.path = 'direct-link';
       await reportLink.click();
@@ -1798,20 +1898,20 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       await page.waitForTimeout(transitionDelay);
       await ensureActiveSession(page, attempts);
     }
-    const salesReport = await findVisibleControl(page, salesReportLabel);
-    if (!salesReport) return null;
-    attempt.path = reports ? 'reports-menu' : 'sales-report-link';
-    await salesReport.click();
+    const reportControl = await findVisibleControl(page, report.menuLabel);
+    if (!reportControl) return null;
+    attempt.path = reports ? 'reports-menu' : report.menuPath;
+    await reportControl.click();
     await page.waitForTimeout(transitionDelay);
     await ensureActiveSession(page, attempts);
     return attempt.path;
   };
-  const pageState = async page => {
+  const pageState = async (page, report) => {
     if (await expiredSessionDialog(page)) return 'session_expired';
     if (await authenticationRequired(page)) return 'authentication_required';
-    if (await findDownloadButton(page)) return 'report_ready';
+    if (await findDownloadButton(page, report)) return 'report_ready';
     if (await findVisibleControl(page, restaurantTriggerLabel)) return 'restaurant_required';
-    if (/reportes\/cierres?\b|reports\/closures?\b/i.test(page.url())) return 'report_unavailable';
+    if (report.routePattern.test(page.url())) return 'report_unavailable';
     return 'unexpected_view';
   };
   const captureDiagnostic = async (page, locationId, state, attempts) => {
@@ -1842,9 +1942,9 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     await page.screenshot({ path: path.join(diagnosticsRoot, `${id}.png`), fullPage: false }).catch(() => {});
     return diagnostic;
   };
-  const attachDiagnostic = async (error, page, locationId, attempts) => {
+  const attachDiagnostic = async (error, page, locationId, attempts, report) => {
     if (error.diagnosticId) return error;
-    const state = error.state || await pageState(page).catch(() => 'unknown');
+    const state = error.state || await pageState(page, report).catch(() => 'unknown');
     const diagnostic = await captureDiagnostic(page, locationId, state, attempts).catch(() => null);
     error.state = state;
     if (diagnostic) {
@@ -1872,13 +1972,13 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       args: ['--disable-blink-features=AutomationControlled']
     });
   };
-  const reportPage = async context => {
+  const reportPage = async (context, report) => {
     const pages = context.pages();
     const page = pages.find(item => item.url().includes('toteat.com')) || pages[0] || await context.newPage();
-    await page.goto(reportUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(report.urls[0], { waitUntil: 'domcontentloaded', timeout: 60000 });
     return page;
   };
-  const prepareReport = async (page, restaurantName) => {
+  const prepareReport = async (page, restaurantName, report) => {
     const attempts = [{ action: 'direct-url', url: page.url() }];
     const requireAuthentication = async () => {
       await ensureActiveSession(page, attempts);
@@ -1897,7 +1997,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
       await requireAuthentication();
-      const found = await waitForDownloadButton(page, readyTimeout);
+      const found = await waitForDownloadButton(page, report, readyTimeout);
       await ensureActiveSession(page, attempts);
       attempt.ready = Boolean(found);
       return found;
@@ -1905,7 +2005,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     try {
       await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
       await requireAuthentication();
-      let button = await waitForDownloadButton(page, readyTimeout);
+      let button = await waitForDownloadButton(page, report, readyTimeout);
       await ensureActiveSession(page, attempts);
       if (button) return { button, attempts };
       const restaurant = await selectRestaurant(page, restaurantName, attempts);
@@ -1917,7 +2017,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
         error.state = 'restaurant_required';
         throw error;
       }
-      const urlsToTry = restaurant.selected ? reportUrls : reportUrls.slice(1);
+      const urlsToTry = restaurant.selected ? report.urls : report.urls.slice(1);
       for (const [index, url] of urlsToTry.entries()) {
         button = await visitReportUrl(url, restaurant.selected && index === 0 ? 'report-after-restaurant' : 'alternate-report-url');
         if (button) return { button, attempts };
@@ -1935,8 +2035,8 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
           if (button) return { button, attempts };
         }
       }
-      const menuPath = await navigateThroughMenus(page, attempts);
-      button = await waitForDownloadButton(page, readyTimeout);
+      const menuPath = await navigateThroughMenus(page, attempts, report);
+      button = await waitForDownloadButton(page, report, readyTimeout);
       await ensureActiveSession(page, attempts);
       if (button) return { button, attempts };
       const reloadAttempt = { action: 'reload', url: page.url(), menuPath };
@@ -1944,76 +2044,82 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
       await requireAuthentication();
-      button = await waitForDownloadButton(page, readyTimeout);
+      button = await waitForDownloadButton(page, report, readyTimeout);
       await ensureActiveSession(page, attempts);
       reloadAttempt.ready = Boolean(button);
       if (button) return { button, attempts };
       const error = automationError(
-        'Toteat está autenticado, pero no fue posible llegar al reporte de ventas ni encontrar su control de descarga.',
+        `Toteat está autenticado, pero no fue posible llegar al reporte de ${report.label} ni encontrar su control de descarga.`,
         'TOTEAT_REPORT_NOT_READY', 502
       );
-      error.state = await pageState(page);
+      error.state = await pageState(page, report);
       throw error;
     } catch (error) {
       error.attempts ||= attempts;
       throw error;
     }
   };
+  const downloadReport = async (locationId, options, report) => {
+    let context = contexts.get(locationId);
+    const reusedVisibleContext = Boolean(context);
+    if (!context) context = await launch(locationId, true);
+    let page = null;
+    let attempts = [];
+    try {
+      page = await reportPage(context, report);
+      const prepared = await prepareReport(page, options.restaurantName || locationId, report);
+      attempts = prepared.attempts;
+      const button = prepared.button;
+      attempts.push({ action: 'download-click', report: report.key });
+      await ensureActiveSession(page, attempts);
+      const downloadPromise = page.waitForEvent('download', { timeout: 90000 });
+      await button.click();
+      const download = await downloadPromise;
+      const failure = await download.failure();
+      if (failure) throw automationError(`Toteat no pudo generar el archivo: ${failure}`, 'TOTEAT_DOWNLOAD_FAILED', 502);
+      const stream = await download.createReadStream();
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const filename = download.suggestedFilename() || report.defaultFilename();
+      const extension = path.extname(filename).toLowerCase();
+      return {
+        filename,
+        contentType: extension === '.csv'
+          ? 'text/csv; charset=utf-8'
+          : extension === '.xls'
+            ? 'application/vnd.ms-excel'
+            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.concat(chunks)
+      };
+    } catch (caught) {
+      const error = caught?.code ? caught : automationError(
+        caught?.message || 'La automatización de Toteat falló inesperadamente.', 'TOTEAT_AUTOMATION_FAILED', 502
+      );
+      if (page) throw await attachDiagnostic(error, page, locationId, error.attempts || attempts, report);
+      throw error;
+    } finally {
+      if (!reusedVisibleContext) await context.close().catch(() => {});
+    }
+  };
   return {
     async connect(locationId) {
       const current = contexts.get(locationId);
       if (current) {
-        const page = await reportPage(current);
+        const page = await reportPage(current, reports.sales);
         await page.bringToFront();
         return { opened: true };
       }
       const context = await launch(locationId, false);
       contexts.set(locationId, context);
       context.on('close', () => contexts.delete(locationId));
-      await reportPage(context);
+      await reportPage(context, reports.sales);
       return { opened: true };
     },
     async downloadSales(locationId, options = {}) {
-      let context = contexts.get(locationId);
-      const reusedVisibleContext = Boolean(context);
-      if (!context) context = await launch(locationId, true);
-      let page = null;
-      let attempts = [];
-      try {
-        page = await reportPage(context);
-        const prepared = await prepareReport(page, options.restaurantName || locationId);
-        attempts = prepared.attempts;
-        const button = prepared.button;
-        attempts.push({ action: 'download-click' });
-        await ensureActiveSession(page, attempts);
-        const downloadPromise = page.waitForEvent('download', { timeout: 90000 });
-        await button.click();
-        const download = await downloadPromise;
-        const failure = await download.failure();
-        if (failure) throw automationError(`Toteat no pudo generar el archivo: ${failure}`, 'TOTEAT_DOWNLOAD_FAILED', 502);
-        const stream = await download.createReadStream();
-        const chunks = [];
-        for await (const chunk of stream) chunks.push(chunk);
-        const filename = download.suggestedFilename() || `ventas-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`;
-        const extension = path.extname(filename).toLowerCase();
-        return {
-          filename,
-          contentType: extension === '.csv'
-            ? 'text/csv; charset=utf-8'
-            : extension === '.xls'
-              ? 'application/vnd.ms-excel'
-              : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          buffer: Buffer.concat(chunks)
-        };
-      } catch (caught) {
-        const error = caught?.code ? caught : automationError(
-          caught?.message || 'La automatización de Toteat falló inesperadamente.', 'TOTEAT_AUTOMATION_FAILED', 502
-        );
-        if (page) throw await attachDiagnostic(error, page, locationId, error.attempts || attempts);
-        throw error;
-      } finally {
-        if (!reusedVisibleContext) await context.close().catch(() => {});
-      }
+      return downloadReport(locationId, options, reports.sales);
+    },
+    async downloadPaymentDetails(locationId, options = {}) {
+      return downloadReport(locationId, options, reports.paymentDetails);
     }
   };
 }
@@ -2160,25 +2266,15 @@ function createApp(options = {}) {
     return [...output, ...storedTransactionFiles(locationId, 'sales')];
   }
 
-  function lac001SubstitutionSummary(locationId, dateFrom, dateTo, recipes, catalog) {
-    const targetCodes = ['BX1010', 'BX1020', 'BX1030'];
-    const targetCodeSet = new Set(targetCodes);
-    const rowsByCode = new Map(targetCodes.map(code => [code, {
-      code,
-      name: catalog?.get(code)?.name || code,
-      orderKeys: new Set(),
-      substitutionCount: 0,
-      matchedSubstitutionCount: 0,
-      lac001VolumeLiters: 0,
-      unresolvedSubstitutionCount: 0
-    }]));
-    const allOrderKeys = new Set();
+  function periodSalesData(locationId, dateFrom, dateTo) {
+    const rows = [];
+    const orderMap = new Map();
+    const rowsByOrder = new Map();
     const seenRows = new Set();
     const warnings = [];
 
     for (const stored of storedSalesFiles(locationId)) {
       try {
-        const currentBaseByOrder = new Map();
         for (const row of readSalesRows(stored.filePath)) {
           const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
           if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
@@ -2191,19 +2287,75 @@ function createApp(options = {}) {
 
           const orderKey = `${locationId}:${salesTransactionKey(row)}`;
           const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
-          if (!code) continue;
-          if (!code.startsWith('BX')) currentBaseByOrder.set(orderKey, code);
-          if (!targetCodeSet.has(code)) continue;
+          const item = {
+            orderKey,
+            date,
+            code,
+            name: repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code,
+            quantity: Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1),
+            extraHierarchyId: String(rowValue(row, ['BA.']) ?? '').trim(),
+            extraHierarchyName: repairMojibake(rowValue(row, ['Jerarquía de Extras', 'Jerarquia de Extras']))
+          };
+          rows.push(item);
+          const orderRows = rowsByOrder.get(orderKey) || [];
+          orderRows.push(item);
+          rowsByOrder.set(orderKey, orderRows);
 
-          const quantity = Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
+          if (!orderMap.has(orderKey)) {
+            const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+            if (gross !== null) {
+              const discounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
+              orderMap.set(orderKey, { orderKey, locationId, date, net: (gross + discounts) / 1.19 });
+            }
+          }
+        }
+      } catch {
+        warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name}.`);
+      }
+    }
+
+    for (const orderRows of rowsByOrder.values()) {
+      const baseRows = orderRows.filter(item => item.code && !item.code.startsWith('BX') && !item.extraHierarchyId);
+      const soleBase = baseRows.length === 1 ? baseRows[0] : null;
+      let currentBase = null;
+      for (const item of orderRows) {
+        if (baseRows.includes(item)) currentBase = item;
+        item.baseProductCode = currentBase?.code || soleBase?.code || null;
+        item.baseProductName = currentBase?.name || soleBase?.name || null;
+      }
+    }
+    return { rows, orderFacts: [...orderMap.values()], warnings };
+  }
+
+  function recipeLinesForProduct(recipes, code) {
+    if (!recipes || !code) return [];
+    return recipes.get(code) || recipes.get(String(code).toUpperCase()) || [];
+  }
+
+  function lac001SubstitutionSummary(salesData, dateFrom, dateTo, recipes, catalog) {
+    const targetCodes = ['BX1010', 'BX1020', 'BX1030'];
+    const targetCodeSet = new Set(targetCodes);
+    const lac001UnitCost = unitCostForRecipeUnit(catalog?.get('LAC001'), 'L');
+    const rowsByCode = new Map(targetCodes.map(code => [code, {
+      code,
+      name: catalog?.get(code)?.name || code,
+      orderKeys: new Set(),
+      substitutionCount: 0,
+      matchedSubstitutionCount: 0,
+      lac001VolumeLiters: 0,
+      unresolvedSubstitutionCount: 0
+    }]));
+    const allOrderKeys = new Set();
+    for (const row of salesData.rows) {
+          const { orderKey, code, quantity } = row;
+          if (!targetCodeSet.has(code) || !quantity) continue;
           if (!quantity) continue;
           const detail = rowsByCode.get(code);
           detail.orderKeys.add(orderKey);
           detail.substitutionCount += quantity;
           allOrderKeys.add(orderKey);
 
-          const baseProductCode = currentBaseByOrder.get(orderKey);
-          const lac001Lines = (recipes?.get(baseProductCode) || [])
+          const lac001Lines = recipeLinesForProduct(recipes, row.baseProductCode)
             .filter(recipe => String(recipe.ingredientId || '').trim().toUpperCase() === 'LAC001');
           let volumePerProduct = 0;
           let recipeResolved = lac001Lines.length > 0;
@@ -2222,10 +2374,6 @@ function createApp(options = {}) {
           }
           detail.matchedSubstitutionCount += quantity;
           detail.lac001VolumeLiters += quantity * volumePerProduct;
-        }
-      } catch {
-        warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name}.`);
-      }
     }
 
     const items = targetCodes.map(code => {
@@ -2237,7 +2385,10 @@ function createApp(options = {}) {
         substitutionCount: item.substitutionCount,
         matchedSubstitutionCount: item.matchedSubstitutionCount,
         lac001VolumeLiters: item.lac001VolumeLiters,
-        unresolvedSubstitutionCount: item.unresolvedSubstitutionCount
+        unresolvedSubstitutionCount: item.unresolvedSubstitutionCount,
+        unitCost: lac001UnitCost ?? 0,
+        hasCost: lac001UnitCost !== null,
+        substitutedCost: lac001UnitCost !== null ? item.lac001VolumeLiters * lac001UnitCost : 0
       };
     });
     return {
@@ -2247,8 +2398,143 @@ function createApp(options = {}) {
       substitutionCount: items.reduce((sum, item) => sum + item.substitutionCount, 0),
       matchedSubstitutionCount: items.reduce((sum, item) => sum + item.matchedSubstitutionCount, 0),
       lac001VolumeLiters: items.reduce((sum, item) => sum + item.lac001VolumeLiters, 0),
+      lac001UnitCost: lac001UnitCost ?? 0,
+      hasCost: lac001UnitCost !== null,
+      totalSubstitutedCost: items.reduce((sum, item) => sum + item.substitutedCost, 0),
       unresolvedSubstitutionCount: items.reduce((sum, item) => sum + item.unresolvedSubstitutionCount, 0),
-      warnings,
+      warnings: salesData.warnings,
+      items
+    };
+  }
+
+  function syrupSauceSubstitutionSummary(salesData, dateFrom, dateTo, recipes, catalog, catalogAssignments) {
+    const targetHierarchy = 'BA.090';
+    const ingredientHierarchy = 'IC.030';
+    const itemMap = new Map();
+    const allOrderKeys = new Set();
+    let substitutionCount = 0;
+    let matchedSubstitutionCount = 0;
+    let unresolvedSubstitutionCount = 0;
+    const flavorType = value => {
+      const name = normalizeHeader(value).replace(/[_-]+/g, ' ');
+      if (/\bsalsa\b/.test(name)) return 'sauce';
+      if (/\bsyrup\b/.test(name) && !/\bgoma\b/.test(name)) return 'flavoredSyrup';
+      if (/\bgoma\b/.test(name)) return 'gum';
+      return null;
+    };
+    const meaningfulTokens = value => new Set(normalizeHeader(value).replace(/[^a-z0-9]+/g, ' ').split(/\s+/)
+      .filter(token => token.length > 2 && !['syrup', 'salsa', 'goma', 'iced', 'hot', 'latte', 'frappe', 'cafe', 'matcha', 'sin', 'con', 'extra'].includes(token)));
+    const candidateScore = (recipe, row, replacementType) => {
+      const candidateName = catalog?.get(recipe.ingredientId)?.name || recipe.ingredientName;
+      const candidateType = flavorType(candidateName);
+      let score = candidateType === replacementType ? 100 : 0;
+      const productTokens = meaningfulTokens(row.baseProductName);
+      const candidateTokens = meaningfulTokens(candidateName);
+      for (const token of candidateTokens) if (productTokens.has(token)) score += 10;
+      score += Math.min(Math.max(Number(recipe.quantity) || 0, 0), 1000) / 10000;
+      return score;
+    };
+    const isFlavorIngredient = recipe => {
+      const assignment = catalogAssignments?.get(String(recipe.ingredientId || '').trim().toUpperCase());
+      return assignment?.type === 'ingredient' && (assignment.hierarchyId === ingredientHierarchy
+        || String(assignment.hierarchyId || '').startsWith(`${ingredientHierarchy}.`));
+    };
+
+    for (const row of salesData.rows) {
+      if (row.extraHierarchyId !== targetHierarchy
+        && !row.extraHierarchyId.startsWith(`${targetHierarchy}.`)) continue;
+      if (!row.code || !row.quantity) continue;
+      allOrderKeys.add(row.orderKey);
+      substitutionCount += row.quantity;
+      const recipeLines = recipeLinesForProduct(recipes, row.baseProductCode);
+      let candidates = recipeLines.filter(isFlavorIngredient);
+      if (!candidates.length) {
+        candidates = recipeLines.filter(recipe => /\bsyrup\b|\bsalsa\b|\bgoma\b/.test(normalizeHeader(recipe.ingredientName)));
+      }
+      const replacementType = flavorType(row.name);
+      if (replacementType === 'flavoredSyrup' || replacementType === 'sauce') {
+        const sameType = candidates.filter(recipe => flavorType(
+          catalog?.get(recipe.ingredientId)?.name || recipe.ingredientName
+        ) === replacementType);
+        if (sameType.length) candidates = sameType;
+      }
+      const original = [...candidates]
+        .sort((left, right) => candidateScore(right, row, replacementType) - candidateScore(left, row, replacementType))[0] || null;
+      const status = original ? 'resolved' : 'unresolved';
+      if (status === 'resolved') matchedSubstitutionCount += row.quantity;
+      else unresolvedSubstitutionCount += row.quantity;
+      const originalCode = original ? String(original.ingredientId || '').trim().toUpperCase() : '';
+      const originalName = original
+        ? catalog?.get(original.ingredientId)?.name || original.ingredientName || originalCode
+        : 'Sin ingrediente original identificable';
+      const canonical = original ? canonicalConsumptionUnit(original.unit) : { unit: '', factor: 0 };
+      const catalogItem = original ? catalog?.get(original.ingredientId) : null;
+      const unitCost = original ? unitCostForRecipeUnit(catalogItem, canonical.unit) : null;
+      const key = `${row.code}:${originalCode || status}:${canonical.unit}`;
+      const item = itemMap.get(key) || {
+        replacementCode: row.code,
+        replacementName: catalog?.get(row.code)?.name || row.name || row.code,
+        originalCode,
+        originalName,
+        status,
+        unit: canonical.unit,
+        unitCost: unitCost ?? 0,
+        hasCost: unitCost !== null,
+        orderKeys: new Set(),
+        baseProducts: new Map(),
+        substitutionCount: 0,
+        theoreticalQuantity: 0,
+        substitutedCost: 0
+      };
+      item.orderKeys.add(row.orderKey);
+      if (row.baseProductCode) item.baseProducts.set(row.baseProductCode, row.baseProductName || row.baseProductCode);
+      item.substitutionCount += row.quantity;
+      if (original) {
+        const yieldFactor = original.yieldRate > 0 ? original.yieldRate / 100 : 1;
+        const theoreticalQuantity = row.quantity * original.quantity / yieldFactor * canonical.factor;
+        item.theoreticalQuantity += theoreticalQuantity;
+        if (unitCost !== null) item.substitutedCost += theoreticalQuantity * unitCost;
+      }
+      itemMap.set(key, item);
+    }
+
+    const items = [...itemMap.values()].map(item => ({
+      replacementCode: item.replacementCode,
+      replacementName: item.replacementName,
+      originalCode: item.originalCode,
+      originalName: item.originalName,
+      status: item.status,
+      unit: item.unit,
+      salesCount: item.orderKeys.size,
+      substitutionCount: item.substitutionCount,
+      theoreticalQuantity: item.theoreticalQuantity,
+      unitCost: item.unitCost,
+      hasCost: item.hasCost,
+      substitutedCost: item.substitutedCost,
+      baseProducts: [...item.baseProducts].map(([code, name]) => ({ code, name }))
+    })).sort((left, right) => right.substitutionCount - left.substitutionCount
+      || left.replacementName.localeCompare(right.replacementName, 'es')
+      || left.originalName.localeCompare(right.originalName, 'es'));
+    const totalsByUnit = [...items.reduce((totals, item) => {
+      if (item.status === 'resolved' && item.unit) {
+        totals.set(item.unit, (totals.get(item.unit) || 0) + item.theoreticalQuantity);
+      }
+      return totals;
+    }, new Map())].map(([unit, quantity]) => ({ unit, quantity }));
+    return {
+      dateFrom,
+      dateTo,
+      targetHierarchy,
+      salesCount: allOrderKeys.size,
+      substitutionCount,
+      matchedSubstitutionCount,
+      ambiguousSubstitutionCount: 0,
+      unresolvedSubstitutionCount,
+      totalsByUnit,
+      totalSubstitutedCost: items.reduce((sum, item) => sum + item.substitutedCost, 0),
+      itemsWithoutCost: items.filter(item => item.status === 'resolved' && !item.hasCost)
+        .map(item => item.originalCode || item.originalName),
+      warnings: salesData.warnings,
       items
     };
   }
@@ -2496,11 +2782,14 @@ function createApp(options = {}) {
 
   function genericTransactionRowDate(row, header = []) {
     const dates = [];
+    const dateOrder = dateOrderForHeaders(header);
     row.forEach((value, column) => {
-      const isDateColumn = /\b(fecha|date)\b/.test(normalizeHeader(header[column]));
-      const parsed = value instanceof Date || typeof value === 'string' || isDateColumn ? cellDate(value) : null;
+      const normalizedHeader = normalizeHeader(header[column]);
+      const isDateColumn = /\b(fecha|date)\b/.test(normalizedHeader)
+        || ['dateclosing', 'closingdate'].includes(normalizedHeader.replace(/\s+/g, ''));
+      const parsed = value instanceof Date || typeof value === 'string' || isDateColumn ? cellDate(value, dateOrder) : null;
       if (parsed) dates.push(parsed);
-      if (typeof value === 'string') datesInText(value).forEach(date => dates.push(date));
+      if (typeof value === 'string') datesInText(value, dateOrder).forEach(date => dates.push(date));
     });
     return dates.sort()[0] || null;
   }
@@ -2527,9 +2816,9 @@ function createApp(options = {}) {
     }));
   }
 
-  function mercadoPagoHistory(locationId, additionalExcludedRanges = []) {
+  function genericTransactionHistory(locationId, field, additionalExcludedRanges = []) {
     const keys = new Set();
-    for (const stored of storedTransactionFiles(locationId, 'mercadopago')) {
+    for (const stored of storedTransactionFiles(locationId, field)) {
       for (const sheet of readGenericTransactionSheets(stored.filePath)) {
         const header = sheet.rows[0] || [];
         for (const row of sheet.rows.slice(1)) {
@@ -2542,10 +2831,10 @@ function createApp(options = {}) {
     return keys;
   }
 
-  function prepareIncrementalMercadoPago(staged, locationId, stagingDirectory, additionalExcludedRanges = []) {
+  function prepareIncrementalGenericTransactions(staged, locationId, stagingDirectory, field, sheetName, additionalExcludedRanges = []) {
     const source = path.join(stagingDirectory, staged.filename);
     const sheets = readGenericTransactionSheets(source);
-    const historyKeys = mercadoPagoHistory(locationId, additionalExcludedRanges);
+    const historyKeys = genericTransactionHistory(locationId, field, additionalExcludedRanges);
     const acceptedKeys = new Set();
     const acceptedDates = [];
     let uploadedRows = 0;
@@ -2576,7 +2865,7 @@ function createApp(options = {}) {
     const workbook = XLSX.utils.book_new();
     filteredSheets.forEach(sheet => {
       if (!sheet.dataRows) return;
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheet.rows), sheet.name.slice(0, 31) || 'MercadoPago');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheet.rows), sheet.name.slice(0, 31) || sheetName);
     });
     const incrementalFilename = `${path.parse(staged.filename).name}_solo_nuevas.xlsx`;
     const incrementalPath = path.join(stagingDirectory, incrementalFilename);
@@ -2599,6 +2888,18 @@ function createApp(options = {}) {
         duplicateTransactions
       }
     };
+  }
+
+  function prepareIncrementalMercadoPago(staged, locationId, stagingDirectory, additionalExcludedRanges = []) {
+    return prepareIncrementalGenericTransactions(
+      staged, locationId, stagingDirectory, 'mercadopago', 'MercadoPago', additionalExcludedRanges
+    );
+  }
+
+  function prepareIncrementalPaymentDetails(staged, locationId, stagingDirectory, additionalExcludedRanges = []) {
+    return prepareIncrementalGenericTransactions(
+      staged, locationId, stagingDirectory, 'payment-details', 'Detalle Pagos', additionalExcludedRanges
+    );
   }
 
   app.disable('x-powered-by');
@@ -4535,6 +4836,7 @@ function createApp(options = {}) {
       const catalogMaster = latestMasterFile('master-catalog', movementDateTo);
       let recipes = null;
       let ingredientCatalog = null;
+      let catalogAssignments = null;
       const masterErrors = [];
       try {
         if (!recipeMaster) throw new Error('No recipe master is valid for the selected final date.');
@@ -4545,6 +4847,7 @@ function createApp(options = {}) {
       try {
         if (!catalogMaster) throw new Error('No product / ingredient / extras master is valid for the selected final date.');
         ingredientCatalog = parseIngredientCatalog(catalogMaster.filePath);
+        catalogAssignments = parseInventoryHierarchyAssignments(catalogMaster.filePath);
       } catch (error) {
         masterErrors.push(error.message);
       }
@@ -4597,8 +4900,25 @@ function createApp(options = {}) {
         consumption,
         ingredientCatalog
       );
+      const salesData = periodSalesData(location.id, movementDateFrom, movementDateTo);
       const lac001Substitutions = lac001SubstitutionSummary(
-        location.id,
+        salesData,
+        movementDateFrom,
+        movementDateTo,
+        recipes,
+        ingredientCatalog
+      );
+      const syrupSauceSubstitutions = syrupSauceSubstitutionSummary(
+        salesData,
+        movementDateFrom,
+        movementDateTo,
+        recipes,
+        ingredientCatalog,
+        catalogAssignments
+      );
+      const avoidedPackaging = inventoryAvoidedPackagingSummary(
+        location,
+        salesData,
         movementDateFrom,
         movementDateTo,
         recipes,
@@ -4612,6 +4932,8 @@ function createApp(options = {}) {
         waste,
         consumption,
         lac001Substitutions,
+        syrupSauceSubstitutions,
+        avoidedPackaging,
         masterSources: { recipes: publicMaster(recipeMaster), catalog: publicMaster(catalogMaster), error: masterError },
         report
       });
@@ -4692,7 +5014,272 @@ function createApp(options = {}) {
     };
   }
 
-  function buildSalesDashboard(requestedLocation = 'all') {
+  function normalizedTransactionId(value) {
+    return String(value ?? '').trim().replace(/^'+/, '').replace(/\.0+$/, '');
+  }
+
+  function editDistance(left, right) {
+    const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+      const current = [leftIndex];
+      for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+        current[rightIndex] = Math.min(
+          current[rightIndex - 1] + 1,
+          previous[rightIndex] + 1,
+          previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
+        );
+      }
+      previous.splice(0, previous.length, ...current);
+    }
+    return previous[right.length];
+  }
+
+  function serviceModeFromComment(value) {
+    const comment = normalizeHeader(value).replace(/\bserv\s+ir\b/g, 'servir').replace(/\bllev\s+ar\b/g, 'llevar');
+    const tokens = comment.replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter(Boolean);
+    const resembles = keyword => tokens.some(token => token.length >= 4 && token.length <= 8
+      && editDistance(token.replace(/\d+$/g, ''), keyword) <= 2);
+    const takeaway = /\btake\s*away\b/.test(comment) || resembles('llevar');
+    const dineIn = resembles('servir') || /\b(en el )?local\b|\baqui\b|\baca\b/.test(comment);
+    if (takeaway && !dineIn) return { key: 'takeaway', ambiguous: false };
+    if (dineIn && !takeaway) return { key: 'dineIn', ambiguous: false };
+    return { key: 'unknown', ambiguous: takeaway && dineIn };
+  }
+
+  function paymentDetailModes(stores, warnings, orderFacts = []) {
+    const detailsByOrder = new Map();
+    const amountFields = new Set();
+    const grossSalesByOrder = new Map(orderFacts.map(fact => [fact.orderKey, fact.net * 1.19]));
+    let filesRead = 0;
+    for (const location of stores) {
+      for (const stored of storedTransactionFiles(location.id, 'payment-details')) {
+        try {
+          const rows = readSalesRows(stored.filePath);
+          const amountSamples = rows.flatMap(row => {
+            const amount = numericValue(rowValue(row, ['A Pagar', 'Due']));
+            const gratuity = numericValue(rowValue(row, ['Propina', 'Gratuity']));
+            return amount && gratuity ? [{ amount: Math.abs(amount), gratuity: Math.abs(gratuity) }] : [];
+          });
+          const salesRatios = rows.flatMap(row => {
+            const orderId = normalizedTransactionId(rowValue(row, ['Comanda', 'Ticket', 'ID de orden', 'Id de orden']));
+            const amount = Math.abs(numericValue(rowValue(row, ['A Pagar', 'Due'])) || 0);
+            const grossSales = grossSalesByOrder.get(`${location.id}:order:${orderId}`);
+            return amount && grossSales ? [grossSales / amount] : [];
+          }).sort((left, right) => left - right);
+          const medianSalesRatio = salesRatios.length ? salesRatios[Math.floor(salesRatios.length / 2)] : null;
+          const usesThousands = medianSalesRatio !== null
+            ? medianSalesRatio >= 100
+            : amountSamples.some(sample => sample.gratuity / sample.amount >= 20)
+              || rows.some(row => {
+              const amount = Math.abs(numericValue(rowValue(row, ['A Pagar', 'Due'])) || 0);
+              return amount > 0 && amount < 200;
+            });
+          const amountScale = usesThousands ? 1000 : 1;
+          for (const row of rows) {
+            const dateOrder = dateOrderForHeaders(Object.keys(row));
+            const orderId = normalizedTransactionId(rowValue(row, ['Comanda', 'Ticket', 'ID de orden', 'Id de orden']));
+            if (!orderId) continue;
+            const date = cellDate(rowValue(row, ['FechaCierre', 'Fecha cierre', 'Fecha de cierre', 'Fecha', 'DateClosing', 'Date Closing', 'Closing Date']), dateOrder);
+            if (date && dateIsExcluded(date, stored.excludedRanges)) continue;
+            const orderKey = `${location.id}:order:${orderId}`;
+            const detail = detailsByOrder.get(orderKey) || { comments: new Set(), dueAmount: null, amountField: null };
+            const comment = String(rowValue(row, ['Comentario General', 'Comentario general', 'General Comment']) || '').trim();
+            if (comment) detail.comments.add(comment);
+            const englishAmount = rowValue(row, ['Due']);
+            const spanishAmount = rowValue(row, ['A Pagar']);
+            const amount = numericValue(englishAmount ?? spanishAmount);
+            if (amount !== null) {
+              detail.dueAmount = amount * amountScale;
+              detail.amountField = englishAmount !== null && englishAmount !== undefined ? 'Due' : 'A Pagar';
+              amountFields.add(detail.amountField);
+            }
+            detailsByOrder.set(orderKey, detail);
+          }
+          filesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer Detalle Pagos (${location.name}).`);
+        }
+      }
+    }
+    const modes = new Map();
+    for (const [orderKey, detail] of detailsByOrder) {
+      const comment = [...detail.comments].join(' / ');
+      modes.set(orderKey, {
+        ...serviceModeFromComment(comment),
+        comment,
+        dueAmount: detail.dueAmount,
+        amountField: detail.amountField
+      });
+    }
+    return { modes, filesRead, amountFields: [...amountFields] };
+  }
+
+  function avoidedPackagingForProducts(products, modeFor, recipes, catalog) {
+    const recipesByCode = new Map([...(recipes || new Map())]
+      .map(([code, entries]) => [String(code).toUpperCase(), entries]));
+    const avoidedPackaging = new Map();
+    const productsWithoutRecipe = new Set();
+    for (const fact of products.filter(item => modeFor(item.orderKey) === 'dineIn' && item.quantity > 0)) {
+      const recipe = recipesByCode.get(String(fact.code).toUpperCase());
+      if (!recipe?.length) {
+        productsWithoutRecipe.add(fact.code || fact.name);
+        continue;
+      }
+      for (const ingredient of recipe) {
+        const catalogItem = catalog?.get(ingredient.ingredientId) || catalog?.get(String(ingredient.ingredientId).toUpperCase());
+        const name = catalogItem?.name || ingredient.ingredientName || ingredient.ingredientId;
+        const normalizedName = normalizeHeader(name);
+        const kind = /\btapa\b/.test(normalizedName) ? 'lid' : (/\bvaso\b/.test(normalizedName) ? 'cup' : null);
+        if (!kind) continue;
+        const key = String(ingredient.ingredientId || normalizedName).toUpperCase();
+        const unitCost = unitCostForRecipeUnit(catalogItem, ingredient.unit);
+        const packaging = avoidedPackaging.get(key) || {
+          code: ingredient.ingredientId,
+          name,
+          kind,
+          unit: ingredient.unit || catalogItem?.unit || 'UN',
+          quantity: 0,
+          unitCost: unitCost ?? 0,
+          hasCost: unitCost !== null,
+          totalCost: 0
+        };
+        const avoidedQuantity = fact.quantity * ingredient.quantity;
+        packaging.quantity += avoidedQuantity;
+        if (packaging.hasCost) packaging.totalCost += avoidedQuantity * packaging.unitCost;
+        avoidedPackaging.set(key, packaging);
+      }
+    }
+    const avoidedDisposablePackaging = [...avoidedPackaging.values()]
+      .sort((left, right) => right.totalCost - left.totalCost
+        || right.quantity - left.quantity
+        || left.name.localeCompare(right.name, 'es'));
+    return {
+      avoidedDisposablePackaging,
+      avoidedDisposableCups: avoidedDisposablePackaging.filter(item => item.kind === 'cup'),
+      totalAvoidedPackagingCost: avoidedDisposablePackaging.reduce((sum, item) => sum + item.totalCost, 0),
+      packagingWithoutCost: avoidedDisposablePackaging.filter(item => !item.hasCost).map(item => item.code || item.name),
+      productsWithoutRecipe: [...productsWithoutRecipe]
+    };
+  }
+
+  function inventoryAvoidedPackagingSummary(location, salesData, dateFrom, dateTo, recipes, catalog) {
+    const warnings = [...salesData.warnings];
+    const modeData = paymentDetailModes([location], warnings, salesData.orderFacts);
+    const modeFor = orderKey => modeData.modes.get(orderKey)?.key || 'unknown';
+    const packaging = avoidedPackagingForProducts(salesData.rows, modeFor, recipes, catalog);
+    const totalOrders = salesData.orderFacts.length;
+    const matchedOrders = salesData.orderFacts.filter(fact => modeData.modes.has(fact.orderKey)).length;
+    const dineInOrders = salesData.orderFacts.filter(fact => modeFor(fact.orderKey) === 'dineIn').length;
+    const ambiguousOrders = salesData.orderFacts.filter(fact => modeData.modes.get(fact.orderKey)?.ambiguous).length;
+    return {
+      dateFrom,
+      dateTo,
+      totalOrders,
+      matchedOrders,
+      dineInOrders,
+      ambiguousOrders,
+      paymentDetailsFilesRead: modeData.filesRead,
+      warnings,
+      ...packaging
+    };
+  }
+
+  function buildServiceModeInsights(periods, orderFacts, productFacts, modeData, todayKey) {
+    const definitions = [
+      ['takeaway', 'Para llevar'],
+      ['dineIn', 'Servir en el local'],
+      ['unknown', 'Sin información']
+    ];
+    const recipeMaster = latestMasterFile('master-recipes', todayKey);
+    const catalogMaster = latestMasterFile('master-catalog', todayKey);
+    let recipes = new Map();
+    let catalog = new Map();
+    try { if (recipeMaster) recipes = parseRecipes(recipeMaster.filePath); } catch { recipes = new Map(); }
+    try { if (catalogMaster) catalog = parseIngredientCatalog(catalogMaster.filePath); } catch { catalog = new Map(); }
+    const summarize = period => {
+      const selectedOrders = orderFacts.filter(fact => fact.date >= period.from && fact.date <= period.to);
+      const selectedProducts = productFacts.filter(fact => fact.date >= period.from && fact.date <= period.to);
+      const modeFor = orderKey => modeData.modes.get(orderKey)?.key || 'unknown';
+      const netForOrder = fact => {
+        const dueAmount = modeData.modes.get(fact.orderKey)?.dueAmount;
+        return dueAmount !== null && dueAmount !== undefined ? dueAmount / 1.19 : fact.net;
+      };
+      const resolvedOrderNet = new Map(selectedOrders.map(fact => [fact.orderKey, netForOrder(fact)]));
+      const productNetByOrder = new Map();
+      selectedProducts.forEach(fact => productNetByOrder.set(
+        fact.orderKey, (productNetByOrder.get(fact.orderKey) || 0) + fact.net
+      ));
+      const allocatedProductNet = fact => {
+        const sourceTotal = productNetByOrder.get(fact.orderKey) || 0;
+        const resolvedTotal = resolvedOrderNet.get(fact.orderKey);
+        return sourceTotal && resolvedTotal !== undefined ? fact.net * resolvedTotal / sourceTotal : fact.net;
+      };
+      const totalNetSales = selectedOrders.reduce((sum, fact) => sum + netForOrder(fact), 0);
+      const groups = definitions.map(([key, label]) => {
+        const orders = selectedOrders.filter(fact => modeFor(fact.orderKey) === key);
+        const netSales = orders.reduce((sum, fact) => sum + netForOrder(fact), 0);
+        return {
+          key,
+          label,
+          orders: orders.length,
+          netSales,
+          averageTicket: orders.length ? netSales / orders.length : 0,
+          orderPercent: selectedOrders.length ? orders.length / selectedOrders.length * 100 : 0,
+          salesPercent: totalNetSales ? netSales / totalNetSales * 100 : 0
+        };
+      });
+      const hierarchyMap = new Map();
+      for (const fact of selectedProducts) {
+        const mode = modeFor(fact.orderKey);
+        const hierarchy = hierarchyMap.get(fact.hierarchy) || {
+          name: fact.hierarchy,
+          takeaway: { orders: new Set(), netSales: 0 },
+          dineIn: { orders: new Set(), netSales: 0 },
+          unknown: { orders: new Set(), netSales: 0 }
+        };
+        hierarchy[mode].orders.add(fact.orderKey);
+        hierarchy[mode].netSales += allocatedProductNet(fact);
+        hierarchyMap.set(fact.hierarchy, hierarchy);
+      }
+      const hierarchies = [...hierarchyMap.values()].map(item => ({
+        name: item.name,
+        groups: Object.fromEntries(definitions.map(([key]) => [key, {
+          orders: item[key].orders.size,
+          netSales: item[key].netSales
+        }])),
+        totalNetSales: definitions.reduce((sum, [key]) => sum + item[key].netSales, 0)
+      })).sort((left, right) => right.totalNetSales - left.totalNetSales || left.name.localeCompare(right.name, 'es'));
+      const hierarchyTotals = Object.fromEntries(definitions.map(([key]) => [key,
+        hierarchies.reduce((sum, hierarchy) => sum + hierarchy.groups[key].netSales, 0)
+      ]));
+      hierarchyTotals.total = hierarchies.reduce((sum, hierarchy) => sum + hierarchy.totalNetSales, 0);
+
+      const packaging = avoidedPackagingForProducts(selectedProducts, modeFor, recipes, catalog);
+      const matchedOrders = selectedOrders.filter(fact => modeData.modes.has(fact.orderKey)).length;
+      const ambiguousOrders = selectedOrders.filter(fact => modeData.modes.get(fact.orderKey)?.ambiguous).length;
+      return {
+        period: { from: period.from, to: period.to },
+        totalOrders: selectedOrders.length,
+        totalNetSales,
+        matchedOrders,
+        ambiguousOrders,
+        groups,
+        hierarchies,
+        hierarchyTotals,
+        ...packaging
+      };
+    };
+    return {
+      classificationField: 'Comentario General / General Comment',
+      paymentDetailsFilesRead: modeData.filesRead,
+      amountFields: modeData.amountFields,
+      recipeSource: recipeMaster ? { name: recipeMaster.originalName || recipeMaster.name, validFrom: recipeMaster.validFrom } : null,
+      catalogSource: catalogMaster ? { name: catalogMaster.originalName || catalogMaster.name, validFrom: catalogMaster.validFrom } : null,
+      periods: Object.fromEntries(Object.entries(periods).map(([key, period]) => [key, summarize(period.current)]))
+    };
+  }
+
+  function buildSalesDashboard(requestedLocation = 'all', query = {}) {
     const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
     const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
     const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
@@ -4706,6 +5293,15 @@ function createApp(options = {}) {
     const stores = selectedStore ? [selectedStore] : activeStores;
     const weekStart = mondayContaining(todayKey);
     const monthStart = `${todayKey.slice(0, 7)}-01`;
+    const customFrom = String(query.serviceDateFrom || '');
+    const customTo = String(query.serviceDateTo || '');
+    if ((customFrom || customTo) && (!isValidDate(customFrom) || !isValidDate(customTo)
+      || customFrom > customTo
+      || (new Date(`${customTo}T00:00:00Z`) - new Date(`${customFrom}T00:00:00Z`)) / 86400000 > 365)) {
+      const error = new Error('Selecciona un rango personalizado válido de hasta 366 días.');
+      error.status = 400;
+      throw error;
+    }
     const periods = {
       day: {
         label: 'Hoy', current: { from: todayKey, to: todayKey },
@@ -4716,14 +5312,34 @@ function createApp(options = {}) {
         previous: { from: addDays(todayKey, -8), to: addDays(todayKey, -8), label: 'Mismo día semana anterior' }
       },
       week: {
-        label: 'Semana', current: { from: weekStart, to: todayKey },
+        label: 'Semana actual', current: { from: weekStart, to: todayKey },
         previous: { from: addDays(weekStart, -7), to: addDays(todayKey, -7), label: 'Mismo tramo semana anterior' }
       },
+      previousWeek: {
+        label: 'Semana anterior', current: { from: addDays(weekStart, -7), to: addDays(weekStart, -1) },
+        previous: { from: addDays(weekStart, -14), to: addDays(weekStart, -8), label: 'Semana previa' }
+      },
+      last30: {
+        label: 'Últimos 30 días', current: { from: addDays(todayKey, -29), to: todayKey },
+        previous: { from: addDays(todayKey, -59), to: addDays(todayKey, -30), label: '30 días anteriores' }
+      },
       month: {
-        label: 'Mes', current: { from: monthStart, to: todayKey },
+        label: 'Mes actual', current: { from: monthStart, to: todayKey },
         previous: { ...previousMonthPeriod(todayKey), label: 'Mismo tramo mes anterior' }
       }
     };
+    if (customFrom && customTo) {
+      const customDays = Math.round((new Date(`${customTo}T00:00:00Z`) - new Date(`${customFrom}T00:00:00Z`)) / 86400000) + 1;
+      periods.custom = {
+        label: 'Rango personalizado',
+        current: { from: customFrom, to: customTo },
+        previous: {
+          from: addDays(customFrom, -customDays),
+          to: addDays(customFrom, -1),
+          label: 'Período anterior equivalente'
+        }
+      };
+    }
     const hierarchyMaster = latestMasterFile('product-hierarchy', todayKey);
     let hierarchyLookup = null;
     if (hierarchyMaster) {
@@ -4745,7 +5361,7 @@ function createApp(options = {}) {
               const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
               if (gross !== null) {
                 const discounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
-                orderMap.set(orderKey, { locationId: location.id, date, net: (gross + discounts) / 1.19 });
+                orderMap.set(orderKey, { orderKey, locationId: location.id, date, net: (gross + discounts) / 1.19 });
               }
             }
             const canonicalRow = Object.entries(row)
@@ -4757,8 +5373,12 @@ function createApp(options = {}) {
             const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim();
             const name = repairMojibake(rowValue(row, ['Nombre', 'Producto']));
             const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
-            const grossLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar', 'Precio Lista'])) || 0;
+            const paidLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
+            const listLine = numericValue(rowValue(row, ['Precio Lista'])) || 0;
             const lineDiscount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            // Toteat's "Precio a Pagar" is already the final line amount after discounts.
+            // Only apply the discount separately when the report has no final-price column.
+            const grossLine = paidLine !== null ? paidLine : listLine + lineDiscount;
             const lineCost = numericValue(rowValue(row, ['Costo'])) || 0;
             const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim();
             const hierarchyNode = hierarchyLookup?.hierarchyMap.get(hierarchyId);
@@ -4768,8 +5388,8 @@ function createApp(options = {}) {
             const resolvedHierarchyPath = hierarchyPath.length ? hierarchyPath : [fallbackHierarchy];
             const hierarchy = resolvedHierarchyPath.join(' / ');
             if (code || name) productFacts.push({
-              locationId: location.id, date, code, name: name || code, quantity,
-              net: (grossLine + lineDiscount) / 1.19, cost: lineCost, hierarchy, hierarchyPath: resolvedHierarchyPath
+              orderKey, locationId: location.id, date, code, name: name || code, quantity,
+              net: grossLine / 1.19, cost: lineCost, hierarchy, hierarchyPath: resolvedHierarchyPath
             });
           }
           salesFilesRead += 1;
@@ -4779,8 +5399,10 @@ function createApp(options = {}) {
       }
     }
     const orderFacts = [...orderMap.values()];
-    const salesMetrics = Object.fromEntries(Object.entries(periods).map(([key, period]) => [
-      key, periodSalesMetric(orderFacts, { ...period.current, label: period.label }, period.previous)
+    const serviceModeData = paymentDetailModes(stores, warnings, orderFacts);
+    const serviceModes = buildServiceModeInsights(periods, orderFacts, productFacts, serviceModeData, todayKey);
+    const salesMetrics = Object.fromEntries(['day', 'yesterday', 'week', 'month'].map(key => [
+      key, periodSalesMetric(orderFacts, { ...periods[key].current, label: periods[key].label }, periods[key].previous)
     ]));
     const locations = stores.map(location => {
       const facts = orderFacts.filter(fact => fact.locationId === location.id);
@@ -4967,7 +5589,7 @@ function createApp(options = {}) {
       scope: selectedStore
         ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
         : { type: 'all', location: null, label: 'Todas las cafeterías' },
-      sales: { metrics: salesMetrics, locations, productInsights, filesRead: salesFilesRead },
+      sales: { metrics: salesMetrics, locations, productInsights, serviceModes, filesRead: salesFilesRead },
       mercadoPago: {
         metrics: Object.fromEntries(['day', 'week', 'month'].map(key => [key,
           recurringPeriodMetric(mercadoPagoFacts, periods[key].current, periods[key].previous)
@@ -4988,7 +5610,7 @@ function createApp(options = {}) {
 
   app.get('/api/sales/dashboard', (req, res) => {
     try {
-      return res.json(buildSalesDashboard(String(req.query.location || 'all')));
+      return res.json(buildSalesDashboard(String(req.query.location || 'all'), req.query));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el panel de ventas.' });
     }
@@ -5785,6 +6407,26 @@ function createApp(options = {}) {
     }
   });
 
+  app.post('/api/integrations/toteat/download-payment-details', async (req, res) => {
+    try {
+      const location = toteatStore(String(req.body?.location || ''));
+      const download = await toteatAutomation.downloadPaymentDetails(location.id, {
+        restaurantName: location.toteatRestaurantName || location.name
+      });
+      const filename = path.basename(download.filename || `detalle-pagos-toteat-${location.id}.csv`).replace(/[\r\n"]/g, '_');
+      res.setHeader('Content-Type', download.contentType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(download.buffer);
+    } catch (error) {
+      return res.status(error.status || 500).json({
+        error: error.message || 'No se pudo descargar Detalle Pagos desde Toteat.',
+        code: error.code || 'TOTEAT_DOWNLOAD_FAILED',
+        state: error.state || null,
+        diagnosticId: error.diagnosticId || null
+      });
+    }
+  });
+
   app.get('/api/reports/weekly-sales', (req, res) => {
     const dailySales = {};
     const transactionsByDate = {};
@@ -6055,6 +6697,16 @@ function createApp(options = {}) {
             overlapAction === 'replace' ? [incomingRange] : []
           );
           imports.mercadopago = prepared.stats;
+          stagedFile = prepared.staged;
+          if (!stagedFile) continue;
+        } else if (staged.field === 'payment-details') {
+          const prepared = prepareIncrementalPaymentDetails(
+            staged,
+            manifest.location,
+            stagingDirectory,
+            overlapAction === 'replace' ? [incomingRange] : []
+          );
+          imports['payment-details'] = prepared.stats;
           stagedFile = prepared.staged;
           if (!stagedFile) continue;
         }

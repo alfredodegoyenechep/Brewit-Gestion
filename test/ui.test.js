@@ -22,6 +22,13 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
           contentType: 'text/csv; charset=utf-8',
           buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\norder-1\t2026-08-09\t119\t0')
         };
+      },
+      async downloadPaymentDetails() {
+        return {
+          filename: 'detalle-pagos.csv',
+          contentType: 'text/csv; charset=utf-8',
+          buffer: Buffer.from('FechaCierre\tComanda\tComentario General\tA Pagar\n09-08-26 08:30 a. m.\torder-1\tServir en el local\t0.119')
+        };
       }
     }
   }).listen(0, '127.0.0.1');
@@ -56,6 +63,16 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
       confirmed: true
     })
   });
+  const recipeMaster = new FormData();
+  recipeMaster.append('master-recipes', new Blob([
+    'Id Producto\tNombre Producto\tId Ingrediente\tNombre Ingrediente\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento\n' +
+    'P1\tProducto Uno\tPAC003\tVaso Caliente 12 oz\t1\tUN\t97\n' +
+    'P1\tProducto Uno\tPAC008\tTapa Vaso Caliente\t1\tUN\t97'
+  ]), 'recetas-ui.txt');
+  recipeMaster.append('master-recipes-from', '2026-08-01');
+  assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/upload/master`, {
+    method: 'POST', body: recipeMaster
+  })).status, 200);
 
   const kardex = [
     ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '', '', '2026-08-05', '', '', '', '2026-08-06', '', '', ''],
@@ -289,6 +306,23 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#date-confirmation').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('#file-sales').evaluate(input => input.files.length), 0);
 
+  const paymentDetailsRow = page.locator('[data-weekly-field="payment-details"]');
+  assert.equal(await paymentDetailsRow.getByText('Detalle Pagos', { exact: true }).count(), 1);
+  assert.equal(await paymentDetailsRow.locator('.file-upload-state').textContent(), 'Sin archivos subidos');
+  await page.locator('#file-payment-details').setInputFiles({
+    name: 'detalle-pagos.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('FechaCierre\tComanda\tComentario General\tA Pagar\n09-08-26 10:00 a. m.\torder-1\tservir en el local\t0.119')
+  });
+  await page.locator('#date-confirmation').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#detected-files-list').textContent(), /Detalle Pagos.*detalle-pagos\.csv.*Estructura verificada/is);
+  assert.equal(await page.locator('#date-confirmation-row').isVisible(), true);
+  await page.locator('#dates-confirmed').check();
+  await page.getByRole('button', { name: 'Confirmar y guardar registros' }).click();
+  await page.locator('#date-confirmation').waitFor({ state: 'hidden' });
+  await paymentDetailsRow.locator('.file-upload-state.uploaded').waitFor();
+  assert.match(await paymentDetailsRow.locator('.file-upload-filename').textContent(), /detalle-pagos\.csv.*1 carga/i);
+
   await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
   assert.equal(await page.locator('#report-location-filter').inputValue(), 'all');
@@ -338,11 +372,17 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
   await page.locator('#report-location-filter').selectOption('store-1');
   await page.locator('#report-scope-description').filter({ hasText: 'Tienda 1' }).waitFor();
-  const toteatDownloadPromise = page.waitForEvent('download');
+  const toteatDownloads = [];
+  page.on('download', download => toteatDownloads.push(download.suggestedFilename()));
   await page.locator('#report-download-toteat-sales').click();
-  const toteatDownload = await toteatDownloadPromise;
-  assert.equal(toteatDownload.suggestedFilename(), 'ventas-totales.csv');
-  await page.locator('#report-status').filter({ hasText: /Ventas procesadas sin duplicar datos.*1 ya existía/i }).waitFor();
+  await page.locator('#report-status').filter({
+    hasText: 'Ventas y Detalle Pagos fueron descargados, validados y actualizados correctamente.'
+  }).waitFor();
+  assert.deepEqual(toteatDownloads, ['ventas-totales.csv', 'detalle-pagos.csv']);
+  const downloadedTransactions = await fetch(`http://127.0.0.1:${server.address().port}/api/transactions?location=store-1`)
+    .then(response => response.json());
+  assert.equal(downloadedTransactions.files['payment-details'].fileCount, 2);
+  assert.equal(downloadedTransactions.files['payment-details'].latest.originalName, 'detalle-pagos.csv');
   assert.equal(await page.locator('#date-confirmation').evaluate(dialog => dialog.open), false);
   const reportSalesChooserPromise = page.waitForEvent('filechooser');
   await page.locator('#report-upload-sales').click();
@@ -368,6 +408,29 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#mercadopago-period-body tr').count(), 3);
   assert.equal(await page.locator('#mercadopago-month-history tr').count(), 6);
   assert.equal(await page.locator('#mercadopago-week-history tr').count(), 8);
+  assert.deepEqual(await page.locator('#sales-service-mode-period option').allTextContents(), [
+    'Mes actual', 'Semana actual', 'Semana anterior', 'Últimos 30 días', 'Definir rango de fechas'
+  ]);
+  await page.locator('#sales-service-mode-period').selectOption('month');
+  assert.match(await page.locator('.sales-service-mode-card.dineIn').textContent(), /Servir en el local.*1 pedido.*\$100/is);
+  assert.match(await page.locator('.sales-service-mode-card.dineIn').textContent(), /Ticket promedio.*\$100/is);
+  assert.match(await page.locator('#sales-service-mode-status').textContent(), /1 de 1 pedidos.*100,0%/i);
+  assert.match(await page.locator('#sales-service-mode-hierarchies').textContent(), /Bebidas.*\$100.*1 pedido/is);
+  assert.match(await page.locator('#sales-service-mode-hierarchy-totals').textContent(), /Total jerarquías.*\$0.*\$100.*\$0.*\$100/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Vaso.*Vaso Caliente 12 oz.*PAC003.*1 UN.*Costo maestro no disponible/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Tapa.*Tapa Vaso Caliente.*PAC008.*1 UN.*Costo maestro no disponible/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Ahorro total valorizado.*\$0.*2 tipo\(s\) sin costo maestro/is);
+  await page.locator('#sales-service-mode-period').selectOption('custom');
+  assert.equal(await page.locator('#sales-service-mode-custom-range').isVisible(), true);
+  await page.locator('#sales-service-mode-from').fill('2026-08-09');
+  await page.locator('#sales-service-mode-to').fill('2026-08-09');
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/api/sales/dashboard?')
+      && response.url().includes('serviceDateFrom=2026-08-09') && response.status() === 200),
+    page.locator('#apply-sales-service-mode-range').click()
+  ]);
+  await page.locator('#sales-service-mode-status').filter({ hasText: /09.*ago.*2026.*1 de 1 pedidos/is }).waitFor();
+  assert.match(await page.locator('.sales-service-mode-card.dineIn').textContent(), /1 pedido.*\$100/is);
   await page.locator('#sales-insight-period').selectOption('month');
   assert.match(await page.locator('#sales-top-products').textContent(), /Producto Uno/);
   await page.getByRole('button', { name: 'Ver detalle de Bebidas' }).click();
@@ -956,20 +1019,21 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('button', { name: 'Cancelar' }).click();
   assert.equal(await page.locator('#master-conflict').isHidden(), true);
 
-  await page.getByRole('button', { name: 'Vista previa' }).click();
+  const catalogMasterRecord = page.locator('.master-record', { hasText: 'catalogo.xlsx' });
+  await catalogMasterRecord.getByRole('button', { name: 'Vista previa' }).click();
   await page.locator('#master-preview-dialog').waitFor({ state: 'visible' });
   await page.locator('#master-preview-title').filter({ hasText: 'catalogo.xlsx' }).waitFor();
   assert.equal(await page.locator('#master-preview-title').textContent(), 'catalogo.xlsx');
   await page.getByRole('button', { name: 'Cerrar' }).click();
 
-  await page.getByRole('button', { name: 'Eliminar' }).click();
+  await catalogMasterRecord.getByRole('button', { name: 'Eliminar' }).click();
   await page.getByText(/¿Eliminar permanentemente/).waitFor();
   await page.locator('.delete-confirmation').getByRole('button', { name: 'Cancelar' }).click();
   assert.equal(await page.locator('.delete-confirmation').count(), 0);
-  await page.getByRole('button', { name: 'Eliminar' }).click();
+  await catalogMasterRecord.getByRole('button', { name: 'Eliminar' }).click();
   await page.getByRole('button', { name: 'Sí, eliminar' }).click();
   await page.getByText('Archivo maestro eliminado.').waitFor();
-  assert.equal(await page.locator('.master-record').count(), 0);
+  assert.equal(await page.locator('.master-record', { hasText: 'catalogo.xlsx' }).count(), 0);
   assert.equal(await page.locator('[data-master-field="master-catalog"]').textContent(), 'Última vigencia: —');
 
   await page.getByRole('link', { name: 'Configuracion' }).click();
