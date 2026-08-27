@@ -573,6 +573,19 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(warehouse.items[0].usageCost, 12);
   assert.equal(warehouse.items[0].products[0].periodProductQuantity, null);
   assert.equal(warehouse.items[0].products[0].periodIngredientQuantity, null);
+
+  const findingsResponse = await fetch(`${baseUrl}/api/findings?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`);
+  assert.equal(findingsResponse.status, 200);
+  const findings = await findingsResponse.json();
+  assert.deepEqual(findings.period, { from: '2026-08-01', to: '2026-08-15' });
+  assert.deepEqual(findings.sections.map(section => section.key), [
+    'products', 'recipes', 'costs', 'inventory', 'purchase-orders', 'purchases', 'sales'
+  ]);
+  assert.ok(findings.summary.total > 0);
+  assert.ok(findings.sections.find(section => section.key === 'costs').findings
+    .some(finding => /Costo maestro desalineado/.test(finding.title)));
+  assert.ok(findings.sections.find(section => section.key === 'inventory').findings
+    .some(finding => /Sin Kardex utilizable/.test(finding.title)));
 });
 
 test('reports product sales by selected recipe ingredients and extras hierarchies without duplicating totals', async t => {

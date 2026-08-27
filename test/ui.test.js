@@ -128,9 +128,11 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
   const expandedLayout = await page.evaluate(() => ({
     sidebarWidth: document.querySelector('.sidebar').getBoundingClientRect().width,
-    mainWidth: document.querySelector('.main-content').getBoundingClientRect().width
+    mainWidth: document.querySelector('.main-content').getBoundingClientRect().width,
+    sidebarPosition: getComputedStyle(document.querySelector('.sidebar')).position
   }));
   assert.equal(expandedLayout.sidebarWidth, 280);
+  assert.equal(expandedLayout.sidebarPosition, 'fixed');
   await page.getByRole('button', { name: 'Contraer menú lateral' }).click();
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 76);
   const collapsedLayout = await page.evaluate(() => ({
@@ -189,6 +191,41 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#ingredients-ranking-limit').selectOption('50');
   assert.equal(await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').count(), 50);
   await page.unroute('**/api/ingredients?**', ingredientRankingRoute);
+
+  const findingSections = [
+    ['products', 'Productos'], ['recipes', 'Recetas'], ['costs', 'Costos'], ['inventory', 'Inventarios'],
+    ['purchase-orders', 'Órdenes de compra'], ['purchases', 'Compras'], ['sales', 'Ventas']
+  ].map(([key, label]) => ({
+    key,
+    label,
+    description: `Revisión de ${label}`,
+    findings: key === 'sales' ? [{
+      id: 'sales-1', severity: 'high', title: 'Código vendido fuera del catálogo: X1',
+      detail: 'Una venta requiere confirmación.', action: 'Revisar el código en Toteat.',
+      code: 'X1', location: 'Tienda 1', date: '2026-08-09', observed: '1 fila'
+    }] : []
+  }));
+  const findingsRoute = route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      generatedAt: '2026-08-10T12:00:00.000Z',
+      period: { from: '2026-07-12', to: '2026-08-10' },
+      scope: { location: 'all', label: 'Todas las ubicaciones', type: 'all' },
+      locations: [],
+      summary: { total: 1, high: 1, medium: 0, low: 0, sectionsWithFindings: 1, salesRowsRead: 1, purchaseRowsRead: 0, ordersRead: 0 },
+      sections: findingSections,
+      sources: [{ type: 'Catálogo', name: 'catalogo.xlsx', validFrom: '2026-08-01' }],
+      warnings: []
+    })
+  });
+  await page.route('**/api/findings?**', findingsRoute);
+  await page.getByRole('link', { name: 'Hallazgos', exact: true }).click();
+  await page.getByRole('heading', { name: 'Hallazgos que requieren revisión' }).waitFor();
+  await page.locator('#findings-status').filter({ hasText: /1 hallazgo.*1 de prioridad alta/i }).waitFor();
+  assert.equal(await page.locator('.findings-section').count(), 7);
+  assert.match(await page.locator('[data-section="sales"]').textContent(), /Código vendido fuera del catálogo.*Revisión sugerida/s);
+  assert.equal(await page.locator('#findings-date-from').inputValue(), '2026-07-12');
+  await page.unroute('**/api/findings?**', findingsRoute);
 
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
   await page.getByRole('heading', { name: 'Cargar archivos' }).waitFor({ state: 'visible' });

@@ -93,6 +93,14 @@
       </a>
     </nav>
 
+    <a href="#" class="nav-link findings-nav-link" data-view="findings">
+      <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m15 4 5 5L9 20l-5-5L15 4Z" />
+        <path d="m14 5 5 5M5 4v3M3.5 5.5h3M19 16v4M17 18h4" />
+      </svg>
+      <span class="nav-text">Hallazgos</span>
+    </a>
+
     <div class="workspace-user">
       <div class="user-row">
         <div class="avatar">BS</div>
@@ -105,6 +113,35 @@
   </aside>
 
   <main class="main-content">
+    <section id="findings-workspace" class="findings-workspace" style="display:none;">
+      <div class="findings-heading">
+        <div>
+          <div class="panel-eyebrow">Auditoría integral</div>
+          <h2>Hallazgos que requieren revisión</h2>
+          <p class="panel-description">Busca señales inusuales en productos, recetas, costos, inventarios, órdenes de compra, compras y ventas. Cada resultado es una alerta para confirmar, no una corrección automática.</p>
+        </div>
+        <div class="findings-controls">
+          <label for="findings-location">Ubicación
+            <select id="findings-location"><option value="all">Todas las ubicaciones</option></select>
+          </label>
+          <label for="findings-date-from">Desde
+            <input id="findings-date-from" type="date" />
+          </label>
+          <label for="findings-date-to">Hasta
+            <input id="findings-date-to" type="date" />
+          </label>
+          <button id="run-findings" class="primary findings-run-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5L9 20l-5-5L15 4Z"/><path d="m14 5 5 5M5 4v3M3.5 5.5h3M19 16v4M17 18h4"/></svg>
+            Buscar hallazgos
+          </button>
+        </div>
+      </div>
+      <div id="findings-status" class="form-status" aria-live="polite"></div>
+      <div id="findings-summary" class="findings-summary"></div>
+      <div id="findings-context" class="findings-context"></div>
+      <div id="findings-report" class="findings-report"></div>
+    </section>
+
     <section id="sales-workspace" class="sales-workspace" style="display:none;">
       <div class="sales-dashboard-heading">
         <div>

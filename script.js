@@ -34,6 +34,7 @@ let purchaseOrderEditorState = null;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
 let hourlySalesDemandState = null;
+let findingsViewState = null;
 let salesIngredientsState = null;
 let salesHierarchyPath = [];
 let hourlySalesHierarchyPath = [];
@@ -113,6 +114,13 @@ function setView(view) {
     sales.hidden = false;
     sales.style.display = '';
     loadSalesDashboard();
+    return;
+  }
+  if (view === 'findings') {
+    const findings = document.getElementById('findings-workspace');
+    findings.hidden = false;
+    findings.style.display = '';
+    loadFindingsView();
     return;
   }
   if (view === 'sales-ingredients') {
@@ -827,6 +835,141 @@ function refreshSalesDashboardLocationFilter() {
   }
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function refreshFindingsLocationFilter() {
+  const select = document.getElementById('findings-location');
+  if (!select) return;
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las ubicaciones', 'all')];
+  for (const location of Object.values(locationRegistry)) options.push(new Option(location.name, location.id));
+  select.replaceChildren(...options);
+  select.value = previous === 'all' || locationRegistry[previous] ? previous : 'all';
+}
+
+function findingsSummaryCard(label, value, className = '') {
+  const card = document.createElement('article');
+  card.className = `findings-summary-card ${className}`.trim();
+  const title = document.createElement('span');
+  title.textContent = label;
+  const number = document.createElement('strong');
+  number.textContent = value;
+  card.append(title, number);
+  return card;
+}
+
+function renderFindingsView() {
+  const summary = document.getElementById('findings-summary');
+  const context = document.getElementById('findings-context');
+  const report = document.getElementById('findings-report');
+  if (!findingsViewState) {
+    summary.replaceChildren();
+    context.textContent = '';
+    report.replaceChildren();
+    return;
+  }
+  const data = findingsViewState;
+  summary.replaceChildren(
+    findingsSummaryCard('Total por revisar', data.summary.total),
+    findingsSummaryCard('Prioridad alta', data.summary.high, 'high'),
+    findingsSummaryCard('Prioridad media', data.summary.medium, 'medium'),
+    findingsSummaryCard('Atención', data.summary.low, 'low')
+  );
+  const sourceText = data.sources.length
+    ? `Fuentes maestras: ${data.sources.map(source => `${source.type} “${source.name}” (vigente desde ${formatReportDate(source.validFrom)})`).join(' · ')}.`
+    : 'No se encontraron fuentes maestras vigentes.';
+  const warningText = data.warnings.length ? ` Advertencias de lectura: ${data.warnings.join(' ')}` : '';
+  context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${data.summary.salesRowsRead} filas de ventas, ${data.summary.purchaseRowsRead} líneas de compra y ${data.summary.ordersRead} órdenes revisadas. ${sourceText}${warningText}`;
+  const severityLabels = { high: 'Alta', medium: 'Media', low: 'Atención' };
+  report.replaceChildren(...data.sections.map(section => {
+    const container = document.createElement('section');
+    container.className = 'findings-section';
+    container.dataset.section = section.key;
+    const head = document.createElement('div');
+    head.className = 'findings-section-head';
+    const headingCopy = document.createElement('div');
+    const title = document.createElement('h3');
+    title.textContent = section.label;
+    const description = document.createElement('p');
+    description.textContent = section.description;
+    headingCopy.append(title, description);
+    const count = document.createElement('span');
+    count.className = 'findings-section-count';
+    count.textContent = section.findings.length;
+    count.setAttribute('aria-label', `${section.findings.length} hallazgo(s)`);
+    head.append(headingCopy, count);
+    container.appendChild(head);
+    if (!section.findings.length) {
+      const empty = document.createElement('div');
+      empty.className = 'findings-empty-section';
+      empty.textContent = 'Sin señales que requieran revisión para este período.';
+      container.appendChild(empty);
+      return container;
+    }
+    const list = document.createElement('div');
+    list.className = 'findings-list';
+    section.findings.forEach(finding => {
+      const item = document.createElement('article');
+      item.className = 'finding-item';
+      const severity = document.createElement('span');
+      severity.className = `finding-severity ${finding.severity}`;
+      severity.textContent = severityLabels[finding.severity] || finding.severity;
+      const copy = document.createElement('div');
+      copy.className = 'finding-copy';
+      const findingTitle = document.createElement('strong');
+      findingTitle.textContent = finding.title;
+      const detail = document.createElement('p');
+      detail.textContent = finding.detail;
+      copy.append(findingTitle, detail);
+      const metadata = [
+        finding.code ? `Código: ${finding.code}` : null,
+        finding.location ? `Ubicación: ${finding.location}` : null,
+        finding.date ? `Fecha: ${formatReportDate(finding.date)}` : null,
+        finding.observed !== null && finding.observed !== undefined ? `Observado: ${finding.observed}` : null
+      ].filter(Boolean);
+      if (metadata.length) {
+        const meta = document.createElement('div');
+        meta.className = 'finding-meta';
+        meta.textContent = metadata.join(' · ');
+        copy.appendChild(meta);
+      }
+      const action = document.createElement('div');
+      action.className = 'finding-action';
+      action.textContent = `Revisión sugerida: ${finding.action}`;
+      item.append(severity, copy, action);
+      list.appendChild(item);
+    });
+    container.appendChild(list);
+    return container;
+  }));
+}
+
+async function loadFindingsView() {
+  const status = document.getElementById('findings-status');
+  const button = document.getElementById('run-findings');
+  const params = new URLSearchParams({ location: document.getElementById('findings-location').value || 'all' });
+  const dateFrom = document.getElementById('findings-date-from').value;
+  const dateTo = document.getElementById('findings-date-to').value;
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  button.disabled = true;
+  setStatus(status, 'Revisando productos, recetas, costos, inventarios, órdenes, compras y ventas…');
+  try {
+    const data = await apiRequest(`/api/findings?${params}`);
+    findingsViewState = data;
+    document.getElementById('findings-date-from').value = data.period.from;
+    document.getElementById('findings-date-to').value = data.period.to;
+    renderFindingsView();
+    setStatus(status, data.summary.total
+      ? `Revisión completa: ${data.summary.total} hallazgo(s), ${data.summary.high} de prioridad alta.`
+      : 'Revisión completa: no se detectaron señales que requieran atención.', data.summary.high ? 'warning' : 'success');
+  } catch (error) {
+    findingsViewState = null;
+    renderFindingsView();
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function dashboardChange(value, suffix = '') {
@@ -4830,6 +4973,7 @@ async function refreshLocationConfiguration() {
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
+    refreshFindingsLocationFilter();
     refreshSalesIngredientsLocationFilter();
     refreshProductsLocationFilter();
     refreshIngredientsLocationFilter();
@@ -5425,6 +5569,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
+  document.getElementById('run-findings').addEventListener('click', loadFindingsView);
   document.getElementById('refresh-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
   document.getElementById('sales-ingredients-location').addEventListener('change', loadSalesIngredientsView);
   document.getElementById('run-sales-ingredients').addEventListener('click', loadSalesIngredientsView);

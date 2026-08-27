@@ -4511,6 +4511,486 @@ function createApp(options = {}) {
     }
   });
 
+  function buildFindingsPayload(query = {}) {
+    const dateTo = String(query.dateTo || projectionToday());
+    const dateFrom = String(query.dateFrom || addDays(dateTo, -29));
+    if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo
+      || (new Date(`${dateTo}T00:00:00Z`) - new Date(`${dateFrom}T00:00:00Z`)) / 86400000 > 365) {
+      const error = new Error('Selecciona un período válido de hasta 366 días para buscar hallazgos.');
+      error.status = 400;
+      throw error;
+    }
+    const locations = readLocations().locations.filter(location => location.status === 'active');
+    const requestedLocation = String(query.location || 'all');
+    const selectedLocation = requestedLocation === 'all'
+      ? null
+      : locations.find(location => location.id === requestedLocation);
+    if (requestedLocation !== 'all' && !selectedLocation) {
+      const error = new Error('Selecciona una ubicación válida para buscar hallazgos.');
+      error.status = 400;
+      throw error;
+    }
+    const auditedLocations = selectedLocation ? [selectedLocation] : locations;
+    const auditedStores = auditedLocations.filter(location => location.type === 'store');
+    const definitions = [
+      ['products', 'Productos', 'Precios, costos, márgenes, jerarquías y códigos vendidos.'],
+      ['recipes', 'Recetas', 'Cobertura de productos vendidos, cantidades, rendimientos e ingredientes referenciados.'],
+      ['costs', 'Costos', 'Costos maestros, costos de compra y variaciones relevantes.'],
+      ['inventory', 'Inventarios', 'Vigencia del Kardex, saldos negativos y productos consumidos sin stock.'],
+      ['purchase-orders', 'Órdenes de compra', 'Estado, proveedor, cantidades, costos y consistencia de totales.'],
+      ['purchases', 'Compras', 'Proveedores, códigos, unidades, conversiones y montos registrados.'],
+      ['sales', 'Ventas', 'Cobertura, productos desconocidos, cantidades y montos atípicos.']
+    ];
+    const sections = new Map(definitions.map(([key, label, description]) => [key, { key, label, description, findings: [] }]));
+    const severityOrder = { high: 0, medium: 1, low: 2 };
+    const warnings = [];
+    const sources = [];
+    const add = (sectionKey, finding) => {
+      const section = sections.get(sectionKey);
+      section.findings.push({
+        id: `${sectionKey}-${section.findings.length + 1}`,
+        severity: 'medium',
+        date: null,
+        location: null,
+        code: null,
+        observed: null,
+        ...finding
+      });
+    };
+    const masterSource = (type, master) => {
+      if (!master) return;
+      sources.push({ type, name: master.originalName || master.name, validFrom: master.validFrom });
+    };
+
+    const catalogMaster = latestMasterFile('master-catalog', dateTo);
+    const recipeMaster = latestMasterFile('master-recipes', dateTo);
+    const hierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
+    masterSource('Catálogo', catalogMaster);
+    masterSource('Recetas', recipeMaster);
+    masterSource('Jerarquía de productos', hierarchyMaster);
+    let products = [];
+    let productByCode = new Map();
+    let ingredientCatalog = new Map();
+    let fullCatalog = new Map();
+    if (!catalogMaster) {
+      add('products', {
+        severity: 'high', title: 'No hay un catálogo maestro vigente',
+        detail: `No fue posible validar productos ni costos al ${dateTo}.`,
+        action: 'Carga un maestro de productos, ingredientes y extras con vigencia aplicable.'
+      });
+    } else {
+      try {
+        products = parseProductCatalog(catalogMaster.filePath);
+        productByCode = new Map(products.map(product => [product.code.toUpperCase(), product]));
+        ingredientCatalog = parseIngredientsCatalog(catalogMaster.filePath);
+        fullCatalog = new Map([...parseIngredientCatalog(catalogMaster.filePath)].map(([code, item]) => [String(code).toUpperCase(), item]));
+      } catch (error) {
+        add('products', {
+          severity: 'high', title: 'El catálogo vigente no se pudo interpretar', detail: error.message,
+          action: 'Revisa las hojas y encabezados del maestro vigente.'
+        });
+      }
+    }
+
+    const salesQuantityByCode = new Map();
+    const unknownSales = new Map();
+    const nonPositiveSales = new Map();
+    const latestSalesDate = new Map();
+    const seenSalesRows = new Set();
+    const seenSalesOrders = new Set();
+    let missingSalesCode = 0;
+    let suspiciousDiscounts = 0;
+    let salesRowsRead = 0;
+    for (const location of auditedStores) {
+      for (const stored of storedSalesFiles(location.id)) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+            if (!date || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+            if (!latestSalesDate.get(location.id) || date > latestSalesDate.get(location.id)) latestSalesDate.set(location.id, date);
+            if (date < dateFrom) continue;
+            const canonical = Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right));
+            const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`;
+            if (seenSalesRows.has(rowKey)) continue;
+            seenSalesRows.add(rowKey);
+            salesRowsRead += 1;
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
+            const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code || 'Producto sin identificar';
+            const quantity = numericValue(rowValue(row, ['Cantidad']));
+            if (!code) missingSalesCode += 1;
+            else {
+              salesQuantityByCode.set(code, (salesQuantityByCode.get(code) || 0) + (quantity || 0));
+              if (fullCatalog.size && !fullCatalog.has(code)) {
+                const item = unknownSales.get(code) || { code, name, rows: 0, quantity: 0 };
+                item.rows += 1;
+                item.quantity += quantity || 0;
+                unknownSales.set(code, item);
+              }
+            }
+            if (quantity !== null && quantity <= 0) {
+              const key = code || normalizeHeader(name);
+              const item = nonPositiveSales.get(key) || { code, name, rows: 0, quantity: 0 };
+              item.rows += 1;
+              item.quantity += quantity;
+              nonPositiveSales.set(key, item);
+            }
+            const orderKey = `${location.id}:${salesTransactionKey(row)}`;
+            if (!seenSalesOrders.has(orderKey)) {
+              seenSalesOrders.add(orderKey);
+              const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+              const discount = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
+              if (gross !== null && gross >= 0 && Math.abs(discount) > gross) suspiciousDiscounts += 1;
+            }
+          }
+        } catch {
+          warnings.push(`No se pudo auditar ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+      const latest = latestSalesDate.get(location.id);
+      if (!latest || latest < addDays(dateTo, -3)) {
+        add('sales', {
+          severity: 'medium', title: `Ventas desactualizadas en ${location.name}`,
+          detail: latest ? `La última venta disponible es del ${latest}.` : 'No se encontraron ventas legibles.',
+          observed: latest || 'Sin datos', location: location.name,
+          action: 'Descarga y procesa el reporte de ventas más reciente.'
+        });
+      }
+    }
+    for (const item of unknownSales.values()) {
+      add('sales', {
+        severity: 'high', title: `Código vendido fuera del catálogo: ${item.code}`,
+        detail: `${item.rows} fila(s), ${item.quantity.toLocaleString('es-CL')} unidad(es), asociadas a “${item.name}”.`,
+        observed: `${item.rows} filas`, code: item.code,
+        action: 'Confirma el código en Toteat o actualiza el catálogo maestro.'
+      });
+    }
+    for (const item of nonPositiveSales.values()) {
+      add('sales', {
+        severity: 'medium', title: `Cantidad de venta no positiva: ${item.name}`,
+        detail: `${item.rows} fila(s) suman ${item.quantity.toLocaleString('es-CL')} unidades.`,
+        observed: item.quantity, code: item.code || null,
+        action: 'Confirma si corresponden a anulaciones, devoluciones o un dato incorrecto.'
+      });
+    }
+    if (missingSalesCode) add('sales', {
+      severity: 'medium', title: 'Ventas sin código de producto', detail: `${missingSalesCode} fila(s) no permiten vincular la venta con el catálogo.`,
+      observed: `${missingSalesCode} filas`, action: 'Revisa la exportación de Toteat y completa el identificador de producto.'
+    });
+    if (suspiciousDiscounts) add('sales', {
+      severity: 'high', title: 'Descuentos superiores al total de la venta',
+      detail: `${suspiciousDiscounts} transacción(es) tienen un descuento absoluto mayor que su monto bruto.`,
+      observed: `${suspiciousDiscounts} transacciones`, action: 'Revisa descuentos, anulaciones y signos monetarios en el archivo de ventas.'
+    });
+
+    const productCodeCounts = new Map();
+    products.forEach(product => productCodeCounts.set(product.code.toUpperCase(), (productCodeCounts.get(product.code.toUpperCase()) || 0) + 1));
+    for (const product of products.filter(item => item.active)) {
+      const code = product.code.toUpperCase();
+      if (product.price <= 0) add('products', {
+        severity: 'high', title: `Producto activo sin precio de venta: ${product.name}`,
+        detail: `El producto ${product.code} tiene precio base ${product.price}.`, observed: product.price, code: product.code,
+        action: 'Define un precio de venta válido o desactiva el producto.'
+      });
+      if (product.cost <= 0) add('products', {
+        severity: salesQuantityByCode.has(code) ? 'high' : 'medium', title: `Producto activo sin costo: ${product.name}`,
+        detail: salesQuantityByCode.has(code) ? 'El producto fue vendido en el período y su costo maestro es cero.' : 'El costo maestro es cero.',
+        observed: product.cost, code: product.code, action: 'Confirma el costo o revisa la composición de su receta.'
+      });
+      if (product.netPrice > 0 && product.cost > product.netPrice) add('products', {
+        severity: 'high', title: `Margen negativo: ${product.name}`,
+        detail: `Costo ${product.cost.toLocaleString('es-CL')} versus precio neto ${Math.round(product.netPrice).toLocaleString('es-CL')}.`,
+        observed: `${product.marginPercent.toFixed(1)}%`, code: product.code,
+        action: 'Revisa precio, costo y receta antes de continuar vendiéndolo.'
+      });
+      else if (product.marginPercent !== null && product.marginPercent < 10) add('products', {
+        severity: 'medium', title: `Margen bajo: ${product.name}`,
+        detail: `El margen maestro calculado es ${product.marginPercent.toFixed(1)}%.`, observed: `${product.marginPercent.toFixed(1)}%`, code: product.code,
+        action: 'Confirma que precio y costo estén actualizados.'
+      });
+      if (!product.hierarchyId) add('products', {
+        severity: 'low', title: `Producto sin jerarquía: ${product.name}`, detail: 'No tiene una jerarquía de producto asignada.',
+        code: product.code, action: 'Asigna una jerarquía para mantener completos los reportes comerciales.'
+      });
+    }
+    for (const [code, count] of productCodeCounts) if (count > 1) add('products', {
+      severity: 'high', title: `Código de producto duplicado: ${code}`, detail: `El catálogo contiene ${count} filas con el mismo código.`,
+      observed: `${count} filas`, code, action: 'Conserva una única definición vigente para el código.'
+    });
+
+    let recipes = new Map();
+    if (!recipeMaster) {
+      add('recipes', {
+        severity: 'high', title: 'No hay un maestro de recetas vigente', detail: `No fue posible validar recetas al ${dateTo}.`,
+        action: 'Carga un maestro de recetas con vigencia aplicable.'
+      });
+    } else {
+      try { recipes = parseRecipes(recipeMaster.filePath); } catch (error) {
+        add('recipes', { severity: 'high', title: 'El maestro de recetas no se pudo interpretar', detail: error.message, action: 'Revisa su estructura y encabezados.' });
+      }
+    }
+    const recipesByCode = new Map([...recipes].map(([code, lines]) => [String(code).toUpperCase(), lines]));
+    const usedIngredientCodes = new Set();
+    for (const [productCode, lines] of recipesByCode) {
+      if (fullCatalog.size && !fullCatalog.has(productCode)) add('recipes', {
+        severity: 'medium', title: `Receta asociada a un código inexistente: ${productCode}`,
+        detail: `Hay ${lines.length} componente(s) para un producto o subreceta que no está en el catálogo vigente.`, code: productCode,
+        action: 'Corrige el código de cabecera o incorpora el producto al catálogo.'
+      });
+      lines.forEach(line => {
+        const ingredientCode = line.ingredientId.toUpperCase();
+        usedIngredientCodes.add(ingredientCode);
+        if (line.quantity <= 0) add('recipes', {
+          severity: 'high', title: `Cantidad inválida en receta ${productCode}`,
+          detail: `${ingredientCode} tiene cantidad ${line.quantity}.`, observed: line.quantity, code: productCode,
+          action: 'Define una cantidad mayor que cero.'
+        });
+        if (line.yieldRate <= 0 || line.yieldRate > 100) add('recipes', {
+          severity: 'high', title: `Rendimiento fuera de rango en receta ${productCode}`,
+          detail: `${ingredientCode} tiene rendimiento ${line.yieldRate}%.`, observed: `${line.yieldRate}%`, code: productCode,
+          action: 'Usa un rendimiento mayor que 0% y menor o igual a 100%.'
+        });
+        if (!line.unit) add('recipes', {
+          severity: 'high', title: `Unidad faltante en receta ${productCode}`,
+          detail: `${ingredientCode} no tiene unidad de medida.`, code: productCode, action: 'Completa una unidad compatible con el ingrediente.'
+        });
+        if (fullCatalog.size && !fullCatalog.has(ingredientCode)) add('recipes', {
+          severity: 'high', title: `Ingrediente inexistente en receta ${productCode}`,
+          detail: `${ingredientCode} no aparece en el catálogo vigente.`, code: ingredientCode,
+          action: 'Corrige el código o incorpora el ingrediente al catálogo.'
+        });
+        if (ingredientCode === productCode) add('recipes', {
+          severity: 'high', title: `Referencia circular en receta ${productCode}`,
+          detail: 'La receta se utiliza a sí misma como ingrediente.', code: productCode,
+          action: 'Reemplaza la línea por el ingrediente o subreceta correcto.'
+        });
+      });
+    }
+    for (const [code, quantity] of salesQuantityByCode) {
+      if (quantity > 0 && productByCode.has(code) && !recipesByCode.has(code)) add('recipes', {
+        severity: 'medium', title: `Producto vendido sin receta: ${productByCode.get(code).name}`,
+        detail: `${quantity.toLocaleString('es-CL')} unidad(es) vendidas en el período no pueden descomponerse en ingredientes.`,
+        observed: `${quantity.toLocaleString('es-CL')} unidades`, code,
+        action: 'Confirma si requiere receta o si corresponde a un producto de reventa.'
+      });
+    }
+    for (const code of usedIngredientCodes) {
+      const ingredient = ingredientCatalog.get(code) || fullCatalog.get(code);
+      if (ingredient && (!Number.isFinite(Number(ingredient.unitCost)) || Number(ingredient.unitCost) <= 0)) add('costs', {
+        severity: 'high', title: `Ingrediente usado sin costo: ${ingredient.name || code}`,
+        detail: 'Aparece en una receta, pero su costo maestro es cero o inválido.', observed: ingredient.unitCost || 0, code,
+        action: 'Actualiza el costo antes de analizar márgenes y consumo valorizado.'
+      });
+    }
+
+    const purchaseRows = [];
+    const purchaseScopes = selectedLocation
+      ? [selectedLocation.id]
+      : ['all', ...locations.filter(location => location.type === 'warehouse').map(location => location.id)];
+    for (const location of purchaseScopes) {
+      try {
+        purchaseRows.push(...buildPurchasesPayload({ location, supplier: 'all', product: '', dateFrom, dateTo }).rows);
+      } catch (error) {
+        warnings.push(`Compras (${location}): ${error.message}`);
+      }
+    }
+    const latestPurchaseByCode = new Map();
+    for (const row of purchaseRows) {
+      const code = String(row.code || '').toUpperCase();
+      if (code && (!latestPurchaseByCode.has(code) || row.date >= latestPurchaseByCode.get(code).date)) latestPurchaseByCode.set(code, row);
+      if (!code) add('purchases', {
+        severity: 'high', title: `Compra sin código: ${row.product || 'Producto sin identificar'}`,
+        detail: `${row.locationName} · documento ${row.document || 'sin número'}.`, date: row.date, location: row.locationName,
+        action: 'Completa el código para vincular compra, costo e inventario.'
+      });
+      if (!row.supplierKey || row.supplierKey === 'unassigned') add('purchases', {
+        severity: 'medium', title: `Proveedor no identificado: ${row.product}`,
+        detail: `${row.locationName} · documento ${row.document || 'sin número'}.`, date: row.date, location: row.locationName, code: row.code,
+        action: 'Corrige el RUT o agrega el proveedor al maestro.'
+      });
+      if (row.quantity <= 0) add('purchases', {
+        severity: 'high', title: `Cantidad de compra no positiva: ${row.product}`,
+        detail: `Cantidad ${row.quantity} ${row.unit || ''} en ${row.locationName}.`, observed: row.quantity, date: row.date, location: row.locationName, code: row.code,
+        action: 'Confirma si es una nota de crédito o corrige la cantidad.'
+      });
+      if (row.listedUnitPrice <= 0 && row.quantity > 0) add('purchases', {
+        severity: 'high', title: `Compra sin costo unitario: ${row.product}`,
+        detail: `${row.quantity} ${row.unit || ''} registradas con costo ${row.listedUnitPrice}.`, observed: row.listedUnitPrice, date: row.date, location: row.locationName, code: row.code,
+        action: 'Corrige el costo del documento de compra.'
+      });
+      if (row.code && row.unitsPerPurchaseUnit === null) add('purchases', {
+        severity: 'medium', title: `Conversión de compra faltante: ${row.product}`,
+        detail: `No se puede convertir ${row.purchaseUnit || row.unit || 'la unidad de compra'} a la unidad base.`, date: row.date, location: row.locationName, code: row.code,
+        action: 'Agrega la conversión de unidad en el catálogo maestro.'
+      });
+      const variation = Number(row.unitCostChangePercent);
+      if (Number.isFinite(variation) && Math.abs(variation) >= 15) add('costs', {
+        severity: Math.abs(variation) >= 30 ? 'high' : 'medium',
+        title: `${variation > 0 ? 'Aumento' : 'Disminución'} relevante de costo: ${row.product}`,
+        detail: `El costo comparable cambió ${variation.toFixed(1)}% en ${row.locationName}.`, observed: `${variation.toFixed(1)}%`,
+        date: row.date, location: row.locationName, code: row.code,
+        action: 'Confirma el documento, la unidad de compra y la negociación con el proveedor.'
+      });
+    }
+    for (const [code, purchase] of latestPurchaseByCode) {
+      const ingredient = ingredientCatalog.get(code);
+      const comparablePurchaseCost = purchase.baseUnitCost;
+      if (!ingredient || !(comparablePurchaseCost > 0) || !ingredient.unitCost) continue;
+      const difference = (comparablePurchaseCost / ingredient.unitCost - 1) * 100;
+      if (Math.abs(difference) >= 20) add('costs', {
+        severity: Math.abs(difference) >= 40 ? 'high' : 'medium', title: `Costo maestro desalineado: ${ingredient.name}`,
+        detail: `Última compra ${comparablePurchaseCost.toLocaleString('es-CL')} por ${purchase.baseUnit}; maestro ${ingredient.unitCost.toLocaleString('es-CL')} por ${ingredient.unit}.`,
+        observed: `${difference > 0 ? '+' : ''}${difference.toFixed(1)}%`, date: purchase.date, location: purchase.locationName, code,
+        action: 'Confirma la conversión y actualiza el costo maestro si corresponde.'
+      });
+    }
+
+    for (const location of auditedLocations) {
+      let kardex;
+      try { kardex = mergedKardexData(location.id, 'kardex'); } catch (error) {
+        warnings.push(`Kardex (${location.name}): ${error.message}`);
+        kardex = null;
+      }
+      if (!kardex?.groups?.length) {
+        add('inventory', {
+          severity: 'medium', title: `Sin Kardex utilizable: ${location.name}`,
+          detail: 'No hay información consolidable de inventario.', location: location.name,
+          action: 'Carga el Kardex más reciente de la ubicación.'
+        });
+        continue;
+      }
+      const groups = kardex.groups.filter(group => group.date <= dateTo);
+      const latestGroup = groups.at(-1);
+      if (!latestGroup || latestGroup.date < dateFrom) {
+        add('inventory', {
+          severity: 'medium', title: `Kardex desactualizado: ${location.name}`,
+          detail: latestGroup ? `La última fecha disponible es ${latestGroup.date}.` : `No hay fechas anteriores o iguales a ${dateTo}.`,
+          observed: latestGroup?.date || 'Sin fecha', location: location.name,
+          action: 'Carga un Kardex que cubra el período seleccionado.'
+        });
+        continue;
+      }
+      const periodGroups = groups.filter(group => group.date >= dateFrom);
+      const hasFinal = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
+      for (const product of kardex.products) {
+        if (!product.code && !product.name) continue;
+        const currentInventory = kardexMetricValue(product, latestGroup,
+          metric => metric.startsWith(hasFinal ? 'if -' : 'ii -'));
+        const consumption = periodGroups.reduce((sum, group) => sum + kardexMetricTotal(product, group,
+          metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
+            || metric.startsWith('mov-out -') || metric.startsWith('trn-out -')), 0);
+        if (currentInventory < -0.005) add('inventory', {
+          severity: 'high', title: `Inventario negativo: ${product.name || product.code}`,
+          detail: `${currentInventory.toLocaleString('es-CL')} ${product.unit || ''} al ${latestGroup.date} en ${location.name}.`,
+          observed: currentInventory, date: latestGroup.date, location: location.name, code: product.code,
+          action: 'Revisa movimientos, unidades y conteo físico antes de proyectar compras.'
+        });
+        else if (Math.abs(currentInventory) < 0.005 && consumption > 0) add('inventory', {
+          severity: 'medium', title: `Producto consumido sin stock: ${product.name || product.code}`,
+          detail: `Stock final cero y consumo de ${consumption.toLocaleString('es-CL')} ${product.unit || ''} en el período.`,
+          observed: 'Stock 0', date: latestGroup.date, location: location.name, code: product.code,
+          action: 'Confirma el stock físico y evalúa reposición.'
+        });
+        if (!product.code) add('inventory', {
+          severity: 'medium', title: `Fila de Kardex sin código: ${product.name}`,
+          detail: `${location.name} · ${latestGroup.date}.`, date: latestGroup.date, location: location.name,
+          action: 'Completa el código para relacionar inventario, compras y costos.'
+        });
+      }
+    }
+
+    const orders = readPurchaseOrders().filter(order => {
+      const date = String(order.updatedAt || order.createdAt || '').slice(0, 10);
+      return date >= dateFrom && date <= dateTo
+        && (!selectedLocation || order.location?.id === selectedLocation.id);
+    });
+    for (const order of orders) {
+      const date = String(order.updatedAt || order.createdAt || '').slice(0, 10);
+      const label = order.orderNumber || order.id;
+      if (!order.supplier?.key || order.supplier.key === 'unassigned') add('purchase-orders', {
+        severity: 'high', title: `Orden sin proveedor: ${label}`, detail: `${order.location?.name || 'Ubicación no identificada'} · ${date}.`,
+        date, location: order.location?.name, action: 'Asigna un proveedor válido antes de utilizar la orden.'
+      });
+      if (order.status !== 'confirmed' && date < addDays(dateTo, -3)) add('purchase-orders', {
+        severity: 'medium', title: `Orden pendiente hace más de 3 días: ${label}`,
+        detail: `Estado “${order.status || 'sin estado'}” desde ${date}.`, date, location: order.location?.name,
+        action: 'Confirma, corrige u oculta la orden si ya no corresponde.'
+      });
+      if (order.status === 'confirmed' && !order.confirmedAt) add('purchase-orders', {
+        severity: 'medium', title: `Orden confirmada sin fecha: ${label}`, detail: 'El estado y la fecha de confirmación no son consistentes.',
+        date, location: order.location?.name, action: 'Revisa el registro de confirmación de la orden.'
+      });
+      const calculatedTotal = (order.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unitCost) || 0), 0);
+      if (Math.abs(calculatedTotal - (Number(order.total) || 0)) > 1) add('purchase-orders', {
+        severity: 'high', title: `Total inconsistente en ${label}`,
+        detail: `Total guardado ${Number(order.total || 0).toLocaleString('es-CL')}; suma de líneas ${calculatedTotal.toLocaleString('es-CL')}.`,
+        observed: calculatedTotal - Number(order.total || 0), date, location: order.location?.name,
+        action: 'Recalcula la orden y confirma cantidades y costos unitarios.'
+      });
+      for (const item of order.items || []) {
+        if (!(Number(item.quantity) > 0)) add('purchase-orders', {
+          severity: 'high', title: `Cantidad inválida en ${label}: ${item.name || item.code}`,
+          detail: `Cantidad registrada: ${item.quantity}.`, observed: item.quantity, date, location: order.location?.name, code: item.code,
+          action: 'Corrige o elimina la línea de la orden.'
+        });
+        if (!(Number(item.unitCost) > 0)) add('purchase-orders', {
+          severity: 'medium', title: `Costo cero en ${label}: ${item.name || item.code}`,
+          detail: `Costo unitario registrado: ${item.unitCost || 0}.`, observed: item.unitCost || 0, date, location: order.location?.name, code: item.code,
+          action: 'Confirma el costo con el proveedor.'
+        });
+        const referenceCost = Number(item.referenceUnitCost);
+        const unitCost = Number(item.unitCost);
+        if (referenceCost > 0 && Number.isFinite(unitCost)) {
+          const difference = (unitCost / referenceCost - 1) * 100;
+          if (Math.abs(difference) >= 20) add('purchase-orders', {
+            severity: 'medium', title: `Costo modificado en ${label}: ${item.name || item.code}`,
+            detail: `El costo de la orden difiere ${difference.toFixed(1)}% de la referencia.`, observed: `${difference.toFixed(1)}%`,
+            date, location: order.location?.name, code: item.code,
+            action: 'Confirma que la modificación sea intencional.'
+          });
+        }
+      }
+    }
+
+    const serializedSections = [...sections.values()].map(section => ({
+      ...section,
+      findings: section.findings.sort((left, right) => severityOrder[left.severity] - severityOrder[right.severity]
+        || String(right.date || '').localeCompare(String(left.date || ''))
+        || left.title.localeCompare(right.title, 'es'))
+    }));
+    const findings = serializedSections.flatMap(section => section.findings);
+    return {
+      generatedAt: new Date().toISOString(),
+      period: { from: dateFrom, to: dateTo },
+      scope: selectedLocation
+        ? { location: selectedLocation.id, label: selectedLocation.name, type: selectedLocation.type }
+        : { location: 'all', label: 'Todas las ubicaciones', type: 'all' },
+      locations: locations.map(publicLocation),
+      summary: {
+        total: findings.length,
+        high: findings.filter(finding => finding.severity === 'high').length,
+        medium: findings.filter(finding => finding.severity === 'medium').length,
+        low: findings.filter(finding => finding.severity === 'low').length,
+        sectionsWithFindings: serializedSections.filter(section => section.findings.length).length,
+        salesRowsRead,
+        purchaseRowsRead: purchaseRows.length,
+        ordersRead: orders.length
+      },
+      sections: serializedSections,
+      sources,
+      warnings
+    };
+  }
+
+  app.get('/api/findings', (req, res) => {
+    try {
+      return res.json(buildFindingsPayload(req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No fue posible buscar hallazgos.' });
+    }
+  });
+
   function buildHourlySalesDemand(requestedLocation = 'all', query = {}) {
     const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
     const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
