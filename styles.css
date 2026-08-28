@@ -4424,7 +4424,7 @@ button.file-upload-state:disabled {
 }
 
 .company-profile-form {
-  grid-template-columns: minmax(200px, 0.7fr) minmax(280px, 1fr) auto;
+  grid-template-columns: minmax(200px, 0.7fr) minmax(260px, 1fr) minmax(230px, 0.65fr) auto;
 }
 
 .create-location-form label,
@@ -4439,6 +4439,7 @@ button.file-upload-state:disabled {
 .create-location-form input,
 .create-location-form select,
 .company-profile-form input,
+.company-profile-form select,
 .location-row input,
 .location-trash-dialog input {
   width: 100%;
@@ -4447,6 +4448,12 @@ button.file-upload-state:disabled {
   padding: 10px 12px;
   background: var(--bg-soft);
   color: var(--text);
+}
+
+.company-profile-form small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .location-management-section {

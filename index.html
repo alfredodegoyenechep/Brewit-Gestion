@@ -612,7 +612,7 @@
         <div>
           <div class="panel-eyebrow">Productos</div>
           <h2>Catálogo y desempeño de productos</h2>
-          <p class="panel-description">Precio neto = precio de venta ÷ 1,19. Margen = (precio neto − costo) ÷ precio neto.</p>
+          <p class="panel-description">Precio neto = precio de venta ÷ 1,19. El costo aplicado usa la última compra disponible a la fecha y, si no existe, el maestro vigente.</p>
         </div>
         <div class="products-controls">
           <label for="products-location-filter">Cafetería
@@ -739,7 +739,7 @@
             <tr>
               <th data-sort-key="code">Código</th><th data-sort-key="name">Ingrediente</th>
               <th data-sort-key="supplier">Proveedor</th><th data-sort-key="unit">Unidad</th>
-              <th data-sort-key="unitCost">Costo maestro</th><th data-sort-key="latestPurchaseCost">Último costo compra</th>
+              <th data-sort-key="unitCost">Costo aplicado</th><th data-sort-key="latestPurchaseCost">Último costo compra</th>
               <th data-sort-key="costChangePercent">Variación costo</th><th data-sort-key="usageQuantity">Consumo período</th>
               <th data-sort-key="usageCost">Costo consumido</th><th data-sort-key="products.length">Productos que lo usan</th>
             </tr>
@@ -1518,6 +1518,14 @@
         <label>
           <span>RUT de Brewit para órdenes de compra</span>
           <input id="company-tax-id" type="text" maxlength="30" placeholder="Ej. 76.123.456-7" />
+        </label>
+        <label>
+          <span>Sistema decimal para exportar a Excel</span>
+          <select id="company-export-decimal-system">
+            <option value="comma">1.234,56 · coma decimal</option>
+            <option value="dot">1,234.56 · punto decimal</option>
+          </select>
+          <small>Solo se aplica a los archivos XLSX exportados.</small>
         </label>
         <button class="icon-button" type="submit">Guardar datos de Brewit</button>
       </form>

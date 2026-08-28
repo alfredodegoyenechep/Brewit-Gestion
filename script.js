@@ -1,4 +1,5 @@
 let locationRegistry = {};
+let exportDecimalSystem = 'comma';
 const FIELD_LABELS = {
   kardex: 'Kardex / inventario',
   waste: 'Merma',
@@ -177,6 +178,88 @@ function setUploadMode(mode) {
   });
   document.getElementById('weekly-upload-pane').hidden = mode !== 'weekly';
   document.getElementById('master-upload-pane').hidden = mode !== 'masters';
+}
+
+function configuredExcelNumberFormat({ currency = false, percent = false, integer = false, decimalPlaces = null } = {}) {
+  const decimal = exportDecimalSystem === 'dot' ? '.' : ',';
+  const thousands = exportDecimalSystem === 'dot' ? ',' : '.';
+  const decimals = integer
+    ? ''
+    : `${decimal}${Number.isInteger(decimalPlaces) ? '0'.repeat(Math.max(1, decimalPlaces)) : '########'}`;
+  const prefix = currency ? '$ ' : '';
+  const suffix = percent ? '%' : '';
+  return `${prefix}#${thousands}##0${percent ? `${decimal}00` : decimals}${suffix}`;
+}
+
+function localizedExportNumber(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text || /^[-—–]$/.test(text) || /\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/.test(text)) return null;
+  const currency = text.includes('$');
+  const percent = text.endsWith('%');
+  let compact = text.replace(/\s+/g, '').replace(/\$/g, '').replace(/%$/, '');
+  if (!/^[+-]?[\d.,]+$/.test(compact)) return null;
+
+  const hasComma = compact.includes(',');
+  const hasDot = compact.includes('.');
+  if (!currency && !percent && !hasComma && !hasDot) return null;
+  let decimalPlaces = 0;
+  if (hasComma) {
+    decimalPlaces = compact.split(',').at(-1).length;
+    compact = compact.replace(/\./g, '').replace(',', '.');
+  } else if (hasDot && /^[+-]?\d{1,3}(?:\.\d{3})+$/.test(compact)) {
+    compact = compact.replace(/\./g, '');
+  } else if (hasDot) {
+    decimalPlaces = compact.split('.').at(-1).length;
+  }
+
+  const number = Number(compact);
+  if (!Number.isFinite(number)) return null;
+  return { value: percent ? number / 100 : number, currency, percent, decimalPlaces };
+}
+
+function prepareWorksheetForConfiguredExport(sheet) {
+  if (!sheet?.['!ref']) return;
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+  for (let row = range.s.r; row <= range.e.r; row += 1) {
+    for (let column = range.s.c; column <= range.e.c; column += 1) {
+      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      const cell = sheet[address];
+      if (!cell || cell.f) continue;
+      if (cell.t === 'n' && Number.isFinite(cell.v)) {
+        const existingFormat = String(cell.z || '');
+        if (!/[dmyhs]/i.test(existingFormat)) {
+          cell.z = configuredExcelNumberFormat({
+            currency: existingFormat.includes('$'),
+            percent: existingFormat.includes('%'),
+            integer: Number.isInteger(cell.v) && !existingFormat.includes('%')
+          });
+        }
+        delete cell.w;
+        continue;
+      }
+      const parsed = localizedExportNumber(cell.v);
+      if (!parsed) continue;
+      cell.t = 'n';
+      cell.v = parsed.value;
+      cell.z = configuredExcelNumberFormat({
+        currency: parsed.currency,
+        percent: parsed.percent,
+        integer: parsed.decimalPlaces === 0 && Number.isInteger(parsed.value) && !parsed.percent,
+        decimalPlaces: parsed.decimalPlaces
+      });
+      delete cell.w;
+    }
+  }
+}
+
+function writeConfiguredExcelWorkbook(workbook, filename) {
+  workbook.SheetNames.forEach(name => prepareWorksheetForConfiguredExport(workbook.Sheets[name]));
+  workbook.Props = {
+    ...(workbook.Props || {}),
+    Comments: `Sistema decimal de exportación: ${exportDecimalSystem === 'dot' ? '1,234.56' : '1.234,56'}`
+  };
+  XLSX.writeFile(workbook, filename, { compression: true, cellStyles: true });
 }
 
 function dateFromKey(value) {
@@ -1303,7 +1386,7 @@ function renderSalesServiceModes() {
       const cost = document.createElement('small');
       cost.textContent = itemData.hasCost
         ? `Costo unitario ${formatClp(itemData.unitCost)} · Ahorro ${formatClp(itemData.totalCost)}`
-        : 'Costo maestro no disponible';
+        : 'Costo de compra o maestro no disponible';
       values.append(quantity, cost);
       item.append(identity, values);
       return item;
@@ -1317,7 +1400,7 @@ function renderSalesServiceModes() {
     total.append(totalLabel, totalValue);
     if (period.packagingWithoutCost?.length) {
       const warning = document.createElement('small');
-      warning.textContent = `${period.packagingWithoutCost.length} tipo(s) sin costo maestro no están incluidos en el total.`;
+      warning.textContent = `${period.packagingWithoutCost.length} tipo(s) sin costo de compra o maestro no están incluidos en el total.`;
       total.appendChild(warning);
     }
     cups.replaceChildren(...items, total);
@@ -2070,6 +2153,20 @@ function formatPurchaseConversion(value) {
   return new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(Number(value));
 }
 
+function costSourceDescription(item) {
+  if (item?.costSource === 'purchase') {
+    return `Última compra${item.costSourceDate ? ` · ${formatReportDate(item.costSourceDate)}` : ''}`;
+  }
+  if (item?.costSource === 'master') return 'Costo del maestro vigente (sin compra anterior comparable)';
+  return 'Sin costo de compra ni costo maestro compatible';
+}
+
+function costSourceShort(item) {
+  if (item?.costSource === 'purchase') return `Compra${item.costSourceDate ? ` ${formatReportDate(item.costSourceDate)}` : ''}`;
+  if (item?.costSource === 'master') return 'Maestro';
+  return 'Sin costo';
+}
+
 function valueAtPath(item, key) {
   return key.split('.').reduce((value, part) => value?.[part], item);
 }
@@ -2120,7 +2217,7 @@ function productTableNode(products) {
   table.className = 'products-table';
   const headers = [
     ['code', 'Código'], ['name', 'Producto'], ['price', 'Precio venta'], ['netPrice', 'Precio venta neto'],
-    ['cost', 'Costo'], ['marginPercent', 'Margen'], ['averageWeeklyUnits8', 'Prom. semanal 8 sem.'],
+    ['cost', 'Costo aplicado'], ['marginPercent', 'Margen'], ['averageWeeklyUnits8', 'Prom. semanal 8 sem.'],
     ['unitsLast7Days', 'Últimos 7 días'], ['unitsChangePercent', 'Cambio vs. prom. 8 sem.']
   ];
   const headRow = document.createElement('tr');
@@ -2150,6 +2247,7 @@ function productTableNode(products) {
     ];
     values.forEach((value, index) => {
       const cell = document.createElement('td');
+      if (index === 4) cell.title = costSourceDescription(product);
       if (index === 2 && product.previousPrice !== null && product.previousPrice !== undefined) {
         const previous = document.createElement('span');
         previous.className = 'product-previous-price';
@@ -2335,22 +2433,26 @@ function exportRelevantProductsReport() {
     ]);
     const headers = [
       'Jerarquía', 'Código', 'Producto', 'Precio anterior', 'Precio venta', 'Precio venta neto',
-      'Costo', 'Margen %', 'Prom. semanal 8 sem.', 'Últimos 7 días', 'Cambio vs. prom. 8 sem. %'
+      'Costo aplicado', 'Origen costo', 'Fecha costo', 'Margen %', 'Prom. semanal 8 sem.', 'Últimos 7 días',
+      'Cambio vs. prom. 8 sem. %'
     ];
     const values = groups.flatMap(group => sortRows(group.products, productsSort).map(product => [
       group.path.join(' › '), product.code, product.name, product.previousPrice,
-      product.price, product.netPrice, product.cost, product.marginPercent,
+      product.price, product.netPrice, product.cost,
+      product.costSource === 'purchase' ? 'Última compra' : product.costSource === 'master' ? 'Maestro' : 'Sin costo',
+      product.costSourceDate,
+      product.marginPercent,
       product.averageWeeklyUnits8, product.unitsLast7Days, product.unitsChangePercent
     ]));
     const sheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
-    sheet['!autofilter'] = { ref: `A1:K${values.length + 1}` };
+    sheet['!autofilter'] = { ref: `A1:M${values.length + 1}` };
     sheet['!cols'] = headers.map((header, index) => ({
       wch: index === 0 ? 42 : index === 2 ? 38 : Math.max(12, Math.min(24, header.length + 2))
     }));
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, information, 'Información');
     XLSX.utils.book_append_sheet(workbook, sheet, 'Cambios Relevantes');
-    XLSX.writeFile(workbook, `cambios-relevantes-${productsViewState.date}.xlsx`, { compression: true });
+    writeConfiguredExcelWorkbook(workbook, `cambios-relevantes-${productsViewState.date}.xlsx`);
     setStatus(status, 'Reporte de Cambios Relevantes exportado a Excel correctamente.', 'success');
   } catch (error) {
     setStatus(status, `No fue posible exportar el reporte: ${error.message}`, 'error');
@@ -2405,11 +2507,13 @@ function printIngredientsReport() {
   const supplier = document.getElementById('ingredients-supplier-filter').selectedOptions[0]?.textContent || 'Todos los proveedores';
   context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${supplier} · ${items.length} ingrediente(s).`;
   report.append(title, context, ingredientReportTable([
-    'Código', 'Ingrediente', 'Proveedor', 'Unidad', 'Costo maestro', 'Último costo compra',
-    'Variación costo', 'Consumo período', 'Costo consumido', 'Productos que lo usan'
+    'Código', 'Ingrediente', 'Proveedor', 'Unidad', 'Costo aplicado', 'Último costo compra',
+    'Origen costo', 'Fecha costo', 'Variación costo', 'Consumo período', 'Costo consumido', 'Productos que lo usan'
   ], items.map(item => [
     item.code, item.name, item.supplier, item.unit || '—', formatClp(item.unitCost),
     item.latestPurchaseCost === null ? '—' : formatClp(item.latestPurchaseCost),
+    item.costSource === 'purchase' ? 'Última compra' : item.costSource === 'master' ? 'Maestro' : 'Sin costo',
+    item.costSourceDate ? formatReportDate(item.costSourceDate) : '—',
     item.costChangePercent === null ? '—' : `${item.costChangePercent >= 0 ? '+' : ''}${item.costChangePercent.toFixed(1)}%`,
     `${formatProductUnits(item.usageQuantity)} ${item.usageUnit || item.unit}`, formatClp(item.usageCost), item.products.length
   ]), 'ingredients-print-main-table'));
@@ -2466,15 +2570,18 @@ function exportIngredientsReport() {
       ['Exportado', new Date().toLocaleString('es-CL')]
     ]);
     const ingredientHeaders = [
-      'Código', 'Ingrediente', 'Proveedor', 'Unidad', 'Costo maestro', 'Último costo compra',
-      'Variación costo %', 'Consumo período', 'Unidad consumo', 'Costo consumido', 'Productos que lo usan'
+      'Código', 'Ingrediente', 'Proveedor', 'Unidad', 'Costo aplicado', 'Último costo compra',
+      'Origen costo', 'Fecha costo', 'Variación costo %', 'Consumo período', 'Unidad consumo', 'Costo consumido',
+      'Productos que lo usan'
     ];
     const ingredientRows = items.map(item => [
       item.code, item.name, item.supplier, item.unit, item.unitCost, item.latestPurchaseCost,
+      item.costSource === 'purchase' ? 'Última compra' : item.costSource === 'master' ? 'Maestro' : 'Sin costo',
+      item.costSourceDate,
       item.costChangePercent, item.usageQuantity, item.usageUnit || item.unit, item.usageCost, item.products.length
     ]);
     const ingredientSheet = XLSX.utils.aoa_to_sheet([ingredientHeaders, ...ingredientRows]);
-    ingredientSheet['!autofilter'] = { ref: `A1:K${ingredientRows.length + 1}` };
+    ingredientSheet['!autofilter'] = { ref: `A1:M${ingredientRows.length + 1}` };
     ingredientSheet['!cols'] = ingredientHeaders.map((header, index) => ({
       wch: index === 1 ? 42 : index === 2 ? 30 : Math.max(12, Math.min(24, header.length + 2))
     }));
@@ -2500,7 +2607,7 @@ function exportIngredientsReport() {
     XLSX.utils.book_append_sheet(workbook, information, 'Información');
     XLSX.utils.book_append_sheet(workbook, ingredientSheet, 'Ingredientes');
     XLSX.utils.book_append_sheet(workbook, productSheet, 'Productos por ingrediente');
-    XLSX.writeFile(workbook, `ingredientes-${data.period.from}-${data.period.to}.xlsx`, { compression: true });
+    writeConfiguredExcelWorkbook(workbook, `ingredientes-${data.period.from}-${data.period.to}.xlsx`);
     setStatus(status, 'Listado de ingredientes exportado a Excel correctamente.', 'success');
   } catch (error) {
     setStatus(status, `No fue posible exportar el listado: ${error.message}`, 'error');
@@ -2575,6 +2682,7 @@ function renderIngredientsView() {
     values.forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
+      if (index === 4) cell.title = costSourceDescription(item);
       if (index === 6 && item.costChangePercent !== null) cell.className = item.costChangePercent > 0 ? 'ingredient-cost-up' : item.costChangePercent < 0 ? 'ingredient-cost-down' : '';
       row.appendChild(cell);
     });
@@ -2963,7 +3071,7 @@ function exportPurchasesReport() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, information, 'Información');
     XLSX.utils.book_append_sheet(workbook, purchasesSheet, 'Compras');
-    XLSX.writeFile(workbook, purchasesReportFilename('xlsx'), { compression: true });
+    writeConfiguredExcelWorkbook(workbook, purchasesReportFilename('xlsx'));
     setStatus(status, 'Historial de compras exportado a Excel correctamente.', 'success');
   } catch (error) {
     setStatus(status, `No fue posible exportar el historial: ${error.message}`, 'error');
@@ -3136,7 +3244,7 @@ function exportPurchaseCostVariations() {
   sheet['!cols'] = headers.map((header, index) => ({ wch: index === 3 ? 42 : Math.max(12, Math.min(24, header.length + 2)) }));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, 'Variaciones de costo');
-  XLSX.writeFile(workbook, `variaciones-costo-${data.period.from}-${data.period.to}.xlsx`, { compression: true });
+  writeConfiguredExcelWorkbook(workbook, `variaciones-costo-${data.period.from}-${data.period.to}.xlsx`);
   setStatus(status, 'Reporte de variaciones exportado a Excel correctamente.', 'success');
 }
 
@@ -4781,6 +4889,7 @@ function populateWasteSummaryTable(table, report) {
       value: item => item.costAvailable ? formatClp(item.unitCost) : 'Sin costo',
       total: ''
     },
+    { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item), total: '' },
     {
       key: 'cost',
       label: 'Costo total',
@@ -4831,7 +4940,7 @@ function populateWasteSummaryTable(table, report) {
 function renderWasteSummary(data) {
   const report = data.report;
   document.getElementById('waste-summary-period').textContent =
-    `${formatReportDate(report.dateFrom)} – ${formatReportDate(report.dateTo)} · solo ítems con adiciones distintas de cero.${report.itemsWithoutCost?.length ? ` ${report.itemsWithoutCost.length} ítem(s) sin costo maestro vigente.` : ''}`;
+    `${formatReportDate(report.dateFrom)} – ${formatReportDate(report.dateTo)} · solo ítems con adiciones distintas de cero.${report.itemsWithoutCost?.length ? ` ${report.itemsWithoutCost.length} ítem(s) sin costo de compra o maestro compatible.` : ''}`;
   document.getElementById('waste-summary-item-count').textContent = `${report.itemCount} ítem(s)`;
   populateWasteSummaryTable(document.getElementById('waste-summary-table'), report);
   const dialog = document.getElementById('waste-summary-results');
@@ -4948,9 +5057,9 @@ function renderCostReconciliation(data) {
   const withoutCost = data.ingredients.ingredientsWithoutCost || [];
   const withoutConversion = data.ingredients.ingredientsWithoutConversion || [];
   if (withoutRecipe.length) reasons.push(`Productos sin receta: ${withoutRecipe.join(', ')}. Su costo aparece en productos, pero no puede descomponerse en ingredientes.`);
-  if (withoutCost.length) reasons.push(`Ingredientes sin costo maestro: ${withoutCost.join(', ')}.`);
+  if (withoutCost.length) reasons.push(`Ingredientes sin costo de compra o maestro: ${withoutCost.join(', ')}.`);
   if (withoutConversion.length) reasons.push(`Ingredientes con unidades incompatibles: ${withoutConversion.join(', ')}.`);
-  if (Math.abs(difference) >= 1) reasons.push('La diferencia restante puede deberse a redondeos, tasas de rendimiento o a que el costo calculado del producto y los costos actuales de sus ingredientes provienen de actualizaciones distintas del maestro.');
+  if (Math.abs(difference) >= 1) reasons.push('La diferencia restante puede deberse a redondeos, tasas de rendimiento o a que productos e ingredientes tienen referencias de compra distintas.');
   if (reasons.length) {
     const list = document.createElement('ul');
     for (const reason of reasons) {
@@ -5023,6 +5132,7 @@ function renderConsumptionReports(
       { key: 'name', label: 'Producto', value: item => item.name, maxChars: 50 },
       { key: 'quantity', label: 'Cantidad', value: item => formatInventoryQuantity(item.quantity) },
       { key: 'unitCost', label: 'Costo unit.', value: item => formatClp(item.unitCost) },
+      { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item) },
       { key: 'totalCost', label: 'Costo total', value: item => formatClp(item.totalCost) }
     ], productRows, {
       code: 'TOTAL',
@@ -5032,7 +5142,7 @@ function renderConsumptionReports(
     if (data.products.productsWithoutMasterCost?.length) {
       const warning = document.createElement('p');
       warning.className = 'form-status muted';
-      warning.textContent = `${data.products.productsWithoutMasterCost.length} producto(s) sin costo en el maestro; se usó el costo de la planilla.`;
+      warning.textContent = `${data.products.productsWithoutMasterCost.length} producto(s) sin costo de compra o maestro compatible.`;
       productPart.appendChild(warning);
     }
     card.appendChild(productPart);
@@ -5055,6 +5165,7 @@ function renderConsumptionReports(
         { key: 'quantity', label: 'Cantidad', value: item => formatInventoryQuantity(item.quantity) },
         { key: 'unit', label: 'Unidad', value: item => item.unit },
         { key: 'unitCost', label: 'Costo unit.', value: item => formatClp(item.unitCost) },
+        { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item) },
         { key: 'totalCost', label: 'Costo total', value: item => formatClp(item.totalCost) }
       ], ingredientRows, {
         code: 'TOTAL',
@@ -5210,7 +5321,7 @@ function renderLac001SubstitutionReport(report) {
     `${report.salesCount} venta(s) con sustitución`,
     `${formatKardexQuantity(report.substitutionCount)} sustitución(es)`,
     `${formatKardexQuantity(report.lac001VolumeLiters)} L de LAC001 sustituido`,
-    report.hasCost ? `${formatClp(report.totalSubstitutedCost || 0)} de costo sustituido` : 'LAC001 sin costo maestro compatible'
+    report.hasCost ? `${formatClp(report.totalSubstitutedCost || 0)} de costo sustituido` : 'LAC001 sin costo de compra o maestro compatible'
   ];
   if (report.unresolvedSubstitutionCount) {
     summaryTexts.push(`${formatKardexQuantity(report.unresolvedSubstitutionCount)} sin receta LAC001 identificable`);
@@ -5230,6 +5341,7 @@ function renderLac001SubstitutionReport(report) {
     { label: 'Ventas con extra', value: item => String(item.salesCount) },
     { label: 'Cantidad de sustituciones', value: item => formatKardexQuantity(item.substitutionCount) },
     { label: 'LAC001 sustituido (L)', value: item => formatKardexQuantity(item.lac001VolumeLiters) },
+    { label: 'Origen costo', value: item => costSourceShort(item) },
     { label: 'Costo LAC001 sustituido', value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
   ];
   const headRow = document.createElement('tr');
@@ -5252,7 +5364,7 @@ function renderLac001SubstitutionReport(report) {
   });
   const footRow = document.createElement('tr');
   footRow.className = 'consumption-total-row';
-  ['TOTAL', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), `${formatKardexQuantity(report.lac001VolumeLiters)} L`, report.hasCost ? formatClp(report.totalSubstitutedCost || 0) : 'Sin costo']
+  ['TOTAL', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), `${formatKardexQuantity(report.lac001VolumeLiters)} L`, costSourceShort(report), report.hasCost ? formatClp(report.totalSubstitutedCost || 0) : 'Sin costo']
     .forEach(value => {
       const cell = document.createElement('td');
       cell.textContent = value;
@@ -5307,7 +5419,7 @@ function renderSyrupSauceSubstitutionReport(report) {
     summaryTexts.push(`${formatKardexQuantity(report.unresolvedSubstitutionCount)} sin ingrediente identificable`);
   }
   if (report.itemsWithoutCost?.length) {
-    summaryTexts.push(`${report.itemsWithoutCost.length} ingrediente(s) sin costo maestro compatible`);
+    summaryTexts.push(`${report.itemsWithoutCost.length} ingrediente(s) sin costo de compra o maestro compatible`);
   }
   const summary = document.getElementById('inventory-syrup-substitution-summary');
   summary.replaceChildren(...summaryTexts.map(text => {
@@ -5334,6 +5446,7 @@ function renderSyrupSauceSubstitutionReport(report) {
         ? `${formatKardexQuantity(item.theoreticalQuantity)} ${item.unit}`
         : 'Sin cantidad identificable'
     },
+    { label: 'Origen costo', value: item => costSourceShort(item) },
     { label: 'Costo sustituido', value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
   ];
   const table = document.getElementById('inventory-syrup-substitution-table');
@@ -5376,7 +5489,7 @@ function renderSyrupSauceSubstitutionReport(report) {
   const foot = document.createElement('tfoot');
   const footRow = document.createElement('tr');
   footRow.className = 'consumption-total-row';
-  ['TOTAL', '', '', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), totals || 'Sin cantidad conciliada', formatClp(report.totalSubstitutedCost || 0)]
+  ['TOTAL', '', '', '', String(report.salesCount), formatKardexQuantity(report.substitutionCount), totals || 'Sin cantidad conciliada', '', formatClp(report.totalSubstitutedCost || 0)]
     .forEach(value => {
       const cell = document.createElement('td');
       cell.textContent = value;
@@ -5404,7 +5517,7 @@ function renderInventoryAvoidedPackagingReport(report) {
     `${formatClp(report.totalAvoidedPackagingCost || 0)} de ahorro valorizado`
   ];
   if (report.packagingWithoutCost?.length) {
-    summaryTexts.push(`${report.packagingWithoutCost.length} tipo(s) sin costo maestro`);
+    summaryTexts.push(`${report.packagingWithoutCost.length} tipo(s) sin costo de compra o maestro`);
   }
   if (report.productsWithoutRecipe?.length) {
     summaryTexts.push(`${report.productsWithoutRecipe.length} producto(s) sin receta`);
@@ -5424,6 +5537,7 @@ function renderInventoryAvoidedPackagingReport(report) {
     { label: 'Insumo desechable', value: item => item.name },
     { label: 'Cantidad no utilizada', value: item => `${formatKardexQuantity(item.quantity)} ${item.unit || 'UN'}` },
     { label: 'Costo unitario', value: item => item.hasCost ? formatClp(item.unitCost) : 'Sin costo' },
+    { label: 'Origen costo', value: item => costSourceShort(item) },
     { label: 'Ahorro valorizado', value: item => item.hasCost ? formatClp(item.totalCost) : 'Sin costo' }
   ];
   const table = document.getElementById('inventory-avoided-packaging-table');
@@ -5483,7 +5597,7 @@ function renderInventoryResults(data) {
   const wasteSection = document.getElementById('inventory-waste-report');
   if (data.waste?.available && data.waste.report) {
     document.getElementById('inventory-waste-period').textContent =
-      `${formatReportDate(data.waste.report.dateFrom)} – ${formatReportDate(data.waste.report.dateTo)} · ${data.waste.report.itemCount} ítem(s) con adiciones.${data.waste.report.itemsWithoutCost?.length ? ` ${data.waste.report.itemsWithoutCost.length} ítem(s) sin costo maestro vigente.` : ''}`;
+      `${formatReportDate(data.waste.report.dateFrom)} – ${formatReportDate(data.waste.report.dateTo)} · ${data.waste.report.itemCount} ítem(s) con adiciones.${data.waste.report.itemsWithoutCost?.length ? ` ${data.waste.report.itemsWithoutCost.length} ítem(s) sin costo de compra o maestro compatible.` : ''}`;
     populateWasteSummaryTable(document.getElementById('inventory-waste-table'), data.waste.report);
     wasteSection.hidden = false;
   } else {
@@ -5502,6 +5616,11 @@ function renderInventoryResults(data) {
       label: 'Costo unitario',
       value: item => item.costAvailable ? formatKardexCost(item.unitCost) : 'Sin costo',
       sortValue: item => item.costAvailable ? Number(item.unitCost) || 0 : null
+    },
+    {
+      label: 'Origen costo',
+      value: item => costSourceShort(item),
+      sortValue: item => `${item.costSource || ''}:${item.costSourceDate || ''}`
     },
     {
       label: report.selection
@@ -5578,6 +5697,7 @@ function currentInventoryColumns() {
     { label: 'Unidad', value: item => item.unit, sortValue: item => item.unit },
     { label: 'Inventario teórico', value: item => formatKardexQuantity(item.quantity, 2), sortValue: item => Number(item.quantity) || 0 },
     { label: 'Costo unitario', value: item => item.costAvailable ? formatKardexCost(item.unitCost) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.unitCost) || 0 : null },
+    { label: 'Origen costo', value: item => costSourceShort(item), sortValue: item => `${item.costSource || ''}:${item.costSourceDate || ''}` },
     { label: 'Valorización', value: item => item.costAvailable ? formatKardexCost(item.valuation) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.valuation) || 0 : null }
   ];
 }
@@ -5673,7 +5793,7 @@ function renderCurrentInventoryTables() {
   document.getElementById('current-inventory-visible-count').textContent =
     `${valuedItems.length} valorizado(s) · ${missingItems.length} sin costo`;
   document.getElementById('current-inventory-missing-cost-note').textContent =
-    `${data.report.itemsWithoutCost.length} producto(s) o insumo(s) no participan de la valorización porque no tienen un costo maestro compatible.`;
+    `${data.report.itemsWithoutCost.length} producto(s) o insumo(s) no participan de la valorización porque no tienen un costo de compra o maestro compatible.`;
 }
 
 function renderCurrentInventoryReport(data) {
@@ -5786,6 +5906,8 @@ async function refreshLocationConfiguration() {
     ]);
     document.getElementById('company-name').value = company.name || 'CODE SPA';
     document.getElementById('company-tax-id').value = company.taxId || '';
+    exportDecimalSystem = company.exportDecimalSystem === 'dot' ? 'dot' : 'comma';
+    document.getElementById('company-export-decimal-system').value = exportDecimalSystem;
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
@@ -6188,7 +6310,7 @@ function exportInventoryReport(sectionId) {
       const sheet = XLSX.utils.table_to_sheet(table, { raw: true });
       XLSX.utils.book_append_sheet(workbook, sheet, uniqueExcelSheetName(excelSheetLabel(table, index), usedNames));
     });
-    XLSX.writeFile(workbook, inventoryReportFilename(title, 'xlsx'), { compression: true });
+    writeConfiguredExcelWorkbook(workbook, inventoryReportFilename(title, 'xlsx'));
     setStatus(status, 'Reporte exportado a Excel correctamente.', 'success');
   } catch (error) {
     setStatus(status, `No fue posible exportar el reporte: ${error.message}`, 'error');
@@ -6771,15 +6893,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const button = event.currentTarget.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-      await apiRequest('/api/config/company', {
+      const company = await apiRequest('/api/config/company', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: document.getElementById('company-name').value,
-          taxId: document.getElementById('company-tax-id').value
+          taxId: document.getElementById('company-tax-id').value,
+          exportDecimalSystem: document.getElementById('company-export-decimal-system').value
         })
       });
-      setStatus(document.getElementById('location-status'), 'Datos de Brewit actualizados.', 'success');
+      exportDecimalSystem = company.exportDecimalSystem === 'dot' ? 'dot' : 'comma';
+      setStatus(document.getElementById('location-status'), 'Datos de Brewit y formato de exportación actualizados.', 'success');
     } catch (error) {
       setStatus(document.getElementById('location-status'), error.message, 'error');
     } finally {

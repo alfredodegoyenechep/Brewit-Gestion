@@ -788,14 +788,15 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   const purchases = [
     'Fecha emisión\tTipo Documento\tDocumento\tProveedor/Para\tNúmero identificador fiscal\tLin\tCod\tPRODUCTO\tQ.Rec\tUm.Rec\tCosto\tMonto neto\tDescuento\tMonto total',
     '2026-08-01\tFactura\t1\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t5\t5\t0\t5',
-    '2026-08-15\tFactura\t2\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t6\t6\t0\t6'
+    '2026-08-15\tFactura\t2\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t6\t6\t0\t6',
+    '2026-08-20\tFactura\t3\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t9\t9\t0\t9'
   ].join('\n');
   const inspection = await inspectTransactions(baseUrl, 'store-1', [
     { field: 'sales', contents: sales, filename: 'ventas.csv' },
     { field: 'purchases', contents: purchases, filename: 'compras.csv' }
   ]).then(response => response.json());
   assert.ok(inspection.token, JSON.stringify(inspection));
-  assert.equal((await confirmTransactions(baseUrl, inspection, 'keep', { from: '2026-08-01', to: '2026-08-15' })).status, 200);
+  assert.equal((await confirmTransactions(baseUrl, inspection, 'keep', { from: '2026-08-01', to: '2026-08-20' })).status, 200);
 
   const response = await fetch(`${baseUrl}/api/ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`);
   assert.equal(response.status, 200);
@@ -813,7 +814,11 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(report.items[0].products[0].periodIngredientEffectiveQuantity, 2.5);
   assert.equal(report.items[0].products[0].periodIngredientUnit, 'kg');
   assert.equal(report.items[0].usageQuantity, 2.5);
-  assert.equal(report.items[0].usageCost, 10);
+  assert.equal(report.items[0].usageCost, 15);
+  assert.equal(report.items[0].masterUnitCost, 4);
+  assert.equal(report.items[0].unitCost, 6);
+  assert.equal(report.items[0].costSource, 'purchase');
+  assert.equal(report.items[0].costSourceDate, '2026-08-15');
   assert.equal(report.items[0].latestPurchaseCost, 6);
   assert.equal(Math.round(report.items[0].costChangePercent), 20);
   const subrecipe = report.items.find(item => item.code === 'SUB005');
@@ -821,7 +826,14 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(subrecipe.usageQuantity, 0.8);
   assert.equal(subrecipe.usageCost, 16);
   assert.equal(subrecipe.products[0].code, 'P1');
-  assert.equal(report.summary.totalUsageCost, 26);
+  assert.equal(report.summary.totalUsageCost, 31);
+
+  const laterReport = await fetch(`${baseUrl}/api/ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20`)
+    .then(response => response.json());
+  const laterIngredient = laterReport.items.find(item => item.code === 'I1');
+  assert.equal(laterIngredient.unitCost, 9);
+  assert.equal(laterIngredient.usageCost, 22.5);
+  assert.equal(laterIngredient.costSourceDate, '2026-08-20');
 
   const warehouseKardex = [
     ['Código', 'Nombre', 'Unidad', '2026-08-10', '', '', '', '2026-08-11', '', '', ''],
@@ -838,7 +850,9 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(warehouseResponse.status, 200, JSON.stringify(warehouse));
   assert.equal(warehouse.scope.type, 'warehouse');
   assert.equal(warehouse.items[0].usageQuantity, 3);
-  assert.equal(warehouse.items[0].usageCost, 12);
+  assert.equal(warehouse.items[0].usageCost, 18);
+  assert.equal(warehouse.items[0].costSource, 'purchase');
+  assert.equal(warehouse.items[0].costSourceDate, '2026-08-15');
   assert.equal(warehouse.items[0].products[0].periodProductQuantity, null);
   assert.equal(warehouse.items[0].products[0].periodIngredientQuantity, null);
 
@@ -971,9 +985,9 @@ test('reports product sales by selected recipe ingredients and extras hierarchie
   assert.equal(ingredient.totals.productUnits, 4);
   assert.equal(ingredient.totals.ingredientQuantity, 2.5);
   assert.equal(Math.round(ingredient.totals.netSales), 2000);
-  assert.equal(ingredient.totals.totalCost, 800);
-  assert.equal(Math.round(ingredient.totals.contributionMarginPercent), 60);
-  assert.equal(ingredient.products[0].totalCost, 800);
+  assert.equal(ingredient.totals.totalCost, 2000);
+  assert.equal(Math.round(ingredient.totals.contributionMarginPercent), 0);
+  assert.equal(ingredient.products[0].totalCost, 2000);
   assert.equal(Math.round(ingredient.shareOfPeriodSales * 10) / 10, 66.7);
   const sub = report.groups.find(group => group.key === 'ingredient:SUB005');
   assert.equal(sub.source, 'recipe-extra');
@@ -983,8 +997,8 @@ test('reports product sales by selected recipe ingredients and extras hierarchie
   assert.equal(report.totals.uniqueProducts, 1);
   assert.equal(report.totals.productUnits, 4);
   assert.equal(Math.round(report.totals.netSales), 2000);
-  assert.equal(report.totals.totalCost, 800);
-  assert.equal(Math.round(report.totals.contributionMarginPercent), 60);
+  assert.equal(report.totals.totalCost, 2000);
+  assert.equal(Math.round(report.totals.contributionMarginPercent), 0);
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
@@ -1538,7 +1552,7 @@ test('consolidates Kardex movements and compares theoretical inventory with next
   })).status, 400);
 });
 
-test('reports the latest theoretical inventory grouped by hierarchy and valued at master cost', async t => {
+test('reports the latest theoretical inventory using the cost available at the report date', async t => {
   const baseUrl = await startTestServer(t);
   const catalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
@@ -1882,10 +1896,21 @@ test('processes marketing and employee consumption into product and recipe ingre
 test('creates, renames, trashes, and restores locations with their weekly data', async t => {
   const baseUrl = await startTestServer(t);
   const savedCompany = await fetch(`${baseUrl}/api/config/company`, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'CODE SPA', taxId: '76.123.456-7' })
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      name: 'CODE SPA', taxId: '76.123.456-7', exportDecimalSystem: 'dot'
+    })
   }).then(response => response.json());
   assert.equal(savedCompany.name, 'CODE SPA');
   assert.equal(savedCompany.taxId, '76.123.456-7');
+  assert.equal(savedCompany.exportDecimalSystem, 'dot');
+  const persistedCompany = await fetch(`${baseUrl}/api/config/company`).then(response => response.json());
+  assert.equal(persistedCompany.exportDecimalSystem, 'dot');
+  const invalidDecimalSystem = await fetch(`${baseUrl}/api/config/company`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      name: 'CODE SPA', taxId: '76.123.456-7', exportDecimalSystem: 'invalid'
+    })
+  });
+  assert.equal(invalidDecimalSystem.status, 400);
   const createdResponse = await fetch(`${baseUrl}/api/config/locations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2264,10 +2289,10 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].name, 'Bebidas');
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].name, 'Café');
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].quantity, 2);
-  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].totalCost, 100);
-  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 66.7);
-  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].totalCost, 100);
-  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].contributionMarginPercent * 10) / 10, 66.7);
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].totalCost, 200);
+  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 33.3);
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].totalCost, 200);
+  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].contributionMarginPercent * 10) / 10, 33.3);
   assert.equal(dashboard.sales.serviceModes.paymentDetailsFilesRead, 1);
   assert.equal(dashboard.sales.serviceModes.classificationField, 'Comentario General / General Comment');
   assert.deepEqual(dashboard.sales.serviceModes.amountFields, ['Due']);

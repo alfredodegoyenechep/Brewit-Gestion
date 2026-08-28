@@ -171,6 +171,14 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('link', { name: 'Resumen General Ventas' }).evaluate(link => {
     if (!link.classList.contains('active')) throw new Error('Resumen General Ventas no quedó como vista inicial activa.');
   });
+  await page.getByRole('link', { name: 'Configuracion' }).click();
+  await page.getByRole('heading', { name: 'Ubicaciones', exact: true }).waitFor();
+  assert.equal(await page.locator('#company-export-decimal-system').inputValue(), 'comma');
+  await page.locator('#company-export-decimal-system').selectOption('dot');
+  await page.locator('#company-profile-form').getByRole('button', { name: 'Guardar datos de Brewit' }).click();
+  await page.locator('#location-status').filter({ hasText: /formato de exportación actualizados/i }).waitFor();
+  await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
+  await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor();
 
   const rankingItems = Array.from({ length: 55 }, (_, index) => ({
     code: `I${String(index + 1).padStart(3, '0')}`,
@@ -417,9 +425,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#sales-service-mode-status').textContent(), /1 de 1 pedidos.*100,0%/i);
   assert.match(await page.locator('#sales-service-mode-hierarchies').textContent(), /Bebidas.*\$100.*1 pedido/is);
   assert.match(await page.locator('#sales-service-mode-hierarchy-totals').textContent(), /Total jerarquías.*\$0.*\$100.*\$0.*\$100/is);
-  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Vaso.*Vaso Caliente 12 oz.*PAC003.*1 UN.*Costo maestro no disponible/is);
-  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Tapa.*Tapa Vaso Caliente.*PAC008.*1 UN.*Costo maestro no disponible/is);
-  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Ahorro total valorizado.*\$0.*2 tipo\(s\) sin costo maestro/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Vaso.*Vaso Caliente 12 oz.*PAC003.*1 UN.*Costo de compra o maestro no disponible/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Tapa.*Tapa Vaso Caliente.*PAC008.*1 UN.*Costo de compra o maestro no disponible/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Ahorro total valorizado.*\$0.*2 tipo\(s\) sin costo de compra o maestro/is);
   await page.locator('#sales-service-mode-period').selectOption('custom');
   assert.equal(await page.locator('#sales-service-mode-custom-range').isVisible(), true);
   await page.locator('#sales-service-mode-from').fill('2026-08-09');
@@ -435,7 +443,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#sales-top-products').textContent(), /Producto Uno/);
   await page.getByRole('button', { name: 'Ver detalle de Bebidas' }).click();
   assert.equal(await page.locator('#sales-hierarchy-title').textContent(), 'Productos vendidos');
-  assert.match(await page.locator('#sales-hierarchy-share').textContent(), /Producto Uno.*P1.*1 un\..*Margen 80,?\.?(0)?%.*\$100/s);
+  assert.match(await page.locator('#sales-hierarchy-share').textContent(), /Producto Uno.*P1.*1 un\..*Margen -400,?\.?(0)?%.*\$100/s);
   assert.equal(await page.locator('#sales-hierarchy-share').getAttribute('class'), 'sales-share-list hierarchy-product-list');
   assert.equal(await page.locator('#sales-hierarchy-back').isVisible(), true);
   await page.locator('#sales-hierarchy-back').click();
@@ -479,11 +487,18 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('button', { name: 'Exportar Excel' }).click();
   const purchasesDownload = await purchasesDownloadPromise;
   assert.match(purchasesDownload.suggestedFilename(), /^historial-compras-2026-08-05-2026-08-05\.xlsx$/);
-  const purchasesWorkbook = XLSX.readFile(await purchasesDownload.path());
+  const purchasesWorkbook = XLSX.readFile(await purchasesDownload.path(), { cellStyles: true });
   assert.deepEqual(purchasesWorkbook.SheetNames, ['Información', 'Compras']);
   assert.equal(purchasesWorkbook.Sheets.Compras.A1.v, 'Fecha');
   assert.equal(purchasesWorkbook.Sheets.Compras.J2.v, 2);
+  assert.equal(purchasesWorkbook.Sheets.Compras.J2.z, '#,##0');
+  assert.match(purchasesWorkbook.Props.Comments, /1,234\.56/);
   assert.equal(await page.locator('.content-layout').isVisible(), false);
+
+  await page.getByRole('link', { name: 'Configuracion' }).click();
+  await page.locator('#company-export-decimal-system').selectOption('comma');
+  await page.locator('#company-profile-form').getByRole('button', { name: 'Guardar datos de Brewit' }).click();
+  await page.locator('#location-status').filter({ hasText: /formato de exportación actualizados/i }).waitFor();
 
   await page.getByRole('link', { name: 'Proyección de Compras' }).click();
   await page.getByRole('heading', { name: 'Proyección de compras' }).waitFor();
@@ -680,28 +695,29 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#current-inventory-period').textContent(), /Inventario Final.*Fecha solicitada.*05.*ago.*2026.*Fecha del inventario utilizada.*05.*ago.*2026/i);
   assert.deepEqual(await page.locator('#current-inventory-table .inventory-sort-button').evaluateAll(buttons =>
     buttons.map(button => button.title.replace('Ordenar por ', ''))), [
-    'Jerarquía', 'Código', 'Producto', 'Unidad', 'Inventario teórico', 'Costo unitario', 'Valorización'
+    'Jerarquía', 'Código', 'Producto', 'Unidad', 'Inventario teórico', 'Costo unitario', 'Origen costo', 'Valorización'
   ]);
-  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /No hay productos/);
-  assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
-  assert.match(await page.locator('#current-inventory-missing-cost-table tbody').textContent(), /Sin jerarquía.*P1.*Producto Uno.*UN.*10,00.*Sin costo/s);
-  assert.match(await page.locator('#current-inventory-missing-cost-table tfoot').textContent(), /TOTAL SIN COSTO.*Sin valorizar/s);
+  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /Sin jerarquía.*P1.*Producto Uno.*UN.*10,00.*\$500.*Compra 05 ago 2026.*\$5\.000/s);
+  assert.equal(await page.locator('#current-inventory-missing-cost').isHidden(), true);
   await page.evaluate(() => {
     const data = currentInventoryTableState.data;
     data.report.items.push(
       { code: 'P2', name: 'Producto Beta', unit: 'UN', hierarchyPath: ['Productos', 'Bebidas'], quantity: 2.5, unitCost: 100, costAvailable: true, valuation: 250 },
-      { code: 'P3', name: 'Producto Alfa', unit: 'UN', hierarchyPath: ['Productos', 'Bebidas'], quantity: 3, unitCost: 100, costAvailable: true, valuation: 300 }
+      { code: 'P3', name: 'Producto Alfa', unit: 'UN', hierarchyPath: ['Productos', 'Bebidas'], quantity: 3, unitCost: 100, costAvailable: true, valuation: 300 },
+      { code: 'P4', name: 'Producto Sin Costo', unit: 'UN', hierarchyPath: ['Productos', 'Bebidas'], quantity: 4, unitCost: 0, costSource: 'missing', costAvailable: false, valuation: 0 }
     );
-    data.report.itemCount = 3;
+    data.report.itemCount = 4;
     data.report.hierarchyCount = 2;
-    data.report.totalValue = 550;
+    data.report.totalValue = 5550;
+    data.report.itemsWithoutCost = ['P4'];
     renderCurrentInventoryReport(data);
   });
-  assert.equal(await page.locator('#current-inventory-table tbody tr').count(), 2);
+  assert.equal(await page.locator('#current-inventory-table tbody tr').count(), 3);
   assert.match(await page.locator('#current-inventory-table tbody').textContent(), /Producto Alfa.*3,00.*\$100.*\$300.*Producto Beta.*2,50.*\$100.*\$250/s);
-  assert.match(await page.locator('#current-inventory-table tfoot').textContent(), /TOTAL VALORIZADO.*\$550/s);
+  assert.match(await page.locator('#current-inventory-table tfoot').textContent(), /TOTAL VALORIZADO.*\$5\.550/s);
   assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
-  await page.locator('#current-inventory-search').fill('P1');
+  assert.match(await page.locator('#current-inventory-missing-cost-table tbody').textContent(), /P4.*Producto Sin Costo.*Sin costo/s);
+  await page.locator('#current-inventory-search').fill('P4');
   assert.match(await page.locator('#current-inventory-table tbody').textContent(), /No hay productos/);
   assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
   assert.equal(await page.locator('#current-inventory-visible-count').textContent(), '0 valorizado(s) · 1 sin costo');
@@ -712,16 +728,19 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#current-inventory-table tbody tr').first().textContent(), /Producto Alfa/);
   await currentProductHeader.locator('button').click();
   assert.equal(await currentProductHeader.getAttribute('aria-sort'), 'descending');
-  assert.match(await page.locator('#current-inventory-table tbody tr').first().textContent(), /Producto Beta/);
+  assert.match(await page.locator('#current-inventory-table tbody tr').first().textContent(), /Producto Uno/);
   assert.equal(await page.locator('#current-inventory-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
   const currentInventoryDownloadPromise = page.waitForEvent('download');
   await page.locator('#current-inventory-results').getByRole('button', { name: 'Exportar Excel' }).click();
   const currentInventoryDownload = await currentInventoryDownloadPromise;
-  const currentInventoryWorkbook = XLSX.readFile(await currentInventoryDownload.path());
+  const currentInventoryWorkbook = XLSX.readFile(await currentInventoryDownload.path(), { cellStyles: true });
   assert.equal(currentInventoryWorkbook.SheetNames.includes('Inventario valorizado'), true);
   assert.equal(currentInventoryWorkbook.SheetNames.includes('Productos sin costo'), true);
   assert.match(currentInventoryWorkbook.Sheets['Inventario valorizado'].A1.v, /Jerarquía/);
   assert.match(currentInventoryWorkbook.Sheets['Productos sin costo'].A1.v, /Jerarquía/);
+  assert.equal(currentInventoryWorkbook.Sheets['Inventario valorizado'].E2.t, 'n');
+  assert.equal(currentInventoryWorkbook.Sheets['Inventario valorizado'].E2.z, '#.##0,00');
+  assert.match(currentInventoryWorkbook.Props.Comments, /1\.234,56/);
   await page.locator('#close-current-inventory-report').click();
   assert.equal(await page.locator('#current-inventory-results').evaluate(dialog => dialog.open), false);
   await page.locator('#inventory-source-list .inventory-source-card').first().getByRole('button', { name: 'Previsualizar' }).click();
@@ -785,7 +804,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'MOV-IN' }).count(), 1);
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'Costo unitario' }).count(), 1);
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'Costo total' }).count(), 1);
-  assert.match(await page.locator('#waste-summary-table tfoot').textContent(), /TOTAL.*5.*Sin costo|TOTAL.*5.*\$0/s);
+  assert.match(await page.locator('#waste-summary-table tfoot').textContent(), /TOTAL.*5.*\$2\.500/s);
   assert.equal(await page.locator('#waste-summary-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#waste-summary-results').getByRole('button', { name: 'Exportar Excel' }).click();
@@ -896,7 +915,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const inventoryResultCells = page.locator('#inventory-results-table tbody tr').first().locator('td');
   assert.match(await inventoryResultCells.nth(theoreticalValueColumn).textContent(), /\$5\.000/);
   assert.match(await inventoryResultCells.nth(physicalValueColumn).textContent(), /\$4\.500/);
-  assert.match(await page.locator('#inventory-results-table tfoot').textContent(), /TOTAL.*\$0.*\$5\.000.*\$4\.500/s);
+  assert.match(await page.locator('#inventory-results-table tfoot').textContent(), /TOTAL.*\$-500.*\$5\.000.*\$4\.500/s);
   assert.equal(await page.locator('#inventory-report-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
   assert.equal(await page.locator('#inventory-report-results').getByRole('button', { name: 'Exportar Excel' }).count(), 1);
   await page.emulateMedia({ media: 'print' });
