@@ -5119,6 +5119,171 @@ button:disabled {
   white-space: nowrap;
 }
 
+.hourly-total-min-max {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.hourly-total-min-max .hourly-demand-chart-button {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+  z-index: 1;
+}
+
+.hourly-demand-chart-button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--coffee-soft-2);
+  color: var(--clay);
+  cursor: pointer;
+}
+
+.hourly-demand-chart-button:hover,
+.hourly-demand-chart-button:focus-visible {
+  border-color: var(--clay);
+  outline: none;
+}
+
+.hourly-demand-chart-button svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.hourly-demand-chart-dialog {
+  width: min(1500px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  min-width: min(640px, calc(100vw - 32px));
+  min-height: min(440px, calc(100vh - 32px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  resize: both;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(46, 32, 21, 0.28);
+}
+
+.hourly-demand-chart-dialog::backdrop {
+  background: rgba(46, 32, 21, 0.6);
+}
+
+.hourly-demand-chart-dialog .report-modal-card {
+  min-width: 600px;
+  min-height: 100%;
+  padding: 24px;
+}
+
+.hourly-demand-chart-head {
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.hourly-demand-chart-head h3 {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.hourly-demand-chart-actions {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.hourly-demand-chart-actions label {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hourly-demand-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 18px;
+}
+
+.hourly-demand-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hourly-demand-chart-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.hourly-demand-chart-scroll {
+  margin-top: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--coffee-soft-2);
+}
+
+#hourly-demand-chart {
+  display: block;
+  min-width: 100%;
+}
+
+.hourly-chart-grid-line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.hourly-chart-axis-label,
+.hourly-chart-date-label,
+.hourly-chart-weekday-label {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hourly-chart-weekday-label {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.hourly-chart-weekday-separator {
+  stroke: var(--clay);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: .65;
+}
+
+.hourly-chart-total-label {
+  fill: var(--text);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.hourly-chart-segment {
+  stroke: color-mix(in srgb, var(--panel) 65%, transparent);
+  stroke-width: 1;
+}
+
 .sales-ranked-list,
 .sales-share-list {
   margin-top: 18px;
@@ -5538,6 +5703,7 @@ button:disabled {
   .sales-insight-heading,
   .sales-service-mode-head,
   .hourly-demand-head,
+  .hourly-demand-chart-head,
   .sales-dashboard-controls,
   .mercadopago-head,
   .inventory-workspace-head,
@@ -5578,6 +5744,12 @@ button:disabled {
   .hourly-demand-controls {
     width: 100%;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .hourly-demand-chart-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-wrap: wrap;
   }
 
   .sales-service-mode-controls {

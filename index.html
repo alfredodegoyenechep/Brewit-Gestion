@@ -31,7 +31,7 @@
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M8 2v4M16 2v4M3 10h18" />
         </svg>
-        <span class="nav-text">Ventas</span>
+        <span class="nav-text">Análisis y Estadísticas</span>
       </a>
       <a href="#" class="nav-link" data-view="sales-ingredients">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -311,13 +311,40 @@
         <div class="sales-table-wrap">
           <table class="sales-dashboard-table hourly-demand-table">
             <thead>
-              <tr><th>Franja horaria</th><th>Unidades</th><th>Facturación</th><th>% unidades</th><th>% facturación</th></tr>
+              <tr><th>Franja horaria</th><th>Unidades</th><th>Mín.–máx.</th><th>Facturación</th><th>Mín.–máx.</th><th>% unidades</th><th>% facturación</th></tr>
             </thead>
             <tbody id="hourly-demand-body"></tbody>
             <tfoot id="hourly-demand-foot"></tfoot>
           </table>
         </div>
       </section>
+
+      <dialog id="hourly-demand-chart-dialog" class="report-modal hourly-demand-chart-dialog">
+        <section class="report-modal-card">
+          <div class="panel-head hourly-demand-chart-head">
+            <div>
+              <div id="hourly-demand-chart-eyebrow" class="panel-eyebrow">Unidades por día</div>
+              <h3 id="hourly-demand-chart-heading">Composición diaria por franja horaria</h3>
+              <p id="hourly-demand-chart-context" class="panel-description"></p>
+            </div>
+            <div class="hourly-demand-chart-actions">
+              <label for="hourly-demand-chart-order">Orden de los días
+                <select id="hourly-demand-chart-order">
+                  <option value="sequential">Secuencia cronológica</option>
+                  <option value="weekday">Agrupar por día de semana</option>
+                </select>
+              </label>
+              <button id="close-hourly-demand-chart" class="icon-button" type="button">Cerrar</button>
+            </div>
+          </div>
+          <div id="hourly-demand-chart-legend" class="hourly-demand-chart-legend"></div>
+          <div id="hourly-demand-chart-scroll" class="hourly-demand-chart-scroll">
+            <svg id="hourly-demand-chart" role="img" aria-labelledby="hourly-demand-chart-title hourly-demand-chart-description"></svg>
+          </div>
+          <span id="hourly-demand-chart-title" hidden>Unidades vendidas diariamente por franja horaria</span>
+          <span id="hourly-demand-chart-description" hidden>Gráfico de barras apiladas. Cada barra representa un día y cada sección una franja horaria.</span>
+        </section>
+      </dialog>
 
       <section class="panel mercadopago-panel">
         <div class="panel-head mercadopago-head">

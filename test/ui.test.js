@@ -407,7 +407,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-location-filter').selectOption('all');
   await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
 
-  await page.getByRole('link', { name: 'Ventas', exact: true }).click();
+  await page.getByRole('link', { name: 'Análisis y Estadísticas', exact: true }).click();
   await page.getByRole('heading', { name: 'Panel de indicadores comerciales' }).waitFor();
   await page.locator('#sales-dashboard-status').filter({ hasText: /archivo\(s\) de ventas/i }).waitFor();
   assert.equal(await page.locator('.sales-kpi-card').count(), 4);
@@ -452,7 +452,47 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#hourly-demand-body tr').count(), 7);
   assert.match(await page.locator('#hourly-demand-body tr').first().textContent(), /07:00–09:00.*1.*\$100/s);
   assert.equal(await page.locator('#hourly-demand-body tr').first().locator('td').first().textContent(), '1,0');
+  assert.equal(await page.locator('#hourly-demand-body tr').first().locator('td').nth(1).textContent(), '1,0 – 1,0');
+  assert.equal(await page.locator('#hourly-demand-body tr').first().locator('td').nth(3).textContent(), '$100 – $100');
   assert.equal(await page.locator('#hourly-demand-foot td').first().textContent(), '1,0');
+  assert.match(await page.locator('#hourly-demand-foot td').nth(1).textContent(), /1,0 – 1,0/);
+  assert.match(await page.locator('#hourly-demand-foot td').nth(3).textContent(), /\$100 – \$100/);
+  const hourlyTotalAlignments = await page.locator('#hourly-demand-foot .hourly-total-min-max').evaluateAll(elements => elements.map(element => {
+    const button = element.querySelector('.hourly-demand-chart-button');
+    const wrapperBounds = element.getBoundingClientRect();
+    const buttonBounds = button.getBoundingClientRect();
+    return {
+      textAlign: getComputedStyle(element).textAlign,
+      position: getComputedStyle(element).position,
+      buttonPosition: getComputedStyle(button).position,
+      buttonIsOnRight: buttonBounds.left > wrapperBounds.right
+    };
+  }));
+  assert.deepEqual(hourlyTotalAlignments, [
+    { textAlign: 'right', position: 'relative', buttonPosition: 'absolute', buttonIsOnRight: true },
+    { textAlign: 'right', position: 'relative', buttonPosition: 'absolute', buttonIsOnRight: true }
+  ]);
+  await page.locator('#hourly-demand-foot .hourly-demand-chart-button[data-metric="units"]').click();
+  assert.equal(await page.locator('#hourly-demand-chart-dialog').evaluate(dialog => dialog.open), true);
+  assert.equal(await page.locator('#hourly-demand-chart-dialog').evaluate(dialog => getComputedStyle(dialog).resize), 'both');
+  assert.match(await page.locator('#hourly-demand-chart-context').textContent(), /Todas las jerarquías.*09.*ago.*2026/i);
+  assert.match(await page.locator('#hourly-demand-chart-legend').textContent(), /07:00–09:00/);
+  assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-segment').count(), 1);
+  assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-weekday-label').textContent(), 'D');
+  assert.deepEqual(await page.locator('#hourly-demand-chart-order option').allTextContents(), [
+    'Secuencia cronológica', 'Agrupar por día de semana'
+  ]);
+  await page.locator('#hourly-demand-chart-order').selectOption('weekday');
+  assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-segment').count(), 1);
+  assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-weekday-label').textContent(), 'D');
+  await page.locator('#close-hourly-demand-chart').click();
+  await page.locator('#hourly-demand-foot .hourly-demand-chart-button[data-metric="sales"]').click();
+  assert.equal(await page.locator('#hourly-demand-chart-eyebrow').textContent(), 'Facturación por día');
+  assert.equal(await page.locator('#hourly-demand-chart-heading').textContent(), 'Facturación diaria por franja horaria');
+  assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-segment').count(), 1);
+  assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-total-label').textContent(), '$100');
+  assert.match(await page.locator('#hourly-demand-chart .hourly-chart-segment title').textContent(), /\$100 facturación neta/);
+  await page.locator('#close-hourly-demand-chart').click();
   await page.locator('#hourly-demand-hierarchies .hourly-hierarchy-button').filter({ hasText: 'Bebidas' }).click();
   assert.match(await page.locator('#hourly-demand-context').textContent(), /Todas las jerarquías.*Bebidas/);
   assert.match(await page.locator('#hourly-demand-hierarchies').textContent(), /Producto Uno.*P1/);

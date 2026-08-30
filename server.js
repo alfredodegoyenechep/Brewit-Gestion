@@ -6598,35 +6598,67 @@ function createApp(options = {}) {
           name: fact.name,
           hierarchyPath: fact.hierarchyPath,
           quantity: 0,
-          netSales: 0
+          netSales: 0,
+          dailyUnits: {},
+          dailyNetSales: {}
         };
         product.quantity += fact.quantity / divisor;
         product.netSales += fact.netSales / divisor;
+        product.dailyUnits[fact.date] = (product.dailyUnits[fact.date] || 0) + fact.quantity;
+        product.dailyNetSales[fact.date] = (product.dailyNetSales[fact.date] || 0) + fact.netSales;
         products.set(key, product);
       });
       const values = [...products.values()];
+      const dailyQuantities = eligibleDates.slice().sort().map(date => ({
+        date,
+        quantity: values.reduce((sum, product) => sum + (Number(product.dailyUnits[date]) || 0), 0)
+      }));
+      const dailyNetSales = eligibleDates.slice().sort().map(date => ({
+        date,
+        netSales: values.reduce((sum, product) => sum + (Number(product.dailyNetSales[date]) || 0), 0)
+      }));
       buckets.push({
         fromHour,
         toHour,
         label: `${String(fromHour).padStart(2, '0')}:00–${String(toHour).padStart(2, '0')}:00`,
         quantity: values.reduce((sum, product) => sum + product.quantity, 0),
         netSales: values.reduce((sum, product) => sum + product.netSales, 0),
+        minQuantity: dailyQuantities.length ? Math.min(...dailyQuantities.map(item => item.quantity)) : 0,
+        maxQuantity: dailyQuantities.length ? Math.max(...dailyQuantities.map(item => item.quantity)) : 0,
+        dailyQuantities,
+        minNetSales: dailyNetSales.length ? Math.min(...dailyNetSales.map(item => item.netSales)) : 0,
+        maxNetSales: dailyNetSales.length ? Math.max(...dailyNetSales.map(item => item.netSales)) : 0,
+        dailyNetSales,
         products: values.sort((left, right) => right.quantity - left.quantity || right.netSales - left.netSales)
       });
     }
+    const selectedDates = eligibleDates.slice().sort();
+    const dailyTotals = selectedDates.map(date => ({
+      date,
+      quantity: buckets.reduce((sum, bucket) => sum
+        + (bucket.dailyQuantities.find(item => item.date === date)?.quantity || 0), 0),
+      netSales: buckets.reduce((sum, bucket) => sum
+        + (bucket.dailyNetSales.find(item => item.date === date)?.netSales || 0), 0)
+    }));
     return {
       scope: selectedStore
         ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
         : { type: 'all', location: null, label: 'Todas las cafeterías' },
       filters: { mode, date: referenceDate, days: requestedDays, intervalHours },
-      selectedDates: eligibleDates.slice().sort(),
+      selectedDates,
       sampleSize: eligibleDates.length,
       isAverage: mode !== 'date',
       openDateCount: openDates.length,
       buckets,
       totals: {
         quantity: buckets.reduce((sum, bucket) => sum + bucket.quantity, 0),
-        netSales: buckets.reduce((sum, bucket) => sum + bucket.netSales, 0)
+        netSales: buckets.reduce((sum, bucket) => sum + bucket.netSales, 0),
+        minQuantity: dailyTotals.length ? Math.min(...dailyTotals.map(item => item.quantity)) : 0,
+        maxQuantity: dailyTotals.length ? Math.max(...dailyTotals.map(item => item.quantity)) : 0,
+        dailyQuantities: dailyTotals.map(({ date, quantity }) => ({ date, quantity })),
+        minNetSales: dailyTotals.length ? Math.min(...dailyTotals.map(item => item.netSales)) : 0,
+        maxNetSales: dailyTotals.length ? Math.max(...dailyTotals.map(item => item.netSales)) : 0,
+        dailyNetSales: dailyTotals.map(({ date, netSales }) => ({ date, netSales }))
       },
       filesRead,
       warnings

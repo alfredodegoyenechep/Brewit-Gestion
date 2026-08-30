@@ -41,6 +41,7 @@ let salesIngredientsState = null;
 let salesHierarchyPath = [];
 let hourlySalesHierarchyPath = [];
 let hourlySalesProductKey = null;
+let hourlyDemandChartMetric = 'units';
 let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
 let pendingTransactionDelete = null;
@@ -1550,6 +1551,196 @@ function formatHourlyTableQuantity(value) {
   return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value || 0);
 }
 
+function filteredHourlyDemandRows(report = hourlySalesDemandState) {
+  if (!report) return [];
+  return report.buckets.map(bucket => {
+    const products = bucket.products.filter(product =>
+      hourlyPathMatches(product, hourlySalesHierarchyPath)
+      && (!hourlySalesProductKey || hourlyProductIdentity(product) === hourlySalesProductKey));
+    const dailyUnits = Object.fromEntries((report.selectedDates || []).map(date => [
+      date,
+      products.reduce((sum, product) => sum + (Number(product.dailyUnits?.[date]) || 0), 0)
+    ]));
+    const dailyNetSales = Object.fromEntries((report.selectedDates || []).map(date => [
+      date,
+      products.reduce((sum, product) => sum + (Number(product.dailyNetSales?.[date]) || 0), 0)
+    ]));
+    const dailyUnitValues = Object.values(dailyUnits);
+    const dailySalesValues = Object.values(dailyNetSales);
+    return {
+      label: bucket.label,
+      quantity: products.reduce((sum, product) => sum + product.quantity, 0),
+      netSales: products.reduce((sum, product) => sum + product.netSales, 0),
+      dailyUnits,
+      minQuantity: dailyUnitValues.length ? Math.min(...dailyUnitValues) : 0,
+      maxQuantity: dailyUnitValues.length ? Math.max(...dailyUnitValues) : 0,
+      dailyNetSales,
+      minNetSales: dailySalesValues.length ? Math.min(...dailySalesValues) : 0,
+      maxNetSales: dailySalesValues.length ? Math.max(...dailySalesValues) : 0
+    };
+  });
+}
+
+function hourlyMinMaxLabel(minimum, maximum) {
+  return `${formatHourlyTableQuantity(minimum)} – ${formatHourlyTableQuantity(maximum)}`;
+}
+
+function hourlySalesMinMaxLabel(minimum, maximum) {
+  return `${formatClp(minimum)} – ${formatClp(maximum)}`;
+}
+
+function hourlyChartButton(metric = 'units') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'hourly-demand-chart-button';
+  button.dataset.metric = metric;
+  button.title = metric === 'sales'
+    ? 'Ver facturación por día y franja horaria'
+    : 'Ver unidades vendidas por día y franja horaria';
+  button.setAttribute('aria-label', button.title);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [x, y, width, height] of [[2, 11, 3, 6], [8, 7, 3, 10], [14, 3, 3, 14]]) {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', width);
+    rect.setAttribute('height', height);
+    rect.setAttribute('rx', '1');
+    svg.appendChild(rect);
+  }
+  button.appendChild(svg);
+  button.addEventListener('click', () => openHourlyDemandChart(metric));
+  return button;
+}
+
+function appendSvgElement(parent, tagName, attributes = {}, textValue = null) {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', tagName);
+  Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, value));
+  if (textValue !== null) element.textContent = textValue;
+  parent.appendChild(element);
+  return element;
+}
+
+function openHourlyDemandChart(metric = hourlyDemandChartMetric) {
+  const report = hourlySalesDemandState;
+  if (!report?.selectedDates?.length) return;
+  hourlyDemandChartMetric = metric === 'sales' ? 'sales' : 'units';
+  const isSalesChart = hourlyDemandChartMetric === 'sales';
+  const rows = filteredHourlyDemandRows(report);
+  const chronologicalDates = report.selectedDates.slice().sort();
+  const weekdayIndex = date => (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7;
+  const weekdayInitials = ['L', 'M', 'W', 'J', 'V', 'S', 'D'];
+  const groupByWeekday = document.getElementById('hourly-demand-chart-order').value === 'weekday';
+  const dates = chronologicalDates.slice().sort((left, right) => groupByWeekday
+    ? weekdayIndex(left) - weekdayIndex(right) || left.localeCompare(right)
+    : left.localeCompare(right));
+  const dailyTotals = dates.map(date => rows.reduce((sum, row) => sum
+    + (Number(isSalesChart ? row.dailyNetSales[date] : row.dailyUnits[date]) || 0), 0));
+  const maximum = Math.max(1, ...dailyTotals);
+  const formatChartValue = value => isSalesChart ? formatClp(value) : formatHourlyTableQuantity(value);
+  const palette = ['#b96f3f', '#d08b4e', '#d6a55d', '#8d6747', '#6f8061', '#4f8270', '#3f6e78', '#6673a1', '#84658e', '#9b5f68', '#a37756', '#77808b', '#5f7256', '#967b45'];
+  const margin = { top: 34, right: 24, bottom: 96, left: isSalesChart ? 90 : 58 };
+  const plotHeight = 280;
+  const step = isSalesChart ? 74 : 54;
+  const width = Math.max(760, margin.left + margin.right + dates.length * step);
+  const height = margin.top + plotHeight + margin.bottom;
+  const plotWidth = width - margin.left - margin.right;
+  const barStep = plotWidth / dates.length;
+  const barWidth = Math.min(34, barStep * 0.68);
+  const svg = document.getElementById('hourly-demand-chart');
+  svg.replaceChildren();
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  for (let index = 0; index <= 4; index += 1) {
+    const value = maximum * index / 4;
+    const y = margin.top + plotHeight - plotHeight * index / 4;
+    appendSvgElement(svg, 'line', { x1: margin.left, y1: y, x2: width - margin.right, y2: y, class: 'hourly-chart-grid-line' });
+    appendSvgElement(svg, 'text', { x: margin.left - 9, y: y + 4, class: 'hourly-chart-axis-label', 'text-anchor': 'end' }, formatChartValue(value));
+  }
+
+  dates.forEach((date, dateIndex) => {
+    const x = margin.left + dateIndex * barStep + (barStep - barWidth) / 2;
+    if (groupByWeekday && dateIndex > 0 && weekdayIndex(date) !== weekdayIndex(dates[dateIndex - 1])) {
+      const separatorX = margin.left + dateIndex * barStep;
+      appendSvgElement(svg, 'line', {
+        x1: separatorX,
+        y1: margin.top - 8,
+        x2: separatorX,
+        y2: margin.top + plotHeight + 70,
+        class: 'hourly-chart-weekday-separator'
+      });
+    }
+    let bottom = margin.top + plotHeight;
+    rows.forEach((row, rowIndex) => {
+      const value = Number(isSalesChart ? row.dailyNetSales[date] : row.dailyUnits[date]) || 0;
+      if (value <= 0) return;
+      const segmentHeight = value / maximum * plotHeight;
+      bottom -= segmentHeight;
+      const rect = appendSvgElement(svg, 'rect', {
+        x,
+        y: bottom,
+        width: barWidth,
+        height: Math.max(1, segmentHeight),
+        fill: palette[rowIndex % palette.length],
+        class: 'hourly-chart-segment'
+      });
+      appendSvgElement(rect, 'title', {}, `${formatReportDate(date)} · ${row.label}: ${formatChartValue(value)}${isSalesChart ? ' facturación neta' : ' unidades'}`);
+    });
+    appendSvgElement(svg, 'text', {
+      x: x + barWidth / 2,
+      y: Math.max(16, bottom - 7),
+      class: 'hourly-chart-total-label',
+      'text-anchor': 'middle'
+    }, formatChartValue(dailyTotals[dateIndex]));
+    appendSvgElement(svg, 'text', {
+      x: x + barWidth / 2,
+      y: margin.top + plotHeight + 17,
+      class: 'hourly-chart-date-label',
+      'text-anchor': 'end',
+      transform: `rotate(-45 ${x + barWidth / 2} ${margin.top + plotHeight + 17})`
+    }, new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)));
+    appendSvgElement(svg, 'text', {
+      x: x + barWidth / 2,
+      y: margin.top + plotHeight + 78,
+      class: 'hourly-chart-weekday-label',
+      'text-anchor': 'middle'
+    }, weekdayInitials[weekdayIndex(date)]);
+  });
+
+  const legend = document.getElementById('hourly-demand-chart-legend');
+  legend.replaceChildren(...rows.map((row, index) => {
+    const item = document.createElement('span');
+    const swatch = document.createElement('i');
+    swatch.style.backgroundColor = palette[index % palette.length];
+    item.append(swatch, row.label);
+    return item;
+  }));
+  const path = ['Todas las jerarquías', ...hourlySalesHierarchyPath];
+  if (hourlySalesProductKey) {
+    const selectedProduct = report.buckets.flatMap(bucket => bucket.products)
+      .find(product => hourlyProductIdentity(product) === hourlySalesProductKey);
+    if (selectedProduct) path.push(selectedProduct.name);
+  }
+  document.getElementById('hourly-demand-chart-context').textContent =
+    `${path.join(' › ')} · ${formatReportDate(chronologicalDates[0])} – ${formatReportDate(chronologicalDates.at(-1))}`;
+  document.getElementById('hourly-demand-chart-eyebrow').textContent = isSalesChart ? 'Facturación por día' : 'Unidades por día';
+  document.getElementById('hourly-demand-chart-heading').textContent = isSalesChart
+    ? 'Facturación diaria por franja horaria'
+    : 'Composición diaria por franja horaria';
+  document.getElementById('hourly-demand-chart-title').textContent = isSalesChart
+    ? 'Facturación neta diaria por franja horaria'
+    : 'Unidades vendidas diariamente por franja horaria';
+  document.getElementById('hourly-demand-chart-description').textContent = isSalesChart
+    ? 'Gráfico de barras apiladas. Cada barra representa la facturación neta de un día y cada sección una franja horaria.'
+    : 'Gráfico de barras apiladas. Cada barra representa las unidades de un día y cada sección una franja horaria.';
+  const dialog = document.getElementById('hourly-demand-chart-dialog');
+  if (!dialog.open) dialog.showModal();
+}
+
 function renderHourlySalesDemand() {
   const report = hourlySalesDemandState;
   if (!report) return;
@@ -1558,7 +1749,6 @@ function renderHourlySalesDemand() {
   const selectedProducts = hourlySalesProductKey
     ? productsInPath.filter(product => hourlyProductIdentity(product) === hourlySalesProductKey)
     : productsInPath;
-  const selectedKeys = new Set(selectedProducts.map(hourlyProductIdentity));
   const hierarchyList = document.getElementById('hourly-demand-hierarchies');
   const nextDepth = hourlySalesHierarchyPath.length;
   const children = new Map();
@@ -1620,32 +1810,39 @@ function renderHourlySalesDemand() {
     hierarchyList.replaceChildren();
   }
 
-  const rows = report.buckets.map(bucket => {
-    const products = bucket.products.filter(product =>
-      hourlyPathMatches(product, hourlySalesHierarchyPath)
-      && (!hourlySalesProductKey || selectedKeys.has(hourlyProductIdentity(product))));
-    return {
-      label: bucket.label,
-      quantity: products.reduce((sum, product) => sum + product.quantity, 0),
-      netSales: products.reduce((sum, product) => sum + product.netSales, 0)
-    };
-  });
+  const rows = filteredHourlyDemandRows(report);
+  const dailyTotals = Object.fromEntries((report.selectedDates || []).map(date => [
+    date,
+    rows.reduce((sum, row) => sum + (row.dailyUnits[date] || 0), 0)
+  ]));
+  const dailySalesTotals = Object.fromEntries((report.selectedDates || []).map(date => [
+    date,
+    rows.reduce((sum, row) => sum + (row.dailyNetSales[date] || 0), 0)
+  ]));
+  const dailyTotalValues = Object.values(dailyTotals);
+  const dailySalesValues = Object.values(dailySalesTotals);
   const totals = {
     quantity: rows.reduce((sum, row) => sum + row.quantity, 0),
-    netSales: rows.reduce((sum, row) => sum + row.netSales, 0)
+    netSales: rows.reduce((sum, row) => sum + row.netSales, 0),
+    minQuantity: dailyTotalValues.length ? Math.min(...dailyTotalValues) : 0,
+    maxQuantity: dailyTotalValues.length ? Math.max(...dailyTotalValues) : 0,
+    minNetSales: dailySalesValues.length ? Math.min(...dailySalesValues) : 0,
+    maxNetSales: dailySalesValues.length ? Math.max(...dailySalesValues) : 0
   };
   document.getElementById('hourly-demand-body').replaceChildren(...rows.map(item => {
     const row = document.createElement('tr');
     const values = [
       item.label,
       formatHourlyTableQuantity(item.quantity),
+      hourlyMinMaxLabel(item.minQuantity, item.maxQuantity),
       formatClp(item.netSales),
+      hourlySalesMinMaxLabel(item.minNetSales, item.maxNetSales),
       `${totals.quantity ? item.quantity / totals.quantity * 100 : 0}`,
       `${totals.netSales ? item.netSales / totals.netSales * 100 : 0}`
     ];
     values.forEach((value, index) => {
       const cell = document.createElement(index ? 'td' : 'th');
-      if (index >= 3) cell.textContent = `${Number(value).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+      if (index >= 5) cell.textContent = `${Number(value).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
       else cell.textContent = value;
       if (index) cell.className = 'numeric-cell';
       row.appendChild(cell);
@@ -1653,10 +1850,16 @@ function renderHourlySalesDemand() {
     return row;
   }));
   const totalRow = document.createElement('tr');
-  ['Total 07:00–21:00', formatHourlyTableQuantity(totals.quantity), formatClp(totals.netSales), '100,0%', '100,0%']
+  ['Total 07:00–21:00', formatHourlyTableQuantity(totals.quantity), hourlyMinMaxLabel(totals.minQuantity, totals.maxQuantity),
+    formatClp(totals.netSales), hourlySalesMinMaxLabel(totals.minNetSales, totals.maxNetSales), '100,0%', '100,0%']
     .forEach((value, index) => {
       const cell = document.createElement(index ? 'td' : 'th');
-      cell.textContent = value;
+      if (index === 2 || index === 4) {
+        const wrapper = document.createElement('span');
+        wrapper.className = 'hourly-total-min-max';
+        wrapper.append(value, hourlyChartButton(index === 4 ? 'sales' : 'units'));
+        cell.appendChild(wrapper);
+      } else cell.textContent = value;
       if (index) cell.className = 'numeric-cell';
       totalRow.appendChild(cell);
     });
@@ -6564,6 +6767,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (hourlySalesProductKey) hourlySalesProductKey = null;
     else hourlySalesHierarchyPath = hourlySalesHierarchyPath.slice(0, -1);
     renderHourlySalesDemand();
+  });
+  document.getElementById('close-hourly-demand-chart').addEventListener('click', () => {
+    document.getElementById('hourly-demand-chart-dialog').close();
+  });
+  document.getElementById('hourly-demand-chart-order').addEventListener('change', () => {
+    if (document.getElementById('hourly-demand-chart-dialog').open) openHourlyDemandChart();
   });
   document.getElementById('products-location-filter').addEventListener('change', () => {
     document.getElementById('products-comparison').hidden = true;

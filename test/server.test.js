@@ -2412,9 +2412,37 @@ test('builds hourly product demand for open days, weekdays and matching weekdays
   assert.equal(recent.buckets[0].label, '07:00–09:00');
   assert.equal(recent.buckets[0].quantity, 3);
   assert.equal(recent.buckets[0].netSales, 250);
+  assert.equal(recent.buckets[0].minQuantity, 2);
+  assert.equal(recent.buckets[0].maxQuantity, 4);
+  assert.deepEqual(recent.buckets[0].dailyQuantities, [
+    { date: '2026-08-24', quantity: 4 },
+    { date: '2026-08-26', quantity: 2 }
+  ]);
+  assert.deepEqual(recent.buckets[0].products[0].dailyUnits, { '2026-08-24': 4, '2026-08-26': 2 });
+  assert.deepEqual(recent.buckets[0].products[0].dailyNetSales, { '2026-08-24': 400, '2026-08-26': 100 });
+  assert.equal(recent.buckets[0].minNetSales, 100);
+  assert.equal(recent.buckets[0].maxNetSales, 400);
+  assert.deepEqual(recent.buckets[0].dailyNetSales, [
+    { date: '2026-08-24', netSales: 400 },
+    { date: '2026-08-26', netSales: 100 }
+  ]);
   assert.equal(recent.buckets[1].quantity, 0.5);
   assert.equal(recent.buckets[1].netSales, 100);
+  assert.equal(recent.buckets[1].minQuantity, 0);
+  assert.equal(recent.buckets[1].maxQuantity, 1);
   assert.deepEqual(recent.buckets[0].products[0].hierarchyPath, ['Bebidas']);
+  assert.equal(recent.totals.minQuantity, 3);
+  assert.equal(recent.totals.maxQuantity, 4);
+  assert.deepEqual(recent.totals.dailyQuantities, [
+    { date: '2026-08-24', quantity: 4 },
+    { date: '2026-08-26', quantity: 3 }
+  ]);
+  assert.equal(recent.totals.minNetSales, 300);
+  assert.equal(recent.totals.maxNetSales, 400);
+  assert.deepEqual(recent.totals.dailyNetSales, [
+    { date: '2026-08-24', netSales: 400 },
+    { date: '2026-08-26', netSales: 300 }
+  ]);
 
   const matching = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=same-weekday&date=2026-08-26&days=2&interval=1`)
     .then(response => response.json());
@@ -2422,6 +2450,8 @@ test('builds hourly product demand for open days, weekdays and matching weekdays
   assert.equal(matching.buckets.length, 14);
   assert.equal(matching.buckets[0].quantity, 1);
   assert.equal(matching.buckets[0].netSales, 50);
+  assert.equal(matching.buckets[0].minQuantity, 0);
+  assert.equal(matching.buckets[0].maxQuantity, 2);
   assert.equal(matching.buckets[1].quantity, 3);
   assert.equal(matching.buckets[1].netSales, 300);
 
