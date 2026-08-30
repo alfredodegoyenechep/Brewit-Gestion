@@ -5063,6 +5063,16 @@ button:disabled {
   opacity: .55;
 }
 
+.hourly-demand-action-stack {
+  display: grid;
+  gap: 7px;
+}
+
+.hourly-demand-action-stack button {
+  width: 100%;
+  white-space: nowrap;
+}
+
 .hourly-demand-selection {
   display: flex;
   align-items: center;
@@ -5282,6 +5292,353 @@ button:disabled {
 .hourly-chart-segment {
   stroke: color-mix(in srgb, var(--panel) 65%, transparent);
   stroke-width: 1;
+}
+
+.hourly-analysis-dialog {
+  width: min(1420px, calc(100vw - 32px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(46, 32, 21, .3);
+}
+
+.hourly-analysis-dialog::backdrop {
+  background: rgba(46, 32, 21, .68);
+}
+
+.hourly-analysis-options-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(46, 32, 21, .3);
+}
+
+.hourly-analysis-options-dialog::backdrop {
+  background: rgba(46, 32, 21, .68);
+}
+
+.hourly-analysis-options-card {
+  padding: 24px;
+}
+
+.hourly-analysis-options-card h3 {
+  margin: 5px 0 0;
+  font-size: 22px;
+}
+
+.hourly-analysis-options-card > p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.hourly-analysis-level-options {
+  display: grid;
+  gap: 9px;
+  margin: 18px 0;
+}
+
+.hourly-analysis-level-options button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--coffee-soft-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hourly-analysis-level-options button:hover,
+.hourly-analysis-level-options button:focus-visible {
+  border-color: var(--clay);
+  background: var(--coffee-soft);
+  outline: none;
+}
+
+.hourly-analysis-level-options strong {
+  font-size: 14px;
+}
+
+.hourly-analysis-level-options span {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.hourly-analysis-report {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.hourly-analysis-head {
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.hourly-analysis-head h2 {
+  margin: 5px 0 0;
+  font-size: 25px;
+}
+
+.hourly-analysis-actions {
+  flex-shrink: 0;
+}
+
+.hourly-analysis-section {
+  padding: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--coffee-soft-2);
+}
+
+.hourly-analysis-section > h3 {
+  margin: 5px 0 14px;
+  font-size: 19px;
+}
+
+.hourly-analysis-section > h4 {
+  margin: 20px 0 8px;
+  font-size: 14px;
+}
+
+.hourly-analysis-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(125px, 1fr));
+  gap: 8px;
+}
+
+.hourly-analysis-metrics article {
+  display: grid;
+  gap: 5px;
+  min-height: 70px;
+  align-content: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.hourly-analysis-metrics span {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.hourly-analysis-metrics strong {
+  font-size: 16px;
+}
+
+.hourly-analysis-executive {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--clay);
+  background: var(--panel);
+}
+
+.hourly-analysis-executive p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.hourly-analysis-findings {
+  display: grid;
+  gap: 10px;
+}
+
+.hourly-analysis-breakdowns {
+  display: grid;
+  gap: 18px;
+}
+
+.hourly-analysis-breakdown > h4 {
+  margin: 18px 0 8px;
+  font-size: 13px;
+}
+
+.hourly-analysis-breakdown-findings {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hourly-analysis-breakdown-finding .hourly-analysis-followup {
+  display: block;
+  width: auto;
+}
+
+.hourly-analysis-breakdown-table-wrap {
+  max-height: 480px;
+  overflow: auto;
+}
+
+.hourly-analysis-breakdown-table {
+  min-width: 1100px;
+}
+
+.hourly-analysis-breakdown-table th:first-child,
+.hourly-analysis-breakdown-table td:first-child,
+.hourly-analysis-breakdown-table[data-breakdown-level="product"] th:nth-child(-n + 3),
+.hourly-analysis-breakdown-table[data-breakdown-level="product"] td:nth-child(-n + 3) {
+  text-align: left;
+}
+
+.hourly-analysis-finding {
+  padding: 15px 16px;
+  border: 1px solid var(--border-soft);
+  border-left: 4px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel);
+}
+
+.hourly-analysis-finding.priority-high {
+  border-left-color: var(--danger);
+}
+
+.hourly-analysis-finding.priority-medium {
+  border-left-color: var(--clay);
+}
+
+.hourly-analysis-finding.priority-info {
+  border-left-color: var(--green);
+}
+
+.hourly-analysis-finding-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+}
+
+.hourly-analysis-finding-number {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--coffee-soft);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.hourly-analysis-category {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.hourly-analysis-finding h4 {
+  margin: 3px 0 0;
+  font-size: 14px;
+}
+
+.hourly-analysis-priority {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--coffee-soft);
+  color: var(--text-soft);
+  font-size: 9px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.hourly-analysis-priority.high {
+  color: var(--danger);
+}
+
+.hourly-analysis-priority.medium {
+  color: var(--clay);
+}
+
+.hourly-analysis-priority.info {
+  color: var(--green);
+}
+
+.hourly-analysis-conclusion,
+.hourly-analysis-evidence {
+  margin: 10px 0 0 45px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.hourly-analysis-evidence {
+  color: var(--text-muted);
+}
+
+.hourly-analysis-followup {
+  display: inline-block;
+  width: calc(50% - 26px);
+  margin: 12px 0 0 45px;
+  vertical-align: top;
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.hourly-analysis-followup + .hourly-analysis-followup {
+  width: calc(50% - 23px);
+  margin-left: 0;
+}
+
+.hourly-analysis-followup strong {
+  font-size: 10px;
+}
+
+.hourly-analysis-followup ul,
+.hourly-analysis-methodology ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.hourly-analysis-followup li,
+.hourly-analysis-methodology li {
+  margin-top: 4px;
+  line-height: 1.45;
+}
+
+.hourly-analysis-appendix .sales-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.hourly-analysis-appendix th:first-child,
+.hourly-analysis-appendix td:first-child {
+  text-align: left;
+}
+
+.hourly-analysis-appendix .numeric-cell {
+  text-align: right;
+}
+
+.hourly-analysis-methodology {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 .sales-ranked-list,
@@ -5752,6 +6109,35 @@ button:disabled {
     flex-wrap: wrap;
   }
 
+  .hourly-analysis-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hourly-analysis-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hourly-analysis-breakdown-findings {
+    grid-template-columns: 1fr;
+  }
+
+  .hourly-analysis-finding-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .hourly-analysis-priority {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .hourly-analysis-followup,
+  .hourly-analysis-followup + .hourly-analysis-followup {
+    display: block;
+    width: auto;
+    margin: 12px 0 0 45px;
+  }
+
   .sales-service-mode-controls {
     width: 100%;
   }
@@ -5929,5 +6315,109 @@ button:disabled {
 
   .bar {
     width: 22px;
+  }
+}
+
+@media print {
+  body.printing-hourly-analysis {
+    display: block;
+    background: white;
+    color: #17130f;
+  }
+
+  body.printing-hourly-analysis .sidebar,
+  body.printing-hourly-analysis .main-content > section:not(#sales-dashboard),
+  body.printing-hourly-analysis #sales-dashboard > *:not(#hourly-analysis-dialog) {
+    display: none !important;
+  }
+
+  body.printing-hourly-analysis .main-content,
+  body.printing-hourly-analysis #sales-dashboard,
+  body.printing-hourly-analysis #hourly-analysis-dialog,
+  body.printing-hourly-analysis .hourly-analysis-report {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.printing-hourly-analysis #hourly-analysis-status,
+  body.printing-hourly-analysis .hourly-analysis-actions {
+    display: none !important;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-head {
+    margin-bottom: 10mm;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-section {
+    margin-bottom: 6mm;
+    background: white !important;
+    break-inside: avoid;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-breakdown,
+  body.printing-hourly-analysis .hourly-analysis-appendix {
+    break-inside: auto;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-findings,
+  body.printing-hourly-analysis .hourly-analysis-appendix {
+    display: block;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-finding {
+    margin-bottom: 4mm;
+    background: white !important;
+    break-inside: avoid;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-metrics article,
+  body.printing-hourly-analysis .hourly-analysis-executive,
+  body.printing-hourly-analysis .hourly-analysis-methodology {
+    background: white !important;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-appendix .sales-table-wrap,
+  body.printing-hourly-analysis .hourly-analysis-breakdown-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-appendix table,
+  body.printing-hourly-analysis .hourly-analysis-breakdown-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 7px !important;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-appendix th,
+  body.printing-hourly-analysis .hourly-analysis-appendix td,
+  body.printing-hourly-analysis .hourly-analysis-breakdown-table th,
+  body.printing-hourly-analysis .hourly-analysis-breakdown-table td {
+    padding: 3px 4px !important;
+    color: #17130f !important;
+    white-space: normal !important;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-breakdown-table thead,
+  body.printing-hourly-analysis .hourly-analysis-appendix thead {
+    display: table-header-group;
+  }
+
+  body.printing-hourly-analysis .hourly-analysis-breakdown-table tr,
+  body.printing-hourly-analysis .hourly-analysis-appendix tr {
+    break-inside: avoid;
   }
 }

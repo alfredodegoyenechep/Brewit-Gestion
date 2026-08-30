@@ -281,9 +281,18 @@
                 <option value="recent" selected>Promedio últimos días abiertos</option>
                 <option value="same-weekday">Promedio mismos días</option>
                 <option value="weekdays">Promedio días hábiles</option>
+                <option value="current-week">Semana actual</option>
+                <option value="previous-week">Semana anterior</option>
+                <option value="current-month">Mes actual</option>
+                <option value="previous-month">Mes anterior</option>
+                <option value="last-30-days">Últimos 30 días</option>
+                <option value="last-60-days">Últimos 60 días</option>
+                <option value="last-90-days">Últimos 90 días</option>
+                <option value="last-180-days">Últimos 180 días</option>
+                <option value="last-360-days">Últimos 360 días</option>
               </select>
             </label>
-            <label for="hourly-demand-date">Fecha de referencia
+            <label id="hourly-demand-date-label" for="hourly-demand-date">Fecha de referencia
               <input id="hourly-demand-date" type="date">
             </label>
             <label id="hourly-demand-days-label" for="hourly-demand-days">Cantidad de días
@@ -295,7 +304,10 @@
                 <option value="2" selected>2 horas</option>
               </select>
             </label>
-            <button id="refresh-hourly-demand" class="icon-button" type="button">Actualizar franjas</button>
+            <div class="hourly-demand-action-stack">
+              <button id="generate-hourly-analysis" class="primary" type="button">Reporte Análisis</button>
+              <button id="refresh-hourly-demand" class="icon-button" type="button">Actualizar franjas</button>
+            </div>
           </div>
         </div>
         <div id="hourly-demand-status" class="form-status" aria-live="polite"></div>
@@ -344,6 +356,86 @@
           <span id="hourly-demand-chart-title" hidden>Unidades vendidas diariamente por franja horaria</span>
           <span id="hourly-demand-chart-description" hidden>Gráfico de barras apiladas. Cada barra representa un día y cada sección una franja horaria.</span>
         </section>
+      </dialog>
+
+      <dialog id="hourly-analysis-options-dialog" class="hourly-analysis-options-dialog">
+        <section class="hourly-analysis-options-card">
+          <div class="panel-eyebrow">Profundidad del reporte</div>
+          <h3>Selecciona el nivel de análisis</h3>
+          <p>Todos los niveles consideran los filtros, la ubicación y la selección de productos actualmente visibles.</p>
+          <div class="hourly-analysis-level-options">
+            <button type="button" data-hourly-analysis-level="general">
+              <strong>Nivel general</strong>
+              <span>Resumen ejecutivo, hallazgos y anexo estadístico general.</span>
+            </button>
+            <button type="button" data-hourly-analysis-level="hierarchy">
+              <strong>General + jerarquías de producto</strong>
+              <span>Agrega comparaciones, tendencias, participación y anomalías por jerarquía.</span>
+            </button>
+            <button type="button" data-hourly-analysis-level="product">
+              <strong>General + jerarquías + productos</strong>
+              <span>Incorpora además el comportamiento individual de cada producto.</span>
+            </button>
+          </div>
+          <div class="report-actions">
+            <button id="close-hourly-analysis-options" class="icon-button" type="button">Cancelar</button>
+          </div>
+        </section>
+      </dialog>
+
+      <dialog id="hourly-analysis-dialog" class="hourly-analysis-dialog">
+        <article id="hourly-analysis-report" class="hourly-analysis-report">
+          <header class="panel-head hourly-analysis-head">
+            <div>
+              <div class="panel-eyebrow">Análisis estadístico intradía</div>
+              <h2>Reporte de ventas por franja horaria</h2>
+              <p id="hourly-analysis-context" class="panel-description"></p>
+            </div>
+            <div class="report-actions hourly-analysis-actions">
+              <button id="print-hourly-analysis" class="icon-button" type="button">Imprimir / PDF</button>
+              <button id="close-hourly-analysis" class="icon-button" type="button">Cerrar</button>
+            </div>
+          </header>
+          <div id="hourly-analysis-status" class="form-status" aria-live="polite"></div>
+          <section class="hourly-analysis-section">
+            <div class="panel-eyebrow">Resumen ejecutivo</div>
+            <h3>Lectura principal del período</h3>
+            <div id="hourly-analysis-metrics" class="hourly-analysis-metrics"></div>
+            <div id="hourly-analysis-executive" class="hourly-analysis-executive"></div>
+          </section>
+          <section class="hourly-analysis-section">
+            <div class="panel-eyebrow">Resultados encontrados</div>
+            <h3>Hallazgos, hipótesis y preguntas</h3>
+            <div id="hourly-analysis-findings" class="hourly-analysis-findings"></div>
+          </section>
+          <div id="hourly-analysis-breakdowns" class="hourly-analysis-breakdowns"></div>
+          <section class="hourly-analysis-section hourly-analysis-appendix">
+            <div class="panel-eyebrow">Anexo estadístico</div>
+            <h3>Datos que respaldan el análisis</h3>
+            <h4>Comportamiento diario</h4>
+            <div class="sales-table-wrap">
+              <table class="sales-dashboard-table">
+                <thead><tr><th>Fecha</th><th>Día</th><th>Unidades</th><th>Facturación</th><th>Venta por unidad</th><th>Desv. unidades ajustada</th><th>Desv. facturación ajustada</th></tr></thead>
+                <tbody id="hourly-analysis-daily-body"></tbody>
+              </table>
+            </div>
+            <h4>Estadísticas por franja</h4>
+            <div class="sales-table-wrap">
+              <table class="sales-dashboard-table">
+                <thead><tr><th>Franja</th><th>Prom. unidades</th><th>Mín.–máx.</th><th>Desv. est. unidades</th><th>CV unidades</th><th>Prom. facturación</th><th>Mín.–máx.</th><th>Desv. est. facturación</th><th>CV facturación</th><th>Participación</th></tr></thead>
+                <tbody id="hourly-analysis-bucket-body"></tbody>
+              </table>
+            </div>
+            <h4>Promedios por día de semana</h4>
+            <div class="sales-table-wrap">
+              <table class="sales-dashboard-table">
+                <thead><tr><th>Día</th><th>Días observados</th><th>Prom. unidades</th><th>Prom. facturación</th><th>Venta por unidad</th></tr></thead>
+                <tbody id="hourly-analysis-weekday-body"></tbody>
+              </table>
+            </div>
+            <div id="hourly-analysis-methodology" class="hourly-analysis-methodology"></div>
+          </section>
+        </article>
       </dialog>
 
       <section class="panel mercadopago-panel">

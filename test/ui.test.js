@@ -493,9 +493,70 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#hourly-demand-chart .hourly-chart-total-label').textContent(), '$100');
   assert.match(await page.locator('#hourly-demand-chart .hourly-chart-segment title').textContent(), /\$100 facturación neta/);
   await page.locator('#close-hourly-demand-chart').click();
+  assert.deepEqual(await page.locator('#hourly-demand-mode option').allTextContents(), [
+    'Día específico', 'Promedio últimos días abiertos', 'Promedio mismos días', 'Promedio días hábiles',
+    'Semana actual', 'Semana anterior', 'Mes actual', 'Mes anterior',
+    'Últimos 30 días', 'Últimos 60 días', 'Últimos 90 días', 'Últimos 180 días', 'Últimos 360 días'
+  ]);
+  assert.deepEqual(await page.locator('.hourly-demand-action-stack button').evaluateAll(buttons => buttons.map(button => button.id)), [
+    'generate-hourly-analysis', 'refresh-hourly-demand'
+  ]);
+  await page.locator('#hourly-demand-mode').selectOption('current-week');
+  assert.equal(await page.locator('#hourly-demand-date').isDisabled(), true);
+  assert.equal(await page.locator('#hourly-demand-days').isDisabled(), true);
+  await page.locator('#hourly-demand-mode').selectOption('last-360-days');
+  assert.equal(await page.locator('#hourly-demand-date').isDisabled(), true);
+  assert.equal(await page.locator('#hourly-demand-days').isDisabled(), true);
+  await page.locator('#hourly-demand-mode').selectOption('recent');
+  assert.equal(await page.locator('#hourly-demand-date').isEnabled(), true);
+  assert.equal(await page.locator('#hourly-demand-days').isEnabled(), true);
   await page.locator('#hourly-demand-hierarchies .hourly-hierarchy-button').filter({ hasText: 'Bebidas' }).click();
   assert.match(await page.locator('#hourly-demand-context').textContent(), /Todas las jerarquías.*Bebidas/);
   assert.match(await page.locator('#hourly-demand-hierarchies').textContent(), /Producto Uno.*P1/);
+  await page.locator('#generate-hourly-analysis').click();
+  assert.equal(await page.locator('#hourly-analysis-options-dialog').evaluate(dialog => dialog.open), true);
+  assert.deepEqual(await page.locator('[data-hourly-analysis-level]').evaluateAll(buttons => buttons.map(button => button.innerText.replace(/\s+/g, ' ').trim())), [
+    'Nivel general Resumen ejecutivo, hallazgos y anexo estadístico general.',
+    'General + jerarquías de producto Agrega comparaciones, tendencias, participación y anomalías por jerarquía.',
+    'General + jerarquías + productos Incorpora además el comportamiento individual de cada producto.'
+  ]);
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/api/sales/hourly-analysis?')
+      && response.url().includes('analysisLevel=general') && response.status() === 200),
+    page.locator('[data-hourly-analysis-level="general"]').click()
+  ]);
+  await page.locator('#hourly-analysis-status').filter({ hasText: /análisis completo/i }).waitFor();
+  assert.equal(await page.locator('#hourly-analysis-dialog').evaluate(dialog => dialog.open), true);
+  assert.match(await page.locator('#hourly-analysis-context').textContent(), /Todas las cafeterías.*Bebidas.*Nivel general.*09.*ago.*2026.*1 día/i);
+  assert.equal(await page.locator('#hourly-analysis-breakdowns .hourly-analysis-breakdown').count(), 0);
+  assert.match(await page.locator('#hourly-analysis-metrics').textContent(), /Promedio diario.*1,0 unidades.*Facturación promedio.*\$100/is);
+  assert.match(await page.locator('#hourly-analysis-executive').textContent(), /Se analizaron 1 día.*promedio diario.*1,0 unidades.*\$100/is);
+  assert.match(await page.locator('#hourly-analysis-findings').textContent(), /Calidad de la muestra.*Concentración horaria/is);
+  assert.equal(await page.locator('#hourly-analysis-daily-body tr').count(), 1);
+  assert.equal(await page.locator('#hourly-analysis-bucket-body tr').count(), 7);
+  assert.equal(await page.locator('#hourly-analysis-weekday-body tr').count(), 1);
+  assert.equal(await page.locator('#hourly-analysis-methodology li').count(), 5);
+  assert.equal(await page.locator('#print-hourly-analysis').isVisible(), true);
+  await page.locator('#close-hourly-analysis').click();
+  await page.locator('#generate-hourly-analysis').click();
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('analysisLevel=hierarchy') && response.status() === 200),
+    page.locator('[data-hourly-analysis-level="hierarchy"]').click()
+  ]);
+  assert.equal(await page.locator('#hourly-analysis-breakdowns .hourly-analysis-breakdown').count(), 1);
+  assert.match(await page.locator('[data-analysis-level="hierarchy"]').textContent(), /Comparación entre jerarquías.*Bebidas.*100,0%/is);
+  assert.equal(await page.locator('[data-analysis-level="product"]').count(), 0);
+  await page.locator('#close-hourly-analysis').click();
+  await page.locator('#generate-hourly-analysis').click();
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('analysisLevel=product') && response.status() === 200),
+    page.locator('[data-hourly-analysis-level="product"]').click()
+  ]);
+  assert.equal(await page.locator('#hourly-analysis-breakdowns .hourly-analysis-breakdown').count(), 2);
+  assert.equal(await page.locator('[data-breakdown-level="hierarchy"] tbody tr').count(), 1);
+  assert.equal(await page.locator('[data-breakdown-level="product"] tbody tr').count(), 1);
+  assert.match(await page.locator('[data-breakdown-level="product"] tbody').textContent(), /P1.*Producto Uno.*Bebidas/is);
+  await page.locator('#close-hourly-analysis').click();
   assert.equal(await page.locator('.content-layout').isVisible(), false);
 
   await page.getByRole('link', { name: 'Ventas por Ingredientes' }).click();

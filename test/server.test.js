@@ -2460,6 +2460,81 @@ test('builds hourly product demand for open days, weekdays and matching weekdays
   assert.deepEqual(weekdays.selectedDates, ['2026-08-19', '2026-08-24', '2026-08-26']);
   assert.equal(weekdays.selectedDates.includes('2026-08-22'), false);
 
+  const currentWeek = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=current-week&date=2020-01-01&days=1`)
+    .then(response => response.json());
+  assert.deepEqual(currentWeek.selectedDates, ['2026-08-24', '2026-08-26']);
+  assert.deepEqual(currentWeek.filters.range, { from: '2026-08-24', to: '2026-08-26' });
+  assert.equal(currentWeek.filters.date, null);
+  assert.equal(currentWeek.filters.days, null);
+
+  const previousWeek = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=previous-week`)
+    .then(response => response.json());
+  assert.deepEqual(previousWeek.selectedDates, ['2026-08-18', '2026-08-19', '2026-08-22']);
+  assert.deepEqual(previousWeek.filters.range, { from: '2026-08-17', to: '2026-08-23' });
+
+  const currentMonth = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=current-month`)
+    .then(response => response.json());
+  assert.deepEqual(currentMonth.selectedDates, ['2026-08-18', '2026-08-19', '2026-08-22', '2026-08-24', '2026-08-26']);
+  assert.deepEqual(currentMonth.filters.range, { from: '2026-08-01', to: '2026-08-26' });
+
+  const previousMonth = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=previous-month`)
+    .then(response => response.json());
+  assert.deepEqual(previousMonth.selectedDates, []);
+  assert.deepEqual(previousMonth.filters.range, { from: '2026-07-01', to: '2026-07-31' });
+
+  for (const [mode, from] of [
+    ['last-30-days', '2026-07-28'],
+    ['last-60-days', '2026-06-28'],
+    ['last-90-days', '2026-05-29'],
+    ['last-180-days', '2026-02-28'],
+    ['last-360-days', '2025-09-01']
+  ]) {
+    const rollingPeriod = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=${mode}&date=2020-01-01&days=1`)
+      .then(response => response.json());
+    assert.deepEqual(rollingPeriod.selectedDates, ['2026-08-18', '2026-08-19', '2026-08-22', '2026-08-24', '2026-08-26']);
+    assert.deepEqual(rollingPeriod.filters.range, { from, to: '2026-08-26' });
+    assert.equal(rollingPeriod.filters.date, null);
+    assert.equal(rollingPeriod.filters.days, null);
+  }
+
+  const analysis = await fetch(`${baseUrl}/api/sales/hourly-analysis?location=store-1&mode=recent&date=2026-08-26&days=2&interval=2`)
+    .then(response => response.json());
+  assert.equal(analysis.analysisLevel, 'general');
+  assert.equal(analysis.breakdowns.hierarchies, null);
+  assert.equal(analysis.breakdowns.products, null);
+  assert.equal(analysis.sampleSize, 2);
+  assert.equal(analysis.selection.label, 'Todas las jerarquías');
+  assert.equal(analysis.metrics.averageUnits, 3.5);
+  assert.equal(analysis.metrics.averageNetSales, 350);
+  assert.equal(analysis.metrics.strongestInterval, '07:00–09:00');
+  assert.equal(analysis.appendix.daily.length, 2);
+  assert.equal(analysis.appendix.buckets.length, 7);
+  assert.equal(analysis.appendix.weekdays.length, 2);
+  assert.equal(analysis.appendix.methodology.length, 5);
+  assert.ok(analysis.findings.some(finding => finding.category === 'Concentración horaria'));
+  assert.ok(analysis.findings.some(finding => finding.category === 'Calidad de la muestra'));
+  assert.match(analysis.executiveSummary.join(' '), /promedio diario.*3,5 unidades.*\$350/i);
+
+  const hierarchyAnalysis = await fetch(`${baseUrl}/api/sales/hourly-analysis?location=store-1&mode=recent&date=2026-08-26&days=2&interval=2&analysisLevel=hierarchy&hierarchyPath=${encodeURIComponent(JSON.stringify(['Bebidas']))}`)
+    .then(response => response.json());
+  assert.equal(hierarchyAnalysis.analysisLevel, 'hierarchy');
+  assert.equal(hierarchyAnalysis.selection.label, 'Bebidas');
+  assert.equal(hierarchyAnalysis.metrics.averageUnits, 3);
+  assert.equal(hierarchyAnalysis.metrics.averageNetSales, 250);
+  assert.equal(hierarchyAnalysis.breakdowns.hierarchies.groupCount, 1);
+  assert.equal(hierarchyAnalysis.breakdowns.hierarchies.rows[0].label, 'Bebidas');
+  assert.equal(hierarchyAnalysis.breakdowns.products, null);
+
+  const productAnalysis = await fetch(`${baseUrl}/api/sales/hourly-analysis?location=store-1&mode=recent&date=2026-08-26&days=2&interval=2&analysisLevel=product`)
+    .then(response => response.json());
+  assert.equal(productAnalysis.analysisLevel, 'product');
+  assert.deepEqual(productAnalysis.breakdowns.hierarchies.rows.map(item => item.label), ['Bebidas', 'Comida']);
+  assert.deepEqual(productAnalysis.breakdowns.products.rows.map(item => item.code), ['P1', 'P2']);
+  assert.equal(productAnalysis.breakdowns.products.rows[0].averageUnits, 3);
+  assert.equal(productAnalysis.breakdowns.products.rows[1].averageUnits, 0.5);
+  assert.ok(productAnalysis.breakdowns.hierarchies.findings.some(finding => finding.category === 'Participación'));
+  assert.ok(productAnalysis.breakdowns.products.findings.some(finding => finding.category === 'Participación'));
+
   const closed = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=date&date=2026-08-25`)
     .then(response => response.json());
   assert.equal(closed.sampleSize, 0);

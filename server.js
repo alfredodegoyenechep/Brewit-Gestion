@@ -6510,8 +6510,17 @@ function createApp(options = {}) {
     const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
     const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
     const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
-    const referenceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(query.date || '')) ? String(query.date) : todayKey;
-    const mode = ['date', 'recent', 'same-weekday', 'weekdays'].includes(String(query.mode)) ? String(query.mode) : 'recent';
+    const automaticModes = new Set([
+      'current-week', 'previous-week', 'current-month', 'previous-month',
+      'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days'
+    ]);
+    const mode = ['date', 'recent', 'same-weekday', 'weekdays', ...automaticModes].includes(String(query.mode))
+      ? String(query.mode)
+      : 'recent';
+    const automaticPeriod = automaticModes.has(mode);
+    const referenceDate = automaticPeriod
+      ? todayKey
+      : /^\d{4}-\d{2}-\d{2}$/.test(String(query.date || '')) ? String(query.date) : todayKey;
     const intervalHours = Number(query.interval) === 1 ? 1 : 2;
     const requestedDays = Math.min(90, Math.max(1, Math.trunc(Number(query.days) || 7)));
     const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
@@ -6574,8 +6583,24 @@ function createApp(options = {}) {
     }
     const openDates = [...new Set(facts.map(fact => fact.date))].sort().reverse();
     const weekdayFor = date => new Date(`${date}T12:00:00.000Z`).getUTCDay();
+    const currentWeekStart = mondayContaining(todayKey);
+    const currentMonthStart = `${todayKey.slice(0, 7)}-01`;
+    const previousMonthEnd = addDays(currentMonthStart, -1);
+    const automaticRanges = {
+      'current-week': { from: currentWeekStart, to: todayKey },
+      'previous-week': { from: addDays(currentWeekStart, -7), to: addDays(currentWeekStart, -1) },
+      'current-month': { from: currentMonthStart, to: todayKey },
+      'previous-month': { from: `${previousMonthEnd.slice(0, 7)}-01`, to: previousMonthEnd },
+      'last-30-days': { from: addDays(todayKey, -29), to: todayKey },
+      'last-60-days': { from: addDays(todayKey, -59), to: todayKey },
+      'last-90-days': { from: addDays(todayKey, -89), to: todayKey },
+      'last-180-days': { from: addDays(todayKey, -179), to: todayKey },
+      'last-360-days': { from: addDays(todayKey, -359), to: todayKey }
+    };
+    const selectedRange = automaticRanges[mode] || null;
     let eligibleDates;
-    if (mode === 'date') eligibleDates = openDates.filter(date => date === referenceDate).slice(0, 1);
+    if (selectedRange) eligibleDates = openDates.filter(date => date >= selectedRange.from && date <= selectedRange.to);
+    else if (mode === 'date') eligibleDates = openDates.filter(date => date === referenceDate).slice(0, 1);
     else if (mode === 'same-weekday') {
       const weekday = weekdayFor(referenceDate);
       eligibleDates = openDates.filter(date => weekdayFor(date) === weekday).slice(0, requestedDays);
@@ -6644,7 +6669,13 @@ function createApp(options = {}) {
       scope: selectedStore
         ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
         : { type: 'all', location: null, label: 'Todas las cafeterías' },
-      filters: { mode, date: referenceDate, days: requestedDays, intervalHours },
+      filters: {
+        mode,
+        date: automaticPeriod ? null : referenceDate,
+        days: automaticPeriod || mode === 'date' ? null : requestedDays,
+        intervalHours,
+        range: selectedRange
+      },
       selectedDates,
       sampleSize: eligibleDates.length,
       isAverage: mode !== 'date',
@@ -6665,11 +6696,451 @@ function createApp(options = {}) {
     };
   }
 
+  function buildHourlySalesAnalysis(requestedLocation = 'all', query = {}) {
+    const report = buildHourlySalesDemand(requestedLocation, query);
+    const analysisLevel = ['general', 'hierarchy', 'product'].includes(String(query.analysisLevel))
+      ? String(query.analysisLevel)
+      : 'general';
+    let hierarchyPath = [];
+    try {
+      const parsed = JSON.parse(String(query.hierarchyPath || '[]'));
+      if (Array.isArray(parsed)) hierarchyPath = parsed.slice(0, 12).map(value => String(value).slice(0, 160));
+    } catch {}
+    const productKey = String(query.productKey || '').slice(0, 400);
+    const productIdentity = product => `${product.code || ''}\u001f${product.name || ''}`;
+    const matchesSelection = product => hierarchyPath.every((name, index) => product.hierarchyPath[index] === name)
+      && (!productKey || productIdentity(product) === productKey);
+    const dates = report.selectedDates.slice().sort();
+    const round = (value, decimals = 2) => Number(Number(value || 0).toFixed(decimals));
+    const statistics = values => {
+      const clean = values.map(Number).filter(Number.isFinite);
+      if (!clean.length) return { count: 0, sum: 0, mean: 0, median: 0, min: 0, max: 0, variance: 0, standardDeviation: 0, coefficientOfVariation: null };
+      const sum = clean.reduce((total, value) => total + value, 0);
+      const mean = sum / clean.length;
+      const sorted = clean.slice().sort((left, right) => left - right);
+      const middle = Math.floor(sorted.length / 2);
+      const median = sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+      const variance = clean.length > 1
+        ? clean.reduce((total, value) => total + (value - mean) ** 2, 0) / (clean.length - 1)
+        : 0;
+      const standardDeviation = Math.sqrt(variance);
+      return {
+        count: clean.length,
+        sum: round(sum),
+        mean: round(mean),
+        median: round(median),
+        min: round(sorted[0]),
+        max: round(sorted.at(-1)),
+        variance: round(variance),
+        standardDeviation: round(standardDeviation),
+        coefficientOfVariation: mean ? round(standardDeviation / Math.abs(mean) * 100, 1) : null
+      };
+    };
+    const regression = values => {
+      if (values.length < 2) return { slope: 0, rSquared: 0, estimatedChangePercent: 0 };
+      const xMean = (values.length - 1) / 2;
+      const yMean = values.reduce((sum, value) => sum + value, 0) / values.length;
+      const denominator = values.reduce((sum, value, index) => sum + (index - xMean) ** 2, 0);
+      const slope = denominator
+        ? values.reduce((sum, value, index) => sum + (index - xMean) * (value - yMean), 0) / denominator
+        : 0;
+      const intercept = yMean - slope * xMean;
+      const totalVariation = values.reduce((sum, value) => sum + (value - yMean) ** 2, 0);
+      const residualVariation = values.reduce((sum, value, index) => sum + (value - (intercept + slope * index)) ** 2, 0);
+      const rSquared = totalVariation ? Math.max(0, 1 - residualVariation / totalVariation) : 0;
+      return {
+        slope: round(slope),
+        rSquared: round(rSquared, 3),
+        estimatedChangePercent: yMean ? round(slope * (values.length - 1) / Math.abs(yMean) * 100, 1) : 0
+      };
+    };
+    const bucketRows = report.buckets.map(bucket => {
+      const products = bucket.products.filter(matchesSelection);
+      const daily = dates.map(date => ({
+        date,
+        units: products.reduce((sum, product) => sum + (Number(product.dailyUnits?.[date]) || 0), 0),
+        netSales: products.reduce((sum, product) => sum + (Number(product.dailyNetSales?.[date]) || 0), 0)
+      }));
+      return {
+        label: bucket.label,
+        daily,
+        unitStats: statistics(daily.map(item => item.units)),
+        salesStats: statistics(daily.map(item => item.netSales))
+      };
+    });
+    const dailyRows = dates.map(date => ({
+      date,
+      units: bucketRows.reduce((sum, bucket) => sum + (bucket.daily.find(item => item.date === date)?.units || 0), 0),
+      netSales: bucketRows.reduce((sum, bucket) => sum + (bucket.daily.find(item => item.date === date)?.netSales || 0), 0)
+    }));
+    const unitStats = statistics(dailyRows.map(item => item.units));
+    const salesStats = statistics(dailyRows.map(item => item.netSales));
+    const unitTrend = regression(dailyRows.map(item => item.units));
+    const salesTrend = regression(dailyRows.map(item => item.netSales));
+    const weekdayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const weekdayGroups = new Map();
+    dailyRows.forEach(item => {
+      const weekday = new Date(`${item.date}T12:00:00Z`).getUTCDay();
+      if (!weekdayGroups.has(weekday)) weekdayGroups.set(weekday, []);
+      weekdayGroups.get(weekday).push(item);
+    });
+    const weekdayRows = [...weekdayGroups].sort(([left], [right]) => ((left + 6) % 7) - ((right + 6) % 7)).map(([weekday, items]) => ({
+      weekday,
+      label: weekdayNames[weekday],
+      sampleSize: items.length,
+      units: statistics(items.map(item => item.units)),
+      netSales: statistics(items.map(item => item.netSales)),
+      revenuePerUnit: round(items.reduce((sum, item) => sum + item.netSales, 0)
+        / Math.max(1, items.reduce((sum, item) => sum + item.units, 0)))
+    }));
+    const totalAverageUnits = bucketRows.reduce((sum, bucket) => sum + bucket.unitStats.mean, 0);
+    const totalAverageSales = bucketRows.reduce((sum, bucket) => sum + bucket.salesStats.mean, 0);
+    bucketRows.forEach(bucket => {
+      bucket.unitShare = round(totalAverageUnits ? bucket.unitStats.mean / totalAverageUnits * 100 : 0, 1);
+      bucket.salesShare = round(totalAverageSales ? bucket.salesStats.mean / totalAverageSales * 100 : 0, 1);
+      bucket.revenuePerUnit = round(bucket.unitStats.sum ? bucket.salesStats.sum / bucket.unitStats.sum : 0);
+    });
+    const standardized = (value, stats) => stats.standardDeviation ? (value - stats.mean) / stats.standardDeviation : 0;
+    dailyRows.forEach(item => {
+      const weekday = new Date(`${item.date}T12:00:00Z`).getUTCDay();
+      const weekdayStats = weekdayRows.find(row => row.weekday === weekday);
+      const useWeekdayBaseline = weekdayStats?.sampleSize >= 2;
+      item.weekday = weekdayNames[weekday];
+      item.revenuePerUnit = round(item.units ? item.netSales / item.units : 0);
+      item.expectedUnits = useWeekdayBaseline ? weekdayStats.units.mean : unitStats.mean;
+      item.expectedNetSales = useWeekdayBaseline ? weekdayStats.netSales.mean : salesStats.mean;
+      item.unitResidual = item.units - item.expectedUnits;
+      item.salesResidual = item.netSales - item.expectedNetSales;
+      item.anomalyBaseline = useWeekdayBaseline ? 'día de semana' : 'promedio general';
+    });
+    const unitResidualStats = statistics(dailyRows.map(item => item.unitResidual));
+    const salesResidualStats = statistics(dailyRows.map(item => item.salesResidual));
+    dailyRows.forEach(item => {
+      item.unitZScore = round(standardized(item.unitResidual, unitResidualStats));
+      item.salesZScore = round(standardized(item.salesResidual, salesResidualStats));
+    });
+    const anomalies = dailyRows.filter(item => dates.length >= 5
+      && (Math.abs(item.unitZScore) >= 2 || Math.abs(item.salesZScore) >= 2));
+    const priorityOrder = { high: 0, medium: 1, info: 2 };
+    const findings = [];
+    const addFinding = finding => findings.push({
+      id: `R-${findings.length + 1}`,
+      priority: 'info',
+      possibleExplanations: [],
+      questions: [],
+      ...finding
+    });
+    const formatNumber = value => Number(value || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    const formatMoney = value => `$${Math.round(Number(value) || 0).toLocaleString('es-CL')}`;
+    const peakUnits = bucketRows.slice().sort((left, right) => right.unitStats.mean - left.unitStats.mean)[0];
+    const peakSales = bucketRows.slice().sort((left, right) => right.salesStats.mean - left.salesStats.mean)[0];
+    if (peakUnits) addFinding({
+      category: 'Concentración horaria',
+      title: `La mayor demanda se concentra entre ${peakUnits.label}`,
+      conclusion: `Esta franja promedia ${formatNumber(peakUnits.unitStats.mean)} unidades y representa ${formatNumber(peakUnits.unitShare)}% de las unidades del día analizado.`,
+      evidence: `Rango ${formatNumber(peakUnits.unitStats.min)}–${formatNumber(peakUnits.unitStats.max)} unidades; facturación promedio ${formatMoney(peakUnits.salesStats.mean)}.`,
+      questions: ['¿La dotación, preparación previa y disponibilidad de productos están dimensionadas para esta concentración?']
+    });
+    if (peakSales && peakSales.label !== peakUnits?.label) addFinding({
+      category: 'Composición de venta',
+      title: `La franja de mayor facturación no coincide con la de más unidades`,
+      conclusion: `${peakSales.label} lidera en facturación con ${formatMoney(peakSales.salesStats.mean)}, mientras ${peakUnits.label} lidera en volumen.`,
+      evidence: `Venta por unidad: ${formatMoney(peakSales.revenuePerUnit)} en ${peakSales.label} versus ${formatMoney(peakUnits.revenuePerUnit)} en ${peakUnits.label}.`,
+      possibleExplanations: ['Mezcla de productos de mayor precio.', 'Mayor incidencia de combos, tamaños grandes o productos complementarios.'],
+      questions: ['¿Qué productos explican el mayor valor por unidad en esa franja?']
+    });
+    const addTrendFinding = (label, trend, stats, formatter) => {
+      const magnitude = Math.abs(trend.estimatedChangePercent);
+      if (dates.length < 3) return;
+      addFinding({
+        priority: magnitude >= 20 && trend.rSquared >= 0.25 ? 'medium' : 'info',
+        category: 'Tendencia',
+        title: magnitude >= 10
+          ? `${label} con tendencia ${trend.estimatedChangePercent > 0 ? 'creciente' : 'decreciente'}`
+          : `${label} sin una tendencia lineal marcada`,
+        conclusion: magnitude >= 10
+          ? `La recta de tendencia estima un cambio de ${formatNumber(trend.estimatedChangePercent)}% entre el inicio y el cierre de la muestra.`
+          : `El cambio lineal estimado es ${formatNumber(trend.estimatedChangePercent)}%, por lo que domina la variación diaria sobre una dirección sostenida.`,
+        evidence: `Pendiente ${formatter(trend.slope)} por día observado; R² ${formatNumber(trend.rSquared)}; promedio ${formatter(stats.mean)}.`,
+        possibleExplanations: magnitude >= 10 ? ['Cambios de afluencia, estacionalidad, promociones o disponibilidad.', 'Efecto del calendario y composición de días de semana.'] : [],
+        questions: magnitude >= 10 ? ['¿Hubo cambios comerciales, operativos o externos coincidentes con el comienzo de la tendencia?'] : []
+      });
+    };
+    addTrendFinding('Las unidades', unitTrend, unitStats, formatNumber);
+    addTrendFinding('La facturación', salesTrend, salesStats, formatMoney);
+    if (anomalies.length) addFinding({
+      priority: anomalies.some(item => Math.abs(item.unitZScore) >= 2.5 || Math.abs(item.salesZScore) >= 2.5) ? 'high' : 'medium',
+      category: 'Anomalías',
+      title: `${anomalies.length} día(s) fuera del comportamiento habitual`,
+      conclusion: anomalies.map(item => `${item.date}: ${formatNumber(item.units)} unidades y ${formatMoney(item.netSales)}`).join(' · '),
+      evidence: `Se marcaron observaciones a dos o más desviaciones estándar después de descontar el patrón del día de semana cuando había al menos dos fechas comparables.`,
+      possibleExplanations: ['Promoción o evento excepcional.', 'Feriado, clima, cierre parcial o cambio de horario.', 'Quiebre de stock, error de carga o transacciones atípicas.'],
+      questions: ['¿Qué ocurrió operativa o comercialmente en esas fechas?', '¿Los archivos contienen el día completo y sin duplicados?']
+    });
+    const volatileBucket = bucketRows.slice().sort((left, right) => (right.unitStats.coefficientOfVariation || 0)
+      - (left.unitStats.coefficientOfVariation || 0))[0];
+    if (volatileBucket) addFinding({
+      priority: (volatileBucket.unitStats.coefficientOfVariation || 0) >= 50 ? 'medium' : 'info',
+      category: 'Variabilidad',
+      title: `${volatileBucket.label} es la franja más variable en unidades`,
+      conclusion: `Su coeficiente de variación es ${formatNumber(volatileBucket.unitStats.coefficientOfVariation)}%, con un rango de ${formatNumber(volatileBucket.unitStats.min)} a ${formatNumber(volatileBucket.unitStats.max)} unidades.`,
+      evidence: `Varianza ${formatNumber(volatileBucket.unitStats.variance)} y desviación estándar ${formatNumber(volatileBucket.unitStats.standardDeviation)}.`,
+      possibleExplanations: ['Dependencia de pedidos puntuales, grupos o mix de días.', 'Diferencias de apertura, promociones o disponibilidad entre jornadas.'],
+      questions: ['¿Conviene revisar esta franja separando días de semana, promociones o eventos?']
+    });
+    if (weekdayRows.length > 1) {
+      const highest = weekdayRows.slice().sort((left, right) => right.units.mean - left.units.mean)[0];
+      const lowest = weekdayRows.slice().sort((left, right) => left.units.mean - right.units.mean)[0];
+      const difference = lowest.units.mean ? (highest.units.mean / lowest.units.mean - 1) * 100 : 0;
+      addFinding({
+        priority: Math.abs(difference) >= 25 && highest.sampleSize >= 2 && lowest.sampleSize >= 2 ? 'medium' : 'info',
+        category: 'Día de semana',
+        title: `${highest.label} presenta el mayor promedio diario`,
+        conclusion: `${highest.label}: ${formatNumber(highest.units.mean)} unidades; ${lowest.label}: ${formatNumber(lowest.units.mean)} unidades${difference ? `, una diferencia de ${formatNumber(difference)}%` : ''}.`,
+        evidence: `${highest.sampleSize} observación(es) para ${highest.label} y ${lowest.sampleSize} para ${lowest.label}.`,
+        questions: highest.sampleSize < 2 || lowest.sampleSize < 2
+          ? ['¿Conviene ampliar el período para confirmar que la diferencia no proviene de una sola fecha?']
+          : ['¿La planificación de personal y producción refleja esta diferencia entre días?']
+      });
+    }
+    const mixGap = bucketRows.slice().sort((left, right) => Math.abs(right.salesShare - right.unitShare)
+      - Math.abs(left.salesShare - left.unitShare))[0];
+    if (mixGap && Math.abs(mixGap.salesShare - mixGap.unitShare) >= 3) addFinding({
+      category: 'Mix de productos',
+      title: `${mixGap.label} tiene una composición de valor distinta a su volumen`,
+      conclusion: `Concentra ${formatNumber(mixGap.unitShare)}% de las unidades y ${formatNumber(mixGap.salesShare)}% de la facturación.`,
+      evidence: `Diferencia de participación ${formatNumber(mixGap.salesShare - mixGap.unitShare)} puntos porcentuales; venta promedio por unidad ${formatMoney(mixGap.revenuePerUnit)}.`,
+      possibleExplanations: [mixGap.salesShare > mixGap.unitShare ? 'Mayor peso de productos de precio alto.' : 'Mayor peso de productos económicos o promociones.'],
+      questions: ['¿Qué jerarquías y productos explican esta diferencia de mix?']
+    });
+    if (dates.length < 5) addFinding({
+      priority: 'medium',
+      category: 'Calidad de la muestra',
+      title: 'La muestra es pequeña para concluir sobre anomalías o tendencias',
+      conclusion: `El reporte contiene ${dates.length} día(s) con ventas. Los promedios son descriptivos, pero su estabilidad estadística es limitada.`,
+      questions: ['¿Es posible ampliar el período a al menos 10–15 días comparables?']
+    });
+    if (!dates.length) findings.length = 0;
+    findings.sort((left, right) => priorityOrder[left.priority] - priorityOrder[right.priority]);
+    const highestDay = dailyRows.slice().sort((left, right) => right.units - left.units)[0] || null;
+    const lowestDay = dailyRows.slice().sort((left, right) => left.units - right.units)[0] || null;
+    const selectionLabel = productKey
+      ? bucketRows.flatMap(bucket => report.buckets.find(source => source.label === bucket.label)?.products || [])
+        .find(product => productIdentity(product) === productKey)?.name || 'Producto seleccionado'
+      : hierarchyPath.length ? hierarchyPath.join(' › ') : 'Todas las jerarquías';
+    const executiveSummary = dates.length ? [
+      `Se analizaron ${dates.length} día(s) con ventas entre ${dates[0]} y ${dates.at(-1)} para ${selectionLabel}. El promedio diario fue ${formatNumber(unitStats.mean)} unidades y ${formatMoney(salesStats.mean)} de facturación neta sin IVA.`,
+      `La variabilidad diaria alcanzó un CV de ${formatNumber(unitStats.coefficientOfVariation)}% en unidades y ${formatNumber(salesStats.coefficientOfVariation)}% en facturación. ${anomalies.length ? `Se detectaron ${anomalies.length} fecha(s) estadísticamente atípica(s).` : 'No se detectaron fechas a dos desviaciones estándar del comportamiento promedio.'}`,
+      highestDay && lowestDay
+        ? `El mayor volumen ocurrió el ${highestDay.date} con ${formatNumber(highestDay.units)} unidades; el menor, el ${lowestDay.date} con ${formatNumber(lowestDay.units)} unidades.`
+        : ''
+    ].filter(Boolean) : ['No hay días con ventas que cumplan los filtros seleccionados; no es posible emitir conclusiones estadísticas.'];
+    const buildBreakdown = level => {
+      const groups = new Map();
+      report.buckets.forEach((bucket, bucketIndex) => {
+        bucket.products.filter(matchesSelection).forEach(product => {
+          const productHierarchy = product.hierarchyPath?.length ? product.hierarchyPath.join(' › ') : 'Sin jerarquía';
+          const key = level === 'hierarchy' ? productHierarchy : productIdentity(product);
+          if (!groups.has(key)) groups.set(key, {
+            key,
+            label: level === 'hierarchy' ? productHierarchy : product.name || product.code || 'Sin nombre',
+            code: level === 'product' ? product.code || '' : null,
+            hierarchy: level === 'product' ? productHierarchy : null,
+            dailyUnits: dates.map(() => 0),
+            dailyNetSales: dates.map(() => 0),
+            bucketUnits: report.buckets.map(() => 0),
+            bucketNetSales: report.buckets.map(() => 0)
+          });
+          const group = groups.get(key);
+          dates.forEach((date, dateIndex) => {
+            const units = Number(product.dailyUnits?.[date]) || 0;
+            const netSales = Number(product.dailyNetSales?.[date]) || 0;
+            group.dailyUnits[dateIndex] += units;
+            group.dailyNetSales[dateIndex] += netSales;
+            group.bucketUnits[bucketIndex] += units;
+            group.bucketNetSales[bucketIndex] += netSales;
+          });
+        });
+      });
+      const adjustedZScores = values => {
+        const weekdayValues = new Map();
+        values.forEach((value, index) => {
+          const weekday = new Date(`${dates[index]}T12:00:00Z`).getUTCDay();
+          if (!weekdayValues.has(weekday)) weekdayValues.set(weekday, []);
+          weekdayValues.get(weekday).push(value);
+        });
+        const overall = statistics(values);
+        const residuals = values.map((value, index) => {
+          const weekday = new Date(`${dates[index]}T12:00:00Z`).getUTCDay();
+          const comparable = weekdayValues.get(weekday) || [];
+          const expected = comparable.length >= 2 ? statistics(comparable).mean : overall.mean;
+          return value - expected;
+        });
+        const residualStats = statistics(residuals);
+        return residuals.map(value => round(standardized(value, residualStats)));
+      };
+      const rows = [...groups.values()].map(group => {
+        const groupUnitStats = statistics(group.dailyUnits);
+        const groupSalesStats = statistics(group.dailyNetSales);
+        const groupUnitTrend = regression(group.dailyUnits);
+        const groupSalesTrend = regression(group.dailyNetSales);
+        const unitZScores = adjustedZScores(group.dailyUnits);
+        const salesZScores = adjustedZScores(group.dailyNetSales);
+        const anomalyCount = dates.length >= 5 ? dates.filter((date, index) => (
+          Math.abs(unitZScores[index]) >= 2 || Math.abs(salesZScores[index]) >= 2
+        )).length : 0;
+        const strongestBucketIndex = group.bucketUnits.reduce((best, value, index, values) => value > values[best] ? index : best, 0);
+        return {
+          key: group.key,
+          label: group.label,
+          code: group.code,
+          hierarchy: group.hierarchy,
+          averageUnits: groupUnitStats.mean,
+          averageNetSales: groupSalesStats.mean,
+          totalUnits: groupUnitStats.sum,
+          totalNetSales: groupSalesStats.sum,
+          unitShare: round(unitStats.sum ? groupUnitStats.sum / unitStats.sum * 100 : 0, 1),
+          salesShare: round(salesStats.sum ? groupSalesStats.sum / salesStats.sum * 100 : 0, 1),
+          revenuePerUnit: round(groupUnitStats.sum ? groupSalesStats.sum / groupUnitStats.sum : 0),
+          unitCoefficientOfVariation: groupUnitStats.coefficientOfVariation,
+          salesCoefficientOfVariation: groupSalesStats.coefficientOfVariation,
+          unitTrend: groupUnitTrend,
+          salesTrend: groupSalesTrend,
+          anomalyCount,
+          strongestInterval: report.buckets[strongestBucketIndex]?.label || null
+        };
+      }).sort((left, right) => right.totalNetSales - left.totalNetSales || right.totalUnits - left.totalUnits);
+      const breakdownFindings = [];
+      const addBreakdownFinding = finding => breakdownFindings.push({
+        priority: 'info',
+        possibleExplanations: [],
+        questions: [],
+        ...finding
+      });
+      const subjectPlural = level === 'hierarchy' ? 'jerarquías' : 'productos';
+      const subjectWithArticle = level === 'hierarchy' ? 'esta jerarquía' : 'este producto';
+      const leading = rows[0];
+      if (leading) addBreakdownFinding({
+        category: 'Participación',
+        title: `${leading.label} lidera entre ${subjectPlural}`,
+        conclusion: `Representa ${formatNumber(leading.salesShare)}% de la facturación y ${formatNumber(leading.unitShare)}% de las unidades de la selección analizada.`,
+        evidence: `Promedio diario ${formatNumber(leading.averageUnits)} unidades y ${formatMoney(leading.averageNetSales)} de facturación.`,
+        questions: [`¿La capacidad, disponibilidad y visibilidad comercial de ${subjectWithArticle} reflejan su importancia?`]
+      });
+      const meaningfulMinimum = Math.max(3, unitStats.sum * 0.005);
+      const trendCandidate = rows.filter(row => row.totalUnits >= meaningfulMinimum && row.unitTrend.rSquared >= 0.15)
+        .sort((left, right) => Math.abs(right.unitTrend.estimatedChangePercent) - Math.abs(left.unitTrend.estimatedChangePercent))[0];
+      if (trendCandidate && Math.abs(trendCandidate.unitTrend.estimatedChangePercent) >= 10) addBreakdownFinding({
+        priority: Math.abs(trendCandidate.unitTrend.estimatedChangePercent) >= 25 ? 'medium' : 'info',
+        category: 'Tendencia',
+        title: `${trendCandidate.label} muestra la tendencia más marcada`,
+        conclusion: `Las unidades presentan una trayectoria ${trendCandidate.unitTrend.estimatedChangePercent > 0 ? 'creciente' : 'decreciente'} estimada en ${formatNumber(trendCandidate.unitTrend.estimatedChangePercent)}% durante la muestra.`,
+        evidence: `R² ${formatNumber(trendCandidate.unitTrend.rSquared)}; participación ${formatNumber(trendCandidate.unitShare)}% de unidades.`,
+        possibleExplanations: ['Cambio de preferencias, disponibilidad, promoción o sustitución dentro del mix.'],
+        questions: [`¿Hubo cambios de precio, receta, stock o promoción asociados a ${subjectWithArticle}?`]
+      });
+      const volatile = rows.filter(row => row.averageUnits >= Math.max(0.5, unitStats.mean * 0.005))
+        .sort((left, right) => (right.unitCoefficientOfVariation || 0) - (left.unitCoefficientOfVariation || 0))[0];
+      if (volatile) addBreakdownFinding({
+        priority: (volatile.unitCoefficientOfVariation || 0) >= 80 ? 'medium' : 'info',
+        category: 'Variabilidad',
+        title: `${volatile.label} tiene la demanda más variable`,
+        conclusion: `Su coeficiente de variación en unidades es ${formatNumber(volatile.unitCoefficientOfVariation)}%.`,
+        evidence: `Promedio ${formatNumber(volatile.averageUnits)} unidades diarias; franja principal ${volatile.strongestInterval || 'sin datos'}.`,
+        possibleExplanations: ['Demanda ocasional, promociones, quiebres de stock o concentración en pocos días.'],
+        questions: ['¿La variabilidad coincide con días específicos, campañas o problemas de disponibilidad?']
+      });
+      const anomalous = rows.filter(row => row.anomalyCount > 0)
+        .sort((left, right) => right.anomalyCount - left.anomalyCount || right.totalNetSales - left.totalNetSales)[0];
+      if (anomalous) addBreakdownFinding({
+        priority: 'medium',
+        category: 'Anomalías',
+        title: `${anomalous.label} concentra desviaciones atípicas`,
+        conclusion: `Registra ${anomalous.anomalyCount} día(s) fuera de su patrón ajustado por día de semana.`,
+        evidence: `Se aplicó el mismo umbral estadístico de dos desviaciones estándar del análisis general.`,
+        questions: ['¿Qué eventos, disponibilidad o registros explican esas fechas específicas?']
+      });
+      const mixDifference = rows.slice().sort((left, right) => Math.abs(right.salesShare - right.unitShare)
+        - Math.abs(left.salesShare - left.unitShare))[0];
+      if (mixDifference && Math.abs(mixDifference.salesShare - mixDifference.unitShare) >= 3) addBreakdownFinding({
+        category: 'Mix de valor',
+        title: `${mixDifference.label} se diferencia por valor versus volumen`,
+        conclusion: `Aporta ${formatNumber(mixDifference.unitShare)}% de unidades y ${formatNumber(mixDifference.salesShare)}% de facturación.`,
+        evidence: `Venta neta por unidad ${formatMoney(mixDifference.revenuePerUnit)}; brecha ${formatNumber(mixDifference.salesShare - mixDifference.unitShare)} puntos porcentuales.`,
+        questions: ['¿La diferencia responde a precio, tamaño, descuentos o composición de productos?']
+      });
+      breakdownFindings.sort((left, right) => priorityOrder[left.priority] - priorityOrder[right.priority]);
+      const leadingCount = Math.min(3, rows.length);
+      const leadingGroupLabel = level === 'hierarchy'
+        ? `${leadingCount === 1 ? 'La' : 'Las'} ${leadingCount} ${leadingCount === 1 ? 'principal jerarquía' : 'principales jerarquías'}`
+        : `${leadingCount === 1 ? 'El' : 'Los'} ${leadingCount} ${leadingCount === 1 ? 'principal producto' : 'principales productos'}`;
+      const topThreeShare = round(rows.slice(0, leadingCount).reduce((sum, row) => sum + row.salesShare, 0), 1);
+      return {
+        level,
+        groupCount: rows.length,
+        executiveSummary: rows.length ? [
+          `Se compararon ${rows.length} ${subjectPlural}. ${leading.label} lidera con ${formatNumber(leading.salesShare)}% de la facturación y ${formatNumber(leading.unitShare)}% de las unidades.`,
+          `${leadingGroupLabel} ${leadingCount === 1 ? 'concentra' : 'concentran'} ${formatNumber(topThreeShare)}% de la facturación de la selección.`
+        ] : [`No se encontraron ${subjectPlural} con ventas para la selección y período indicados.`],
+        findings: breakdownFindings,
+        rows
+      };
+    };
+    const hierarchyBreakdown = analysisLevel === 'hierarchy' || analysisLevel === 'product'
+      ? buildBreakdown('hierarchy')
+      : null;
+    const productBreakdown = analysisLevel === 'product' ? buildBreakdown('product') : null;
+    return {
+      analysisLevel,
+      scope: report.scope,
+      filters: report.filters,
+      selectedDates: dates,
+      sampleSize: dates.length,
+      selection: { hierarchyPath, productKey: productKey || null, label: selectionLabel },
+      executiveSummary,
+      metrics: {
+        averageUnits: unitStats.mean,
+        averageNetSales: salesStats.mean,
+        unitCoefficientOfVariation: unitStats.coefficientOfVariation,
+        salesCoefficientOfVariation: salesStats.coefficientOfVariation,
+        anomalyCount: anomalies.length,
+        strongestInterval: peakUnits?.label || null
+      },
+      findings,
+      breakdowns: {
+        hierarchies: hierarchyBreakdown,
+        products: productBreakdown
+      },
+      appendix: {
+        daily: dailyRows,
+        buckets: bucketRows.map(({ daily, ...bucket }) => bucket),
+        weekdays: weekdayRows,
+        totals: { units: unitStats, netSales: salesStats, unitTrend, salesTrend },
+        methodology: [
+          'Los promedios consideran únicamente los días con ventas incluidos por el período seleccionado.',
+          'La varianza y desviación estándar son muestrales; el CV corresponde a desviación estándar dividida por promedio.',
+          'Las anomalías se señalan a dos desviaciones estándar sobre la diferencia respecto del promedio de su mismo día de semana; si no hay dos fechas comparables, se usa el promedio general.',
+          'Las tendencias utilizan una regresión lineal sobre la secuencia de días observados; R² indica cuánto explica esa recta.',
+          'Las hipótesis son posibilidades para orientar una revisión y no prueban causalidad por sí solas.'
+        ]
+      },
+      warnings: report.warnings
+    };
+  }
+
   app.get('/api/sales/hourly-demand', (req, res) => {
     try {
       return res.json(buildHourlySalesDemand(String(req.query.location || 'all'), req.query));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la demanda por franja horaria.' });
+    }
+  });
+
+  app.get('/api/sales/hourly-analysis', (req, res) => {
+    try {
+      return res.json(buildHourlySalesAnalysis(String(req.query.location || 'all'), req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis estadístico por franja horaria.' });
     }
   });
 

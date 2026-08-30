@@ -36,6 +36,7 @@ let purchaseOrderEditorState = null;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
 let hourlySalesDemandState = null;
+let hourlyAnalysisState = null;
 let findingsViewState = null;
 let salesIngredientsState = null;
 let salesHierarchyPath = [];
@@ -1874,10 +1875,18 @@ function renderHourlySalesDemand() {
 }
 
 function syncHourlyDemandControls() {
-  const isSpecificDate = document.getElementById('hourly-demand-mode').value === 'date';
+  const mode = document.getElementById('hourly-demand-mode').value;
+  const isSpecificDate = mode === 'date';
+  const isAutomaticPeriod = [
+    'current-week', 'previous-week', 'current-month', 'previous-month',
+    'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days'
+  ].includes(mode);
+  const date = document.getElementById('hourly-demand-date');
   const days = document.getElementById('hourly-demand-days');
-  days.disabled = isSpecificDate;
-  document.getElementById('hourly-demand-days-label').classList.toggle('disabled-control', isSpecificDate);
+  date.disabled = isAutomaticPeriod;
+  days.disabled = isSpecificDate || isAutomaticPeriod;
+  document.getElementById('hourly-demand-date-label').classList.toggle('disabled-control', isAutomaticPeriod);
+  document.getElementById('hourly-demand-days-label').classList.toggle('disabled-control', isSpecificDate || isAutomaticPeriod);
 }
 
 async function loadHourlySalesDemand() {
@@ -1916,6 +1925,312 @@ async function loadHourlySalesDemand() {
   } finally {
     button.disabled = false;
   }
+}
+
+function hourlyAnalysisTableRow(values, numericFrom = 1) {
+  const row = document.createElement('tr');
+  values.forEach((value, index) => {
+    const cell = document.createElement(index ? 'td' : 'th');
+    cell.textContent = value;
+    if (index >= numericFrom) cell.className = 'numeric-cell';
+    row.appendChild(cell);
+  });
+  return row;
+}
+
+function hourlyAnalysisBreakdownFindingCard(finding, index) {
+  const card = document.createElement('article');
+  card.className = `hourly-analysis-finding hourly-analysis-breakdown-finding priority-${finding.priority}`;
+  const head = document.createElement('div');
+  head.className = 'hourly-analysis-finding-head';
+  const number = document.createElement('span');
+  number.className = 'hourly-analysis-finding-number';
+  number.textContent = String(index + 1).padStart(2, '0');
+  const titleWrap = document.createElement('div');
+  const category = document.createElement('span');
+  category.className = 'hourly-analysis-category';
+  category.textContent = finding.category;
+  const title = document.createElement('h4');
+  title.textContent = finding.title;
+  titleWrap.append(category, title);
+  const priority = document.createElement('span');
+  priority.className = `hourly-analysis-priority ${finding.priority}`;
+  priority.textContent = finding.priority === 'high' ? 'Prioridad alta' : finding.priority === 'medium' ? 'Revisar' : 'Informativo';
+  head.append(number, titleWrap, priority);
+  const conclusion = document.createElement('p');
+  conclusion.className = 'hourly-analysis-conclusion';
+  conclusion.textContent = finding.conclusion;
+  const evidence = document.createElement('p');
+  evidence.className = 'hourly-analysis-evidence';
+  evidence.textContent = `Evidencia: ${finding.evidence || 'Conclusión descriptiva basada en la muestra seleccionada.'}`;
+  card.append(head, conclusion, evidence);
+  if (finding.questions?.length) {
+    const followup = document.createElement('div');
+    followup.className = 'hourly-analysis-followup questions';
+    const label = document.createElement('strong');
+    label.textContent = 'Preguntas para investigar';
+    const list = document.createElement('ul');
+    finding.questions.forEach(textValue => {
+      const item = document.createElement('li');
+      item.textContent = textValue;
+      list.appendChild(item);
+    });
+    followup.append(label, list);
+    card.appendChild(followup);
+  }
+  return card;
+}
+
+function renderHourlyAnalysisBreakdown(breakdown) {
+  const isHierarchy = breakdown.level === 'hierarchy';
+  const section = document.createElement('section');
+  section.className = 'hourly-analysis-section hourly-analysis-breakdown';
+  section.dataset.analysisLevel = breakdown.level;
+  const eyebrow = document.createElement('div');
+  eyebrow.className = 'panel-eyebrow';
+  eyebrow.textContent = isHierarchy ? 'Análisis por jerarquías de producto' : 'Análisis por producto';
+  const heading = document.createElement('h3');
+  heading.textContent = isHierarchy ? 'Comparación entre jerarquías' : 'Comportamiento individual de productos';
+  const executive = document.createElement('div');
+  executive.className = 'hourly-analysis-executive';
+  executive.replaceChildren(...breakdown.executiveSummary.map(textValue => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = textValue;
+    return paragraph;
+  }));
+  section.append(eyebrow, heading, executive);
+  if (breakdown.findings.length) {
+    const findingsHeading = document.createElement('h4');
+    findingsHeading.textContent = 'Resultados destacados';
+    const findings = document.createElement('div');
+    findings.className = 'hourly-analysis-findings hourly-analysis-breakdown-findings';
+    findings.replaceChildren(...breakdown.findings.map(hourlyAnalysisBreakdownFindingCard));
+    section.append(findingsHeading, findings);
+  }
+  const detailHeading = document.createElement('h4');
+  detailHeading.textContent = isHierarchy ? `Detalle de ${breakdown.groupCount} jerarquía(s)` : `Detalle de ${breakdown.groupCount} producto(s)`;
+  const wrap = document.createElement('div');
+  wrap.className = 'sales-table-wrap hourly-analysis-breakdown-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'sales-dashboard-table hourly-analysis-breakdown-table';
+  table.dataset.breakdownLevel = breakdown.level;
+  const head = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  const headers = isHierarchy
+    ? ['Jerarquía', 'Prom. unidades', 'Prom. facturación', '% unidades', '% facturación', 'CV unidades', 'Tendencia unidades', 'Días atípicos', 'Franja principal']
+    : ['Código', 'Producto', 'Jerarquía', 'Prom. unidades', 'Prom. facturación', '% unidades', '% facturación', 'CV unidades', 'Tendencia unidades', 'Días atípicos', 'Franja principal'];
+  headers.forEach(textValue => {
+    const cell = document.createElement('th');
+    cell.textContent = textValue;
+    headerRow.appendChild(cell);
+  });
+  head.appendChild(headerRow);
+  const body = document.createElement('tbody');
+  body.replaceChildren(...breakdown.rows.map(row => hourlyAnalysisTableRow(isHierarchy ? [
+    row.label,
+    formatHourlyTableQuantity(row.averageUnits),
+    formatClp(row.averageNetSales),
+    `${formatHourlyTableQuantity(row.unitShare)}%`,
+    `${formatHourlyTableQuantity(row.salesShare)}%`,
+    row.unitCoefficientOfVariation === null ? '—' : `${formatHourlyTableQuantity(row.unitCoefficientOfVariation)}%`,
+    `${formatHourlyTableQuantity(row.unitTrend.estimatedChangePercent)}%`,
+    new Intl.NumberFormat('es-CL').format(row.anomalyCount),
+    row.strongestInterval || '—'
+  ] : [
+    row.code || '—', row.label, row.hierarchy || 'Sin jerarquía',
+    formatHourlyTableQuantity(row.averageUnits),
+    formatClp(row.averageNetSales),
+    `${formatHourlyTableQuantity(row.unitShare)}%`,
+    `${formatHourlyTableQuantity(row.salesShare)}%`,
+    row.unitCoefficientOfVariation === null ? '—' : `${formatHourlyTableQuantity(row.unitCoefficientOfVariation)}%`,
+    `${formatHourlyTableQuantity(row.unitTrend.estimatedChangePercent)}%`,
+    new Intl.NumberFormat('es-CL').format(row.anomalyCount),
+    row.strongestInterval || '—'
+  ], isHierarchy ? 1 : 3)));
+  table.append(head, body);
+  wrap.appendChild(table);
+  section.append(detailHeading, wrap);
+  return section;
+}
+
+function renderHourlyAnalysisBreakdowns(report) {
+  const container = document.getElementById('hourly-analysis-breakdowns');
+  container.replaceChildren(...[report.breakdowns?.hierarchies, report.breakdowns?.products]
+    .filter(Boolean)
+    .map(renderHourlyAnalysisBreakdown));
+}
+
+function renderHourlyAnalysis(report) {
+  hourlyAnalysisState = report;
+  const dates = report.selectedDates || [];
+  const levelLabel = report.analysisLevel === 'product'
+    ? 'General + jerarquías + productos'
+    : report.analysisLevel === 'hierarchy' ? 'General + jerarquías' : 'Nivel general';
+  document.getElementById('hourly-analysis-context').textContent = dates.length
+    ? `${report.scope.label} · ${report.selection.label} · ${levelLabel} · ${formatReportDate(dates[0])} – ${formatReportDate(dates.at(-1))} · ${report.sampleSize} día(s) con ventas`
+    : `${report.scope.label} · ${report.selection.label} · ${levelLabel} · Sin días con ventas para los filtros seleccionados`;
+  const metricDefinitions = [
+    ['Promedio diario', `${formatHourlyTableQuantity(report.metrics.averageUnits)} unidades`],
+    ['Facturación promedio', formatClp(report.metrics.averageNetSales)],
+    ['Variación unidades', report.metrics.unitCoefficientOfVariation === null ? 'Sin base' : `${formatHourlyTableQuantity(report.metrics.unitCoefficientOfVariation)}% CV`],
+    ['Variación facturación', report.metrics.salesCoefficientOfVariation === null ? 'Sin base' : `${formatHourlyTableQuantity(report.metrics.salesCoefficientOfVariation)}% CV`],
+    ['Días atípicos', new Intl.NumberFormat('es-CL').format(report.metrics.anomalyCount)],
+    ['Franja más intensa', report.metrics.strongestInterval || 'Sin datos']
+  ];
+  document.getElementById('hourly-analysis-metrics').replaceChildren(...metricDefinitions.map(([label, value]) => {
+    const item = document.createElement('article');
+    const caption = document.createElement('span');
+    const strong = document.createElement('strong');
+    caption.textContent = label;
+    strong.textContent = value;
+    item.append(caption, strong);
+    return item;
+  }));
+  document.getElementById('hourly-analysis-executive').replaceChildren(...report.executiveSummary.map(textValue => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = textValue;
+    return paragraph;
+  }));
+  const findings = document.getElementById('hourly-analysis-findings');
+  if (!report.findings.length) {
+    const empty = document.createElement('p');
+    empty.className = 'sales-service-mode-empty';
+    empty.textContent = 'No fue posible generar hallazgos con los datos disponibles.';
+    findings.replaceChildren(empty);
+  } else findings.replaceChildren(...report.findings.map((finding, index) => {
+    const card = document.createElement('article');
+    card.className = `hourly-analysis-finding priority-${finding.priority}`;
+    const heading = document.createElement('div');
+    heading.className = 'hourly-analysis-finding-head';
+    const number = document.createElement('span');
+    number.className = 'hourly-analysis-finding-number';
+    number.textContent = String(index + 1).padStart(2, '0');
+    const titleWrap = document.createElement('div');
+    const category = document.createElement('span');
+    category.className = 'hourly-analysis-category';
+    category.textContent = finding.category;
+    const title = document.createElement('h4');
+    title.textContent = finding.title;
+    titleWrap.append(category, title);
+    const priority = document.createElement('span');
+    priority.className = `hourly-analysis-priority ${finding.priority}`;
+    priority.textContent = finding.priority === 'high' ? 'Prioridad alta' : finding.priority === 'medium' ? 'Revisar' : 'Informativo';
+    heading.append(number, titleWrap, priority);
+    const conclusion = document.createElement('p');
+    conclusion.className = 'hourly-analysis-conclusion';
+    conclusion.textContent = finding.conclusion;
+    const evidence = document.createElement('p');
+    evidence.className = 'hourly-analysis-evidence';
+    evidence.textContent = `Evidencia: ${finding.evidence || 'Conclusión descriptiva basada en la muestra seleccionada.'}`;
+    card.append(heading, conclusion, evidence);
+    for (const [label, entries, className] of [
+      ['Explicaciones posibles', finding.possibleExplanations, 'hypotheses'],
+      ['Preguntas para investigar', finding.questions, 'questions']
+    ]) {
+      if (!entries?.length) continue;
+      const block = document.createElement('div');
+      block.className = `hourly-analysis-followup ${className}`;
+      const subtitle = document.createElement('strong');
+      subtitle.textContent = label;
+      const list = document.createElement('ul');
+      entries.forEach(entry => {
+        const item = document.createElement('li');
+        item.textContent = entry;
+        list.appendChild(item);
+      });
+      block.append(subtitle, list);
+      card.appendChild(block);
+    }
+    return card;
+  }));
+  renderHourlyAnalysisBreakdowns(report);
+  document.getElementById('hourly-analysis-daily-body').replaceChildren(...report.appendix.daily.map(item => hourlyAnalysisTableRow([
+    formatReportDate(item.date),
+    item.weekday,
+    formatHourlyTableQuantity(item.units),
+    formatClp(item.netSales),
+    formatClp(item.revenuePerUnit),
+    `${formatHourlyTableQuantity(item.unitZScore)}σ`,
+    `${formatHourlyTableQuantity(item.salesZScore)}σ`
+  ], 2)));
+  document.getElementById('hourly-analysis-bucket-body').replaceChildren(...report.appendix.buckets.map(item => hourlyAnalysisTableRow([
+    item.label,
+    formatHourlyTableQuantity(item.unitStats.mean),
+    hourlyMinMaxLabel(item.unitStats.min, item.unitStats.max),
+    formatHourlyTableQuantity(item.unitStats.standardDeviation),
+    item.unitStats.coefficientOfVariation === null ? '—' : `${formatHourlyTableQuantity(item.unitStats.coefficientOfVariation)}%`,
+    formatClp(item.salesStats.mean),
+    hourlySalesMinMaxLabel(item.salesStats.min, item.salesStats.max),
+    formatClp(item.salesStats.standardDeviation),
+    item.salesStats.coefficientOfVariation === null ? '—' : `${formatHourlyTableQuantity(item.salesStats.coefficientOfVariation)}%`,
+    `${formatHourlyTableQuantity(item.unitShare)}% un. · ${formatHourlyTableQuantity(item.salesShare)}% venta`
+  ])));
+  document.getElementById('hourly-analysis-weekday-body').replaceChildren(...report.appendix.weekdays.map(item => hourlyAnalysisTableRow([
+    item.label,
+    new Intl.NumberFormat('es-CL').format(item.sampleSize),
+    formatHourlyTableQuantity(item.units.mean),
+    formatClp(item.netSales.mean),
+    formatClp(item.revenuePerUnit)
+  ])));
+  const methodology = document.getElementById('hourly-analysis-methodology');
+  const methodologyTitle = document.createElement('strong');
+  methodologyTitle.textContent = 'Metodología y límites';
+  const methodologyList = document.createElement('ul');
+  report.appendix.methodology.forEach(textValue => {
+    const item = document.createElement('li');
+    item.textContent = textValue;
+    methodologyList.appendChild(item);
+  });
+  methodology.replaceChildren(methodologyTitle, methodologyList);
+}
+
+function openHourlyAnalysisOptions() {
+  const dialog = document.getElementById('hourly-analysis-options-dialog');
+  if (!dialog.open) dialog.showModal();
+}
+
+async function loadHourlyAnalysis(analysisLevel = 'general') {
+  const dialog = document.getElementById('hourly-analysis-dialog');
+  const optionsDialog = document.getElementById('hourly-analysis-options-dialog');
+  const status = document.getElementById('hourly-analysis-status');
+  const button = document.getElementById('generate-hourly-analysis');
+  const params = new URLSearchParams({
+    location: document.getElementById('sales-dashboard-location').value || 'all',
+    mode: document.getElementById('hourly-demand-mode').value,
+    date: document.getElementById('hourly-demand-date').value,
+    days: document.getElementById('hourly-demand-days').value,
+    interval: document.getElementById('hourly-demand-interval').value,
+    hierarchyPath: JSON.stringify(hourlySalesHierarchyPath),
+    productKey: hourlySalesProductKey || '',
+    analysisLevel
+  });
+  if (optionsDialog.open) optionsDialog.close();
+  if (!dialog.open) dialog.showModal();
+  button.disabled = true;
+  setStatus(status, 'Analizando tendencias, dispersión, anomalías y participación horaria…');
+  try {
+    const report = await apiRequest(`/api/sales/hourly-analysis?${params}`);
+    renderHourlyAnalysis(report);
+    const additionalFindings = (report.breakdowns?.hierarchies?.findings.length || 0)
+      + (report.breakdowns?.products?.findings.length || 0);
+    setStatus(status, report.sampleSize
+      ? `Análisis completo: ${report.sampleSize} día(s), ${report.findings.length + additionalFindings} resultado(s) priorizado(s).`
+      : 'No hay ventas suficientes para elaborar el reporte con estos filtros.', report.sampleSize ? 'success' : 'error');
+  } catch (error) {
+    hourlyAnalysisState = null;
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function printHourlyAnalysis() {
+  if (!hourlyAnalysisState) return;
+  document.body.classList.add('printing-hourly-analysis');
+  setTimeout(() => {
+    window.print();
+    document.body.classList.remove('printing-hourly-analysis');
+  }, 50);
 }
 
 function renderMercadoPago(report) {
@@ -6762,6 +7077,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderSalesInsights();
   });
   document.getElementById('refresh-hourly-demand').addEventListener('click', loadHourlySalesDemand);
+  document.getElementById('generate-hourly-analysis').addEventListener('click', openHourlyAnalysisOptions);
+  document.getElementById('hourly-analysis-options-dialog').addEventListener('click', event => {
+    const option = event.target.closest('[data-hourly-analysis-level]');
+    if (option) loadHourlyAnalysis(option.dataset.hourlyAnalysisLevel);
+  });
+  document.getElementById('close-hourly-analysis-options').addEventListener('click', () => {
+    document.getElementById('hourly-analysis-options-dialog').close();
+  });
   document.getElementById('hourly-demand-mode').addEventListener('change', syncHourlyDemandControls);
   document.getElementById('hourly-demand-back').addEventListener('click', () => {
     if (hourlySalesProductKey) hourlySalesProductKey = null;
@@ -6771,6 +7094,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('close-hourly-demand-chart').addEventListener('click', () => {
     document.getElementById('hourly-demand-chart-dialog').close();
   });
+  document.getElementById('close-hourly-analysis').addEventListener('click', () => {
+    document.getElementById('hourly-analysis-dialog').close();
+  });
+  document.getElementById('print-hourly-analysis').addEventListener('click', printHourlyAnalysis);
   document.getElementById('hourly-demand-chart-order').addEventListener('change', () => {
     if (document.getElementById('hourly-demand-chart-dialog').open) openHourlyDemandChart();
   });
