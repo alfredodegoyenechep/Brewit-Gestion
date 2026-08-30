@@ -28,6 +28,8 @@ let currentWeekFiles = {};
 let pendingTrashLocation = null;
 let inventorySourceState = null;
 let productsViewState = null;
+let productAnalysisState = null;
+let productAnalysisOptions = null;
 let ingredientsViewState = null;
 let purchasesViewState = null;
 let purchaseCostVariationState = null;
@@ -2977,6 +2979,317 @@ function exportRelevantProductsReport() {
   }
 }
 
+function productAnalysisPresetRange(mode, referenceDate) {
+  const monday = value => {
+    const date = dateFromKey(value);
+    const weekday = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - weekday);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+  const monthStart = `${referenceDate.slice(0, 7)}-01`;
+  if (mode === 'current-week') return { from: monday(referenceDate), to: referenceDate };
+  if (mode === 'previous-week') {
+    const start = monday(referenceDate);
+    return { from: offsetIsoDate(start, -7), to: offsetIsoDate(start, -1) };
+  }
+  if (mode === 'current-month') return { from: monthStart, to: referenceDate };
+  if (mode === 'previous-month') {
+    const to = offsetIsoDate(monthStart, -1);
+    return { from: `${to.slice(0, 7)}-01`, to };
+  }
+  const days = Number(mode.match(/^last-(\d+)-days$/)?.[1]) || 30;
+  return { from: offsetIsoDate(referenceDate, -days + 1), to: referenceDate };
+}
+
+function syncProductAnalysisPeriod() {
+  const mode = document.getElementById('product-analysis-period').value;
+  const from = document.getElementById('product-analysis-date-from');
+  const to = document.getElementById('product-analysis-date-to');
+  const custom = mode === 'custom';
+  from.disabled = !custom;
+  to.disabled = !custom;
+  if (!custom && productAnalysisOptions?.availablePeriod?.to) {
+    const range = productAnalysisPresetRange(mode, productAnalysisOptions.availablePeriod.to);
+    from.value = range.from;
+    to.value = range.to;
+  }
+}
+
+async function loadProductAnalysisOptions(location) {
+  const status = document.getElementById('product-analysis-config-status');
+  setStatus(status, 'Leyendo períodos, jerarquías y cobertura disponible…');
+  try {
+    const options = await apiRequest(`/api/products/analysis/options?location=${encodeURIComponent(location)}`);
+    productAnalysisOptions = options;
+    const hierarchy = document.getElementById('product-analysis-hierarchy');
+    hierarchy.replaceChildren(new Option('Todas las jerarquías', 'all'), ...options.hierarchies.map(item => new Option(item.pathLabel, item.id)));
+    syncProductAnalysisPeriod();
+    const available = options.availablePeriod;
+    setStatus(status, available
+      ? `Datos disponibles entre ${formatReportDate(available.from)} y ${formatReportDate(available.to)}. Cobertura de Detalle Pagos: ${Number(options.coverage.paymentMatchPercent || 0).toLocaleString('es-CL', { maximumFractionDigits: 1 })}%.`
+      : 'No hay ventas disponibles para esta selección.', available ? 'success' : 'muted');
+  } catch (error) {
+    productAnalysisOptions = null;
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function openProductAnalysisConfig() {
+  const dialog = document.getElementById('product-analysis-config-dialog');
+  const location = document.getElementById('products-location-filter').value || 'all';
+  const select = document.getElementById('product-analysis-location');
+  const stores = Object.values(locationRegistry).filter(item => item.type === 'store' && item.status !== 'trash');
+  select.replaceChildren(new Option('Todas las cafeterías', 'all'), ...stores.map(item => new Option(item.name, item.id)));
+  select.value = location;
+  dialog.showModal();
+  await loadProductAnalysisOptions(location);
+}
+
+function productAnalysisElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function productAnalysisTable(headers, rows, options = {}) {
+  const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap');
+  const table = productAnalysisElement('table', `product-analysis-table ${options.className || ''}`);
+  const thead = document.createElement('thead');
+  const head = document.createElement('tr');
+  headers.forEach(header => head.appendChild(productAnalysisElement('th', '', header)));
+  thead.appendChild(head);
+  const tbody = document.createElement('tbody');
+  rows.forEach(values => {
+    const row = document.createElement('tr');
+    values.forEach((value, index) => {
+      const cell = productAnalysisElement('td', index === 0 ? 'product-analysis-row-label' : '', value ?? '—');
+      row.appendChild(cell);
+    });
+    tbody.appendChild(row);
+  });
+  if (!rows.length) {
+    const row = document.createElement('tr');
+    const cell = productAnalysisElement('td', 'product-analysis-empty', options.empty || 'No hay datos suficientes para esta sección.');
+    cell.colSpan = headers.length;
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  }
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function productAnalysisSection(id, eyebrow, title, description = '') {
+  const section = productAnalysisElement('section', 'product-analysis-section');
+  section.id = `product-analysis-${id}`;
+  section.append(productAnalysisElement('div', 'panel-eyebrow', eyebrow), productAnalysisElement('h4', '', title));
+  if (description) section.appendChild(productAnalysisElement('p', 'panel-description', description));
+  return section;
+}
+
+function analysisImpactLabel(value) {
+  return value === 'alto' ? 'ALTO' : value === 'medio' ? 'MEDIO' : value === 'bajo' ? 'BAJO' : 'INFORMATIVO';
+}
+
+function renderProductAnalysis() {
+  const report = productAnalysisState;
+  if (!report) return;
+  const content = document.getElementById('product-analysis-content');
+  const nav = document.getElementById('product-analysis-nav');
+  document.getElementById('product-analysis-description').textContent =
+    `${report.scope.locationLabel} · ${report.scope.hierarchyLabel} · ${formatReportDate(report.period.from)} – ${formatReportDate(report.period.to)} · comparación ${formatReportDate(report.period.previousFrom)} – ${formatReportDate(report.period.previousTo)}.`;
+  const sections = [];
+  const register = (id, label, section) => { sections.push({ id, label, section }); return section; };
+
+  const executive = register('executive', 'Resumen', productAnalysisSection('executive', 'Resumen ejecutivo', 'Qué merece atención', 'Las conclusiones están ordenadas por impacto y acompañadas por su nivel de confianza.'));
+  const metrics = productAnalysisElement('div', 'product-analysis-metrics');
+  [
+    ['Venta neta', formatClp(report.summary.netSales)],
+    ['Unidades', Number(report.summary.units).toLocaleString('es-CL', { maximumFractionDigits: 1 })],
+    ['Pedidos', Number(report.summary.orders).toLocaleString('es-CL')],
+    ['Ticket promedio', formatClp(report.summary.averageTicket)],
+    ['Margen estimado', report.summary.grossMarginPercent === null ? 'Sin costo suficiente' : `${report.summary.grossMarginPercent.toLocaleString('es-CL')}%`],
+    ['Hallazgos de alto impacto', String(report.summary.highImpactCount)]
+  ].forEach(([label, value]) => {
+    const card = productAnalysisElement('div', 'product-analysis-metric');
+    card.append(productAnalysisElement('span', '', label), productAnalysisElement('strong', '', value));
+    metrics.appendChild(card);
+  });
+  executive.appendChild(metrics);
+  const findingList = productAnalysisElement('div', 'product-analysis-findings');
+  report.findings.forEach(finding => {
+    const item = productAnalysisElement('article', `product-analysis-finding impact-${finding.impact}`);
+    const header = productAnalysisElement('div', 'product-analysis-finding-head');
+    header.append(productAnalysisElement('span', `analysis-impact impact-${finding.impact}`, analysisImpactLabel(finding.impact)), productAnalysisElement('span', 'analysis-confidence', `Confianza ${finding.confidence}`));
+    item.append(header, productAnalysisElement('h5', '', finding.title), productAnalysisElement('p', '', finding.detail));
+    if (finding.evidence?.length) item.appendChild(productAnalysisElement('p', 'analysis-evidence', `Evidencia: ${finding.evidence.join(' · ')}`));
+    item.appendChild(productAnalysisElement('p', 'analysis-action', `Acción / pregunta: ${finding.action}`));
+    findingList.appendChild(item);
+  });
+  if (!report.findings.length) findingList.appendChild(productAnalysisElement('p', 'form-status muted', 'No se detectaron señales con evidencia suficiente para destacar.'));
+  executive.appendChild(findingList);
+
+  const coverage = register('coverage', 'Cobertura', productAnalysisSection('coverage', 'Calidad de datos', 'Cobertura y límites', 'La confianza del reporte depende de la disponibilidad de pedidos, modalidad, recetas y costos.'));
+  coverage.appendChild(productAnalysisTable(['Indicador', 'Valor', 'Lectura'], [
+    ['Pedidos analizados', report.coverage.orders.toLocaleString('es-CL'), 'Pedidos con al menos un producto dentro del alcance'],
+    ['Días con ventas', report.coverage.openDays.toLocaleString('es-CL'), `${report.period.days} días calendario en el período`],
+    ['Detalle Pagos vinculado', `${report.coverage.paymentMatchPercent.toLocaleString('es-CL')}%`, 'Cobertura para modalidad de consumo'],
+    ['Modalidad sin información', `${report.coverage.unknownModePercent.toLocaleString('es-CL')}%`, 'No se imputa una modalidad cuando el comentario no es concluyente'],
+    ['Productos con receta', `${report.coverage.recipeCoveragePercent.toLocaleString('es-CL')}%`, 'Necesario para análisis de ingredientes'],
+    ['Costo desde compra vigente', `${report.coverage.purchaseCostCoveragePercent.toLocaleString('es-CL')}%`, 'El resto usa maestro o queda sin costo'],
+    ['Productos aptos para sensibilidad de precio', report.coverage.priceAnalysisEligibleProducts.toLocaleString('es-CL'), 'Exige muestra y variación mínima de precio']
+  ]));
+
+  const portfolio = register('portfolio', 'Portafolio', productAnalysisSection('portfolio', 'Portafolio y Pareto', 'Qué productos explican la venta', 'Clasificación ABC por participación acumulada de venta neta.'));
+  portfolio.appendChild(productAnalysisTable(['Código', 'Producto', 'Jerarquía', 'ABC', 'Unidades', 'Venta neta', 'Part.', 'Crec. vs. anterior', 'Margen'], report.portfolio.products.slice(0, 80).map(item => [
+    item.code, item.name, item.hierarchy, item.abc,
+    item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), `${item.salesShare.toLocaleString('es-CL')}%`,
+    item.salesGrowthPercent === null ? 'Sin base comparable' : `${item.salesGrowthPercent.toLocaleString('es-CL')}%`,
+    item.marginPercent === null ? 'Sin costo' : `${item.marginPercent.toLocaleString('es-CL')}%`
+  ])));
+
+  const trends = register('trends', 'Tendencias', productAnalysisSection('trends', 'Tendencias y anomalías', 'Comportamiento a través del período', 'Las anomalías son señales para investigar; no implican por sí mismas un error.'));
+  trends.appendChild(productAnalysisTable(['Fecha', 'Unidades', 'Venta neta', 'Señal'], report.trends.daily.map(item => {
+    const anomaly = report.trends.anomalies.find(value => value.date === item.date);
+    return [formatReportDate(item.date), item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), anomaly ? `${anomaly.direction} (${anomaly.deviationPercent}%)` : 'Dentro de rango'];
+  })));
+
+  const temporal = register('temporal', 'Día y hora', productAnalysisSection('temporal', 'Preferencias por día y horario', 'Cuándo se concentra la demanda', 'Los promedios diarios consideran solo días con ventas de cada día de semana.'));
+  temporal.append(productAnalysisTable(['Día', 'Días observados', 'Unidades promedio', 'Venta neta promedio'], report.temporal.weekdays.map(item => [item.label, item.days, item.averageUnits.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.averageNetSales)])), productAnalysisTable(['Hora', 'Unidades', 'Venta neta'], report.temporal.hours.map(item => [item.label, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales)])));
+
+  const service = register('service', 'Modalidad', productAnalysisSection('service', 'Para llevar, local y sin información', 'Modalidad y ticket promedio', 'La clasificación proviene del Comentario General de Detalle Pagos.'));
+  service.appendChild(productAnalysisTable(['Modalidad', 'Pedidos', 'Part. pedidos', 'Venta neta', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders.toLocaleString('es-CL'), `${item.orderShare.toLocaleString('es-CL')}%`, formatClp(item.netSales), formatClp(item.averageTicket)])));
+
+  const baskets = register('baskets', 'Canastas', productAnalysisSection('baskets', 'Productos que se venden juntos', 'Afinidad de canasta y extras', `Se muestran pares con al menos ${report.baskets.minimumPairOrders} pedidos. Un lift superior a 1 indica una coincidencia mayor a la esperada bajo independencia.`));
+  baskets.append(productAnalysisElement('h5', '', 'Pares de productos'), productAnalysisTable(['Producto A', 'Producto B', 'Pedidos', 'Soporte', 'Confianza A→B', 'Lift'], report.baskets.pairs.slice(0, 40).map(item => [item.leftName, item.rightName, item.orders, `${item.supportPercent}%`, `${item.confidenceLeftToRightPercent}%`, item.lift])));
+  baskets.append(productAnalysisElement('h5', '', 'Extras y modificadores'), productAnalysisTable(['Código', 'Extra', 'Pedidos', 'Unidades', 'Part. pedidos'], report.baskets.modifiers.map(item => [item.code, item.name, item.orders, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), `${item.orderShare}%`]), { empty: 'No se identificaron extras en el período y alcance.' }));
+
+  const formats = register('formats', 'Formatos', productAnalysisSection('formats', 'Familias, formatos y tamaños', 'Cómo se distribuye la elección dentro de una familia', report.formats.methodology));
+  report.formats.families.forEach(family => {
+    const block = productAnalysisElement('div', 'product-analysis-family');
+    block.append(productAnalysisElement('h5', '', family.family), productAnalysisElement('p', 'panel-description', `${family.hierarchy} · confianza ${family.confidence}`));
+    block.appendChild(productAnalysisTable(['Código', 'Formato detectado', 'Producto', 'Unidades', 'Venta neta', 'Precio promedio'], family.formats.map(item => [item.code, item.format, item.name, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), formatClp(item.averagePrice)])));
+    formats.appendChild(block);
+  });
+  if (!report.formats.families.length) formats.appendChild(productAnalysisElement('p', 'form-status muted', 'No hay familias con múltiples formatos detectables en este alcance.'));
+
+  const value = register('value', 'Valor', productAnalysisSection('value', 'Venta por tramo de precio', 'Unidades y valor vendido en cortes de $500', report.priceDistribution.basis));
+  value.appendChild(productAnalysisTable(['Tramo de precio efectivo', 'Unidades', '% unidades', 'Venta neta', '% venta neta'], report.priceDistribution.bands.map(item => [
+    item.label,
+    item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }),
+    `${item.unitSharePercent.toLocaleString('es-CL')}%`,
+    formatClp(item.netSales),
+    `${item.salesSharePercent.toLocaleString('es-CL')}%`
+  ])));
+  const valueInsights = productAnalysisElement('div', 'product-analysis-interpretations');
+  report.priceDistribution.insights.forEach(insight => valueInsights.appendChild(productAnalysisElement('p', 'product-analysis-interpretation', insight)));
+  value.appendChild(valueInsights);
+
+  const price = register('price', 'Precio', productAnalysisSection('price', 'Precio, demanda y margen', 'Sensibilidad observada — no causal', report.priceSensitivity.caveat));
+  price.appendChild(productAnalysisTable(['Código', 'Producto', 'Observaciones', 'Niveles de precio', 'Rango', 'Coef. observado', 'R²', 'Confianza'], report.priceSensitivity.items.map(item => [item.code, item.name, item.observations, item.pricePoints, `${item.priceRangePercent}%`, item.observedElasticity, item.rSquared, item.confidence]), { empty: 'Ningún producto cumple simultáneamente los mínimos de muestra y variación de precio.' }));
+  const priceReading = productAnalysisElement('div', 'product-analysis-price-reading');
+  priceReading.appendChild(productAnalysisElement('h5', '', 'Cómo leer las columnas'));
+  const definitions = productAnalysisElement('dl', 'product-analysis-definitions');
+  report.priceSensitivity.definitions.forEach(item => {
+    definitions.append(productAnalysisElement('dt', '', item.term), productAnalysisElement('dd', '', item.detail));
+  });
+  priceReading.appendChild(definitions);
+  priceReading.appendChild(productAnalysisElement('h5', '', 'Qué muestran los datos de este período'));
+  const interpretations = productAnalysisElement('div', 'product-analysis-interpretations');
+  report.priceSensitivity.interpretation.forEach(item => {
+    const card = productAnalysisElement('article', `product-analysis-interpretation interpretation-${item.level}`);
+    card.append(productAnalysisElement('strong', '', item.title), productAnalysisElement('p', '', item.detail));
+    interpretations.appendChild(card);
+  });
+  priceReading.appendChild(interpretations);
+  price.appendChild(priceReading);
+
+  const ingredients = register('ingredients', 'Ingredientes', productAnalysisSection('ingredients', 'Composición por ingrediente principal', 'Lectura de la venta desde las recetas', 'El ingrediente principal se infiere por su contribución estimada al costo, excluyendo packaging.'));
+  ingredients.appendChild(productAnalysisTable(['Código', 'Ingrediente principal', 'Productos asociados', 'Unidades producto', 'Venta neta asociada', 'Part. venta'], report.ingredients.map(item => [item.code, item.name, item.products.length, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), `${item.salesShare}%`])));
+
+  const appendix = register('appendix', 'Anexo', productAnalysisSection('appendix', 'Anexo metodológico', 'Definiciones y fuentes', 'Detalle para interpretar y reproducir las conclusiones.'));
+  const list = productAnalysisElement('ul', 'product-analysis-methodology');
+  report.appendix.methodology.forEach(item => list.appendChild(productAnalysisElement('li', '', item)));
+  appendix.appendChild(list);
+  if (report.appendix.warnings.length) appendix.appendChild(productAnalysisElement('p', 'form-status error', report.appendix.warnings.join(' ')));
+  const sources = report.sources ? Object.entries(report.sources).map(([key, value]) => `${key}: ${value}`).join(' · ') : '';
+  if (sources) appendix.appendChild(productAnalysisElement('p', 'analysis-evidence', `Fuentes: ${sources}`));
+
+  content.replaceChildren(...sections.map(item => item.section));
+  nav.replaceChildren(...sections.map(item => {
+    const link = productAnalysisElement('a', '', item.label);
+    link.href = `#product-analysis-${item.id}`;
+    return link;
+  }));
+}
+
+async function generateProductAnalysis() {
+  const button = document.getElementById('generate-product-analysis');
+  const status = document.getElementById('product-analysis-config-status');
+  const location = document.getElementById('product-analysis-location').value || 'all';
+  const hierarchyId = document.getElementById('product-analysis-hierarchy').value || 'all';
+  const dateFrom = document.getElementById('product-analysis-date-from').value;
+  const dateTo = document.getElementById('product-analysis-date-to').value;
+  if (!dateFrom || !dateTo || dateFrom > dateTo) return setStatus(status, 'Selecciona un rango de fechas válido.', 'error');
+  button.disabled = true;
+  setStatus(status, 'Construyendo portafolio, tendencias, canastas, formatos, precios, recetas y hallazgos…');
+  try {
+    const params = new URLSearchParams({ location, hierarchyId, dateFrom, dateTo });
+    productAnalysisState = await apiRequest(`/api/products/analysis?${params}`);
+    renderProductAnalysis();
+    document.getElementById('product-analysis-config-dialog').close();
+    document.getElementById('product-analysis-dialog').showModal();
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function printProductAnalysis() {
+  if (!productAnalysisState) return;
+  const previousTitle = document.title;
+  document.title = `Análisis Productos - ${productAnalysisState.scope.locationLabel}`;
+  document.body.classList.add('printing-product-analysis');
+  try { window.print(); } finally { document.body.classList.remove('printing-product-analysis'); document.title = previousTitle; }
+}
+
+function exportProductAnalysis() {
+  const report = productAnalysisState;
+  if (!report || !window.XLSX) return;
+  const workbook = XLSX.utils.book_new();
+  const append = (name, headers, rows) => {
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    sheet['!autofilter'] = rows.length ? { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 1}` } : undefined;
+    sheet['!cols'] = headers.map(header => ({ wch: Math.max(12, Math.min(42, String(header).length + 4)) }));
+    XLSX.utils.book_append_sheet(workbook, sheet, name.slice(0, 31));
+  };
+  append('Información', ['Campo', 'Valor'], [
+    ['Reporte', 'Análisis estadístico de productos'], ['Ubicación', report.scope.locationLabel], ['Jerarquía', report.scope.hierarchyLabel],
+    ['Desde', report.period.from], ['Hasta', report.period.to], ['Comparación desde', report.period.previousFrom], ['Comparación hasta', report.period.previousTo],
+    ['Venta neta', report.summary.netSales], ['Unidades', report.summary.units], ['Pedidos', report.summary.orders], ['Ticket promedio', report.summary.averageTicket],
+    ['Cobertura Detalle Pagos %', report.coverage.paymentMatchPercent], ['Cobertura recetas %', report.coverage.recipeCoveragePercent],
+    ['Exportado', new Date().toLocaleString('es-CL')]
+  ]);
+  append('Hallazgos', ['ID', 'Impacto', 'Confianza', 'Sección', 'Título', 'Detalle', 'Evidencia', 'Acción o pregunta'], report.findings.map(item => [item.id, item.impact, item.confidence, item.section, item.title, item.detail, item.evidence.join(' · '), item.action]));
+  append('Productos', ['Código', 'Producto', 'Jerarquía', 'ABC', 'Unidades', 'Venta neta', 'Participación %', 'Pedidos', 'Precio promedio', 'Costo unitario', 'Origen costo', 'Margen %', 'Crecimiento venta %', 'Tendencia %', 'CV %'], report.appendix.products.map(item => [item.code, item.name, item.hierarchy, item.abc, item.units, item.netSales, item.salesShare, item.orderCount, item.averagePrice, item.unitCost, item.costSource, item.marginPercent, item.salesGrowthPercent, item.trendPercent, item.variabilityPercent]));
+  append('Canastas', ['Código A', 'Producto A', 'Código B', 'Producto B', 'Pedidos', 'Soporte %', 'Confianza A-B %', 'Confianza B-A %', 'Lift'], report.baskets.pairs.map(item => [item.leftCode, item.leftName, item.rightCode, item.rightName, item.orders, item.supportPercent, item.confidenceLeftToRightPercent, item.confidenceRightToLeftPercent, item.lift]));
+  append('Modalidad', ['Modalidad', 'Pedidos', 'Participación %', 'Venta neta', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders, item.orderShare, item.netSales, item.averageTicket]));
+  append('Días y horas', ['Tipo', 'Valor', 'Observaciones', 'Unidades', 'Venta neta'], [...report.temporal.weekdays.map(item => ['Día semana', item.label, item.days, item.averageUnits, item.averageNetSales]), ...report.temporal.hours.map(item => ['Hora', item.label, '', item.units, item.netSales])]);
+  append('Formatos', ['Familia', 'Jerarquía', 'Confianza', 'Código', 'Producto', 'Formato', 'Unidades', 'Venta neta', 'Precio promedio'], report.formats.families.flatMap(family => family.formats.map(item => [family.family, family.hierarchy, family.confidence, item.code, item.name, item.format, item.units, item.netSales, item.averagePrice])));
+  append('Tramos de precio', ['Tramo precio efectivo con IVA', 'Desde exclusivo', 'Hasta inclusivo', 'Unidades', 'Participación unidades %', 'Venta neta', 'Participación venta %', 'Venta con IVA'], report.priceDistribution.bands.map(item => [item.label, item.fromExclusive, item.toInclusive, item.units, item.unitSharePercent, item.netSales, item.salesSharePercent, item.grossSales]));
+  append('Precio', ['Código', 'Producto', 'Observaciones', 'Niveles precio', 'Rango %', 'Coeficiente observado', 'Correlación', 'R²', 'Confianza'], report.priceSensitivity.items.map(item => [item.code, item.name, item.observations, item.pricePoints, item.priceRangePercent, item.observedElasticity, item.correlation, item.rSquared, item.confidence]));
+  append('Lectura precio', ['Tipo', 'Título o término', 'Explicación'], [
+    ...report.priceSensitivity.definitions.map(item => ['Definición', item.term, item.detail]),
+    ...report.priceSensitivity.interpretation.map(item => ['Conclusión', item.title, item.detail])
+  ]);
+  append('Ingredientes', ['Código', 'Ingrediente principal', 'Unidades producto', 'Venta neta asociada', 'Participación %', 'Productos'], report.ingredients.map(item => [item.code, item.name, item.units, item.netSales, item.salesShare, item.products.map(product => `${product.code} ${product.name}`).join(' · ')]));
+  append('Serie diaria', ['Fecha', 'Unidades', 'Venta neta', 'Anomalía'], report.trends.daily.map(item => [item.date, item.units, item.netSales, report.trends.anomalies.find(value => value.date === item.date)?.direction || '']));
+  append('Metodología', ['Definición'], report.appendix.methodology.map(item => [item]));
+  writeConfiguredExcelWorkbook(workbook, `analisis-productos-${report.period.from}-${report.period.to}.xlsx`);
+}
+
 function filteredIngredientItems() {
   if (!ingredientsViewState) return [];
   const supplier = document.getElementById('ingredients-supplier-filter').value || 'all';
@@ -3314,9 +3627,11 @@ async function loadProductsView() {
   const status = document.getElementById('products-status');
   const button = document.getElementById('refresh-products');
   const relevantButton = document.getElementById('open-relevant-products-report');
+  const analysisButton = document.getElementById('open-product-analysis');
   const location = document.getElementById('products-location-filter').value || 'all';
   button.disabled = true;
   relevantButton.disabled = true;
+  analysisButton.disabled = true;
   setStatus(status, 'Calculando catálogo y ventas por producto…');
   try {
     const data = await apiRequest(`/api/products?location=${encodeURIComponent(location)}`);
@@ -3324,6 +3639,7 @@ async function loadProductsView() {
     productsViewState = data;
     renderProductsView();
     relevantButton.disabled = false;
+    analysisButton.disabled = false;
     await refreshSavedProductReports();
     if (data.warnings.length) setStatus(status, data.warnings.join(' '), 'error');
     else setStatus(status, `${data.filesRead} archivo(s) de ventas procesado(s) para ${data.scope.label}.`, 'success');
@@ -3331,6 +3647,7 @@ async function loadProductsView() {
     productsViewState = null;
     renderProductsView();
     relevantButton.disabled = true;
+    analysisButton.disabled = true;
     setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
@@ -7110,6 +7427,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('products-grouping').addEventListener('change', renderProductsView);
   document.getElementById('refresh-products').addEventListener('click', loadProductsView);
   document.getElementById('open-relevant-products-report').addEventListener('click', openRelevantProductsReport);
+  document.getElementById('open-product-analysis').addEventListener('click', openProductAnalysisConfig);
+  document.getElementById('close-product-analysis-config').addEventListener('click', () => {
+    document.getElementById('product-analysis-config-dialog').close();
+  });
+  document.getElementById('product-analysis-location').addEventListener('change', event => {
+    loadProductAnalysisOptions(event.target.value || 'all');
+  });
+  document.getElementById('product-analysis-period').addEventListener('change', syncProductAnalysisPeriod);
+  document.getElementById('generate-product-analysis').addEventListener('click', generateProductAnalysis);
+  document.getElementById('close-product-analysis').addEventListener('click', () => {
+    document.getElementById('product-analysis-dialog').close();
+  });
+  document.getElementById('print-product-analysis').addEventListener('click', printProductAnalysis);
+  document.getElementById('export-product-analysis').addEventListener('click', exportProductAnalysis);
   document.getElementById('close-relevant-products-report').addEventListener('click', () => {
     document.getElementById('relevant-products-dialog').close();
   });

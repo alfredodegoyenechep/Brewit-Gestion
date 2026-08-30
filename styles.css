@@ -23,6 +23,88 @@
   --shadow: 0 6px 24px rgba(74, 47, 16, 0.06);
 }
 
+@media print {
+  body.printing-product-analysis {
+    display: block;
+    background: white !important;
+    color: #17130f !important;
+  }
+
+  body.printing-product-analysis .sidebar,
+  body.printing-product-analysis .main-content > section:not(#products-workspace),
+  body.printing-product-analysis #products-workspace > *:not(#product-analysis-dialog),
+  body.printing-product-analysis .product-analysis-report-head .inventory-source-actions,
+  body.printing-product-analysis .product-analysis-nav {
+    display: none !important;
+  }
+
+  body.printing-product-analysis .main-content,
+  body.printing-product-analysis #products-workspace,
+  body.printing-product-analysis #product-analysis-dialog,
+  body.printing-product-analysis .product-analysis-content {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: #17130f !important;
+  }
+
+  body.printing-product-analysis .product-analysis-report-head {
+    position: static !important;
+    margin-bottom: 8mm;
+    background: white !important;
+  }
+
+  body.printing-product-analysis .product-analysis-section {
+    margin-bottom: 6mm;
+    padding: 4mm;
+    overflow: visible !important;
+    border-color: #aaa !important;
+    background: white !important;
+    break-inside: auto;
+  }
+
+  body.printing-product-analysis .product-analysis-metric,
+  body.printing-product-analysis .product-analysis-finding {
+    background: white !important;
+    break-inside: avoid;
+  }
+
+  body.printing-product-analysis .product-analysis-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  body.printing-product-analysis .product-analysis-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  body.printing-product-analysis .product-analysis-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 7px !important;
+  }
+
+  body.printing-product-analysis .product-analysis-table th,
+  body.printing-product-analysis .product-analysis-table td {
+    position: static !important;
+    padding: 3px 4px !important;
+    color: #17130f !important;
+    background: white !important;
+    white-space: normal !important;
+  }
+
+  body.printing-product-analysis .product-analysis-table thead { display: table-header-group; }
+  body.printing-product-analysis .product-analysis-table tr { break-inside: avoid; }
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -2484,6 +2566,326 @@ body {
 .relevant-products-dialog h3 {
   margin: 5px 0;
   font-size: 23px;
+}
+
+.product-analysis-config-dialog,
+.product-analysis-dialog {
+  box-sizing: border-box;
+  width: min(1500px, calc(100vw - 28px));
+  max-width: none;
+  max-height: calc(100vh - 28px);
+  margin: auto;
+  padding: 22px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(20, 14, 10, 0.45);
+}
+
+.product-analysis-config-dialog {
+  width: min(1120px, calc(100vw - 28px));
+}
+
+.product-analysis-config-dialog::backdrop,
+.product-analysis-dialog::backdrop {
+  background: rgba(20, 14, 10, 0.66);
+}
+
+.product-analysis-config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 14px;
+  margin: 22px 0 14px;
+}
+
+.product-analysis-config-grid label {
+  display: grid;
+  gap: 7px;
+}
+
+.product-analysis-config-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.product-analysis-report-head {
+  position: sticky;
+  z-index: 8;
+  top: -22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin: -2px -2px 0;
+  padding: 18px 2px 14px;
+  background: var(--panel);
+}
+
+.product-analysis-report-head h3 {
+  margin: 5px 0;
+  font-size: 26px;
+}
+
+.product-analysis-nav {
+  position: sticky;
+  z-index: 7;
+  top: 100px;
+  display: flex;
+  gap: 7px;
+  padding: 9px 0 14px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel);
+}
+
+.product-analysis-nav a {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.product-analysis-content {
+  display: grid;
+  gap: 18px;
+  padding-top: 18px;
+}
+
+.product-analysis-section {
+  min-width: 0;
+  padding: 20px;
+  scroll-margin-top: 160px;
+  border: 1px solid var(--border-soft);
+  border-radius: 15px;
+  background: var(--coffee-soft-2);
+}
+
+.product-analysis-section > h4 {
+  margin: 4px 0 6px;
+  font-size: 21px;
+}
+
+.product-analysis-section > h5,
+.product-analysis-family h5 {
+  margin: 20px 0 5px;
+  font-size: 15px;
+}
+
+.product-analysis-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  gap: 9px;
+  margin: 18px 0;
+}
+
+.product-analysis-metric {
+  display: grid;
+  gap: 6px;
+  padding: 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.product-analysis-metric span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.product-analysis-metric strong {
+  font-size: 20px;
+}
+
+.product-analysis-findings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.product-analysis-finding {
+  padding: 15px;
+  border: 1px solid var(--border-soft);
+  border-left: 4px solid var(--text-muted);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.product-analysis-finding.impact-alto { border-left-color: var(--red); }
+.product-analysis-finding.impact-medio { border-left-color: var(--orange); }
+.product-analysis-finding.impact-bajo { border-left-color: #3a91cf; }
+.product-analysis-finding.impact-informativo { border-left-color: var(--green); }
+
+.product-analysis-finding-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysis-impact,
+.analysis-confidence {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--coffee-soft);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.analysis-impact.impact-alto { color: var(--red); }
+.analysis-impact.impact-medio { color: var(--orange); }
+.analysis-impact.impact-bajo { color: #3a91cf; }
+.analysis-impact.impact-informativo { color: var(--green); }
+.analysis-confidence { color: var(--text-muted); }
+
+.product-analysis-finding h5 {
+  margin: 11px 0 6px;
+  font-size: 15px;
+}
+
+.product-analysis-finding p {
+  margin: 5px 0;
+  line-height: 1.45;
+}
+
+.analysis-evidence {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.analysis-action {
+  font-weight: 700;
+}
+
+.product-analysis-table-wrap {
+  max-height: 520px;
+  margin-top: 14px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+
+.product-analysis-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.product-analysis-table th,
+.product-analysis-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.product-analysis-table th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  color: var(--text-muted);
+  background: var(--coffee-soft-2);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.product-analysis-table th:first-child,
+.product-analysis-table td:first-child,
+.product-analysis-table th:nth-child(2),
+.product-analysis-table td:nth-child(2),
+.product-analysis-table th:nth-child(3),
+.product-analysis-table td:nth-child(3) {
+  text-align: left;
+}
+
+.product-analysis-table tbody tr:last-child td { border-bottom: 0; }
+.product-analysis-empty { color: var(--text-muted); text-align: left !important; }
+.product-analysis-family + .product-analysis-family { margin-top: 24px; padding-top: 5px; border-top: 1px solid var(--border-soft); }
+.product-analysis-methodology { margin: 16px 0 0; padding-left: 20px; line-height: 1.65; }
+
+.product-analysis-price-reading {
+  margin-top: 20px;
+  padding-top: 2px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.product-analysis-definitions {
+  display: grid;
+  grid-template-columns: minmax(130px, 190px) 1fr;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+
+.product-analysis-definitions dt,
+.product-analysis-definitions dd {
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  line-height: 1.45;
+}
+
+.product-analysis-definitions dt {
+  font-weight: 800;
+  background: var(--coffee-soft);
+}
+
+.product-analysis-definitions dd {
+  color: var(--text-soft);
+  background: var(--panel);
+}
+
+.product-analysis-definitions dt:nth-last-of-type(1),
+.product-analysis-definitions dd:last-child {
+  border-bottom: 0;
+}
+
+.product-analysis-interpretations {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.product-analysis-interpretation {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid #3a91cf;
+  border-radius: 9px;
+  background: var(--panel);
+  line-height: 1.5;
+}
+
+.product-analysis-interpretation.interpretation-atención,
+.product-analysis-interpretation.interpretation-revisión {
+  border-left-color: var(--orange);
+}
+
+.product-analysis-interpretation strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.product-analysis-interpretation p { margin: 0; }
+
+@media (max-width: 900px) {
+  .product-analysis-config-grid,
+  .product-analysis-metrics,
+  .product-analysis-findings { grid-template-columns: 1fr; }
+  .product-analysis-definitions { grid-template-columns: 1fr; }
+  .product-analysis-definitions dt { border-bottom: 0; }
+  .product-analysis-report-head { position: static; display: grid; }
+  .product-analysis-nav { top: 0; }
 }
 
 .products-table td.product-change-positive {

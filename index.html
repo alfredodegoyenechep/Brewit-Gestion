@@ -749,6 +749,7 @@
           <div class="products-control-actions">
             <button id="refresh-products" class="icon-button" type="button">Actualizar</button>
             <button id="open-relevant-products-report" class="icon-button" type="button" disabled>Cambios Relevantes</button>
+            <button id="open-product-analysis" class="primary" type="button" disabled>Análisis Productos</button>
           </div>
         </div>
       </div>
@@ -777,6 +778,64 @@
         </div>
         <div id="relevant-products-summary" class="products-summary"></div>
         <div id="relevant-products-hierarchy-list" class="products-hierarchy-list"></div>
+      </dialog>
+      <dialog id="product-analysis-config-dialog" class="product-analysis-config-dialog" aria-labelledby="product-analysis-config-title">
+        <div class="inventory-results-head">
+          <div>
+            <div class="panel-eyebrow">Análisis estadístico</div>
+            <h3 id="product-analysis-config-title">Análisis de productos</h3>
+            <p class="panel-description">Selecciona el período, la cafetería y el alcance de jerarquías. El reporte comparará automáticamente con el período anterior equivalente.</p>
+          </div>
+          <button id="close-product-analysis-config" class="icon-button small" type="button">Cerrar</button>
+        </div>
+        <div class="product-analysis-config-grid">
+          <label for="product-analysis-location">Cafetería
+            <select id="product-analysis-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="product-analysis-period">Período
+            <select id="product-analysis-period">
+              <option value="current-week">Semana actual</option>
+              <option value="previous-week">Semana anterior</option>
+              <option value="current-month">Mes actual</option>
+              <option value="previous-month">Mes anterior</option>
+              <option value="last-30-days" selected>Últimos 30 días</option>
+              <option value="last-60-days">Últimos 60 días</option>
+              <option value="last-90-days">Últimos 90 días</option>
+              <option value="last-180-days">Últimos 180 días</option>
+              <option value="last-360-days">Últimos 360 días</option>
+              <option value="custom">Rango personalizado</option>
+            </select>
+          </label>
+          <label for="product-analysis-hierarchy">Jerarquía de producto
+            <select id="product-analysis-hierarchy"><option value="all">Todas las jerarquías</option></select>
+          </label>
+          <label for="product-analysis-date-from">Desde
+            <input id="product-analysis-date-from" type="date" disabled />
+          </label>
+          <label for="product-analysis-date-to">Hasta
+            <input id="product-analysis-date-to" type="date" disabled />
+          </label>
+        </div>
+        <div id="product-analysis-config-status" class="form-status" aria-live="polite"></div>
+        <div class="product-analysis-config-actions">
+          <button id="generate-product-analysis" class="primary" type="button">Generar reporte</button>
+        </div>
+      </dialog>
+      <dialog id="product-analysis-dialog" class="product-analysis-dialog" aria-labelledby="product-analysis-title">
+        <div class="product-analysis-report-head">
+          <div>
+            <div class="panel-eyebrow">Inteligencia comercial</div>
+            <h3 id="product-analysis-title">Análisis estadístico de productos</h3>
+            <p id="product-analysis-description" class="panel-description"></p>
+          </div>
+          <div class="inventory-source-actions">
+            <button id="print-product-analysis" class="icon-button small" type="button">Imprimir / PDF</button>
+            <button id="export-product-analysis" class="icon-button small" type="button">Exportar Excel</button>
+            <button id="close-product-analysis" class="icon-button small" type="button">Cerrar</button>
+          </div>
+        </div>
+        <nav id="product-analysis-nav" class="product-analysis-nav" aria-label="Secciones del reporte"></nav>
+        <div id="product-analysis-content" class="product-analysis-content"></div>
       </dialog>
       <section id="products-comparison" class="products-comparison" hidden>
         <div class="products-comparison-head">

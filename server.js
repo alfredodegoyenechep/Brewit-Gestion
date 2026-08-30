@@ -4,6 +4,7 @@ const XLSX = require('xlsx');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { buildProductAnalytics } = require('./product-analytics');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -2164,6 +2165,7 @@ function createApp(options = {}) {
   const purchaseOrderCounterPath = path.join(configRoot, 'purchase-order-counter.json');
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
   const findingsRegistryPath = path.join(configRoot, 'findings.json');
+  const productAnalyticsSourceCache = new Map();
   ensureDir(weeksRoot);
   ensureDir(mastersRoot);
   ensureDir(stagingRoot);
@@ -4354,6 +4356,262 @@ function createApp(options = {}) {
       }))
     };
   }
+
+  function productAnalyticsLocations(requestedLocation) {
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    if (requestedLocation === 'all') return stores;
+    const selected = stores.find(location => location.id === requestedLocation);
+    if (!selected) {
+      const error = new Error('Selecciona una cafetería válida.');
+      error.status = 400;
+      throw error;
+    }
+    return [selected];
+  }
+
+  function productAnalyticsSourceFingerprint(stores) {
+    const paths = stores.flatMap(store => [
+      ...storedSalesFiles(store.id),
+      ...storedTransactionFiles(store.id, 'payment-details')
+    ]).map(stored => {
+      const stat = fs.statSync(stored.filePath);
+      return `${stored.filePath}:${stat.size}:${stat.mtimeMs}`;
+    }).sort();
+    return crypto.createHash('sha256').update(paths.join('|')).digest('hex');
+  }
+
+  function buildProductAnalyticsSource(requestedLocation) {
+    const stores = productAnalyticsLocations(requestedLocation);
+    const fingerprint = productAnalyticsSourceFingerprint(stores);
+    const cacheKey = `${stores.map(store => store.id).sort().join(',')}:${fingerprint}`;
+    const cached = productAnalyticsSourceCache.get(cacheKey);
+    if (cached) return cached;
+    const warnings = [];
+    const seenRows = new Set();
+    const orders = new Map();
+    let salesFilesRead = 0;
+    for (const location of stores) {
+      for (const stored of storedSalesFiles(location.id)) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const dateTime = salesTransactionDateTime(row);
+            const date = dateTime?.slice(0, 10);
+            if (!date || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const canonical = Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right));
+            const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`;
+            if (seenRows.has(rowKey)) continue;
+            seenRows.add(rowKey);
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
+            const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code;
+            if (!code && !name) continue;
+            const orderKey = `${location.id}:${salesTransactionKey(row)}`;
+            const paid = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
+            const list = numericValue(rowValue(row, ['Precio Lista', 'Precio de lista'])) || 0;
+            const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            const quantity = Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
+            const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+            const orderDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento total'])) || 0;
+            const existing = orders.get(orderKey) || {
+              orderKey,
+              locationId: location.id,
+              locationName: location.name,
+              date,
+              hour: Number(dateTime.slice(11, 13)) + Number(dateTime.slice(14, 16)) / 60,
+              clients: Math.max(0, numericValue(rowValue(row, ['Numero de clientes', 'Número de clientes'])) || 0),
+              netSales: gross !== null ? (gross + orderDiscount) / 1.19 : 0,
+              lines: []
+            };
+            existing.lines.push({
+              code,
+              name,
+              quantity,
+              netSales: ((paid !== null ? paid : list) + discount) / 1.19,
+              hierarchyId: String(rowValue(row, ['AB.']) ?? '').trim() || null,
+              hierarchyName: repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos'])) || '',
+              extraHierarchyId: String(rowValue(row, ['BA.']) ?? '').trim() || null,
+              extraHierarchyName: repairMojibake(rowValue(row, ['Jerarquía de Extras', 'Jerarquia de Extras'])) || ''
+            });
+            orders.set(orderKey, existing);
+          }
+          salesFilesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    const orderFacts = [...orders.values()];
+    for (const order of orderFacts) {
+      if (!(order.netSales > 0)) order.netSales = order.lines.reduce((total, line) => total + line.netSales, 0);
+    }
+    const payment = paymentDetailModes(stores, warnings, orderFacts.map(order => ({ orderKey: order.orderKey, net: order.netSales })));
+    for (const order of orderFacts) {
+      const detail = payment.modes.get(order.orderKey);
+      order.mode = detail?.key || 'unknown';
+      order.modeAmbiguous = Boolean(detail?.ambiguous);
+      order.paymentDue = detail?.dueAmount ?? null;
+      order.paymentComment = detail?.comment || '';
+    }
+    const result = {
+      stores,
+      orders: orderFacts.sort((left, right) => left.date.localeCompare(right.date) || left.orderKey.localeCompare(right.orderKey)),
+      warnings,
+      fingerprint,
+      salesFilesRead,
+      paymentFilesRead: payment.filesRead,
+      coverage: {
+        paymentMatchPercent: orderFacts.length ? orderFacts.filter(order => payment.modes.has(order.orderKey)).length / orderFacts.length * 100 : 0,
+        ambiguousPaymentOrders: orderFacts.filter(order => order.modeAmbiguous).length
+      }
+    };
+    if (productAnalyticsSourceCache.size >= 6) {
+      productAnalyticsSourceCache.delete(productAnalyticsSourceCache.keys().next().value);
+    }
+    productAnalyticsSourceCache.set(cacheKey, result);
+    return result;
+  }
+
+  function buildProductAnalyticsSnapshot(requestedLocation, dateTo) {
+    const source = buildProductAnalyticsSource(requestedLocation);
+    const catalogMaster = latestMasterFile('master-catalog', dateTo);
+    const hierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
+    const recipesMaster = latestMasterFile('master-recipes', dateTo);
+    if (!catalogMaster || !hierarchyMaster || !recipesMaster) {
+      const error = new Error('Se requieren los maestros vigentes de productos, jerarquías y recetas para construir el análisis.');
+      error.status = 404;
+      throw error;
+    }
+    const catalogProducts = parseProductCatalog(catalogMaster.filePath);
+    const analysisCatalog = parseSalesAnalysisCatalog(catalogMaster.filePath);
+    const fullCatalog = parseIngredientCatalog(catalogMaster.filePath);
+    const recipes = parseRecipes(recipesMaster.filePath);
+    const hierarchy = parseProductHierarchies(hierarchyMaster.filePath);
+    const hierarchyAncestors = id => {
+      const ids = [];
+      const visited = new Set();
+      let current = hierarchy.hierarchyMap.get(id);
+      while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        ids.unshift(current.id);
+        current = current.parentId ? hierarchy.hierarchyMap.get(current.parentId) : null;
+      }
+      return ids;
+    };
+    const productByCode = new Map(catalogProducts.map(product => [product.code.toUpperCase(), product]));
+    const costResolver = buildCostResolver(dateTo, source.stores.map(store => store.id));
+    const products = catalogProducts.map(product => {
+      const hierarchyIds = hierarchyAncestors(product.hierarchyId);
+      const cost = costResolver.resolve(product.code, product.unit, { unitCost: product.cost, unit: product.unit });
+      return {
+        code: product.code.toUpperCase(),
+        name: product.name,
+        hierarchyIds,
+        hierarchyPath: product.hierarchyId ? hierarchy.pathFor(product.hierarchyId) : [],
+        unitCost: cost.unitCost,
+        costSource: cost.source,
+        costSourceDate: cost.sourceDate
+      };
+    });
+    const productLookup = new Map(products.map(product => [product.code, product]));
+    const orders = source.orders.map(order => ({
+      ...order,
+      lines: order.lines.map(line => {
+        const product = productLookup.get(line.code);
+        const hierarchyIds = line.hierarchyId ? hierarchyAncestors(line.hierarchyId) : product?.hierarchyIds || [];
+        const hierarchyPath = line.hierarchyId ? hierarchy.pathFor(line.hierarchyId) : product?.hierarchyPath || (line.hierarchyName ? [line.hierarchyName] : []);
+        return {
+          ...line,
+          hierarchyIds,
+          hierarchyPath,
+          isExtra: Boolean(line.extraHierarchyId || analysisCatalog.recipeExtras.has(line.code))
+        };
+      })
+    }));
+    const recipePayload = {};
+    for (const [code, lines] of recipes) {
+      recipePayload[String(code).toUpperCase()] = lines.map(line => {
+        const catalogItem = fullCatalog.get(line.ingredientId) || fullCatalog.get(String(line.ingredientId).toUpperCase());
+        const yieldFactor = line.yieldRate > 0 ? line.yieldRate / 100 : 1;
+        const cost = costResolver.resolve(line.ingredientId, line.unit, catalogItem);
+        return {
+          ingredientId: String(line.ingredientId).toUpperCase(),
+          ingredientName: catalogItem?.name || line.ingredientName || line.ingredientId,
+          quantity: line.quantity,
+          effectiveQuantity: line.quantity / yieldFactor,
+          unit: line.unit,
+          unitCost: cost.unitCost,
+          costSource: cost.source,
+          costSourceDate: cost.sourceDate
+        };
+      });
+    }
+    const usedHierarchyIds = new Set(orders.flatMap(order => order.lines.filter(line => !line.isExtra).flatMap(line => line.hierarchyIds || [])));
+    const hierarchies = [...hierarchy.hierarchyMap.values()].filter(node => usedHierarchyIds.has(node.id)).map(node => ({
+      id: node.id,
+      name: node.name,
+      path: hierarchy.pathFor(node.id),
+      pathLabel: hierarchy.pathFor(node.id).join(' › ') || node.name,
+      depth: hierarchyAncestors(node.id).length
+    })).sort((left, right) => left.pathLabel.localeCompare(right.pathLabel, 'es'));
+    return {
+      orders,
+      products,
+      recipes: recipePayload,
+      hierarchies,
+      coverage: source.coverage,
+      warnings: source.warnings,
+      sources: {
+        salesFiles: source.salesFilesRead,
+        paymentFiles: source.paymentFilesRead,
+        catalog: catalogMaster.originalName || catalogMaster.name,
+        recipes: recipesMaster.originalName || recipesMaster.name,
+        hierarchy: hierarchyMaster.originalName || hierarchyMaster.name
+      }
+    };
+  }
+
+  app.get('/api/products/analysis/options', (req, res) => {
+    try {
+      const requestedLocation = String(req.query.location || 'all');
+      const source = buildProductAnalyticsSource(requestedLocation);
+      const dates = source.orders.map(order => order.date).sort();
+      const reportDate = dates.at(-1) || projectionToday();
+      const snapshot = buildProductAnalyticsSnapshot(requestedLocation, reportDate);
+      return res.json({
+        locations: readLocations().locations.filter(location => location.status === 'active' && location.type === 'store').map(publicLocation),
+        hierarchies: snapshot.hierarchies,
+        availablePeriod: dates.length ? { from: dates[0], to: dates.at(-1) } : null,
+        coverage: snapshot.coverage
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las opciones del análisis de productos.' });
+    }
+  });
+
+  app.get('/api/products/analysis', (req, res) => {
+    try {
+      const requestedLocation = String(req.query.location || 'all');
+      const dateFrom = String(req.query.dateFrom || '');
+      const dateTo = String(req.query.dateTo || '');
+      if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo) {
+        return res.status(400).json({ error: 'Selecciona un período válido para el análisis de productos.' });
+      }
+      const stores = productAnalyticsLocations(requestedLocation);
+      const snapshot = buildProductAnalyticsSnapshot(requestedLocation, dateTo);
+      const report = buildProductAnalytics(snapshot, {
+        location: requestedLocation,
+        locationLabel: requestedLocation === 'all' ? 'Todas las cafeterías' : stores[0].name,
+        hierarchyId: String(req.query.hierarchyId || 'all'),
+        from: dateFrom,
+        to: dateTo
+      });
+      report.sources = snapshot.sources;
+      return res.json(report);
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis estadístico de productos.' });
+    }
+  });
 
   app.get('/api/products', (req, res) => {
     try {
