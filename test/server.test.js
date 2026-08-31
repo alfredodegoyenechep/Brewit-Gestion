@@ -1471,6 +1471,24 @@ test('selects the most recent inventory source files for an active location', as
   assert.deepEqual(wasteSummary.report.itemsWithoutCost, []);
   assert.equal(wasteSummary.report.additionDefinitions.length, 2);
 
+  const updatedWaste = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '', '', '2026-08-05', '', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'BUY - Compras', 'MOV-IN - Transferencias entre Bodegas Entrantes', 'IF - Inventario Final', 'II - Inventario Inicial', 'BUY - Compras', 'MOV-IN - Transferencias entre Bodegas Entrantes', 'IF - Inventario Final'],
+    ['P1', 'Producto con merma actualizado', 'UN', 0, 0, 20, 20, 20, 1, 30, 51],
+    ['P2', 'Producto sin merma', 'UN', 0, 0, 0, 0, 0, 0, 0, 0]
+  ].map(row => row.join('\t')).join('\n');
+  const updatedWasteInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'waste', contents: updatedWaste, filename: 'merma-actualizada.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, updatedWasteInspection, 'keep')).status, 200);
+  const updatedWasteSummary = await fetch(`${baseUrl}/api/inventory/waste-summary?location=store-1&dateFrom=2026-08-04&dateTo=2026-08-05`).then(response => response.json());
+  assert.equal(updatedWasteSummary.source.originalName, 'merma-actualizada.csv');
+  assert.equal(updatedWasteSummary.report.itemCount, 1);
+  assert.equal(updatedWasteSummary.report.items[0].name, 'Producto con merma actualizado');
+  assert.equal(updatedWasteSummary.report.items[0].additions['mov-in-transferencias-entre-bodegas-entrantes'], 50);
+  assert.equal(updatedWasteSummary.report.items[0].total, 51);
+  assert.equal(updatedWasteSummary.report.totalAdditions, 51);
+
   const warehouse = await fetch(`${baseUrl}/api/inventory/sources?location=main-warehouse`).then(response => response.json());
   assert.equal(warehouse.sources.find(source => source.field === 'waste').applicable, false);
   assert.equal(warehouse.sources.find(source => source.field === 'marketing').applicable, false);

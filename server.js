@@ -2634,7 +2634,7 @@ function createApp(options = {}) {
         const metrics = dateMetrics.get(group.date);
         group.metrics.forEach(metric => {
           const key = metric.normalized;
-          if (!metrics.has(key)) metrics.set(key, metric.label);
+          metrics.set(key, metric.label);
         });
         for (const product of parsed.products) {
           const productKey = product.code || normalizeHeader(product.name);
@@ -2642,9 +2642,12 @@ function createApp(options = {}) {
             productMap.set(productKey, { code: product.code, name: product.name, unit: product.unit, values: new Map() });
           }
           const target = productMap.get(productKey);
+          target.code = product.code || target.code;
+          target.name = product.name || target.name;
+          target.unit = product.unit || target.unit;
           for (const metric of group.metrics) {
             const valueKey = `${group.date}|${metric.normalized}`;
-            if (!target.values.has(valueKey)) target.values.set(valueKey, numericValue(product.row[metric.column]) || 0);
+            target.values.set(valueKey, numericValue(product.row[metric.column]) || 0);
           }
         }
       }
