@@ -2807,10 +2807,374 @@ body {
   text-align: left;
 }
 
+.product-analysis-table th.numeric-cell,
+.product-analysis-table td.numeric-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .product-analysis-table tbody tr:last-child td { border-bottom: 0; }
 .product-analysis-empty { color: var(--text-muted); text-align: left !important; }
 .product-analysis-family + .product-analysis-family { margin-top: 24px; padding-top: 5px; border-top: 1px solid var(--border-soft); }
 .product-analysis-methodology { margin: 16px 0 0; padding-left: 20px; line-height: 1.65; }
+
+.product-analysis-format-table {
+  table-layout: fixed;
+}
+
+.product-analysis-format-table th:nth-child(1),
+.product-analysis-format-table td:nth-child(1) { width: 7%; }
+.product-analysis-format-table th:nth-child(2),
+.product-analysis-format-table td:nth-child(2) { width: 10%; }
+.product-analysis-format-table th:nth-child(3),
+.product-analysis-format-table td:nth-child(3) { width: 25%; }
+.product-analysis-format-table th:nth-child(4),
+.product-analysis-format-table td:nth-child(4) { width: 11%; }
+.product-analysis-format-table th:nth-child(5),
+.product-analysis-format-table td:nth-child(5) { width: 11%; }
+.product-analysis-format-table th:nth-child(6),
+.product-analysis-format-table td:nth-child(6) { width: 11%; }
+.product-analysis-format-table th:nth-child(7),
+.product-analysis-format-table td:nth-child(7) { width: 15%; }
+.product-analysis-format-table th:nth-child(8),
+.product-analysis-format-table td:nth-child(8) { width: 10%; }
+
+.product-analysis-format-table th:nth-child(n+4),
+.product-analysis-format-table td:nth-child(n+4) {
+  text-align: right;
+}
+
+.product-analysis-format-table td {
+  vertical-align: middle;
+}
+
+.product-analysis-family-metric {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  width: 100%;
+  white-space: nowrap;
+}
+
+.product-analysis-family-value {
+  font-size: 11px;
+}
+
+.product-analysis-family-share {
+  color: #3a91cf;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.product-analysis-average-price-metric {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  width: 100%;
+  white-space: nowrap;
+}
+
+.product-analysis-average-price-value {
+  font-size: 11px;
+}
+
+.product-analysis-implicit-discount {
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.product-analysis-discount-button {
+  padding: 2px 3px;
+  border: 0;
+  border-bottom: 1px dashed currentColor;
+  background: transparent;
+  font-family: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.product-analysis-discount-button.discount-nonzero {
+  color: var(--red);
+}
+
+.product-analysis-discount-button:hover,
+.product-analysis-discount-button:focus-visible,
+.transaction-detail-open .product-analysis-discount-button {
+  color: #ff9a63;
+  background: rgba(196, 103, 55, 0.12);
+  border-radius: 4px;
+  outline: none;
+}
+
+.product-analysis-transaction-detail-row > td {
+  padding: 0 !important;
+  background: var(--panel);
+}
+
+.product-analysis-transaction-detail {
+  padding: 15px 18px 18px;
+  border-top: 2px solid rgba(196, 103, 55, 0.55);
+  border-bottom: 2px solid rgba(196, 103, 55, 0.28);
+}
+
+.product-analysis-transaction-detail > h5 {
+  margin: 0 0 5px;
+}
+
+.product-analysis-transaction-detail .product-analysis-table-wrap {
+  max-height: 380px;
+  margin-top: 10px;
+}
+
+.product-analysis-transactions-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.product-analysis-transactions-table th:nth-child(n+6),
+.product-analysis-transactions-table td:nth-child(n+6) {
+  text-align: right;
+}
+
+.product-analysis-order-button {
+  max-width: 100%;
+  padding: 2px 3px;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px dashed currentColor;
+  color: #3a91cf;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.product-analysis-order-button:hover,
+.product-analysis-order-button:focus-visible,
+.order-detail-open .product-analysis-order-button {
+  color: #80c7f8;
+  background: rgba(58, 145, 207, 0.12);
+  border-radius: 4px;
+  outline: none;
+}
+
+.product-analysis-order-detail-row > td {
+  padding: 0 !important;
+  background: var(--panel);
+}
+
+.product-analysis-order-detail {
+  padding: 14px 16px 17px;
+  border-top: 2px solid rgba(58, 145, 207, 0.5);
+  border-bottom: 2px solid rgba(58, 145, 207, 0.25);
+}
+
+.product-analysis-order-detail > h6 {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.product-analysis-order-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+}
+
+.product-analysis-order-facts dt,
+.product-analysis-order-facts dd {
+  margin: 0;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.product-analysis-order-facts dt {
+  color: var(--text-soft);
+  background: var(--coffee-soft);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.product-analysis-order-facts dd {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.product-analysis-order-lines-title {
+  margin-top: 14px !important;
+}
+
+.product-analysis-order-lines-table {
+  min-width: 1050px;
+  table-layout: fixed;
+}
+
+.product-analysis-order-lines-table th:nth-child(5),
+.product-analysis-order-lines-table td:nth-child(5),
+.product-analysis-order-lines-table th:nth-child(6),
+.product-analysis-order-lines-table td:nth-child(6),
+.product-analysis-order-lines-table th:nth-child(n+8),
+.product-analysis-order-lines-table td:nth-child(n+8) {
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .product-analysis-order-facts { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+}
+
+.product-analysis-ingredients-table th:nth-child(n+3),
+.product-analysis-ingredients-table td:nth-child(n+3),
+.product-analysis-ingredient-products-table th:nth-child(n+3),
+.product-analysis-ingredient-products-table td:nth-child(n+3) {
+  text-align: right;
+}
+
+.product-analysis-associated-button {
+  min-width: 46px;
+  padding: 5px 9px;
+  border: 1px solid rgba(58, 145, 207, 0.55);
+  border-radius: 8px;
+  color: #3a91cf;
+  background: transparent;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.product-analysis-associated-button:hover,
+.product-analysis-associated-button:focus-visible,
+.ingredient-detail-open .product-analysis-associated-button,
+.observation-detail-open .product-analysis-associated-button {
+  color: var(--panel);
+  background: #3a91cf;
+}
+
+.product-analysis-ingredient-detail-row > td {
+  padding: 0 !important;
+  background: var(--panel);
+}
+
+.product-analysis-observation-detail-row > td {
+  padding: 0 !important;
+  background: var(--panel);
+}
+
+.product-analysis-observation-detail {
+  padding: 15px 18px 18px;
+  border-top: 2px solid rgba(58, 145, 207, 0.5);
+  border-bottom: 2px solid rgba(58, 145, 207, 0.28);
+}
+
+.product-analysis-observation-detail > h5 {
+  margin: 0 0 5px;
+}
+
+.product-analysis-observation-detail .product-analysis-table-wrap {
+  max-height: 360px;
+  margin-top: 10px;
+}
+
+.product-analysis-price-sensitivity-table th:nth-child(n+3):nth-child(-n+7),
+.product-analysis-price-sensitivity-table td:nth-child(n+3):nth-child(-n+7),
+.product-analysis-price-observations-table th:nth-child(n+2),
+.product-analysis-price-observations-table td:nth-child(n+2) {
+  text-align: right;
+}
+
+.product-analysis-price-observations-table {
+  min-width: 820px;
+  table-layout: fixed;
+}
+
+.product-analysis-daily-discount-button {
+  min-width: 54px;
+  padding: 3px 5px;
+  border: 0;
+  border-bottom: 1px dashed currentColor;
+  color: var(--text);
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 800;
+  text-align: right;
+  cursor: pointer;
+}
+
+.product-analysis-daily-discount-button.discount-nonzero {
+  color: var(--red);
+}
+
+.product-analysis-daily-discount-button:hover,
+.product-analysis-daily-discount-button:focus-visible,
+.daily-transactions-open .product-analysis-daily-discount-button {
+  color: #ff9a63;
+  background: rgba(196, 103, 55, 0.12);
+  border-radius: 4px;
+  outline: none;
+}
+
+.product-analysis-daily-transactions-row > td {
+  padding: 0 !important;
+  background: var(--panel);
+}
+
+.product-analysis-daily-transactions-detail {
+  padding: 14px 16px 17px;
+  border-top: 2px solid rgba(196, 103, 55, 0.48);
+  border-bottom: 2px solid rgba(196, 103, 55, 0.24);
+}
+
+.product-analysis-daily-transactions-detail > h6 {
+  margin: 0 0 5px;
+  font-size: 12px;
+}
+
+.product-analysis-ingredient-detail {
+  padding: 15px 18px 18px;
+  border-top: 2px solid rgba(58, 145, 207, 0.5);
+  border-bottom: 2px solid rgba(58, 145, 207, 0.28);
+}
+
+.product-analysis-ingredient-detail > h5 {
+  margin: 0 0 5px;
+}
+
+.product-analysis-ingredient-detail .product-analysis-table-wrap {
+  max-height: 360px;
+  margin-top: 10px;
+}
+
+.product-analysis-ingredient-products-table {
+  min-width: 880px;
+  table-layout: fixed;
+}
+
+.product-analysis-ingredient-products-table th:nth-child(1),
+.product-analysis-ingredient-products-table td:nth-child(1) { width: 9%; }
+.product-analysis-ingredient-products-table th:nth-child(2),
+.product-analysis-ingredient-products-table td:nth-child(2) { width: 29%; }
+.product-analysis-ingredient-products-table th:nth-child(3),
+.product-analysis-ingredient-products-table td:nth-child(3) { width: 10%; }
+.product-analysis-ingredient-products-table th:nth-child(4),
+.product-analysis-ingredient-products-table td:nth-child(4) { width: 9%; }
+.product-analysis-ingredient-products-table th:nth-child(5),
+.product-analysis-ingredient-products-table td:nth-child(5) { width: 12%; }
+.product-analysis-ingredient-products-table th:nth-child(6),
+.product-analysis-ingredient-products-table td:nth-child(6) { width: 13%; }
+.product-analysis-ingredient-products-table th:nth-child(7),
+.product-analysis-ingredient-products-table td:nth-child(7),
+.product-analysis-ingredient-products-table th:nth-child(8),
+.product-analysis-ingredient-products-table td:nth-child(8) { width: 9%; }
 
 .product-analysis-price-reading {
   margin-top: 20px;
@@ -2869,6 +3233,10 @@ body {
 .product-analysis-interpretation.interpretation-atención,
 .product-analysis-interpretation.interpretation-revisión {
   border-left-color: var(--orange);
+}
+
+.product-analysis-interpretation.interpretation-acción {
+  border-left-color: var(--green);
 }
 
 .product-analysis-interpretation strong {

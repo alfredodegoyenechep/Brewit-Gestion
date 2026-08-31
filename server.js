@@ -4406,7 +4406,8 @@ function createApp(options = {}) {
             const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
             const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code;
             if (!code && !name) continue;
-            const orderKey = `${location.id}:${salesTransactionKey(row)}`;
+            const transactionKey = salesTransactionKey(row);
+            const orderKey = `${location.id}:${transactionKey}`;
             const paid = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
             const list = numericValue(rowValue(row, ['Precio Lista', 'Precio de lista'])) || 0;
             const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
@@ -4415,6 +4416,7 @@ function createApp(options = {}) {
             const orderDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento total'])) || 0;
             const existing = orders.get(orderKey) || {
               orderKey,
+              orderReference: transactionKey.startsWith('order:') ? transactionKey.slice('order:'.length) : null,
               locationId: location.id,
               locationName: location.name,
               date,
@@ -4508,6 +4510,7 @@ function createApp(options = {}) {
         name: product.name,
         hierarchyIds,
         hierarchyPath: product.hierarchyId ? hierarchy.pathFor(product.hierarchyId) : [],
+        listPrice: product.price,
         unitCost: cost.unitCost,
         costSource: cost.source,
         costSourceDate: cost.sourceDate

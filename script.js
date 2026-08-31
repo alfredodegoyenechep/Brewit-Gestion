@@ -3052,18 +3052,243 @@ function productAnalysisElement(tag, className, text) {
   return element;
 }
 
+function productAnalysisFamilyMetric(value, sharePercent, formatter) {
+  const metric = productAnalysisElement('span', 'product-analysis-family-metric');
+  metric.append(
+    productAnalysisElement('span', 'product-analysis-family-value', formatter(value)),
+    productAnalysisElement('span', 'product-analysis-family-share', `${Number(sharePercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`)
+  );
+  return metric;
+}
+
+function productAnalysisAveragePriceMetric(value, discountPercent, options = {}) {
+  const metric = productAnalysisElement('span', 'product-analysis-average-price-metric');
+  if (discountPercent !== null && Number.isFinite(Number(discountPercent))) {
+    const nonzeroClass = Math.abs(Number(discountPercent)) >= 0.05 ? ' discount-nonzero' : '';
+    const discount = productAnalysisElement(options.onClick ? 'button' : 'span', `product-analysis-implicit-discount${options.onClick ? ' product-analysis-discount-button' : ''}${nonzeroClass}`, `(${formatProductAnalysisPercent(discountPercent)})`);
+    if (options.onClick) {
+      discount.type = 'button';
+      discount.title = options.title || 'Ver las transacciones que componen este descuento';
+      discount.setAttribute('aria-expanded', 'false');
+      if (options.controls) discount.setAttribute('aria-controls', options.controls);
+      discount.addEventListener('click', options.onClick);
+    }
+    metric.appendChild(discount);
+  }
+  metric.appendChild(productAnalysisElement('span', 'product-analysis-average-price-value', formatClp(value)));
+  return metric;
+}
+
+function productAnalysisModeLabel(mode) {
+  if (mode === 'takeaway') return 'Para llevar';
+  if (mode === 'dineIn') return 'Servir en el local';
+  return 'Sin información';
+}
+
+function productAnalysisSalesAllocationLabel(value) {
+  if (value === 'catalog_share') return 'Distribuido por precio de lista';
+  if (value === 'scaled_to_order') return 'Ajustado al total del pedido';
+  return 'Informado por Toteat';
+}
+
+function productAnalysisTimeLabel(hour) {
+  const value = Number(hour);
+  if (!Number.isFinite(value)) return '—';
+  const hours = Math.max(0, Math.min(23, Math.trunc(value)));
+  const minutes = Math.max(0, Math.min(59, Math.round((value - hours) * 60)));
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function productAnalysisOrderFacts(transaction) {
+  const facts = productAnalysisElement('dl', 'product-analysis-order-facts');
+  const append = (term, value) => facts.append(productAnalysisElement('dt', '', term), productAnalysisElement('dd', '', value));
+  append('Pedido', transaction.orderReference || transaction.orderKey);
+  append('Fecha y hora', `${formatReportDate(transaction.date)} · ${productAnalysisTimeLabel(transaction.hour)}`);
+  append('Ubicación', transaction.locationName || '—');
+  append('Modalidad', productAnalysisModeLabel(transaction.mode));
+  append('Clientes informados', Number(transaction.clients || 0).toLocaleString('es-CL'));
+  append('Venta neta del pedido', formatClp(transaction.orderNetSales));
+  append('Total Detalle Pagos', transaction.paymentDue === null ? 'Sin información' : formatClp(transaction.paymentDue));
+  append('Comentario general', transaction.paymentComment || 'Sin comentario');
+  return facts;
+}
+
+function productAnalysisTransactionsTable(item, familyIndex, itemIndex) {
+  const headers = ['Fecha', 'Hora', 'Pedido', 'Ubicación', 'Modalidad', 'Unidades', 'Venta neta producto', 'Precio neto unitario', 'Precio con IVA', 'Descuento'];
+  const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap');
+  const table = productAnalysisElement('table', 'product-analysis-table product-analysis-transactions-table');
+  const thead = document.createElement('thead');
+  const head = document.createElement('tr');
+  headers.forEach((header, index) => head.appendChild(productAnalysisElement('th', index >= 5 ? 'numeric-cell' : '', header)));
+  thead.appendChild(head);
+  const tbody = document.createElement('tbody');
+  item.transactions.forEach((transaction, transactionIndex) => {
+    const detailId = `order-detail-${familyIndex}-${itemIndex}-${transactionIndex}`;
+    const row = document.createElement('tr');
+    row.append(
+      productAnalysisElement('td', '', formatReportDate(transaction.date)),
+      productAnalysisElement('td', '', productAnalysisTimeLabel(transaction.hour))
+    );
+    const orderCell = document.createElement('td');
+    const orderButton = productAnalysisElement('button', 'product-analysis-order-button', transaction.orderReference || transaction.orderKey);
+    orderButton.type = 'button';
+    orderButton.title = `Ver el detalle completo del pedido ${transaction.orderReference || transaction.orderKey}`;
+    orderButton.setAttribute('aria-expanded', 'false');
+    orderButton.setAttribute('aria-controls', detailId);
+    orderCell.appendChild(orderButton);
+    row.append(
+      orderCell,
+      productAnalysisElement('td', '', transaction.locationName || '—'),
+      productAnalysisElement('td', '', productAnalysisModeLabel(transaction.mode)),
+      productAnalysisElement('td', 'numeric-cell', formatProductAnalysisUnits(transaction.quantity)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(transaction.netSales)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(transaction.averageNetPrice)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(transaction.averageGrossPrice)),
+      productAnalysisElement('td', 'numeric-cell', transaction.implicitDiscountPercent === null ? '—' : formatProductAnalysisPercent(transaction.implicitDiscountPercent))
+    );
+
+    const detailRow = document.createElement('tr');
+    detailRow.id = detailId;
+    detailRow.className = 'product-analysis-order-detail-row';
+    detailRow.hidden = true;
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = headers.length;
+    const detail = productAnalysisElement('div', 'product-analysis-order-detail');
+    detail.append(
+      productAnalysisElement('h6', '', `Detalle completo del pedido ${transaction.orderReference || transaction.orderKey}`),
+      productAnalysisOrderFacts(transaction),
+      productAnalysisElement('h6', 'product-analysis-order-lines-title', 'Productos y extras del pedido'),
+      productAnalysisTable(
+        ['Código', 'Producto / extra', 'Tipo', 'Jerarquía', 'Cantidad', 'Venta neta', 'Origen valor', 'Precio neto unitario', 'Precio con IVA', 'Descuento'],
+        (transaction.orderLines || []).map(line => [
+          line.code,
+          line.name,
+          line.type,
+          line.hierarchy || '—',
+          formatProductAnalysisUnits(line.quantity),
+          formatClp(line.netSales),
+          productAnalysisSalesAllocationLabel(line.salesAllocation),
+          formatClp(line.averageNetPrice),
+          formatClp(line.averageGrossPrice),
+          line.implicitDiscountPercent === null ? '—' : formatProductAnalysisPercent(line.implicitDiscountPercent)
+        ]),
+        { className: 'product-analysis-order-lines-table', empty: 'No hay líneas disponibles para este pedido.' }
+      )
+    );
+    detailCell.appendChild(detail);
+    detailRow.appendChild(detailCell);
+    orderButton.addEventListener('click', () => {
+      const opening = detailRow.hidden;
+      detailRow.hidden = !opening;
+      orderButton.setAttribute('aria-expanded', String(opening));
+      row.classList.toggle('order-detail-open', opening);
+    });
+    tbody.append(row, detailRow);
+  });
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function productAnalysisFormatsTable(family, familyIndex) {
+  const headers = ['Código', 'Formato detectado', 'Producto', 'Precio lista', 'Precio neto', 'Unidades', 'Venta neta', 'Precio promedio'];
+  const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap');
+  const table = productAnalysisElement('table', 'product-analysis-table product-analysis-format-table');
+  const thead = document.createElement('thead');
+  const head = document.createElement('tr');
+  headers.forEach((header, index) => head.appendChild(productAnalysisElement('th', index >= 3 ? 'numeric-cell' : '', header)));
+  thead.appendChild(head);
+  const tbody = document.createElement('tbody');
+
+  family.formats.forEach((item, itemIndex) => {
+    const detailId = `format-transactions-${familyIndex}-${itemIndex}`;
+    const row = document.createElement('tr');
+    const detailRow = document.createElement('tr');
+    detailRow.id = detailId;
+    detailRow.className = 'product-analysis-transaction-detail-row';
+    detailRow.hidden = true;
+    const discountMetric = productAnalysisAveragePriceMetric(item.averagePrice, item.implicitDiscountPercent, {
+      controls: detailId,
+      title: `Ver ${item.transactions.length} transacción(es) de ${item.name}`,
+      onClick: event => {
+        const opening = detailRow.hidden;
+        detailRow.hidden = !opening;
+        event.currentTarget.setAttribute('aria-expanded', String(opening));
+        row.classList.toggle('transaction-detail-open', opening);
+      }
+    });
+    const unitsCell = productAnalysisElement('td', 'numeric-cell');
+    unitsCell.appendChild(productAnalysisFamilyMetric(item.units, item.familyUnitSharePercent, formatProductAnalysisUnits));
+    const salesCell = productAnalysisElement('td', 'numeric-cell');
+    salesCell.appendChild(productAnalysisFamilyMetric(item.netSales, item.familySalesSharePercent, formatClp));
+    const averagePriceCell = productAnalysisElement('td', 'numeric-cell');
+    averagePriceCell.appendChild(discountMetric);
+    row.append(
+      productAnalysisElement('td', 'product-analysis-row-label', item.code),
+      productAnalysisElement('td', '', item.format),
+      productAnalysisElement('td', '', item.name),
+      productAnalysisElement('td', 'numeric-cell', formatClp(item.listPrice)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(item.netListPrice)),
+      unitsCell,
+      salesCell,
+      averagePriceCell
+    );
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = headers.length;
+    const detail = productAnalysisElement('div', 'product-analysis-transaction-detail');
+    detail.append(
+      productAnalysisElement('h5', '', `Transacciones de ${item.name}`),
+      productAnalysisElement('p', 'panel-description', `${item.transactions.length} transacción(es). El descuento se compara con el precio neto de lista y se calcula para cada venta.`),
+      productAnalysisTransactionsTable(item, familyIndex, itemIndex)
+    );
+    detailCell.appendChild(detail);
+    detailRow.appendChild(detailCell);
+    tbody.append(row, detailRow);
+  });
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function formatProductAnalysisUnits(value) {
+  return Number(value || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function formatProductAnalysisPercent(value) {
+  return `${Number(value || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
+function productAnalysisValueIsNumeric(value) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (value && typeof value === 'object' && value.nodeType) {
+    if (value.classList?.contains('product-analysis-family-metric')
+      || value.classList?.contains('product-analysis-average-price-metric')) return true;
+    return productAnalysisValueIsNumeric(value.textContent);
+  }
+  const text = String(value ?? '').trim();
+  if (!text || text === '—') return false;
+  return /^-?\$?\s*\d[\d.]*?(?:,\d+)?%?$/.test(text);
+}
+
 function productAnalysisTable(headers, rows, options = {}) {
   const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap');
   const table = productAnalysisElement('table', `product-analysis-table ${options.className || ''}`);
   const thead = document.createElement('thead');
   const head = document.createElement('tr');
-  headers.forEach(header => head.appendChild(productAnalysisElement('th', '', header)));
+  const numericColumns = headers.map((header, index) => {
+    const values = rows.map(row => row[index]).filter(value => value !== null && value !== undefined && value !== '—');
+    return values.length > 0 && values.filter(productAnalysisValueIsNumeric).length / values.length >= 0.5;
+  });
+  headers.forEach((header, index) => head.appendChild(productAnalysisElement('th', numericColumns[index] ? 'numeric-cell' : '', header)));
   thead.appendChild(head);
   const tbody = document.createElement('tbody');
   rows.forEach(values => {
     const row = document.createElement('tr');
     values.forEach((value, index) => {
-      const cell = productAnalysisElement('td', index === 0 ? 'product-analysis-row-label' : '', value ?? '—');
+      const classes = [index === 0 ? 'product-analysis-row-label' : '', numericColumns[index] ? 'numeric-cell' : ''].filter(Boolean).join(' ');
+      const cell = productAnalysisElement('td', classes);
+      if (value && typeof value === 'object' && value.nodeType) cell.appendChild(value);
+      else cell.textContent = value ?? '—';
       row.appendChild(cell);
     });
     tbody.appendChild(row);
@@ -3071,6 +3296,215 @@ function productAnalysisTable(headers, rows, options = {}) {
   if (!rows.length) {
     const row = document.createElement('tr');
     const cell = productAnalysisElement('td', 'product-analysis-empty', options.empty || 'No hay datos suficientes para esta sección.');
+    cell.colSpan = headers.length;
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  }
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function productAnalysisIngredientsTable(items) {
+  const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap product-analysis-ingredients-wrap');
+  const table = productAnalysisElement('table', 'product-analysis-table product-analysis-ingredients-table');
+  const thead = document.createElement('thead');
+  const head = document.createElement('tr');
+  ['Código', 'Ingrediente principal', 'Productos asociados', 'Unidades producto', 'Venta neta asociada', 'Part. venta']
+    .forEach((header, index) => head.appendChild(productAnalysisElement('th', index >= 2 ? 'numeric-cell' : '', header)));
+  thead.appendChild(head);
+  const tbody = document.createElement('tbody');
+  items.forEach((item, index) => {
+    const row = document.createElement('tr');
+    row.append(
+      productAnalysisElement('td', 'product-analysis-row-label', item.code),
+      productAnalysisElement('td', '', item.name)
+    );
+    const countCell = productAnalysisElement('td', 'numeric-cell');
+    const button = productAnalysisElement('button', 'product-analysis-associated-button', `${item.productCount} ▾`);
+    button.type = 'button';
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', `ingredient-products-${index}`);
+    button.title = `Ver los ${item.productCount} producto(s) asociados a ${item.name}`;
+    countCell.appendChild(button);
+    row.append(
+      countCell,
+      productAnalysisElement('td', 'numeric-cell', formatProductAnalysisUnits(item.units)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(item.netSales)),
+      productAnalysisElement('td', 'numeric-cell', formatProductAnalysisPercent(item.salesShare))
+    );
+    const detailRow = document.createElement('tr');
+    detailRow.id = `ingredient-products-${index}`;
+    detailRow.className = 'product-analysis-ingredient-detail-row';
+    detailRow.hidden = true;
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = 6;
+    const detail = productAnalysisElement('div', 'product-analysis-ingredient-detail');
+    detail.append(
+      productAnalysisElement('h5', '', `Productos asociados a ${item.name}`),
+      productAnalysisElement('p', 'panel-description', `${item.productCount} producto(s), ordenados por venta neta asociada.`),
+      productAnalysisTable(
+        ['Código', 'Producto', 'Unidades', 'Pedidos', 'Precio promedio', 'Venta neta', '% unidades', '% venta'],
+        item.products.map(product => [
+          product.code,
+          product.name,
+          formatProductAnalysisUnits(product.units),
+          product.orderCount.toLocaleString('es-CL'),
+          formatClp(product.averagePrice),
+          formatClp(product.netSales),
+          formatProductAnalysisPercent(product.ingredientUnitSharePercent),
+          formatProductAnalysisPercent(product.ingredientSalesSharePercent)
+        ]),
+        { className: 'product-analysis-ingredient-products-table' }
+      )
+    );
+    detailCell.appendChild(detail);
+    detailRow.appendChild(detailCell);
+    button.addEventListener('click', () => {
+      const opening = detailRow.hidden;
+      detailRow.hidden = !opening;
+      button.setAttribute('aria-expanded', String(opening));
+      button.textContent = `${item.productCount} ${opening ? '▴' : '▾'}`;
+      row.classList.toggle('ingredient-detail-open', opening);
+    });
+    tbody.append(row, detailRow);
+  });
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function productAnalysisPriceObservationsTable(item, itemIndex) {
+  const headers = ['Fecha', 'Unidades', 'Venta neta', 'Precio neto promedio', 'Precio con IVA', 'Descuento vs. lista neta'];
+  const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap');
+  const table = productAnalysisElement('table', 'product-analysis-table product-analysis-price-observations-table');
+  const thead = document.createElement('thead');
+  const head = document.createElement('tr');
+  headers.forEach((header, index) => head.appendChild(productAnalysisElement('th', index >= 1 ? 'numeric-cell' : '', header)));
+  thead.appendChild(head);
+  const tbody = document.createElement('tbody');
+
+  (item.observationDetails || []).forEach((observation, observationIndex) => {
+    const detailId = `price-day-transactions-${itemIndex}-${observationIndex}`;
+    const row = document.createElement('tr');
+    row.append(
+      productAnalysisElement('td', 'product-analysis-row-label', formatReportDate(observation.date)),
+      productAnalysisElement('td', 'numeric-cell', formatProductAnalysisUnits(observation.units)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(observation.netSales)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(observation.averageNetPrice)),
+      productAnalysisElement('td', 'numeric-cell', formatClp(observation.averageGrossPrice))
+    );
+    const discountCell = productAnalysisElement('td', 'numeric-cell');
+    if (observation.implicitDiscountPercent === null) {
+      discountCell.textContent = '—';
+      row.appendChild(discountCell);
+      tbody.appendChild(row);
+      return;
+    }
+
+    const nonzeroClass = Math.abs(Number(observation.implicitDiscountPercent)) >= 0.05 ? ' discount-nonzero' : '';
+    const discountButton = productAnalysisElement('button', `product-analysis-daily-discount-button${nonzeroClass}`, formatProductAnalysisPercent(observation.implicitDiscountPercent));
+    discountButton.type = 'button';
+    discountButton.title = `Ver ${observation.transactions?.length || 0} transacción(es) de ${formatReportDate(observation.date)}`;
+    discountButton.setAttribute('aria-expanded', 'false');
+    discountButton.setAttribute('aria-controls', detailId);
+    discountCell.appendChild(discountButton);
+    row.appendChild(discountCell);
+
+    const detailRow = document.createElement('tr');
+    detailRow.id = detailId;
+    detailRow.className = 'product-analysis-daily-transactions-row';
+    detailRow.hidden = true;
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = headers.length;
+    const detail = productAnalysisElement('div', 'product-analysis-daily-transactions-detail');
+    detail.append(
+      productAnalysisElement('h6', '', `Transacciones de ${item.name} · ${formatReportDate(observation.date)}`),
+      productAnalysisElement('p', 'panel-description', `${observation.transactions?.length || 0} pedido(s) forman el precio neto promedio y el descuento de este día.`),
+      productAnalysisTransactionsTable({ name: item.name, transactions: observation.transactions || [] }, `price-${itemIndex}`, observationIndex)
+    );
+    detailCell.appendChild(detail);
+    detailRow.appendChild(detailCell);
+    discountButton.addEventListener('click', () => {
+      const opening = detailRow.hidden;
+      detailRow.hidden = !opening;
+      discountButton.setAttribute('aria-expanded', String(opening));
+      row.classList.toggle('daily-transactions-open', opening);
+    });
+    tbody.append(row, detailRow);
+  });
+
+  if (!(item.observationDetails || []).length) {
+    const row = document.createElement('tr');
+    const cell = productAnalysisElement('td', 'product-analysis-empty', 'No hay detalle disponible para estas observaciones.');
+    cell.colSpan = headers.length;
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  }
+  table.append(thead, tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function productAnalysisPriceSensitivityTable(items) {
+  const headers = ['Código', 'Producto', 'Observaciones', 'Niveles de precio', 'Rango', 'Coef. observado', 'R²', 'Confianza'];
+  const wrapper = productAnalysisElement('div', 'product-analysis-table-wrap product-analysis-price-sensitivity-wrap');
+  const table = productAnalysisElement('table', 'product-analysis-table product-analysis-price-sensitivity-table');
+  const thead = document.createElement('thead');
+  const head = document.createElement('tr');
+  headers.forEach((header, index) => head.appendChild(productAnalysisElement('th', index >= 2 && index <= 6 ? 'numeric-cell' : '', header)));
+  thead.appendChild(head);
+  const tbody = document.createElement('tbody');
+
+  items.forEach((item, index) => {
+    const row = document.createElement('tr');
+    row.append(
+      productAnalysisElement('td', 'product-analysis-row-label', item.code),
+      productAnalysisElement('td', '', item.name)
+    );
+    const observationsCell = productAnalysisElement('td', 'numeric-cell');
+    const button = productAnalysisElement('button', 'product-analysis-associated-button product-analysis-observation-button', `${item.observations} ▾`);
+    button.type = 'button';
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', `price-observations-${index}`);
+    button.title = `Ver las ${item.observations} observaciones utilizadas para ${item.name}`;
+    observationsCell.appendChild(button);
+    row.append(
+      observationsCell,
+      productAnalysisElement('td', 'numeric-cell', item.pricePoints.toLocaleString('es-CL')),
+      productAnalysisElement('td', 'numeric-cell', formatProductAnalysisPercent(item.priceRangePercent)),
+      productAnalysisElement('td', 'numeric-cell', item.observedElasticity.toLocaleString('es-CL')),
+      productAnalysisElement('td', 'numeric-cell', item.rSquared.toLocaleString('es-CL')),
+      productAnalysisElement('td', '', item.confidence)
+    );
+
+    const detailRow = document.createElement('tr');
+    detailRow.id = `price-observations-${index}`;
+    detailRow.className = 'product-analysis-observation-detail-row';
+    detailRow.hidden = true;
+    const detailCell = document.createElement('td');
+    detailCell.colSpan = headers.length;
+    const detail = productAnalysisElement('div', 'product-analysis-observation-detail');
+    detail.append(
+      productAnalysisElement('h5', '', `Observaciones de ${item.name}`),
+      productAnalysisElement('p', 'panel-description', 'Cada fila es un día incluido en la regresión. Los precios son promedios ponderados por las unidades vendidas.'),
+      productAnalysisPriceObservationsTable(item, index)
+    );
+    detailCell.appendChild(detail);
+    detailRow.appendChild(detailCell);
+    button.addEventListener('click', () => {
+      const opening = detailRow.hidden;
+      detailRow.hidden = !opening;
+      button.setAttribute('aria-expanded', String(opening));
+      button.textContent = `${item.observations} ${opening ? '▴' : '▾'}`;
+      row.classList.toggle('observation-detail-open', opening);
+    });
+    tbody.append(row, detailRow);
+  });
+
+  if (!items.length) {
+    const row = document.createElement('tr');
+    const cell = productAnalysisElement('td', 'product-analysis-empty', 'Ningún producto cumple simultáneamente los mínimos de muestra y variación de precio.');
     cell.colSpan = headers.length;
     row.appendChild(cell);
     tbody.appendChild(row);
@@ -3106,10 +3540,10 @@ function renderProductAnalysis() {
   const metrics = productAnalysisElement('div', 'product-analysis-metrics');
   [
     ['Venta neta', formatClp(report.summary.netSales)],
-    ['Unidades', Number(report.summary.units).toLocaleString('es-CL', { maximumFractionDigits: 1 })],
+    ['Unidades', formatProductAnalysisUnits(report.summary.units)],
     ['Pedidos', Number(report.summary.orders).toLocaleString('es-CL')],
     ['Ticket promedio', formatClp(report.summary.averageTicket)],
-    ['Margen estimado', report.summary.grossMarginPercent === null ? 'Sin costo suficiente' : `${report.summary.grossMarginPercent.toLocaleString('es-CL')}%`],
+    ['Margen estimado', report.summary.grossMarginPercent === null ? 'Sin costo suficiente' : formatProductAnalysisPercent(report.summary.grossMarginPercent)],
     ['Hallazgos de alto impacto', String(report.summary.highImpactCount)]
   ].forEach(([label, value]) => {
     const card = productAnalysisElement('div', 'product-analysis-metric');
@@ -3134,42 +3568,58 @@ function renderProductAnalysis() {
   coverage.appendChild(productAnalysisTable(['Indicador', 'Valor', 'Lectura'], [
     ['Pedidos analizados', report.coverage.orders.toLocaleString('es-CL'), 'Pedidos con al menos un producto dentro del alcance'],
     ['Días con ventas', report.coverage.openDays.toLocaleString('es-CL'), `${report.period.days} días calendario en el período`],
-    ['Detalle Pagos vinculado', `${report.coverage.paymentMatchPercent.toLocaleString('es-CL')}%`, 'Cobertura para modalidad de consumo'],
-    ['Modalidad sin información', `${report.coverage.unknownModePercent.toLocaleString('es-CL')}%`, 'No se imputa una modalidad cuando el comentario no es concluyente'],
-    ['Productos con receta', `${report.coverage.recipeCoveragePercent.toLocaleString('es-CL')}%`, 'Necesario para análisis de ingredientes'],
-    ['Costo desde compra vigente', `${report.coverage.purchaseCostCoveragePercent.toLocaleString('es-CL')}%`, 'El resto usa maestro o queda sin costo'],
+    ['Detalle Pagos vinculado', formatProductAnalysisPercent(report.coverage.paymentMatchPercent), 'Cobertura para modalidad de consumo'],
+    ['Modalidad sin información', formatProductAnalysisPercent(report.coverage.unknownModePercent), 'No se imputa una modalidad cuando el comentario no es concluyente'],
+    ['Productos con receta', formatProductAnalysisPercent(report.coverage.recipeCoveragePercent), 'Necesario para análisis de ingredientes'],
+    ['Costo desde compra vigente', formatProductAnalysisPercent(report.coverage.purchaseCostCoveragePercent), 'El resto usa maestro o queda sin costo'],
     ['Productos aptos para sensibilidad de precio', report.coverage.priceAnalysisEligibleProducts.toLocaleString('es-CL'), 'Exige muestra y variación mínima de precio']
   ]));
 
   const portfolio = register('portfolio', 'Portafolio', productAnalysisSection('portfolio', 'Portafolio y Pareto', 'Qué productos explican la venta', 'Clasificación ABC por participación acumulada de venta neta.'));
   portfolio.appendChild(productAnalysisTable(['Código', 'Producto', 'Jerarquía', 'ABC', 'Unidades', 'Venta neta', 'Part.', 'Crec. vs. anterior', 'Margen'], report.portfolio.products.slice(0, 80).map(item => [
     item.code, item.name, item.hierarchy, item.abc,
-    item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), `${item.salesShare.toLocaleString('es-CL')}%`,
-    item.salesGrowthPercent === null ? 'Sin base comparable' : `${item.salesGrowthPercent.toLocaleString('es-CL')}%`,
-    item.marginPercent === null ? 'Sin costo' : `${item.marginPercent.toLocaleString('es-CL')}%`
+    formatProductAnalysisUnits(item.units), formatClp(item.netSales), formatProductAnalysisPercent(item.salesShare),
+    item.salesGrowthPercent === null ? 'Sin base comparable' : formatProductAnalysisPercent(item.salesGrowthPercent),
+    item.marginPercent === null ? 'Sin costo' : formatProductAnalysisPercent(item.marginPercent)
   ])));
 
   const trends = register('trends', 'Tendencias', productAnalysisSection('trends', 'Tendencias y anomalías', 'Comportamiento a través del período', 'Las anomalías son señales para investigar; no implican por sí mismas un error.'));
   trends.appendChild(productAnalysisTable(['Fecha', 'Unidades', 'Venta neta', 'Señal'], report.trends.daily.map(item => {
     const anomaly = report.trends.anomalies.find(value => value.date === item.date);
-    return [formatReportDate(item.date), item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), anomaly ? `${anomaly.direction} (${anomaly.deviationPercent}%)` : 'Dentro de rango'];
+    return [formatReportDate(item.date), formatProductAnalysisUnits(item.units), formatClp(item.netSales), anomaly ? `${anomaly.direction} (${anomaly.deviationPercent}%)` : 'Dentro de rango'];
   })));
 
   const temporal = register('temporal', 'Día y hora', productAnalysisSection('temporal', 'Preferencias por día y horario', 'Cuándo se concentra la demanda', 'Los promedios diarios consideran solo días con ventas de cada día de semana.'));
-  temporal.append(productAnalysisTable(['Día', 'Días observados', 'Unidades promedio', 'Venta neta promedio'], report.temporal.weekdays.map(item => [item.label, item.days, item.averageUnits.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.averageNetSales)])), productAnalysisTable(['Hora', 'Unidades', 'Venta neta'], report.temporal.hours.map(item => [item.label, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales)])));
+  temporal.append(productAnalysisTable(['Día', 'Días observados', 'Unidades promedio', 'Venta neta promedio'], report.temporal.weekdays.map(item => [item.label, item.days, formatProductAnalysisUnits(item.averageUnits), formatClp(item.averageNetSales)])), productAnalysisTable(['Hora', 'Unidades', 'Venta neta'], report.temporal.hours.map(item => [item.label, formatProductAnalysisUnits(item.units), formatClp(item.netSales)])));
 
   const service = register('service', 'Modalidad', productAnalysisSection('service', 'Para llevar, local y sin información', 'Modalidad y ticket promedio', 'La clasificación proviene del Comentario General de Detalle Pagos.'));
-  service.appendChild(productAnalysisTable(['Modalidad', 'Pedidos', 'Part. pedidos', 'Venta neta', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders.toLocaleString('es-CL'), `${item.orderShare.toLocaleString('es-CL')}%`, formatClp(item.netSales), formatClp(item.averageTicket)])));
+  service.appendChild(productAnalysisTable(['Modalidad', 'Pedidos', 'Part. pedidos', 'Venta neta', 'Part. venta neta', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders.toLocaleString('es-CL'), formatProductAnalysisPercent(item.orderShare), formatClp(item.netSales), formatProductAnalysisPercent(item.salesShare), formatClp(item.averageTicket)])));
 
   const baskets = register('baskets', 'Canastas', productAnalysisSection('baskets', 'Productos que se venden juntos', 'Afinidad de canasta y extras', `Se muestran pares con al menos ${report.baskets.minimumPairOrders} pedidos. Un lift superior a 1 indica una coincidencia mayor a la esperada bajo independencia.`));
-  baskets.append(productAnalysisElement('h5', '', 'Pares de productos'), productAnalysisTable(['Producto A', 'Producto B', 'Pedidos', 'Soporte', 'Confianza A→B', 'Lift'], report.baskets.pairs.slice(0, 40).map(item => [item.leftName, item.rightName, item.orders, `${item.supportPercent}%`, `${item.confidenceLeftToRightPercent}%`, item.lift])));
-  baskets.append(productAnalysisElement('h5', '', 'Extras y modificadores'), productAnalysisTable(['Código', 'Extra', 'Pedidos', 'Unidades', 'Part. pedidos'], report.baskets.modifiers.map(item => [item.code, item.name, item.orders, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), `${item.orderShare}%`]), { empty: 'No se identificaron extras en el período y alcance.' }));
+  baskets.append(productAnalysisElement('h5', '', 'Pares de productos'), productAnalysisTable(['Producto A', 'Producto B', 'Pedidos', 'Soporte', 'Confianza A→B', 'Confianza B→A', 'Lift'], report.baskets.pairs.slice(0, 40).map(item => [item.leftName, item.rightName, item.orders, formatProductAnalysisPercent(item.supportPercent), formatProductAnalysisPercent(item.confidenceLeftToRightPercent), formatProductAnalysisPercent(item.confidenceRightToLeftPercent), item.lift])));
+  baskets.append(productAnalysisElement('h5', '', 'Extras y modificadores'), productAnalysisTable(['Código', 'Extra', 'Pedidos', 'Unidades', 'Part. pedidos'], report.baskets.modifiers.map(item => [item.code, item.name, item.orders, formatProductAnalysisUnits(item.units), formatProductAnalysisPercent(item.orderShare)]), { empty: 'No se identificaron extras en el período y alcance.' }));
+  const basketReading = productAnalysisElement('div', 'product-analysis-price-reading');
+  basketReading.appendChild(productAnalysisElement('h5', '', 'Cómo leer las columnas'));
+  const basketDefinitions = productAnalysisElement('dl', 'product-analysis-definitions');
+  report.baskets.definitions.forEach(item => {
+    basketDefinitions.append(productAnalysisElement('dt', '', item.term), productAnalysisElement('dd', '', item.detail));
+  });
+  basketReading.appendChild(basketDefinitions);
+  basketReading.appendChild(productAnalysisElement('h5', '', 'Qué muestran los datos de este período'));
+  const basketInterpretations = productAnalysisElement('div', 'product-analysis-interpretations');
+  report.baskets.interpretation.forEach(item => {
+    const card = productAnalysisElement('article', `product-analysis-interpretation interpretation-${item.level}`);
+    card.append(productAnalysisElement('strong', '', item.title), productAnalysisElement('p', '', item.detail));
+    basketInterpretations.appendChild(card);
+  });
+  basketReading.appendChild(basketInterpretations);
+  baskets.appendChild(basketReading);
 
   const formats = register('formats', 'Formatos', productAnalysisSection('formats', 'Familias, formatos y tamaños', 'Cómo se distribuye la elección dentro de una familia', report.formats.methodology));
-  report.formats.families.forEach(family => {
+  report.formats.families.forEach((family, familyIndex) => {
     const block = productAnalysisElement('div', 'product-analysis-family');
     block.append(productAnalysisElement('h5', '', family.family), productAnalysisElement('p', 'panel-description', `${family.hierarchy} · confianza ${family.confidence}`));
-    block.appendChild(productAnalysisTable(['Código', 'Formato detectado', 'Producto', 'Unidades', 'Venta neta', 'Precio promedio'], family.formats.map(item => [item.code, item.format, item.name, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), formatClp(item.averagePrice)])));
+    block.appendChild(productAnalysisFormatsTable(family, familyIndex));
     formats.appendChild(block);
   });
   if (!report.formats.families.length) formats.appendChild(productAnalysisElement('p', 'form-status muted', 'No hay familias con múltiples formatos detectables en este alcance.'));
@@ -3177,17 +3627,17 @@ function renderProductAnalysis() {
   const value = register('value', 'Valor', productAnalysisSection('value', 'Venta por tramo de precio', 'Unidades y valor vendido en cortes de $500', report.priceDistribution.basis));
   value.appendChild(productAnalysisTable(['Tramo de precio efectivo', 'Unidades', '% unidades', 'Venta neta', '% venta neta'], report.priceDistribution.bands.map(item => [
     item.label,
-    item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }),
-    `${item.unitSharePercent.toLocaleString('es-CL')}%`,
+    formatProductAnalysisUnits(item.units),
+    formatProductAnalysisPercent(item.unitSharePercent),
     formatClp(item.netSales),
-    `${item.salesSharePercent.toLocaleString('es-CL')}%`
+    formatProductAnalysisPercent(item.salesSharePercent)
   ])));
   const valueInsights = productAnalysisElement('div', 'product-analysis-interpretations');
   report.priceDistribution.insights.forEach(insight => valueInsights.appendChild(productAnalysisElement('p', 'product-analysis-interpretation', insight)));
   value.appendChild(valueInsights);
 
   const price = register('price', 'Precio', productAnalysisSection('price', 'Precio, demanda y margen', 'Sensibilidad observada — no causal', report.priceSensitivity.caveat));
-  price.appendChild(productAnalysisTable(['Código', 'Producto', 'Observaciones', 'Niveles de precio', 'Rango', 'Coef. observado', 'R²', 'Confianza'], report.priceSensitivity.items.map(item => [item.code, item.name, item.observations, item.pricePoints, `${item.priceRangePercent}%`, item.observedElasticity, item.rSquared, item.confidence]), { empty: 'Ningún producto cumple simultáneamente los mínimos de muestra y variación de precio.' }));
+  price.appendChild(productAnalysisPriceSensitivityTable(report.priceSensitivity.items));
   const priceReading = productAnalysisElement('div', 'product-analysis-price-reading');
   priceReading.appendChild(productAnalysisElement('h5', '', 'Cómo leer las columnas'));
   const definitions = productAnalysisElement('dl', 'product-analysis-definitions');
@@ -3206,7 +3656,7 @@ function renderProductAnalysis() {
   price.appendChild(priceReading);
 
   const ingredients = register('ingredients', 'Ingredientes', productAnalysisSection('ingredients', 'Composición por ingrediente principal', 'Lectura de la venta desde las recetas', 'El ingrediente principal se infiere por su contribución estimada al costo, excluyendo packaging.'));
-  ingredients.appendChild(productAnalysisTable(['Código', 'Ingrediente principal', 'Productos asociados', 'Unidades producto', 'Venta neta asociada', 'Part. venta'], report.ingredients.map(item => [item.code, item.name, item.products.length, item.units.toLocaleString('es-CL', { maximumFractionDigits: 1 }), formatClp(item.netSales), `${item.salesShare}%`])));
+  ingredients.appendChild(productAnalysisIngredientsTable(report.ingredients));
 
   const appendix = register('appendix', 'Anexo', productAnalysisSection('appendix', 'Anexo metodológico', 'Definiciones y fuentes', 'Detalle para interpretar y reproducir las conclusiones.'));
   const list = productAnalysisElement('ul', 'product-analysis-methodology');
@@ -3275,16 +3725,26 @@ function exportProductAnalysis() {
   append('Hallazgos', ['ID', 'Impacto', 'Confianza', 'Sección', 'Título', 'Detalle', 'Evidencia', 'Acción o pregunta'], report.findings.map(item => [item.id, item.impact, item.confidence, item.section, item.title, item.detail, item.evidence.join(' · '), item.action]));
   append('Productos', ['Código', 'Producto', 'Jerarquía', 'ABC', 'Unidades', 'Venta neta', 'Participación %', 'Pedidos', 'Precio promedio', 'Costo unitario', 'Origen costo', 'Margen %', 'Crecimiento venta %', 'Tendencia %', 'CV %'], report.appendix.products.map(item => [item.code, item.name, item.hierarchy, item.abc, item.units, item.netSales, item.salesShare, item.orderCount, item.averagePrice, item.unitCost, item.costSource, item.marginPercent, item.salesGrowthPercent, item.trendPercent, item.variabilityPercent]));
   append('Canastas', ['Código A', 'Producto A', 'Código B', 'Producto B', 'Pedidos', 'Soporte %', 'Confianza A-B %', 'Confianza B-A %', 'Lift'], report.baskets.pairs.map(item => [item.leftCode, item.leftName, item.rightCode, item.rightName, item.orders, item.supportPercent, item.confidenceLeftToRightPercent, item.confidenceRightToLeftPercent, item.lift]));
-  append('Modalidad', ['Modalidad', 'Pedidos', 'Participación %', 'Venta neta', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders, item.orderShare, item.netSales, item.averageTicket]));
+  append('Extras y modificadores', ['Código', 'Extra', 'Pedidos', 'Unidades', 'Participación pedidos %'], report.baskets.modifiers.map(item => [item.code, item.name, item.orders, item.units, item.orderShare]));
+  append('Lectura canastas', ['Tipo', 'Título o término', 'Explicación'], [
+    ...report.baskets.definitions.map(item => ['Definición', item.term, item.detail]),
+    ...report.baskets.interpretation.map(item => ['Conclusión', item.title, item.detail])
+  ]);
+  append('Modalidad', ['Modalidad', 'Pedidos', 'Participación pedidos %', 'Venta neta', 'Participación venta neta %', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders, item.orderShare, item.netSales, item.salesShare, item.averageTicket]));
   append('Días y horas', ['Tipo', 'Valor', 'Observaciones', 'Unidades', 'Venta neta'], [...report.temporal.weekdays.map(item => ['Día semana', item.label, item.days, item.averageUnits, item.averageNetSales]), ...report.temporal.hours.map(item => ['Hora', item.label, '', item.units, item.netSales])]);
-  append('Formatos', ['Familia', 'Jerarquía', 'Confianza', 'Código', 'Producto', 'Formato', 'Unidades', 'Venta neta', 'Precio promedio'], report.formats.families.flatMap(family => family.formats.map(item => [family.family, family.hierarchy, family.confidence, item.code, item.name, item.format, item.units, item.netSales, item.averagePrice])));
+  append('Formatos', ['Familia', 'Jerarquía', 'Confianza', 'Código', 'Producto', 'Formato', 'Precio lista', 'Precio neto', 'Unidades', 'Participación unidades familia %', 'Venta neta', 'Participación venta familia %', 'Descuento implícito %', 'Precio promedio'], report.formats.families.flatMap(family => family.formats.map(item => [family.family, family.hierarchy, family.confidence, item.code, item.name, item.format, item.listPrice, item.netListPrice, item.units, item.familyUnitSharePercent, item.netSales, item.familySalesSharePercent, item.implicitDiscountPercent, item.averagePrice])));
+  append('Transacciones formatos', ['Familia', 'Código', 'Producto', 'Fecha', 'Hora', 'Pedido', 'Ubicación', 'Modalidad', 'Unidades', 'Venta neta producto', 'Precio neto unitario', 'Precio con IVA', 'Descuento implícito %', 'Venta neta pedido'], report.formats.families.flatMap(family => family.formats.flatMap(item => item.transactions.map(transaction => [family.family, item.code, item.name, transaction.date, productAnalysisTimeLabel(transaction.hour), transaction.orderReference || transaction.orderKey, transaction.locationName, productAnalysisModeLabel(transaction.mode), transaction.quantity, transaction.netSales, transaction.averageNetPrice, transaction.averageGrossPrice, transaction.implicitDiscountPercent, transaction.orderNetSales]))));
+  append('Detalle pedidos', ['Pedido', 'Fecha', 'Hora', 'Ubicación', 'Modalidad', 'Clientes', 'Comentario general', 'Total Detalle Pagos', 'Venta neta pedido', 'Código línea', 'Producto / extra', 'Tipo', 'Jerarquía', 'Cantidad', 'Venta neta línea', 'Origen valor', 'Precio neto unitario', 'Precio con IVA', 'Descuento implícito %'], report.formats.families.flatMap(family => family.formats.flatMap(item => item.transactions.flatMap(transaction => (transaction.orderLines || []).map(line => [transaction.orderReference || transaction.orderKey, transaction.date, productAnalysisTimeLabel(transaction.hour), transaction.locationName, productAnalysisModeLabel(transaction.mode), transaction.clients, transaction.paymentComment, transaction.paymentDue, transaction.orderNetSales, line.code, line.name, line.type, line.hierarchy, line.quantity, line.netSales, productAnalysisSalesAllocationLabel(line.salesAllocation), line.averageNetPrice, line.averageGrossPrice, line.implicitDiscountPercent])))));
   append('Tramos de precio', ['Tramo precio efectivo con IVA', 'Desde exclusivo', 'Hasta inclusivo', 'Unidades', 'Participación unidades %', 'Venta neta', 'Participación venta %', 'Venta con IVA'], report.priceDistribution.bands.map(item => [item.label, item.fromExclusive, item.toInclusive, item.units, item.unitSharePercent, item.netSales, item.salesSharePercent, item.grossSales]));
   append('Precio', ['Código', 'Producto', 'Observaciones', 'Niveles precio', 'Rango %', 'Coeficiente observado', 'Correlación', 'R²', 'Confianza'], report.priceSensitivity.items.map(item => [item.code, item.name, item.observations, item.pricePoints, item.priceRangePercent, item.observedElasticity, item.correlation, item.rSquared, item.confidence]));
+  append('Detalle precio', ['Código', 'Producto', 'Fecha', 'Unidades', 'Venta neta', 'Precio neto promedio', 'Precio con IVA', 'Descuento vs. lista neta %'], report.priceSensitivity.items.flatMap(item => (item.observationDetails || []).map(observation => [item.code, item.name, observation.date, observation.units, observation.netSales, observation.averageNetPrice, observation.averageGrossPrice, observation.implicitDiscountPercent])));
+  append('Transacciones precio', ['Código', 'Producto', 'Fecha observación', 'Pedido', 'Hora', 'Ubicación', 'Modalidad', 'Unidades', 'Venta neta producto', 'Precio neto unitario', 'Precio con IVA', 'Descuento implícito %', 'Venta neta pedido'], report.priceSensitivity.items.flatMap(item => (item.observationDetails || []).flatMap(observation => (observation.transactions || []).map(transaction => [item.code, item.name, observation.date, transaction.orderReference || transaction.orderKey, productAnalysisTimeLabel(transaction.hour), transaction.locationName, productAnalysisModeLabel(transaction.mode), transaction.quantity, transaction.netSales, transaction.averageNetPrice, transaction.averageGrossPrice, transaction.implicitDiscountPercent, transaction.orderNetSales]))));
   append('Lectura precio', ['Tipo', 'Título o término', 'Explicación'], [
     ...report.priceSensitivity.definitions.map(item => ['Definición', item.term, item.detail]),
     ...report.priceSensitivity.interpretation.map(item => ['Conclusión', item.title, item.detail])
   ]);
   append('Ingredientes', ['Código', 'Ingrediente principal', 'Unidades producto', 'Venta neta asociada', 'Participación %', 'Productos'], report.ingredients.map(item => [item.code, item.name, item.units, item.netSales, item.salesShare, item.products.map(product => `${product.code} ${product.name}`).join(' · ')]));
+  append('Detalle ingredientes', ['Código ingrediente', 'Ingrediente principal', 'Código producto', 'Producto', 'Unidades', 'Pedidos', 'Precio promedio', 'Venta neta', 'Participación unidades ingrediente %', 'Participación venta ingrediente %'], report.ingredients.flatMap(item => item.products.map(product => [item.code, item.name, product.code, product.name, product.units, product.orderCount, product.averagePrice, product.netSales, product.ingredientUnitSharePercent, product.ingredientSalesSharePercent])));
   append('Serie diaria', ['Fecha', 'Unidades', 'Venta neta', 'Anomalía'], report.trends.daily.map(item => [item.date, item.units, item.netSales, report.trends.anomalies.find(value => value.date === item.date)?.direction || '']));
   append('Metodología', ['Definición'], report.appendix.methodology.map(item => [item]));
   writeConfiguredExcelWorkbook(workbook, `analisis-productos-${report.period.from}-${report.period.to}.xlsx`);

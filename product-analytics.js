@@ -109,6 +109,52 @@ function impactForShare(share, growth = 0) {
   return 'bajo';
 }
 
+function reconcileOrderLineSales(order, productMap) {
+  const lines = (order.lines || []).map(line => ({
+    ...line,
+    reportedNetSales: Number(line.netSales) || 0,
+    salesAllocation: 'reported'
+  }));
+  const target = Number(order.netSales) || 0;
+  const reportedTotal = sum(lines.map(line => line.reportedNetSales));
+  if (!lines.length || target <= 0 || Math.abs(target - reportedTotal) < 0.01) return { ...order, lines };
+
+  const zeroLines = lines.filter(line => !(line.reportedNetSales > 0));
+  if (target > reportedTotal && zeroLines.length) {
+    const residual = target - reportedTotal;
+    const weights = zeroLines.map(line => {
+      const listPrice = Number(productMap.get(line.code)?.listPrice) || 0;
+      const quantity = Math.max(0, Number(line.quantity) || 0);
+      return listPrice * quantity || quantity || 1;
+    });
+    const totalWeight = sum(weights) || zeroLines.length;
+    zeroLines.forEach((line, index) => {
+      line.netSales = residual * weights[index] / totalWeight;
+      line.salesAllocation = 'catalog_share';
+    });
+  } else {
+    const weights = lines.map(line => {
+      if (line.reportedNetSales > 0) return line.reportedNetSales;
+      const listPrice = Number(productMap.get(line.code)?.listPrice) || 0;
+      const quantity = Math.max(0, Number(line.quantity) || 0);
+      return listPrice * quantity || quantity || 1;
+    });
+    const totalWeight = sum(weights) || lines.length;
+    lines.forEach((line, index) => {
+      line.netSales = target * weights[index] / totalWeight;
+      line.salesAllocation = 'scaled_to_order';
+    });
+  }
+
+  const allocatedTotal = sum(lines.map(line => Number(line.netSales) || 0));
+  let adjustmentLine = lines.at(-1);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].salesAllocation !== 'reported') { adjustmentLine = lines[index]; break; }
+  }
+  if (adjustmentLine) adjustmentLine.netSales += target - allocatedTotal;
+  return { ...order, lines };
+}
+
 function buildProductAnalytics(snapshot, filters) {
   const period = { from: filters.from, to: filters.to };
   const previous = priorPeriod(period.from, period.to);
@@ -118,8 +164,10 @@ function buildProductAnalytics(snapshot, filters) {
     : snapshot.hierarchies.find(item => item.id === hierarchyId)?.pathLabel || 'Jerarquía seleccionada';
   const matchesHierarchy = line => hierarchyId === 'all' || (line.hierarchyIds || []).includes(hierarchyId);
   const inPeriod = (date, selected) => date >= selected.from && date <= selected.to;
-  const currentOrders = snapshot.orders.filter(order => inPeriod(order.date, period));
-  const previousOrders = snapshot.orders.filter(order => inPeriod(order.date, previous));
+  const productMap = new Map(snapshot.products.map(product => [product.code, product]));
+  const reconciledOrders = snapshot.orders.map(order => reconcileOrderLineSales(order, productMap));
+  const currentOrders = reconciledOrders.filter(order => inPeriod(order.date, period));
+  const previousOrders = reconciledOrders.filter(order => inPeriod(order.date, previous));
   const scopedOrder = order => order.lines.some(line => !line.isExtra && matchesHierarchy(line));
   const currentScopedOrders = currentOrders.filter(scopedOrder);
   const previousScopedOrders = previousOrders.filter(scopedOrder);
@@ -128,7 +176,6 @@ function buildProductAnalytics(snapshot, filters) {
   const openDates = [...new Set(currentScopedOrders.map(order => order.date))].sort();
   const allDates = dateRange(period.from, period.to);
   const priorDates = dateRange(previous.from, previous.to);
-  const productMap = new Map(snapshot.products.map(product => [product.code, product]));
 
   const aggregateProducts = (lines, dates) => {
     const map = new Map();
@@ -138,7 +185,8 @@ function buildProductAnalytics(snapshot, filters) {
         code: item.code, name: product.name || item.name, hierarchyPath: product.hierarchyPath || item.hierarchyPath || [],
         units: 0, netSales: 0, cost: 0, orders: new Set(), dailyUnits: {}, dailySales: {},
         weekdayUnits: Array(7).fill(0), hourUnits: Array(24).fill(0), modes: {}, prices: [],
-        unitCost: product.unitCost || 0, costSource: product.costSource || 'missing', costSourceDate: product.costSourceDate || null
+        listPrice: product.listPrice || 0, unitCost: product.unitCost || 0,
+        costSource: product.costSource || 'missing', costSourceDate: product.costSourceDate || null
       };
       value.units += item.quantity;
       value.netSales += item.netSales;
@@ -185,6 +233,7 @@ function buildProductAnalytics(snapshot, filters) {
       salesShare: totalNetSales ? round(product.netSales / totalNetSales * 100, 1) : 0,
       unitShare: totalUnits ? round(product.units / totalUnits * 100, 1) : 0,
       averagePrice: round(product.averagePrice), unitCost: round(product.unitCost), cost: round(product.cost),
+      listPrice: round(product.listPrice),
       marginPercent: product.margin === null ? null : round(product.margin, 1), costSource: product.costSource,
       costSourceDate: product.costSourceDate, salesGrowthPercent: salesGrowth === null ? null : round(salesGrowth, 1),
       unitGrowthPercent: unitGrowth === null ? null : round(unitGrowth, 1), trendPercent: round(product.trendPercent, 1),
@@ -216,6 +265,7 @@ function buildProductAnalytics(snapshot, filters) {
   }));
 
   const modeKeys = ['takeaway', 'dineIn', 'unknown'];
+  const serviceModeTotalNetSales = sum(currentScopedOrders.map(order => order.netSales));
   const serviceModes = modeKeys.map(key => {
     const orders = currentScopedOrders.filter(order => (order.mode || 'unknown') === key);
     const netSales = sum(orders.map(order => order.netSales));
@@ -223,6 +273,7 @@ function buildProductAnalytics(snapshot, filters) {
       key, label: key === 'takeaway' ? 'Para llevar' : key === 'dineIn' ? 'Servir en el local' : 'Sin información',
       orders: orders.length, netSales: round(netSales), averageTicket: round(orders.length ? netSales / orders.length : 0),
       orderShare: currentScopedOrders.length ? round(orders.length / currentScopedOrders.length * 100, 1) : 0,
+      salesShare: serviceModeTotalNetSales ? round(netSales / serviceModeTotalNetSales * 100, 1) : 0,
       coverage: round(snapshot.coverage.paymentMatchPercent || 0, 1)
     };
   });
@@ -277,15 +328,150 @@ function buildProductAnalytics(snapshot, filters) {
     value.orders.add(order.orderKey); value.units += line.quantity; modifierCounts.set(line.code, value);
   }));
   const modifiers = [...modifierCounts.values()].map(item => ({ code: item.code, name: item.name, orders: item.orders.size, units: round(item.units, 1), orderShare: currentScopedOrders.length ? round(item.orders.size / currentScopedOrders.length * 100, 1) : 0 })).sort((a, b) => b.orders - a.orders).slice(0, 30);
+  const basketDefinitions = [
+    { term: 'Producto A / Producto B', detail: 'Dos productos base distintos que aparecen dentro de un mismo pedido. El orden A–B no implica que uno se haya agregado antes que el otro.' },
+    { term: 'Pedidos', detail: 'Cantidad de pedidos que contienen ambos productos al menos una vez.' },
+    { term: 'Soporte', detail: 'Porcentaje de todos los pedidos analizados que contienen el par. Mide su importancia o alcance dentro del total.' },
+    { term: 'Confianza A→B', detail: 'Entre los pedidos que contienen A, porcentaje que también contiene B. Sirve para evaluar una recomendación de B cuando se elige A.' },
+    { term: 'Confianza B→A', detail: 'Entre los pedidos que contienen B, porcentaje que también contiene A. Puede diferir de A→B porque los productos tienen distintas frecuencias de venta.' },
+    { term: 'Lift', detail: 'Compara la coincidencia observada con la esperada si ambos productos fueran independientes. Mayor que 1 indica afinidad positiva; igual a 1, ausencia de asociación; menor que 1, coincidencia inferior a la esperada.' },
+    { term: 'Código / Extra', detail: 'Identificador y nombre del extra o modificador registrado en la venta.' },
+    { term: 'Pedidos (extras)', detail: 'Pedidos distintos en los que aparece el extra, sin duplicar un pedido aunque el extra se repita.' },
+    { term: 'Unidades (extras)', detail: 'Cantidad total del extra vendido; puede superar los pedidos si una orden incluye más de una unidad.' },
+    { term: 'Part. pedidos', detail: 'Porcentaje de pedidos analizados que incluyen el extra.' }
+  ];
+  const basketInterpretation = [];
+  if (pairs.length) {
+    const strongestLift = pairs.slice().sort((left, right) => (right.lift || 0) - (left.lift || 0))[0];
+    const mostFrequent = pairs.slice().sort((left, right) => right.orders - left.orders || right.supportPercent - left.supportPercent)[0];
+    const directional = pairs.flatMap(pair => [
+      { source: pair.leftName, target: pair.rightName, confidence: pair.confidenceLeftToRightPercent, pair },
+      { source: pair.rightName, target: pair.leftName, confidence: pair.confidenceRightToLeftPercent, pair }
+    ]).sort((left, right) => right.confidence - left.confidence)[0];
+    basketInterpretation.push({
+      level: 'informativo',
+      title: 'Par con mayor presencia en los pedidos',
+      detail: `${mostFrequent.leftName} + ${mostFrequent.rightName}: ${mostFrequent.orders} pedidos, equivalentes a ${mostFrequent.supportPercent}% del total analizado.`
+    });
+    basketInterpretation.push({
+      level: strongestLift.lift >= 2 ? 'atención' : 'informativo',
+      title: 'Asociación relativa más intensa',
+      detail: `${strongestLift.leftName} + ${strongestLift.rightName} alcanza lift ${strongestLift.lift}. Aparecen juntos ${strongestLift.lift} veces lo esperado bajo independencia, sobre una base de ${strongestLift.orders} pedidos.`
+    });
+    basketInterpretation.push({
+      level: 'acción',
+      title: 'Oportunidad direccional de recomendación',
+      detail: `Cuando se compra ${directional.source}, ${directional.target} también aparece en ${directional.confidence}% de esos pedidos. Conviene probar la recomendación solo si el soporte y el margen justifican la intervención.`
+    });
+    const maximumSupport = Math.max(...pairs.map(pair => pair.supportPercent));
+    if (maximumSupport < 2) basketInterpretation.push({
+      level: 'revisión',
+      title: 'Las afinidades tienen alcance reducido',
+      detail: `Ningún par supera ${maximumSupport}% de soporte. Los lifts pueden ser altos porque el par es relativamente inusual; deben leerse junto con pedidos y soporte antes de diseñar un combo.`
+    });
+  } else basketInterpretation.push({
+    level: 'informativo',
+    title: 'No hay pares con muestra mínima suficiente',
+    detail: `Ninguna combinación alcanzó el mínimo de ${minimumPairOrders} pedidos dentro del período y alcance seleccionados.`
+  });
+  if (modifiers.length) {
+    const topModifier = modifiers[0];
+    basketInterpretation.push({
+      level: 'informativo',
+      title: 'Extra o modificador más utilizado',
+      detail: `${topModifier.name} aparece en ${topModifier.orders} pedidos (${topModifier.orderShare}% del total) y suma ${topModifier.units} unidades.`
+    });
+  }
 
   const familyMap = new Map();
+  const productTransactions = new Map();
+  currentLines.filter(item => item.quantity > 0).forEach(item => {
+    const byOrder = productTransactions.get(item.code) || new Map();
+    const transaction = byOrder.get(item.order.orderKey) || {
+      orderKey: item.order.orderKey,
+      orderReference: item.order.orderReference || null,
+      date: item.order.date,
+      hour: item.order.hour,
+      locationName: item.order.locationName || filters.locationLabel || '',
+      mode: item.order.mode || 'unknown',
+      clients: item.order.clients || 0,
+      paymentDue: item.order.paymentDue ?? null,
+      paymentComment: item.order.paymentComment || '',
+      quantity: 0,
+      netSales: 0,
+      orderNetSales: item.order.netSales || 0,
+      orderLines: (item.order.lines || []).map(line => {
+        const catalogProduct = productMap.get(line.code);
+        const lineUnitNetPrice = line.quantity ? line.netSales / line.quantity : 0;
+        const netListPrice = catalogProduct?.listPrice > 0 ? catalogProduct.listPrice / 1.19 : null;
+        return {
+          code: line.code,
+          name: catalogProduct?.name || line.name,
+          type: line.isExtra ? 'Extra' : 'Producto',
+          hierarchy: (line.hierarchyPath || []).join(' › ') || line.hierarchyName || line.extraHierarchyName || '',
+          quantity: round(line.quantity, 1),
+          netSales: round(line.netSales),
+          averageNetPrice: round(lineUnitNetPrice),
+          averageGrossPrice: round(lineUnitNetPrice * 1.19),
+          implicitDiscountPercent: netListPrice ? round((1 - lineUnitNetPrice / netListPrice) * 100, 1) : null,
+          salesAllocation: line.salesAllocation || 'reported'
+        };
+      })
+    };
+    transaction.quantity += item.quantity;
+    transaction.netSales += item.netSales;
+    byOrder.set(item.order.orderKey, transaction);
+    productTransactions.set(item.code, byOrder);
+  });
+  const finalizedProductTransaction = (transaction, listPrice) => {
+    const averageNetPrice = transaction.quantity ? transaction.netSales / transaction.quantity : 0;
+    const netListPrice = listPrice > 0 ? listPrice / 1.19 : null;
+    return {
+      ...transaction,
+      quantity: round(transaction.quantity, 1),
+      netSales: round(transaction.netSales),
+      orderNetSales: round(transaction.orderNetSales),
+      averageNetPrice: round(averageNetPrice),
+      averageGrossPrice: round(averageNetPrice * 1.19),
+      implicitDiscountPercent: netListPrice ? round((1 - averageNetPrice / netListPrice) * 100, 1) : null
+    };
+  };
   productRows.forEach(product => {
     const inferred = inferFamily(product);
     const value = familyMap.get(inferred.key) || { family: inferred.family, hierarchy: product.hierarchy, confidence: inferred.confidence, formats: [] };
-    value.formats.push({ code: product.code, name: product.name, format: inferred.format, units: product.units, netSales: product.netSales, averagePrice: product.averagePrice, share: product.salesShare });
+    value.formats.push({
+      code: product.code,
+      name: product.name,
+      format: inferred.format,
+      listPrice: product.listPrice,
+      units: product.units,
+      netSales: product.netSales,
+      averagePrice: product.averagePrice,
+      share: product.salesShare,
+      transactions: [...(productTransactions.get(product.code)?.values() || [])]
+        .map(transaction => finalizedProductTransaction(transaction, product.listPrice))
+        .sort((left, right) => right.date.localeCompare(left.date) || (right.hour || 0) - (left.hour || 0))
+    });
     familyMap.set(inferred.key, value);
   });
-  const families = [...familyMap.values()].filter(item => item.formats.length >= 2).map(item => ({ ...item, formats: item.formats.sort((a, b) => b.netSales - a.netSales), totalNetSales: round(sum(item.formats.map(format => format.netSales))) })).sort((a, b) => b.totalNetSales - a.totalNetSales).slice(0, 30);
+  const families = [...familyMap.values()].filter(item => item.formats.length >= 2).map(item => {
+    const totalUnits = sum(item.formats.map(format => format.units));
+    const totalNetSales = sum(item.formats.map(format => format.netSales));
+    return {
+      ...item,
+      totalUnits: round(totalUnits, 1),
+      totalNetSales: round(totalNetSales),
+      formats: item.formats.map(format => ({
+        ...format,
+        netListPrice: round(format.listPrice / 1.19),
+        implicitDiscountPercent: format.listPrice > 0
+          ? round((1 - format.averagePrice / (format.listPrice / 1.19)) * 100, 1)
+          : null,
+        familyUnitSharePercent: totalUnits ? round(format.units / totalUnits * 100, 1) : 0,
+        familySalesSharePercent: totalNetSales ? round(format.netSales / totalNetSales * 100, 1) : 0
+      })).sort((a, b) => b.netSales - a.netSales)
+    };
+  }).sort((a, b) => b.totalNetSales - a.totalNetSales).slice(0, 30);
 
   const priceSensitivity = [];
   for (const product of currentProducts.values()) {
@@ -294,7 +480,12 @@ function buildProductAnalytics(snapshot, filters) {
       const value = pointsByDate.get(line.order.date) || { units: 0, sales: 0 };
       value.units += line.quantity; value.sales += line.netSales; pointsByDate.set(line.order.date, value);
     });
-    const points = [...pointsByDate].map(([date, value]) => ({ date, units: value.units, price: value.sales / value.units }));
+    const points = [...pointsByDate].map(([date, value]) => ({
+      date,
+      units: value.units,
+      netSales: value.sales,
+      price: value.sales / value.units
+    })).sort((left, right) => left.date.localeCompare(right.date));
     const pricePoints = new Set(points.map(point => Math.round(point.price / 10) * 10));
     const priceRange = points.length ? (Math.max(...points.map(point => point.price)) / Math.max(1, Math.min(...points.map(point => point.price))) - 1) * 100 : 0;
     if (points.length < 12 || pricePoints.size < 3 || priceRange < 5) continue;
@@ -305,7 +496,24 @@ function buildProductAnalytics(snapshot, filters) {
       priceRangePercent: round(priceRange, 1), observedElasticity: round(regression.slope, 2),
       correlation: correlation === null ? null : round(correlation, 2), rSquared: round(regression.rSquared, 2),
       confidence: points.length >= 25 && regression.rSquared >= 0.25 ? 'media' : 'baja',
-      note: 'Asociación observada; no demuestra causalidad del precio.'
+      note: 'Asociación observada; no demuestra causalidad del precio.',
+      observationDetails: points.map(point => {
+        const netListPrice = product.listPrice > 0 ? product.listPrice / 1.19 : null;
+        return {
+          date: point.date,
+          units: round(point.units, 1),
+          netSales: round(point.netSales),
+          averageNetPrice: round(point.price),
+          averageGrossPrice: round(point.price * 1.19),
+          implicitDiscountPercent: netListPrice
+            ? round((1 - point.price / netListPrice) * 100, 1)
+            : null,
+          transactions: [...(productTransactions.get(product.code)?.values() || [])]
+            .filter(transaction => transaction.date === point.date)
+            .map(transaction => finalizedProductTransaction(transaction, product.listPrice))
+            .sort((left, right) => (right.hour || 0) - (left.hour || 0))
+        };
+      })
     });
   }
   priceSensitivity.sort((a, b) => Math.abs(b.observedElasticity) * b.rSquared - Math.abs(a.observedElasticity) * a.rSquared);
@@ -398,10 +606,31 @@ function buildProductAnalytics(snapshot, filters) {
     if (!main) continue;
     const value = ingredientExposure.get(main.ingredientId) || { code: main.ingredientId, name: main.ingredientName, netSales: 0, units: 0, products: [] };
     value.netSales += product.netSales; value.units += product.units;
-    value.products.push({ code: product.code, name: product.name, netSales: product.netSales });
+    value.products.push({
+      code: product.code,
+      name: product.name,
+      units: product.units,
+      netSales: product.netSales,
+      averagePrice: product.averagePrice,
+      orderCount: product.orderCount
+    });
     ingredientExposure.set(main.ingredientId, value);
   }
-  const ingredients = [...ingredientExposure.values()].map(item => ({ ...item, netSales: round(item.netSales), units: round(item.units, 1), salesShare: totalNetSales ? round(item.netSales / totalNetSales * 100, 1) : 0, products: item.products.sort((a, b) => b.netSales - a.netSales).slice(0, 8) })).sort((a, b) => b.netSales - a.netSales).slice(0, 30);
+  const ingredients = [...ingredientExposure.values()].map(item => ({
+    ...item,
+    productCount: item.products.length,
+    netSales: round(item.netSales),
+    units: round(item.units, 1),
+    salesShare: totalNetSales ? round(item.netSales / totalNetSales * 100, 1) : 0,
+    products: item.products.map(product => ({
+      ...product,
+      units: round(product.units, 1),
+      netSales: round(product.netSales),
+      averagePrice: round(product.averagePrice),
+      ingredientUnitSharePercent: item.units ? round(product.units / item.units * 100, 1) : 0,
+      ingredientSalesSharePercent: item.netSales ? round(product.netSales / item.netSales * 100, 1) : 0
+    })).sort((a, b) => b.netSales - a.netSales)
+  })).sort((a, b) => b.netSales - a.netSales).slice(0, 30);
 
   const findings = [];
   const addFinding = finding => findings.push({ id: `PA-${String(findings.length + 1).padStart(3, '0')}`, ...finding });
@@ -445,7 +674,14 @@ function buildProductAnalytics(snapshot, filters) {
     trends: { daily: dailyTotals, anomalies, previousPeriod: previous },
     temporal: { weekdays: weekday, hours: hourly },
     serviceModes,
-    baskets: { ordersAnalyzed: orderProductSets.length, minimumPairOrders, pairs, modifiers },
+    baskets: {
+      ordersAnalyzed: orderProductSets.length,
+      minimumPairOrders,
+      pairs,
+      modifiers,
+      definitions: basketDefinitions,
+      interpretation: basketInterpretation
+    },
     formats: { families, methodology: 'Familias inferidas por jerarquía, nombre y marcadores de formato; revisar las de confianza baja.' },
     priceDistribution: {
       basis: 'Precio unitario efectivo con IVA; el valor vendido se muestra neto, sin IVA, para mantener consistencia con el resto del reporte.',
@@ -474,4 +710,4 @@ function buildProductAnalytics(snapshot, filters) {
   };
 }
 
-module.exports = { buildProductAnalytics, statistics, linearRegression, inferFamily, priorPeriod };
+module.exports = { buildProductAnalytics, statistics, linearRegression, inferFamily, priorPeriod, reconcileOrderLineSales };
