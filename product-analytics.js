@@ -123,9 +123,10 @@ function reconcileOrderLineSales(order, productMap) {
   if (target > reportedTotal && zeroLines.length) {
     const residual = target - reportedTotal;
     const weights = zeroLines.map(line => {
-      const listPrice = Number(productMap.get(line.code)?.listPrice) || 0;
       const quantity = Math.max(0, Number(line.quantity) || 0);
-      return listPrice * quantity || quantity || 1;
+      const catalogValue = (Number(productMap.get(line.code)?.listPrice) || 0) * quantity;
+      const reportedListValue = Math.max(0, Number(line.listGross) || 0);
+      return reportedListValue || catalogValue || quantity || 1;
     });
     const totalWeight = sum(weights) || zeroLines.length;
     zeroLines.forEach((line, index) => {
@@ -135,9 +136,10 @@ function reconcileOrderLineSales(order, productMap) {
   } else {
     const weights = lines.map(line => {
       if (line.reportedNetSales > 0) return line.reportedNetSales;
-      const listPrice = Number(productMap.get(line.code)?.listPrice) || 0;
       const quantity = Math.max(0, Number(line.quantity) || 0);
-      return listPrice * quantity || quantity || 1;
+      const catalogValue = (Number(productMap.get(line.code)?.listPrice) || 0) * quantity;
+      const reportedListValue = Math.max(0, Number(line.listGross) || 0);
+      return reportedListValue || catalogValue || quantity || 1;
     });
     const totalWeight = sum(weights) || lines.length;
     lines.forEach((line, index) => {
@@ -222,6 +224,16 @@ function buildProductAnalytics(snapshot, filters) {
   const totalNetSales = sum([...currentProducts.values()].map(product => product.netSales));
   const totalUnits = sum([...currentProducts.values()].map(product => product.units));
   const totalCost = sum([...currentProducts.values()].map(product => product.cost));
+  const currentExtraLines = currentScopedOrders.flatMap(order => order.lines
+    .filter(line => line.isExtra)
+    .map(line => ({ ...line, order })));
+  const orderNetSales = sum(currentScopedOrders.map(order => Number(order.netSales) || 0));
+  const extraUnits = sum(currentExtraLines.map(line => Number(line.quantity) || 0));
+  const extraNetSales = sum(currentExtraLines.map(line => Number(line.netSales) || 0));
+  const roundedOrderNetSales = round(orderNetSales);
+  const roundedProductNetSales = round(totalNetSales);
+  const roundedExtraNetSales = round(extraNetSales);
+  const roundedOtherNetSales = round(roundedOrderNetSales - roundedProductNetSales - roundedExtraNetSales);
   const productRows = [...currentProducts.values()].map(product => {
     const prior = priorProducts.get(product.code);
     const salesGrowth = prior?.netSales ? (product.netSales / prior.netSales - 1) * 100 : null;
@@ -662,11 +674,27 @@ function buildProductAnalytics(snapshot, filters) {
     period: { ...period, previousFrom: previous.from, previousTo: previous.to, days: previous.days },
     coverage: reportCoverage,
     summary: {
-      netSales: round(totalNetSales), units: round(totalUnits, 1), orders: currentScopedOrders.length,
-      averageTicket: round(currentScopedOrders.length ? sum(currentScopedOrders.map(order => order.netSales)) / currentScopedOrders.length : 0),
+      netSales: roundedOrderNetSales,
+      productNetSales: roundedProductNetSales,
+      extraNetSales: roundedExtraNetSales,
+      otherNetSales: roundedOtherNetSales,
+      units: round(totalUnits, 1),
+      productUnits: round(totalUnits, 1),
+      extraUnits: round(extraUnits, 1),
+      orders: currentScopedOrders.length,
+      averageTicket: round(currentScopedOrders.length ? orderNetSales / currentScopedOrders.length : 0),
       cost: round(totalCost), grossMarginPercent: totalNetSales ? round((totalNetSales - totalCost) / totalNetSales * 100, 1) : null,
       productCount: productRows.length, anomalyCount: anomalies.length, findingCount: findings.length,
       highImpactCount: findings.filter(item => item.impact === 'alto').length
+    },
+    reconciliation: {
+      productNetSales: roundedProductNetSales,
+      extraNetSales: roundedExtraNetSales,
+      otherNetSales: roundedOtherNetSales,
+      totalNetSales: roundedOrderNetSales,
+      productUnits: round(totalUnits, 1),
+      extraUnits: round(extraUnits, 1),
+      reconciles: round(roundedProductNetSales + roundedExtraNetSales + roundedOtherNetSales) === roundedOrderNetSales
     },
     executiveSummary: findings.slice(0, 4).map(item => item.detail),
     findings,
@@ -698,7 +726,8 @@ function buildProductAnalytics(snapshot, filters) {
     appendix: {
       products: productRows,
       methodology: [
-        'El cuerpo principal considera productos base; los extras se analizan como modificadores.',
+        'La venta neta del resumen usa el total completo de los pedidos y se concilia entre productos base, extras y, cuando se filtra una jerarquía, otras líneas fuera del alcance.',
+        'Las unidades y los análisis de portafolio, formatos, precios, tendencias e ingredientes consideran solo productos base; los extras se informan por separado como modificadores.',
         'La comparación utiliza el período inmediatamente anterior de igual duración.',
         'Los costos usan la compra más reciente registrada hasta la fecha final y recurren al maestro solo si no existe compra compatible.',
         'Soporte es la proporción de pedidos con el par; confianza es la probabilidad condicional; lift compara lo observado con independencia.',

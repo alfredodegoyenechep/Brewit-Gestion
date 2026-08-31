@@ -36,7 +36,21 @@ test('builds product analytics from base products and keeps extras as modifiers'
   assert.equal(report.summary.orders, 2);
   assert.equal(report.summary.productCount, 2);
   assert.equal(report.summary.units, 4);
-  assert.equal(report.summary.netSales, 11000);
+  assert.equal(report.summary.productUnits, 4);
+  assert.equal(report.summary.extraUnits, 1);
+  assert.equal(report.summary.netSales, 11500);
+  assert.equal(report.summary.productNetSales, 11000);
+  assert.equal(report.summary.extraNetSales, 500);
+  assert.equal(report.summary.otherNetSales, 0);
+  assert.deepEqual(report.reconciliation, {
+    productNetSales: 11000,
+    extraNetSales: 500,
+    otherNetSales: 0,
+    totalNetSales: 11500,
+    productUnits: 4,
+    extraUnits: 1,
+    reconciles: true
+  });
   assert.equal(report.portfolio.products.some(product => product.code === 'E1'), false);
   assert.equal(report.baskets.modifiers[0].code, 'E1');
   assert.ok(report.baskets.definitions.some(item => item.term === 'Confianza B→A'));

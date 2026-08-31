@@ -4,7 +4,7 @@ const XLSX = require('xlsx');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-const { buildProductAnalytics } = require('./product-analytics');
+const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -1224,6 +1224,7 @@ function parseSalesAnalysisCatalog(filePath) {
     const nameColumn = findHeaderColumn(headers, ['Nombre Producto *', 'Nombre Producto']);
     const activeColumn = findHeaderColumn(headers, ['Activo']);
     const unitColumn = findHeaderColumn(headers, ['Medida Base', 'Unidad Base', 'Unidad de Reportes']);
+    const priceColumn = findHeaderColumn(headers, ['Precio Base', 'Precio de venta']);
     const ingredientHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Ingredientes *', 'Jerarquía de Ingredientes']);
     const extrasHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Extras *', 'Jerarquía de Extras']);
     for (const row of rows.slice(headerIndex + 1)) {
@@ -1233,6 +1234,7 @@ function parseSalesAnalysisCatalog(filePath) {
         code,
         name: repairMojibake(row[nameColumn]) || code,
         unit: String(row[unitColumn] ?? '').trim(),
+        listPrice: priceColumn >= 0 ? numericValue(row[priceColumn]) || 0 : 0,
         hierarchyIds: String(row[isIngredientSheet ? ingredientHierarchyColumn : extrasHierarchyColumn] ?? '')
           .split(',').map(value => value.trim()).filter(Boolean)
       };
@@ -4372,21 +4374,28 @@ function createApp(options = {}) {
     return [selected];
   }
 
-  function productAnalyticsSourceFingerprint(stores) {
+  function storedFileIntersectsPeriod(stored, period) {
+    if (!period) return true;
+    const range = stored.record?.detectedRange || stored.record?.confirmedRange;
+    return !range || (range.to >= period.from && range.from <= period.to);
+  }
+
+  function productAnalyticsSourceFingerprint(stores, sourcePeriod = null) {
     const paths = stores.flatMap(store => [
       ...storedSalesFiles(store.id),
       ...storedTransactionFiles(store.id, 'payment-details')
-    ]).map(stored => {
+    ]).filter(stored => storedFileIntersectsPeriod(stored, sourcePeriod)).map(stored => {
       const stat = fs.statSync(stored.filePath);
       return `${stored.filePath}:${stat.size}:${stat.mtimeMs}`;
     }).sort();
     return crypto.createHash('sha256').update(paths.join('|')).digest('hex');
   }
 
-  function buildProductAnalyticsSource(requestedLocation) {
+  function buildProductAnalyticsSource(requestedLocation, sourcePeriod = null) {
     const stores = productAnalyticsLocations(requestedLocation);
-    const fingerprint = productAnalyticsSourceFingerprint(stores);
-    const cacheKey = `${stores.map(store => store.id).sort().join(',')}:${fingerprint}`;
+    const fingerprint = productAnalyticsSourceFingerprint(stores, sourcePeriod);
+    const periodKey = sourcePeriod ? `${sourcePeriod.from}:${sourcePeriod.to}` : 'all';
+    const cacheKey = `${stores.map(store => store.id).sort().join(',')}:${periodKey}:${fingerprint}`;
     const cached = productAnalyticsSourceCache.get(cacheKey);
     if (cached) return cached;
     const warnings = [];
@@ -4394,12 +4403,13 @@ function createApp(options = {}) {
     const orders = new Map();
     let salesFilesRead = 0;
     for (const location of stores) {
-      for (const stored of storedSalesFiles(location.id)) {
+      for (const stored of storedSalesFiles(location.id).filter(file => storedFileIntersectsPeriod(file, sourcePeriod))) {
         try {
           for (const row of readSalesRows(stored.filePath)) {
             const dateTime = salesTransactionDateTime(row);
             const date = dateTime?.slice(0, 10);
-            if (!date || dateIsExcluded(date, stored.excludedRanges)) continue;
+            if (!date || dateIsExcluded(date, stored.excludedRanges)
+              || (sourcePeriod && (date < sourcePeriod.from || date > sourcePeriod.to))) continue;
             const canonical = Object.entries(row)
               .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
               .sort(([left], [right]) => left.localeCompare(right));
@@ -4414,6 +4424,9 @@ function createApp(options = {}) {
             const paid = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
             const list = numericValue(rowValue(row, ['Precio Lista', 'Precio de lista'])) || 0;
             const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            // Toteat's line-level "Precio a Pagar" is already the final amount after
+            // discounts. Apply "Descuento" only when that final-price column is absent.
+            const lineGrossSales = paid !== null ? paid : list + discount;
             const quantity = Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
             const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
             const orderDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento total'])) || 0;
@@ -4423,8 +4436,12 @@ function createApp(options = {}) {
               locationId: location.id,
               locationName: location.name,
               date,
+              dateTime,
+              time: dateTime.slice(11, 16),
               hour: Number(dateTime.slice(11, 13)) + Number(dateTime.slice(14, 16)) / 60,
               clients: Math.max(0, numericValue(rowValue(row, ['Numero de clientes', 'Número de clientes'])) || 0),
+              grossSales: gross,
+              orderDiscount,
               netSales: gross !== null ? (gross + orderDiscount) / 1.19 : 0,
               lines: []
             };
@@ -4432,7 +4449,10 @@ function createApp(options = {}) {
               code,
               name,
               quantity,
-              netSales: ((paid !== null ? paid : list) + discount) / 1.19,
+              listGross: list,
+              paidGross: paid,
+              discountGross: discount,
+              netSales: lineGrossSales / 1.19,
               hierarchyId: String(rowValue(row, ['AB.']) ?? '').trim() || null,
               hierarchyName: repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos'])) || '',
               extraHierarchyId: String(rowValue(row, ['BA.']) ?? '').trim() || null,
@@ -4450,7 +4470,7 @@ function createApp(options = {}) {
     for (const order of orderFacts) {
       if (!(order.netSales > 0)) order.netSales = order.lines.reduce((total, line) => total + line.netSales, 0);
     }
-    const payment = paymentDetailModes(stores, warnings, orderFacts.map(order => ({ orderKey: order.orderKey, net: order.netSales })));
+    const payment = paymentDetailModes(stores, warnings, orderFacts.map(order => ({ orderKey: order.orderKey, net: order.netSales })), sourcePeriod);
     for (const order of orderFacts) {
       const detail = payment.modes.get(order.orderKey);
       order.mode = detail?.key || 'unknown';
@@ -4616,6 +4636,128 @@ function createApp(options = {}) {
       return res.json(report);
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis estadístico de productos.' });
+    }
+  });
+
+  app.get('/api/transactions/audit', (req, res) => {
+    try {
+      const requestedLocation = String(req.query.location || 'all');
+      const dateTo = String(req.query.dateTo || projectionToday());
+      const dateFrom = String(req.query.dateFrom || addDays(dateTo, -29));
+      if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo) {
+        return res.status(400).json({ error: 'Selecciona un período válido para auditar las transacciones.' });
+      }
+      const finiteFilter = name => {
+        const raw = String(req.query[name] ?? '').trim();
+        if (!raw) return null;
+        const value = numericValue(raw);
+        if (value === null) {
+          const error = new Error(`El filtro ${name} debe ser numérico.`);
+          error.status = 400;
+          throw error;
+        }
+        return value;
+      };
+      const minAmount = finiteFilter('minAmount');
+      const maxAmount = finiteFilter('maxAmount');
+      const minDiscount = finiteFilter('minDiscount');
+      const maxDiscount = finiteFilter('maxDiscount');
+      if ((minAmount !== null && maxAmount !== null && minAmount > maxAmount)
+        || (minDiscount !== null && maxDiscount !== null && minDiscount > maxDiscount)) {
+        return res.status(400).json({ error: 'El valor mínimo de un rango no puede superar su valor máximo.' });
+      }
+
+      const source = buildProductAnalyticsSource(requestedLocation, { from: dateFrom, to: dateTo });
+      const catalogMaster = latestMasterFile('master-catalog', dateTo);
+      const catalog = catalogMaster ? parseSalesAnalysisCatalog(catalogMaster.filePath) : null;
+      const listPrices = new Map(catalog ? [
+        ...catalog.products.values(),
+        ...catalog.recipeExtras.values()
+      ].map(item => [String(item.code).toUpperCase(), Number(item.listPrice) || 0]) : []);
+      const transactions = source.orders.flatMap(order => {
+        if (order.date < dateFrom || order.date > dateTo) return [];
+        const reportedGross = Number(order.grossSales);
+        const hasReportedGross = order.grossSales !== null && order.grossSales !== undefined && Number.isFinite(reportedGross);
+        const signedDiscount = Number(order.orderDiscount) || 0;
+        const fallbackAfterGross = Math.max(0, order.lines.reduce((total, line) => total + (Number(line.netSales) || 0), 0) * 1.19);
+        const saleBeforeDiscount = hasReportedGross
+          ? Math.max(0, signedDiscount > 0 ? reportedGross + signedDiscount : reportedGross)
+          : fallbackAfterGross;
+        const saleWithDiscount = hasReportedGross
+          ? Math.max(0, signedDiscount < 0 ? reportedGross + signedDiscount : reportedGross)
+          : fallbackAfterGross;
+        const discountAmount = Math.max(0, saleBeforeDiscount - saleWithDiscount);
+        const discountPercent = saleBeforeDiscount > 0 ? discountAmount / saleBeforeDiscount * 100 : 0;
+        const netSale = saleWithDiscount / 1.19;
+        const units = order.lines.reduce((total, line) => total + Math.max(0, Number(line.quantity) || 0), 0);
+        if ((minAmount !== null && saleWithDiscount < minAmount)
+          || (maxAmount !== null && saleWithDiscount > maxAmount)
+          || (minDiscount !== null && discountPercent < minDiscount)
+          || (maxDiscount !== null && discountPercent > maxDiscount)) return [];
+
+        const reconciled = reconcileOrderLineSales({ ...order, netSales: netSale }, new Map());
+        return [{
+          id: order.orderKey,
+          orderReference: order.orderReference || order.orderKey,
+          locationId: order.locationId,
+          locationName: order.locationName,
+          date: order.date,
+          time: order.time || order.dateTime?.slice(11, 16) || '00:00',
+          saleBeforeDiscount: Math.round(saleBeforeDiscount),
+          discountAmount: Math.round(discountAmount),
+          discountPercent: Math.round(discountPercent * 10) / 10,
+          saleWithDiscount: Math.round(saleWithDiscount),
+          netSale: Math.round(netSale),
+          units: Math.round(units * 10) / 10,
+          clients: order.clients,
+          mode: order.mode,
+          modeLabel: order.mode === 'takeaway' ? 'Para llevar' : order.mode === 'dineIn' ? 'Servir en el local' : 'Sin información',
+          paymentDue: order.paymentDue,
+          paymentComment: order.paymentComment,
+          lines: reconciled.lines.map(line => ({
+            code: line.code,
+            name: line.name,
+            type: line.extraHierarchyId ? 'Extra' : 'Producto',
+            hierarchy: line.extraHierarchyName || line.hierarchyName || 'Sin jerarquía',
+            quantity: Math.round((Number(line.quantity) || 0) * 10) / 10,
+            listPrice: Math.round(Math.max(0,
+              listPrices.get(String(line.code).toUpperCase())
+                ?? ((Number(line.listGross) || 0) / Math.max(1, Number(line.quantity) || 1)))),
+            reportedSale: line.paidGross === null ? null : Math.round(Number(line.paidGross) || 0),
+            reportedDiscount: Math.round(Number(line.discountGross) || 0),
+            netSale: Math.round(Number(line.netSales) || 0),
+            grossSale: Math.round((Number(line.netSales) || 0) * 1.19),
+            allocation: line.salesAllocation
+          }))
+        }];
+      });
+      const summary = transactions.reduce((result, transaction) => {
+        result.transactions += 1;
+        result.saleBeforeDiscount += transaction.saleBeforeDiscount;
+        result.discountAmount += transaction.discountAmount;
+        result.saleWithDiscount += transaction.saleWithDiscount;
+        result.netSale += transaction.netSale;
+        result.units += transaction.units;
+        return result;
+      }, { transactions: 0, saleBeforeDiscount: 0, discountAmount: 0, saleWithDiscount: 0, netSale: 0, units: 0 });
+      summary.discountPercent = summary.saleBeforeDiscount
+        ? Math.round(summary.discountAmount / summary.saleBeforeDiscount * 1000) / 10
+        : 0;
+      summary.units = Math.round(summary.units * 10) / 10;
+      transactions.sort((left, right) => right.date.localeCompare(left.date) || right.time.localeCompare(left.time));
+      return res.json({
+        filters: { location: requestedLocation, dateFrom, dateTo, minAmount, maxAmount, minDiscount, maxDiscount },
+        locations: source.stores.map(publicLocation),
+        availablePeriod: source.orders.length
+          ? { from: source.orders[0].date, to: source.orders.at(-1).date }
+          : null,
+        summary,
+        transactions,
+        warnings: source.warnings,
+        coverage: source.coverage
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudieron auditar las transacciones.' });
     }
   });
 
@@ -4919,8 +5061,10 @@ function createApp(options = {}) {
             const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim();
             const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || catalog.products.get(code.toUpperCase())?.name || code;
             const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
-            const grossLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar', 'Precio Lista'])) || 0;
+            const paidLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
+            const listLine = numericValue(rowValue(row, ['Precio Lista'])) || 0;
             const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            const grossLine = paidLine !== null ? paidLine : listLine + discount;
             const catalogItem = costCatalog.get(code.toUpperCase());
             const costReference = costResolver.resolve(code, catalogItem?.unit, catalogItem);
             const totalCost = quantity * costReference.unitCost;
@@ -4929,7 +5073,7 @@ function createApp(options = {}) {
               code,
               name,
               quantity,
-              netSales: (grossLine + discount) / 1.19,
+              netSales: grossLine / 1.19,
               totalCost,
               unitCost: costReference.unitCost,
               costSource: costReference.source,
@@ -5543,13 +5687,14 @@ function createApp(options = {}) {
     return { key: 'unknown', ambiguous: takeaway && dineIn };
   }
 
-  function paymentDetailModes(stores, warnings, orderFacts = []) {
+  function paymentDetailModes(stores, warnings, orderFacts = [], sourcePeriod = null) {
     const detailsByOrder = new Map();
     const amountFields = new Set();
     const grossSalesByOrder = new Map(orderFacts.map(fact => [fact.orderKey, fact.net * 1.19]));
     let filesRead = 0;
     for (const location of stores) {
-      for (const stored of storedTransactionFiles(location.id, 'payment-details')) {
+      for (const stored of storedTransactionFiles(location.id, 'payment-details')
+        .filter(file => storedFileIntersectsPeriod(file, sourcePeriod))) {
         try {
           const rows = readSalesRows(stored.filePath);
           const amountSamples = rows.flatMap(row => {
@@ -5577,7 +5722,8 @@ function createApp(options = {}) {
             const orderId = normalizedTransactionId(rowValue(row, ['Comanda', 'Ticket', 'ID de orden', 'Id de orden']));
             if (!orderId) continue;
             const date = cellDate(rowValue(row, ['FechaCierre', 'Fecha cierre', 'Fecha de cierre', 'Fecha', 'DateClosing', 'Date Closing', 'Closing Date']), dateOrder);
-            if (date && dateIsExcluded(date, stored.excludedRanges)) continue;
+            if (date && (dateIsExcluded(date, stored.excludedRanges)
+              || (sourcePeriod && (date < sourcePeriod.from || date > sourcePeriod.to)))) continue;
             const orderKey = `${location.id}:order:${orderId}`;
             const detail = detailsByOrder.get(orderKey) || { comments: new Set(), dueAmount: null, amountField: null };
             const comment = String(rowValue(row, ['Comentario General', 'Comentario general', 'General Comment']) || '').trim();

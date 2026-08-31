@@ -171,6 +171,40 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('link', { name: 'Resumen General Ventas' }).evaluate(link => {
     if (!link.classList.contains('active')) throw new Error('Resumen General Ventas no quedó como vista inicial activa.');
   });
+  await page.evaluate(() => {
+    productAnalysisOptions = { availablePeriod: { from: '2026-05-18', to: '2026-08-10' } };
+  });
+  for (const period of ['current-week', 'previous-week', 'current-month', 'previous-month', 'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days']) {
+    await page.evaluate(selectedPeriod => {
+      document.getElementById('product-analysis-period').value = selectedPeriod;
+      syncProductAnalysisPeriod();
+    }, period);
+    assert.equal(await page.locator('#product-analysis-date-from-field').getAttribute('hidden'), '');
+    assert.equal(await page.locator('#product-analysis-date-to-field').getAttribute('hidden'), '');
+    assert.match(await page.locator('#product-analysis-date-from').inputValue(), /^202[56]-\d{2}-\d{2}$/);
+    assert.match(await page.locator('#product-analysis-date-to').inputValue(), /^202[56]-\d{2}-\d{2}$/);
+  }
+  await page.evaluate(() => {
+    document.getElementById('product-analysis-period').value = 'custom';
+    syncProductAnalysisPeriod();
+  });
+  assert.equal(await page.locator('#product-analysis-date-from-field').getAttribute('hidden'), null);
+  assert.equal(await page.locator('#product-analysis-date-to-field').getAttribute('hidden'), null);
+  assert.equal(await page.locator('#product-analysis-date-from').isEnabled(), true);
+  assert.equal(await page.locator('#product-analysis-date-to').isEnabled(), true);
+  await page.evaluate(() => {
+    document.getElementById('product-analysis-period').value = 'last-30-days';
+    syncProductAnalysisPeriod();
+  });
+  await page.getByRole('link', { name: 'Auditoría Transacciones' }).click();
+  await page.getByRole('heading', { name: 'Auditoría de transacciones' }).waitFor();
+  await page.locator('#transaction-audit-body .transaction-audit-row').first().waitFor();
+  assert.equal(await page.locator('#transaction-audit-body .transaction-audit-row').count(), 1);
+  await page.getByRole('button', { name: 'Venta antes de descuentos' }).click();
+  assert.equal(await page.getByRole('button', { name: 'Venta antes de descuentos' }).locator('..').getAttribute('aria-sort'), 'descending');
+  await page.locator('#transaction-audit-body .transaction-audit-row').first().click();
+  await page.getByRole('heading', { name: /Detalle completo del pedido order-1/ }).waitFor();
+  assert.equal(await page.locator('.transaction-audit-lines tbody tr').count(), 1);
   await page.getByRole('link', { name: 'Configuracion' }).click();
   await page.getByRole('heading', { name: 'Ubicaciones', exact: true }).waitFor();
   assert.equal(await page.locator('#company-export-decimal-system').inputValue(), 'comma');

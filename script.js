@@ -37,6 +37,9 @@ let purchaseProjectionState = null;
 let purchaseOrderEditorState = null;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
+let transactionAuditState = null;
+let transactionAuditSort = { key: 'date', direction: 'desc' };
+const expandedAuditTransactions = new Set();
 let hourlySalesDemandState = null;
 let hourlyAnalysisState = null;
 let findingsViewState = null;
@@ -121,6 +124,13 @@ function setView(view) {
     sales.hidden = false;
     sales.style.display = '';
     loadSalesDashboard();
+    return;
+  }
+  if (view === 'transaction-audit') {
+    const audit = document.getElementById('transaction-audit-workspace');
+    audit.hidden = false;
+    audit.style.display = '';
+    loadTransactionAudit();
     return;
   }
   if (view === 'findings') {
@@ -697,6 +707,270 @@ function offsetIsoDate(value, amount) {
   const date = new Date(Date.UTC(year, month - 1, day));
   date.setUTCDate(date.getUTCDate() + amount);
   return date.toISOString().slice(0, 10);
+}
+
+function browserIsoToday() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function transactionAuditPeriodRange() {
+  const period = document.getElementById('transaction-audit-period').value;
+  const today = browserIsoToday();
+  if (period === 'custom') {
+    return {
+      from: document.getElementById('transaction-audit-from').value,
+      to: document.getElementById('transaction-audit-to').value
+    };
+  }
+  if (period === 'today') return { from: today, to: today };
+  if (period === 'yesterday') {
+    const yesterday = offsetIsoDate(today, -1);
+    return { from: yesterday, to: yesterday };
+  }
+  if (period === 'current-week' || period === 'previous-week') {
+    const date = dateFromKey(today);
+    const mondayOffset = -((date.getDay() + 6) % 7) + (period === 'previous-week' ? -7 : 0);
+    const from = offsetIsoDate(today, mondayOffset);
+    return { from, to: period === 'previous-week' ? offsetIsoDate(from, 6) : today };
+  }
+  if (period === 'current-month') return { from: `${today.slice(0, 8)}01`, to: today };
+  return { from: offsetIsoDate(today, period === 'last-60' ? -59 : -29), to: today };
+}
+
+function syncTransactionAuditPeriod() {
+  const custom = document.getElementById('transaction-audit-period').value === 'custom';
+  document.getElementById('transaction-audit-custom-dates').hidden = !custom;
+  if (!custom) {
+    const range = transactionAuditPeriodRange();
+    document.getElementById('transaction-audit-from').value = range.from;
+    document.getElementById('transaction-audit-to').value = range.to;
+  }
+}
+
+function refreshTransactionAuditLocationFilter() {
+  const select = document.getElementById('transaction-audit-location');
+  if (!select) return;
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las cafeterías', 'all')];
+  Object.values(locationRegistry)
+    .filter(location => location.type === 'store')
+    .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+    .forEach(location => options.push(new Option(location.name, location.id)));
+  select.replaceChildren(...options);
+  select.value = previous === 'all' || locationRegistry[previous] ? previous : 'all';
+}
+
+function transactionAuditFilterValue(id) {
+  const value = document.getElementById(id).value.trim();
+  return value ? value : null;
+}
+
+function renderTransactionAuditSummary() {
+  const container = document.getElementById('transaction-audit-summary');
+  const summary = transactionAuditState?.summary;
+  container.replaceChildren();
+  if (!summary) return;
+  const cards = [
+    ['Transacciones', Number(summary.transactions || 0).toLocaleString('es-CL')],
+    ['Venta antes de descuentos', formatClp(summary.saleBeforeDiscount)],
+    ['Descuentos', `${formatClp(summary.discountAmount)} · ${Number(summary.discountPercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`],
+    ['Venta con descuentos', formatClp(summary.saleWithDiscount)],
+    ['Venta neta sin IVA', formatClp(summary.netSale)],
+    ['Unidades', Number(summary.units || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })]
+  ];
+  cards.forEach(([label, value]) => {
+    const article = document.createElement('article');
+    const heading = document.createElement('span');
+    heading.textContent = label;
+    const metric = document.createElement('strong');
+    metric.textContent = value;
+    article.append(heading, metric);
+    container.appendChild(article);
+  });
+}
+
+function transactionAuditComparable(transaction, key) {
+  if (key === 'date') return `${transaction.date}T${transaction.time}`;
+  const value = transaction[key];
+  return typeof value === 'number' ? value : String(value || '').toLocaleLowerCase('es');
+}
+
+function transactionAuditSortedRows() {
+  const direction = transactionAuditSort.direction === 'asc' ? 1 : -1;
+  return [...(transactionAuditState?.transactions || [])].sort((left, right) => {
+    const leftValue = transactionAuditComparable(left, transactionAuditSort.key);
+    const rightValue = transactionAuditComparable(right, transactionAuditSort.key);
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') return (leftValue - rightValue) * direction;
+    return String(leftValue).localeCompare(String(rightValue), 'es', { numeric: true }) * direction;
+  });
+}
+
+function transactionAuditCell(value, className = '') {
+  const cell = document.createElement('td');
+  if (className) cell.className = className;
+  cell.textContent = value;
+  return cell;
+}
+
+function buildTransactionAuditDetail(transaction) {
+  const row = document.createElement('tr');
+  row.className = 'transaction-audit-detail-row';
+  const cell = document.createElement('td');
+  cell.colSpan = 9;
+  const detail = document.createElement('div');
+  detail.className = 'transaction-audit-detail';
+  const title = document.createElement('h4');
+  title.textContent = `Detalle completo del pedido ${transaction.orderReference}`;
+  const facts = document.createElement('dl');
+  facts.className = 'transaction-audit-facts';
+  [
+    ['Cafetería', transaction.locationName],
+    ['Fecha y hora', `${formatReportDate(transaction.date)} · ${transaction.time}`],
+    ['Modalidad', transaction.modeLabel],
+    ['Clientes informados', Number(transaction.clients || 0).toLocaleString('es-CL')],
+    ['Venta antes de descuentos', formatClp(transaction.saleBeforeDiscount)],
+    ['Descuento', `${formatClp(transaction.discountAmount)} (${Number(transaction.discountPercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%)`],
+    ['Venta con descuentos', formatClp(transaction.saleWithDiscount)],
+    ['Venta neta sin IVA', formatClp(transaction.netSale)],
+    ['Detalle Pagos', transaction.paymentDue === null ? 'Sin información' : formatClp(transaction.paymentDue)],
+    ['Comentario general', transaction.paymentComment || 'Sin información']
+  ].forEach(([term, value]) => {
+    const dt = document.createElement('dt');
+    dt.textContent = term;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    facts.append(dt, dd);
+  });
+  const subtitle = document.createElement('h5');
+  subtitle.textContent = 'Productos y extras del pedido';
+  const wrap = document.createElement('div');
+  wrap.className = 'transaction-audit-lines-wrap';
+  const table = document.createElement('table');
+  table.className = 'transaction-audit-lines';
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Código', 'Producto / extra', 'Tipo', 'Jerarquía', 'Cantidad', 'Precio lista', 'Venta con desc.', 'Venta neta'].forEach(label => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  transaction.lines.forEach(line => {
+    const lineRow = document.createElement('tr');
+    lineRow.append(
+      transactionAuditCell(line.code || '—'),
+      transactionAuditCell(line.name || 'Sin nombre'),
+      transactionAuditCell(line.type),
+      transactionAuditCell(line.hierarchy),
+      transactionAuditCell(Number(line.quantity || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }), 'numeric-cell'),
+      transactionAuditCell(formatClp(line.listPrice), 'numeric-cell'),
+      transactionAuditCell(formatClp(line.grossSale), 'numeric-cell'),
+      transactionAuditCell(formatClp(line.netSale), 'numeric-cell')
+    );
+    body.appendChild(lineRow);
+  });
+  table.append(head, body);
+  wrap.appendChild(table);
+  detail.append(title, facts, subtitle, wrap);
+  cell.appendChild(detail);
+  row.appendChild(cell);
+  return row;
+}
+
+function renderTransactionAuditTable() {
+  const body = document.getElementById('transaction-audit-body');
+  body.replaceChildren();
+  document.querySelectorAll('[data-audit-sort]').forEach(button => {
+    const active = button.dataset.auditSort === transactionAuditSort.key;
+    button.classList.toggle('active', active);
+    button.closest('th').setAttribute('aria-sort', active ? (transactionAuditSort.direction === 'asc' ? 'ascending' : 'descending') : 'none');
+  });
+  const transactions = transactionAuditSortedRows();
+  if (!transactions.length) {
+    const row = document.createElement('tr');
+    const cell = transactionAuditCell('No hay transacciones que coincidan con los filtros seleccionados.', 'transaction-audit-empty');
+    cell.colSpan = 9;
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+  transactions.forEach(transaction => {
+    const row = document.createElement('tr');
+    row.className = 'transaction-audit-row';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-expanded', String(expandedAuditTransactions.has(transaction.id)));
+    row.title = 'Ver detalle completo del pedido';
+    const discount = transactionAuditCell(`${Number(transaction.discountPercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`, 'numeric-cell');
+    if (transaction.discountPercent > 0) discount.classList.add('transaction-audit-discount');
+    row.append(
+      transactionAuditCell(transaction.locationName),
+      transactionAuditCell(formatReportDate(transaction.date)),
+      transactionAuditCell(transaction.time),
+      transactionAuditCell(formatClp(transaction.saleBeforeDiscount), 'numeric-cell'),
+      discount,
+      transactionAuditCell(formatClp(transaction.saleWithDiscount), 'numeric-cell'),
+      transactionAuditCell(formatClp(transaction.netSale), 'numeric-cell'),
+      transactionAuditCell(Number(transaction.units || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }), 'numeric-cell'),
+      transactionAuditCell(transaction.orderReference, 'transaction-audit-order')
+    );
+    const toggle = () => {
+      if (expandedAuditTransactions.has(transaction.id)) expandedAuditTransactions.delete(transaction.id);
+      else expandedAuditTransactions.add(transaction.id);
+      renderTransactionAuditTable();
+      document.querySelector(`[data-audit-order-id="${CSS.escape(transaction.id)}"]`)?.scrollIntoView({ block: 'nearest' });
+    };
+    row.dataset.auditOrderId = transaction.id;
+    row.addEventListener('click', toggle);
+    row.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      toggle();
+    });
+    body.appendChild(row);
+    if (expandedAuditTransactions.has(transaction.id)) body.appendChild(buildTransactionAuditDetail(transaction));
+  });
+}
+
+async function loadTransactionAudit() {
+  const status = document.getElementById('transaction-audit-status');
+  const range = transactionAuditPeriodRange();
+  if (!range.from || !range.to || range.from > range.to) {
+    setStatus(status, 'Selecciona un rango de fechas válido.', 'error');
+    return;
+  }
+  const parameters = new URLSearchParams({
+    location: document.getElementById('transaction-audit-location').value || 'all',
+    dateFrom: range.from,
+    dateTo: range.to
+  });
+  [
+    ['transaction-audit-min-amount', 'minAmount'],
+    ['transaction-audit-max-amount', 'maxAmount'],
+    ['transaction-audit-min-discount', 'minDiscount'],
+    ['transaction-audit-max-discount', 'maxDiscount']
+  ].forEach(([id, key]) => {
+    const value = transactionAuditFilterValue(id);
+    if (value !== null) parameters.set(key, value);
+  });
+  setStatus(status, 'Revisando y conciliando transacciones…');
+  try {
+    transactionAuditState = await apiRequest(`/api/transactions/audit?${parameters}`);
+    expandedAuditTransactions.clear();
+    renderTransactionAuditSummary();
+    renderTransactionAuditTable();
+    const warning = transactionAuditState.warnings?.length ? ` ${transactionAuditState.warnings.length} archivo(s) no pudieron leerse.` : '';
+    setStatus(status,
+      `${formatReportDate(range.from)} – ${formatReportDate(range.to)} · ${transactionAuditState.summary.transactions.toLocaleString('es-CL')} transacción(es).${warning}`,
+      transactionAuditState.warnings?.length ? 'muted' : 'success');
+  } catch (error) {
+    transactionAuditState = null;
+    renderTransactionAuditSummary();
+    renderTransactionAuditTable();
+    setStatus(status, error.message, 'error');
+  }
 }
 
 function rankText(label, ranking) {
@@ -3008,8 +3282,11 @@ function syncProductAnalysisPeriod() {
   const custom = mode === 'custom';
   from.disabled = !custom;
   to.disabled = !custom;
-  if (!custom && productAnalysisOptions?.availablePeriod?.to) {
-    const range = productAnalysisPresetRange(mode, productAnalysisOptions.availablePeriod.to);
+  document.getElementById('product-analysis-date-from-field').hidden = !custom;
+  document.getElementById('product-analysis-date-to-field').hidden = !custom;
+  if (!custom) {
+    const referenceDate = productAnalysisOptions?.availablePeriod?.to || browserIsoToday();
+    const range = productAnalysisPresetRange(mode, referenceDate);
     from.value = range.from;
     to.value = range.to;
   }
@@ -3017,6 +3294,8 @@ function syncProductAnalysisPeriod() {
 
 async function loadProductAnalysisOptions(location) {
   const status = document.getElementById('product-analysis-config-status');
+  const generateButton = document.getElementById('generate-product-analysis');
+  generateButton.disabled = true;
   setStatus(status, 'Leyendo períodos, jerarquías y cobertura disponible…');
   try {
     const options = await apiRequest(`/api/products/analysis/options?location=${encodeURIComponent(location)}`);
@@ -3031,6 +3310,8 @@ async function loadProductAnalysisOptions(location) {
   } catch (error) {
     productAnalysisOptions = null;
     setStatus(status, error.message, 'error');
+  } finally {
+    generateButton.disabled = false;
   }
 }
 
@@ -3539,11 +3820,13 @@ function renderProductAnalysis() {
   const executive = register('executive', 'Resumen', productAnalysisSection('executive', 'Resumen ejecutivo', 'Qué merece atención', 'Las conclusiones están ordenadas por impacto y acompañadas por su nivel de confianza.'));
   const metrics = productAnalysisElement('div', 'product-analysis-metrics');
   [
-    ['Venta neta', formatClp(report.summary.netSales)],
-    ['Unidades', formatProductAnalysisUnits(report.summary.units)],
+    ['Venta neta total', formatClp(report.summary.netSales)],
+    ['Unidades de productos', formatProductAnalysisUnits(report.summary.productUnits ?? report.summary.units)],
+    ['Unidades de extras', formatProductAnalysisUnits(report.summary.extraUnits || 0)],
+    ['Venta neta de extras', formatClp(report.summary.extraNetSales || 0)],
     ['Pedidos', Number(report.summary.orders).toLocaleString('es-CL')],
     ['Ticket promedio', formatClp(report.summary.averageTicket)],
-    ['Margen estimado', report.summary.grossMarginPercent === null ? 'Sin costo suficiente' : formatProductAnalysisPercent(report.summary.grossMarginPercent)],
+    ['Margen productos', report.summary.grossMarginPercent === null ? 'Sin costo suficiente' : formatProductAnalysisPercent(report.summary.grossMarginPercent)],
     ['Hallazgos de alto impacto', String(report.summary.highImpactCount)]
   ].forEach(([label, value]) => {
     const card = productAnalysisElement('div', 'product-analysis-metric');
@@ -3551,6 +3834,37 @@ function renderProductAnalysis() {
     metrics.appendChild(card);
   });
   executive.appendChild(metrics);
+  const reconciliation = report.reconciliation || {
+    productNetSales: report.summary.productNetSales ?? report.summary.netSales,
+    extraNetSales: report.summary.extraNetSales || 0,
+    otherNetSales: report.summary.otherNetSales || 0,
+    totalNetSales: report.summary.netSales
+  };
+  const reconciliationBlock = productAnalysisElement('div', 'product-analysis-reconciliation');
+  const reconciliationTitle = productAnalysisElement('div', 'product-analysis-reconciliation-title');
+  reconciliationTitle.append(
+    productAnalysisElement('strong', '', 'Conciliación de venta neta'),
+    productAnalysisElement('span', '', 'El total usa los pedidos completos; los análisis de productos excluyen extras.')
+  );
+  const reconciliationEquation = productAnalysisElement('div', 'product-analysis-reconciliation-equation');
+  const addReconciliationValue = (label, value) => {
+    const item = productAnalysisElement('div', 'product-analysis-reconciliation-value');
+    item.append(productAnalysisElement('span', '', label), productAnalysisElement('strong', '', formatClp(value)));
+    reconciliationEquation.appendChild(item);
+  };
+  addReconciliationValue('Productos base', reconciliation.productNetSales);
+  reconciliationEquation.appendChild(productAnalysisElement('b', 'product-analysis-reconciliation-symbol', '+'));
+  addReconciliationValue('Extras', reconciliation.extraNetSales);
+  if (Math.abs(Number(reconciliation.otherNetSales) || 0) >= 1) {
+    reconciliationEquation.appendChild(productAnalysisElement('b', 'product-analysis-reconciliation-symbol', '+'));
+    addReconciliationValue('Otras líneas fuera del alcance', reconciliation.otherNetSales);
+  }
+  reconciliationEquation.appendChild(productAnalysisElement('b', 'product-analysis-reconciliation-symbol', '='));
+  const totalValue = productAnalysisElement('div', 'product-analysis-reconciliation-value is-total');
+  totalValue.append(productAnalysisElement('span', '', 'Venta neta total'), productAnalysisElement('strong', '', formatClp(reconciliation.totalNetSales)));
+  reconciliationEquation.appendChild(totalValue);
+  reconciliationBlock.append(reconciliationTitle, reconciliationEquation);
+  executive.appendChild(reconciliationBlock);
   const findingList = productAnalysisElement('div', 'product-analysis-findings');
   report.findings.forEach(finding => {
     const item = productAnalysisElement('article', `product-analysis-finding impact-${finding.impact}`);
@@ -3679,9 +3993,24 @@ async function generateProductAnalysis() {
   const status = document.getElementById('product-analysis-config-status');
   const location = document.getElementById('product-analysis-location').value || 'all';
   const hierarchyId = document.getElementById('product-analysis-hierarchy').value || 'all';
-  const dateFrom = document.getElementById('product-analysis-date-from').value;
-  const dateTo = document.getElementById('product-analysis-date-to').value;
-  if (!dateFrom || !dateTo || dateFrom > dateTo) return setStatus(status, 'Selecciona un rango de fechas válido.', 'error');
+  const mode = document.getElementById('product-analysis-period').value;
+  const fromInput = document.getElementById('product-analysis-date-from');
+  const toInput = document.getElementById('product-analysis-date-to');
+  let dateFrom = fromInput.value;
+  let dateTo = toInput.value;
+  if (mode !== 'custom') {
+    const referenceDate = productAnalysisOptions?.availablePeriod?.to || browserIsoToday();
+    const range = productAnalysisPresetRange(mode, referenceDate);
+    dateFrom = range.from;
+    dateTo = range.to;
+    fromInput.value = dateFrom;
+    toInput.value = dateTo;
+  }
+  if (!dateFrom || !dateTo || dateFrom > dateTo) {
+    return setStatus(status, mode === 'custom'
+      ? 'Selecciona un rango personalizado válido.'
+      : 'No fue posible determinar el período seleccionado.', 'error');
+  }
   button.disabled = true;
   setStatus(status, 'Construyendo portafolio, tendencias, canastas, formatos, precios, recetas y hallazgos…');
   try {
@@ -3718,9 +4047,18 @@ function exportProductAnalysis() {
   append('Información', ['Campo', 'Valor'], [
     ['Reporte', 'Análisis estadístico de productos'], ['Ubicación', report.scope.locationLabel], ['Jerarquía', report.scope.hierarchyLabel],
     ['Desde', report.period.from], ['Hasta', report.period.to], ['Comparación desde', report.period.previousFrom], ['Comparación hasta', report.period.previousTo],
-    ['Venta neta', report.summary.netSales], ['Unidades', report.summary.units], ['Pedidos', report.summary.orders], ['Ticket promedio', report.summary.averageTicket],
+    ['Venta neta total', report.summary.netSales], ['Venta neta productos base', report.summary.productNetSales ?? report.summary.netSales],
+    ['Venta neta extras', report.summary.extraNetSales || 0], ['Otras líneas fuera del alcance', report.summary.otherNetSales || 0],
+    ['Unidades de productos', report.summary.productUnits ?? report.summary.units], ['Unidades de extras', report.summary.extraUnits || 0],
+    ['Pedidos', report.summary.orders], ['Ticket promedio', report.summary.averageTicket],
     ['Cobertura Detalle Pagos %', report.coverage.paymentMatchPercent], ['Cobertura recetas %', report.coverage.recipeCoveragePercent],
     ['Exportado', new Date().toLocaleString('es-CL')]
+  ]);
+  append('Conciliación', ['Concepto', 'Venta neta', 'Unidades'], [
+    ['Productos base', report.reconciliation?.productNetSales ?? report.summary.productNetSales ?? report.summary.netSales, report.reconciliation?.productUnits ?? report.summary.productUnits ?? report.summary.units],
+    ['Extras', report.reconciliation?.extraNetSales ?? report.summary.extraNetSales ?? 0, report.reconciliation?.extraUnits ?? report.summary.extraUnits ?? 0],
+    ['Otras líneas fuera del alcance', report.reconciliation?.otherNetSales ?? report.summary.otherNetSales ?? 0, ''],
+    ['Venta neta total', report.reconciliation?.totalNetSales ?? report.summary.netSales, '']
   ]);
   append('Hallazgos', ['ID', 'Impacto', 'Confianza', 'Sección', 'Título', 'Detalle', 'Evidencia', 'Acción o pregunta'], report.findings.map(item => [item.id, item.impact, item.confidence, item.section, item.title, item.detail, item.evidence.join(' · '), item.action]));
   append('Productos', ['Código', 'Producto', 'Jerarquía', 'ABC', 'Unidades', 'Venta neta', 'Participación %', 'Pedidos', 'Precio promedio', 'Costo unitario', 'Origen costo', 'Margen %', 'Crecimiento venta %', 'Tendencia %', 'CV %'], report.appendix.products.map(item => [item.code, item.name, item.hierarchy, item.abc, item.units, item.netSales, item.salesShare, item.orderCount, item.averagePrice, item.unitCost, item.costSource, item.marginPercent, item.salesGrowthPercent, item.trendPercent, item.variabilityPercent]));
@@ -7206,6 +7544,7 @@ async function refreshLocationConfiguration() {
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
+    refreshTransactionAuditLocationFilter();
     refreshFindingsLocationFilter();
     refreshSalesIngredientsLocationFilter();
     refreshProductsLocationFilter();
@@ -7722,7 +8061,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeFileUploadControls();
   renderMasterList();
   await refreshLocationConfiguration().catch(() => {});
+  syncTransactionAuditPeriod();
   setView(document.querySelector('.nav-link.active')?.dataset.view || 'report');
+
+  document.getElementById('transaction-audit-period').addEventListener('change', syncTransactionAuditPeriod);
+  document.getElementById('transaction-audit-filters').addEventListener('submit', event => {
+    event.preventDefault();
+    loadTransactionAudit();
+  });
+  document.getElementById('transaction-audit-clear').addEventListener('click', () => {
+    document.getElementById('transaction-audit-location').value = 'all';
+    document.getElementById('transaction-audit-period').value = 'last-30';
+    ['transaction-audit-min-amount', 'transaction-audit-max-amount', 'transaction-audit-min-discount', 'transaction-audit-max-discount']
+      .forEach(id => { document.getElementById(id).value = ''; });
+    syncTransactionAuditPeriod();
+    loadTransactionAudit();
+  });
+  document.querySelectorAll('[data-audit-sort]').forEach(button => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.auditSort;
+      transactionAuditSort = transactionAuditSort.key === key
+        ? { key, direction: transactionAuditSort.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: ['locationName', 'orderReference'].includes(key) ? 'asc' : 'desc' };
+      renderTransactionAuditTable();
+    });
+  });
 
   document.getElementById('location-select').addEventListener('change', updateLocationFields);
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => {

@@ -2229,6 +2229,70 @@ test('accepts MercadoPago files without a structural reference and avoids duplic
   assert.deepEqual(afterReplacement.files.mercadopago.latest.replacementEffects[0].range, { from: '2026-08-06', to: '2026-08-06' });
 });
 
+test('audits transactions with date, amount and discount filters and complete order details', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-31' });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Precio Base', 'Costo', 'Activo', 'Jerarquías de Producto *'],
+    ['P1', 'Café', 4500, 1000, 1, 'AB.1'],
+    ['P2', 'Sándwich', 5000, 1200, 1, 'AB.2']
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Precio Base', 'Costo', 'Activo', 'Jerarquías de Extras *'],
+    ['E1', 'Extra shot', 600, 100, 1, 'BA.1']
+  ]), 'Extr');
+  const catalogUpload = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog',
+      contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }),
+      filename: 'catalogo-auditoria.xlsx'
+    }], { 'master-catalog-from': '2026-08-01' })
+  });
+  assert.equal(catalogUpload.status, 200);
+  const rows = [
+    ['ID de orden', 'Fecha de creacion', 'Hora de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio Lista', 'Precio a Pagar', 'Descuento', 'Categorías de Productos/Platos', 'BA.', 'Jerarquía de Extras'],
+    ['audit-1', '2026-08-30', '10:15:00', 10000, -1000, 'P1', 'Café', 2, 6000, 5500, -500, 'Bebidas', '', ''],
+    ['audit-1', '2026-08-30', '10:15:00', 10000, -1000, 'E1', 'Extra shot', 1, 4000, 3500, -500, '', 'BA.1', 'Extras'],
+    ['audit-2', '2026-08-29', '09:00:00', 5000, 0, 'P2', 'Sándwich', 1, 5000, 5000, 0, 'Comida', '', '']
+  ];
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', contents: rows.map(row => row.join('\t')).join('\n'), filename: 'ventas-auditoria.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+  const paymentInspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details',
+    contents: 'FechaCierre\tComanda\tComentario General\tA Pagar\n30-08-26 10:15 a. m.\taudit-1\tservir en el local\t9',
+    filename: 'detalle-pagos-auditoria.csv'
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, paymentInspection)).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/transactions/audit?location=store-1&dateFrom=2026-08-29&dateTo=2026-08-30&minDiscount=5&maxAmount=9500`);
+  assert.equal(response.status, 200);
+  const audit = await response.json();
+  assert.equal(audit.summary.transactions, 1);
+  assert.equal(audit.summary.saleBeforeDiscount, 10000);
+  assert.equal(audit.summary.discountAmount, 1000);
+  assert.equal(audit.summary.saleWithDiscount, 9000);
+  assert.equal(audit.summary.netSale, 7563);
+  assert.equal(audit.summary.discountPercent, 10);
+  assert.equal(audit.summary.units, 3);
+  assert.equal(audit.transactions[0].orderReference, 'audit-1');
+  assert.equal(audit.transactions[0].time, '10:15');
+  assert.equal(audit.transactions[0].modeLabel, 'Servir en el local');
+  assert.equal(audit.transactions[0].lines.length, 2);
+  assert.deepEqual(audit.transactions[0].lines.map(line => line.type), ['Producto', 'Extra']);
+  assert.deepEqual(audit.transactions[0].lines.map(line => line.listPrice), [4500, 600]);
+  assert.deepEqual(audit.transactions[0].lines.map(line => line.reportedSale), [5500, 3500]);
+  assert.deepEqual(audit.transactions[0].lines.map(line => line.reportedDiscount), [-500, -500]);
+  assert.deepEqual(audit.transactions[0].lines.map(line => line.grossSale), [5500, 3500]);
+  assert.deepEqual(audit.transactions[0].lines.map(line => line.allocation), ['reported', 'reported']);
+  assert.equal(audit.transactions[0].lines.reduce((sum, line) => sum + line.netSale, 0), audit.transactions[0].netSale);
+
+  const invalid = await fetch(`${baseUrl}/api/transactions/audit?location=store-1&dateFrom=2026-08-30&dateTo=2026-08-29`);
+  assert.equal(invalid.status, 400);
+});
+
 test('builds the sales dashboard and identifies recurring MercadoPago customers by card key', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
   const salesHeader = ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'Costo', 'AB.', 'Categorías de Productos/Platos'];

@@ -33,6 +33,15 @@
         </svg>
         <span class="nav-text">Análisis y Estadísticas</span>
       </a>
+      <a href="#" class="nav-link" data-view="transaction-audit">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 3h11v18H5z" />
+          <path d="M8 7h5M8 11h5M8 15h3" />
+          <circle cx="17" cy="16" r="3" />
+          <path d="m19.2 18.2 2.3 2.3" />
+        </svg>
+        <span class="nav-text">Auditoría Transacciones</span>
+      </a>
       <a href="#" class="nav-link" data-view="sales-ingredients">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M12 3c4 3 6 6 6 10a6 6 0 0 1-12 0c0-4 2-7 6-10Z" />
@@ -148,6 +157,87 @@
       <div id="findings-summary" class="findings-summary"></div>
       <div id="findings-context" class="findings-context"></div>
       <div id="findings-report" class="findings-report"></div>
+    </section>
+
+    <section id="transaction-audit-workspace" class="transaction-audit-workspace" style="display:none;">
+      <div class="transaction-audit-heading">
+        <div>
+          <div class="panel-eyebrow">Auditoría comercial</div>
+          <h2>Auditoría de transacciones</h2>
+          <p class="panel-description">Revisa ventas, descuentos y unidades por pedido. Los montos antes y después de descuentos incluyen IVA; la venta neta lo excluye. Selecciona una fila para consultar su detalle completo.</p>
+        </div>
+      </div>
+
+      <form id="transaction-audit-filters" class="transaction-audit-filters">
+        <label for="transaction-audit-location">Cafetería
+          <select id="transaction-audit-location"><option value="all">Todas las cafeterías</option></select>
+        </label>
+        <label for="transaction-audit-period">Período
+          <select id="transaction-audit-period">
+            <option value="today">Hoy</option>
+            <option value="yesterday">Ayer</option>
+            <option value="current-week">Esta semana</option>
+            <option value="previous-week">Semana anterior</option>
+            <option value="current-month">Mes actual</option>
+            <option value="last-30" selected>Últimos 30 días</option>
+            <option value="last-60">Últimos 60 días</option>
+            <option value="custom">Rango de fechas</option>
+          </select>
+        </label>
+        <div id="transaction-audit-custom-dates" class="transaction-audit-custom-dates" hidden>
+          <label for="transaction-audit-from">Desde
+            <input id="transaction-audit-from" type="date" />
+          </label>
+          <label for="transaction-audit-to">Hasta
+            <input id="transaction-audit-to" type="date" />
+          </label>
+        </div>
+        <fieldset class="transaction-audit-range">
+          <legend>Monto venta con descuento</legend>
+          <label for="transaction-audit-min-amount">Mínimo
+            <input id="transaction-audit-min-amount" type="number" min="0" step="1" placeholder="Sin mínimo" />
+          </label>
+          <label for="transaction-audit-max-amount">Máximo
+            <input id="transaction-audit-max-amount" type="number" min="0" step="1" placeholder="Sin máximo" />
+          </label>
+        </fieldset>
+        <fieldset class="transaction-audit-range">
+          <legend>Descuento</legend>
+          <label for="transaction-audit-min-discount">Mínimo %
+            <input id="transaction-audit-min-discount" type="number" min="0" step="0.1" placeholder="0" />
+          </label>
+          <label for="transaction-audit-max-discount">Máximo %
+            <input id="transaction-audit-max-discount" type="number" min="0" step="0.1" placeholder="Sin máximo" />
+          </label>
+        </fieldset>
+        <div class="transaction-audit-actions">
+          <button class="primary" type="submit">Buscar transacciones</button>
+          <button id="transaction-audit-clear" class="icon-button" type="button">Limpiar filtros</button>
+        </div>
+      </form>
+
+      <div id="transaction-audit-status" class="form-status" aria-live="polite"></div>
+      <div id="transaction-audit-summary" class="transaction-audit-summary"></div>
+      <section class="panel transaction-audit-results">
+        <div class="transaction-audit-table-wrap">
+          <table class="transaction-audit-table">
+            <thead>
+              <tr>
+                <th><button type="button" data-audit-sort="locationName">Cafetería</button></th>
+                <th><button type="button" data-audit-sort="date">Fecha</button></th>
+                <th><button type="button" data-audit-sort="time">Hora</button></th>
+                <th><button type="button" data-audit-sort="saleBeforeDiscount">Venta antes de descuentos</button></th>
+                <th><button type="button" data-audit-sort="discountPercent">Descuento</button></th>
+                <th><button type="button" data-audit-sort="saleWithDiscount">Venta con descuentos</button></th>
+                <th><button type="button" data-audit-sort="netSale">Venta neta</button></th>
+                <th><button type="button" data-audit-sort="units">Unidades</button></th>
+                <th><button type="button" data-audit-sort="orderReference">Pedido</button></th>
+              </tr>
+            </thead>
+            <tbody id="transaction-audit-body"></tbody>
+          </table>
+        </div>
+      </section>
     </section>
 
     <section id="sales-workspace" class="sales-workspace" style="display:none;">
@@ -809,10 +899,10 @@
           <label for="product-analysis-hierarchy">Jerarquía de producto
             <select id="product-analysis-hierarchy"><option value="all">Todas las jerarquías</option></select>
           </label>
-          <label for="product-analysis-date-from">Desde
+          <label id="product-analysis-date-from-field" for="product-analysis-date-from" hidden>Desde
             <input id="product-analysis-date-from" type="date" disabled />
           </label>
-          <label for="product-analysis-date-to">Hasta
+          <label id="product-analysis-date-to-field" for="product-analysis-date-to" hidden>Hasta
             <input id="product-analysis-date-to" type="date" disabled />
           </label>
         </div>
