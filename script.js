@@ -4243,6 +4243,107 @@ function exportIngredientsReport() {
   }
 }
 
+function ingredientYieldExceptions() {
+  if (!ingredientsViewState) return [];
+  return filteredIngredientItems().flatMap(ingredient => ingredient.products.flatMap(product => {
+    const yieldRate = Number(product.yieldRate);
+    if (!Number.isFinite(yieldRate) || Math.abs(yieldRate - 100) < 0.0001) return [];
+    const effectiveRecipeQuantity = yieldRate > 0
+      ? product.recipeQuantity / (yieldRate / 100)
+      : product.recipeQuantity;
+    return [{
+      ingredientCode: ingredient.code,
+      ingredientName: ingredient.name,
+      productCode: product.code,
+      productName: product.name,
+      recipeQuantity: product.recipeQuantity,
+      recipeUnit: product.recipeUnit,
+      yieldRate,
+      effectiveRecipeQuantity,
+      periodProductQuantity: product.periodProductQuantity,
+      periodIngredientQuantity: product.periodIngredientQuantity,
+      periodIngredientUnit: product.periodIngredientUnit
+    }];
+  })).sort((left, right) => left.productName.localeCompare(right.productName, 'es')
+    || left.ingredientName.localeCompare(right.ingredientName, 'es'));
+}
+
+function exportIngredientYieldsReport() {
+  const status = document.getElementById('ingredients-status');
+  const rows = ingredientYieldExceptions();
+  if (!rows.length) {
+    return setStatus(status, 'No hay recetas con ingredientes cuyo rendimiento sea distinto de 100%.', 'muted');
+  }
+  if (!window.XLSX) return setStatus(status, 'No fue posible cargar el generador de archivos Excel.', 'error');
+  try {
+    const data = ingredientsViewState;
+    const products = new Map();
+    for (const row of rows) {
+      const current = products.get(row.productCode) || {
+        code: row.productCode,
+        name: row.productName,
+        periodProductQuantity: row.periodProductQuantity,
+        ingredients: []
+      };
+      current.ingredients.push(row);
+      products.set(row.productCode, current);
+    }
+    const productRows = [...products.values()]
+      .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+      .map(product => [
+        product.code,
+        product.name,
+        product.ingredients.length,
+        Math.min(...product.ingredients.map(item => item.yieldRate)),
+        product.ingredients.map(item => `${item.ingredientCode} ${item.ingredientName} (${item.yieldRate}%)`).join(' · '),
+        product.periodProductQuantity
+      ]);
+    const detailHeaders = [
+      'Código producto', 'Producto', 'Código ingrediente', 'Ingrediente', 'Cantidad receta', 'Unidad receta',
+      'Rendimiento %', 'Cantidad efectiva por producto', 'Productos vendidos período',
+      'Consumo ingrediente período', 'Unidad consumo período'
+    ];
+    const detailRows = rows.map(row => [
+      row.productCode, row.productName, row.ingredientCode, row.ingredientName,
+      row.recipeQuantity, row.recipeUnit, row.yieldRate, row.effectiveRecipeQuantity,
+      row.periodProductQuantity, row.periodIngredientQuantity, row.periodIngredientUnit
+    ]);
+    const information = XLSX.utils.aoa_to_sheet([
+      ['Reporte', 'Productos con ingredientes de rendimiento distinto de 100%'],
+      ['Ubicación', data.scope.label],
+      ['Fecha inicial', data.period.from],
+      ['Fecha final', data.period.to],
+      ['Proveedor', document.getElementById('ingredients-supplier-filter').selectedOptions[0]?.textContent || 'Todos los proveedores'],
+      ['Búsqueda', document.getElementById('ingredients-search').value.trim() || 'Todos'],
+      ['Solo con variación de costo', document.getElementById('ingredients-only-changed').checked ? 'Sí' : 'No'],
+      ['Productos incluidos', productRows.length],
+      ['Líneas de receta incluidas', detailRows.length],
+      ['Criterio', 'Tasa Rendimiento <> 100%'],
+      ['Exportado', new Date().toLocaleString('es-CL')]
+    ]);
+    const productHeaders = [
+      'Código producto', 'Producto', 'Ingredientes con rendimiento <> 100%', 'Rendimiento mínimo %',
+      'Ingredientes y rendimientos', 'Productos vendidos período'
+    ];
+    const productSheet = XLSX.utils.aoa_to_sheet([productHeaders, ...productRows]);
+    productSheet['!autofilter'] = { ref: `A1:F${productRows.length + 1}` };
+    productSheet['!cols'] = [{ wch: 18 }, { wch: 44 }, { wch: 24 }, { wch: 22 }, { wch: 80 }, { wch: 24 }];
+    const detailSheet = XLSX.utils.aoa_to_sheet([detailHeaders, ...detailRows]);
+    detailSheet['!autofilter'] = { ref: `A1:K${detailRows.length + 1}` };
+    detailSheet['!cols'] = detailHeaders.map((header, index) => ({
+      wch: [1, 3].includes(index) ? 44 : Math.max(14, Math.min(30, header.length + 2))
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, information, 'Información');
+    XLSX.utils.book_append_sheet(workbook, productSheet, 'Productos');
+    XLSX.utils.book_append_sheet(workbook, detailSheet, 'Detalle rendimientos');
+    writeConfiguredExcelWorkbook(workbook, `rendimiento-ingredientes-no-100-${data.period.from}-${data.period.to}.xlsx`);
+    setStatus(status, `Reporte exportado: ${productRows.length} producto(s) y ${detailRows.length} ingrediente(s) con rendimiento distinto de 100%.`, 'success');
+  } catch (error) {
+    setStatus(status, `No fue posible exportar el reporte de rendimientos: ${error.message}`, 'error');
+  }
+}
+
 function renderIngredientsView() {
   const body = document.getElementById('ingredients-table-body');
   const summary = document.getElementById('ingredients-summary');
@@ -4253,11 +4354,13 @@ function renderIngredientsView() {
     ranking.replaceChildren();
     document.getElementById('print-ingredients-report').disabled = true;
     document.getElementById('export-ingredients-report').disabled = true;
+    document.getElementById('export-ingredient-yields-report').disabled = true;
     return;
   }
   const items = filteredIngredientItems();
   document.getElementById('print-ingredients-report').disabled = items.length === 0;
   document.getElementById('export-ingredients-report').disabled = items.length === 0;
+  document.getElementById('export-ingredient-yields-report').disabled = ingredientYieldExceptions().length === 0;
   summary.replaceChildren(...[
     `${items.length} de ${ingredientsViewState.summary.ingredientCount} ingredientes`,
     `${items.filter(item => item.usageQuantity > 0).length} con consumo`,
@@ -8296,6 +8399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('refresh-ingredients').addEventListener('click', loadIngredientsView);
   document.getElementById('print-ingredients-report').addEventListener('click', printIngredientsReport);
   document.getElementById('export-ingredients-report').addEventListener('click', exportIngredientsReport);
+  document.getElementById('export-ingredient-yields-report').addEventListener('click', exportIngredientYieldsReport);
   document.querySelector('.ingredients-table thead').addEventListener('click', event => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;

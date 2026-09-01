@@ -777,6 +777,78 @@ test('organizes products by hierarchy and calculates rolling sales by cafeteria'
   assert.equal(comparison.changes[0].after.price, 3300);
 });
 
+test('resolves missing product recipes through dated, latest, and older masters', async t => {
+  const baseUrl = await startTestServer(t);
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'ce', 'ub'],
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['P1', 'Producto Fecha', 10, 'UN'],
+    ['P2', 'Producto Reciente', 10, 'UN'],
+    ['P3', 'Producto Anterior', 10, 'UN']
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['pl', 'np', 'ce', 'ub'],
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['I_DATE', 'Ingrediente Fecha', 1, 'UN'],
+    ['I_LATEST', 'Ingrediente Reciente', 1, 'UN'],
+    ['I_OLDER', 'Ingrediente Anterior', 1, 'UN'],
+    ['I_WRONG', 'Ingrediente que no debe reemplazar la receta fechada', 1, 'UN']
+  ]), 'Ingr');
+  assert.equal((await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog',
+      contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }),
+      filename: 'catalogo-recetas-fallback.xlsx'
+    }], { 'master-catalog-from': '2026-06-01' })
+  })).status, 200);
+
+  const recipeFile = rows => [
+    ['Id Producto', 'Nombre Producto*', 'Id Ingrediente', 'Nombre Ingrediente*', 'Cantidad Ingrediente', 'Unidad Medida', 'Tasa Rendimiento'],
+    ...rows
+  ].map(row => row.join('\t')).join('\n');
+  for (const [validFrom, filename, rows] of [[
+    '2026-08-01', 'recetas-anteriores.txt', [
+      ['P1', 'Producto Fecha', 'I_OLDER', 'Ingrediente Anterior', 1, 'UN', 91],
+      ['P3', 'Producto Anterior', 'I_OLDER', 'Ingrediente Anterior', 1, 'UN', 93]
+    ]
+  ], [
+    '2026-08-05', 'recetas-fecha.txt', [
+      ['P1', 'Producto Fecha', 'I_DATE', 'Ingrediente Fecha', 1, 'UN', 95]
+    ]
+  ], [
+    '2026-08-10', 'recetas-recientes.txt', [
+      ['P1', 'Producto Fecha', 'I_WRONG', 'Ingrediente que no debe reemplazar la receta fechada', 1, 'UN', 80],
+      ['P2', 'Producto Reciente', 'I_LATEST', 'Ingrediente Reciente', 1, 'UN', 97]
+    ]
+  ]]) {
+    assert.equal((await fetch(`${baseUrl}/upload/master`, {
+      method: 'POST',
+      body: fileForm([{
+        field: 'master-recipes', contents: recipeFile(rows), filename
+      }], { 'master-recipes-from': validFrom })
+    })).status, 200);
+  }
+
+  const productsByIngredient = payload => Object.fromEntries(payload.items.map(item => [
+    item.code, item.products.map(product => `${product.code}:${product.yieldRate}`).sort()
+  ]));
+  const dated = await fetch(`${baseUrl}/api/ingredients?dateFrom=2026-08-01&dateTo=2026-08-06`).then(response => response.json());
+  const datedProducts = productsByIngredient(dated);
+  assert.deepEqual(datedProducts.I_DATE, ['P1:95']);
+  assert.deepEqual(datedProducts.I_LATEST, ['P2:97']);
+  assert.deepEqual(datedProducts.I_OLDER, ['P3:93']);
+  assert.deepEqual(datedProducts.I_WRONG, []);
+
+  const beforeAllRecipes = await fetch(`${baseUrl}/api/ingredients?dateFrom=2026-06-01&dateTo=2026-07-01`).then(response => response.json());
+  const latestProducts = productsByIngredient(beforeAllRecipes);
+  assert.deepEqual(latestProducts.I_WRONG, ['P1:80']);
+  assert.deepEqual(latestProducts.I_LATEST, ['P2:97']);
+  assert.deepEqual(latestProducts.I_OLDER, ['P3:93']);
+  assert.deepEqual(latestProducts.I_DATE, []);
+});
+
 test('builds ingredient costs, recipe usage, suppliers, and cost variation for a selected period', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
   const catalog = XLSX.utils.book_new();
@@ -1843,7 +1915,7 @@ test('processes marketing and employee consumption into product and recipe ingre
   const recipeUpload = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
     body: fileForm([{ field: 'master-recipes', contents: recipeRows.map(row => row.join('\t')).join('\n'), filename: 'recetas.txt' }], {
-      'master-recipes-from': '2026-08-01'
+      'master-recipes-from': '2026-08-06'
     })
   });
   assert.equal(recipeUpload.status, 200);
@@ -1865,7 +1937,7 @@ test('processes marketing and employee consumption into product and recipe ingre
       field: 'master-catalog',
       contents: XLSX.write(catalogWorkbook, { type: 'buffer', bookType: 'xlsx' }),
       filename: 'catalogo.xlsx'
-    }], { 'master-catalog-from': '2026-08-01' })
+    }], { 'master-catalog-from': '2026-08-06' })
   });
   assert.equal(catalogUpload.status, 200);
 
@@ -1929,8 +2001,28 @@ test('processes marketing and employee consumption into product and recipe ingre
   assert.equal(data.report.items[0].unitCost, 4);
   assert.equal(data.report.items[0].totalCost, 16.5);
   assert.equal(data.report.totalCost, 16.5);
+  assert.equal(data.masterSources.recipes.validFrom, '2026-08-06');
+  assert.equal(data.masterSources.catalog.validFrom, '2026-08-06');
 
-  const marketingSummaryResponse = await fetch(`${baseUrl}/api/inventory/consumption-summary?location=store-1&field=marketing&dateFrom=2026-08-04&dateTo=2026-08-05`);
+  const customSelectionResponse = await fetch(`${baseUrl}/api/inventory/process`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'store-1',
+      movementDateFrom: '2026-08-04',
+      movementDateTo: '2026-08-05',
+      initialInventoryDate: '2026-08-04',
+      initialInventoryBasis: 'initial',
+      finalInventoryDate: '2026-08-06',
+      finalInventoryBasis: 'initial'
+    })
+  });
+  assert.equal(customSelectionResponse.status, 200);
+  const customSelection = await customSelectionResponse.json();
+  assert.equal(customSelection.consumption.employees.ingredients.error, undefined);
+  assert.equal(customSelection.report.items[0].employeeConsumption, 1.25);
+  assert.equal(customSelection.report.items[0].marketingConsumption, 2.875);
+
+  const marketingSummaryResponse = await fetch(`${baseUrl}/api/inventory/consumption-summary?location=store-1&field=marketing&dateFrom=2026-08-04&dateTo=2026-08-06`);
   assert.equal(marketingSummaryResponse.status, 200);
   const marketingSummary = await marketingSummaryResponse.json();
   assert.equal(marketingSummary.summary.products.totalQuantity, 4);

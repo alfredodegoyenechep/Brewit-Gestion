@@ -2752,19 +2752,56 @@ function createApp(options = {}) {
       || String(right.week || '').localeCompare(String(left.week || '')))[0] || null;
   }
 
-  function latestMasterFile(field, effectiveDate) {
+  function masterFiles(field) {
     const index = readJson(path.join(mastersRoot, 'masters.json'), {});
     const candidates = [];
     for (const [version, group] of Object.entries(index)) {
       const record = group[field];
-      if (!record || !record.name || !isValidDate(record.validFrom) || record.validFrom > effectiveDate) continue;
+      if (!record || !record.name || !isValidDate(record.validFrom)) continue;
       const filePath = path.resolve(mastersRoot, record.name);
       if (path.dirname(filePath) !== path.resolve(mastersRoot) || !fs.existsSync(filePath)) continue;
       candidates.push({ ...record, version, filePath });
     }
     return candidates.sort((left, right) =>
       right.validFrom.localeCompare(left.validFrom)
-      || String(right.savedAt || right.version).localeCompare(String(left.savedAt || left.version)))[0] || null;
+      || String(right.savedAt || right.version).localeCompare(String(left.savedAt || left.version)));
+  }
+
+  function latestMasterFile(field, effectiveDate) {
+    return masterFiles(field).find(record => record.validFrom <= effectiveDate) || null;
+  }
+
+  function resolveRecipes(effectiveDate) {
+    const allMasters = masterFiles('master-recipes');
+    const datedMaster = allMasters.find(record => record.validFrom <= effectiveDate) || null;
+    const orderedMasters = [...new Map([
+      datedMaster,
+      allMasters[0],
+      ...allMasters
+    ].filter(Boolean).map(record => [`${record.version}:${record.name}`, record])).values()];
+    const recipes = new Map();
+    const sources = [];
+    const errors = [];
+    for (const master of orderedMasters) {
+      try {
+        const parsed = parseRecipes(master.filePath);
+        let contributedProducts = 0;
+        for (const [productCode, lines] of parsed) {
+          if (recipes.has(productCode)) continue;
+          recipes.set(productCode, lines);
+          contributedProducts += 1;
+        }
+        sources.push({ master, contributedProducts });
+      } catch (error) {
+        errors.push(`${master.originalName || master.name}: ${error.message}`);
+      }
+    }
+    return {
+      recipes,
+      primary: sources[0]?.master || orderedMasters[0] || null,
+      sources,
+      errors
+    };
   }
 
   function salesHistory(locationId, additionalExcludedRanges = []) {
@@ -4512,8 +4549,9 @@ function createApp(options = {}) {
     const source = buildProductAnalyticsSource(requestedLocation);
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
     const hierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
-    const recipesMaster = latestMasterFile('master-recipes', dateTo);
-    if (!catalogMaster || !hierarchyMaster || !recipesMaster) {
+    const recipeResolution = resolveRecipes(dateTo);
+    const recipesMaster = recipeResolution.primary;
+    if (!catalogMaster || !hierarchyMaster || !recipesMaster || !recipeResolution.recipes.size) {
       const error = new Error('Se requieren los maestros vigentes de productos, jerarquías y recetas para construir el análisis.');
       error.status = 404;
       throw error;
@@ -4521,7 +4559,7 @@ function createApp(options = {}) {
     const catalogProducts = parseProductCatalog(catalogMaster.filePath);
     const analysisCatalog = parseSalesAnalysisCatalog(catalogMaster.filePath);
     const fullCatalog = parseIngredientCatalog(catalogMaster.filePath);
-    const recipes = parseRecipes(recipesMaster.filePath);
+    const recipes = recipeResolution.recipes;
     const hierarchy = parseProductHierarchies(hierarchyMaster.filePath);
     const hierarchyAncestors = id => {
       const ids = [];
@@ -4802,8 +4840,9 @@ function createApp(options = {}) {
       throw error;
     }
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
-    const recipesMaster = latestMasterFile('master-recipes', dateTo);
-    if (!catalogMaster || !recipesMaster) {
+    const recipeResolution = resolveRecipes(dateTo);
+    const recipesMaster = recipeResolution.primary;
+    if (!catalogMaster || !recipesMaster || !recipeResolution.recipes.size) {
       const error = new Error('Se requiere un maestro de ingredientes y un maestro de recetas vigentes para el período.');
       error.status = 404;
       throw error;
@@ -4811,7 +4850,7 @@ function createApp(options = {}) {
     const ingredientCatalog = parseIngredientsCatalog(catalogMaster.filePath);
     const fullCatalog = parseIngredientCatalog(catalogMaster.filePath);
     const products = new Map(parseProductCatalog(catalogMaster.filePath).map(product => [product.code, product]));
-    const recipes = parseRecipes(recipesMaster.filePath);
+    const recipes = recipeResolution.recipes;
     const usedBy = new Map();
     for (const [productCode, lines] of recipes) {
       for (const line of lines) {
@@ -4999,8 +5038,9 @@ function createApp(options = {}) {
       throw error;
     }
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
-    const recipesMaster = latestMasterFile('master-recipes', dateTo);
-    if (!catalogMaster || !recipesMaster) {
+    const recipeResolution = resolveRecipes(dateTo);
+    const recipesMaster = recipeResolution.primary;
+    if (!catalogMaster || !recipesMaster || !recipeResolution.recipes.size) {
       const error = new Error('Se requiere el maestro de productos e ingredientes y el maestro de recetas vigentes para el período.');
       error.status = 404;
       throw error;
@@ -5009,7 +5049,7 @@ function createApp(options = {}) {
     const extrasHierarchyMaster = latestMasterFile('extras-hierarchy', dateTo);
     const catalog = parseSalesAnalysisCatalog(catalogMaster.filePath);
     const costCatalog = parseIngredientCatalog(catalogMaster.filePath);
-    const recipes = parseRecipes(recipesMaster.filePath);
+    const recipes = recipeResolution.recipes;
     const recipesByProduct = new Map([...recipes].map(([code, lines]) => [code.toUpperCase(), lines]));
     const ingredientHierarchies = ingredientHierarchyMaster
       ? parseNamedHierarchies(ingredientHierarchyMaster.filePath, ['Nombre Jerarquía *', 'Nombre Jerarquia *', 'Nombre Jerarquía Producto *'])
@@ -5440,9 +5480,10 @@ function createApp(options = {}) {
     const stored = latestWeeklyFile(location.id, field);
     if (!stored) return res.status(404).json({ error: `No hay un archivo de ${labels[field]} disponible.` });
     try {
-      const recipeMaster = latestMasterFile('master-recipes', req.query.dateTo);
+      const recipeResolution = resolveRecipes(req.query.dateTo);
+      const recipeMaster = recipeResolution.primary;
       const catalogMaster = latestMasterFile('master-catalog', req.query.dateTo);
-      if (!recipeMaster) throw new Error('No hay un maestro de recetas vigente para la fecha final seleccionada.');
+      if (!recipeMaster || !recipeResolution.recipes.size) throw new Error('No hay un maestro de recetas disponible.');
       if (!catalogMaster) throw new Error('No hay un maestro de productos / ingredientes / extras vigente para la fecha final seleccionada.');
       const catalog = parseIngredientCatalog(catalogMaster.filePath);
       const costResolver = buildCostResolver(req.query.dateTo, [location.id]);
@@ -5451,7 +5492,7 @@ function createApp(options = {}) {
         catalog,
         costResolver
       );
-      const ingredients = buildIngredientConsumption(products.products, parseRecipes(recipeMaster.filePath), catalog, costResolver);
+      const ingredients = buildIngredientConsumption(products.products, recipeResolution.recipes, catalog, costResolver);
       const { filePath, ...source } = stored;
       return res.json({
         location: publicLocation(location),
@@ -5473,15 +5514,28 @@ function createApp(options = {}) {
     try {
       const movementDateFrom = req.body?.movementDateFrom || req.body?.dateFrom;
       const movementDateTo = req.body?.movementDateTo || req.body?.dateTo;
-      const recipeMaster = latestMasterFile('master-recipes', movementDateTo);
-      const catalogMaster = latestMasterFile('master-catalog', movementDateTo);
+      const parsed = mergedKardexData(location.id, 'kardex');
+      const hasCustomSelection = req.body?.initialInventoryDate || req.body?.finalInventoryDate;
+      const selection = hasCustomSelection ? {
+        initialDate: req.body?.initialInventoryDate,
+        initialBasis: req.body?.initialInventoryBasis,
+        finalDate: req.body?.finalInventoryDate,
+        finalBasis: req.body?.finalInventoryBasis
+      } : null;
+      const balanceDate = selection?.finalDate
+        || parsed.groups.find(group => group.date > movementDateTo)?.date
+        || movementDateTo;
+      const recipeResolution = resolveRecipes(balanceDate);
+      const recipeMaster = recipeResolution.primary;
+      const catalogMaster = latestMasterFile('master-catalog', balanceDate);
       let recipes = null;
       let ingredientCatalog = null;
       let catalogAssignments = null;
       const masterErrors = [];
       try {
-        if (!recipeMaster) throw new Error('No recipe master is valid for the selected final date.');
-        recipes = parseRecipes(recipeMaster.filePath);
+        if (!recipeMaster || !recipeResolution.recipes.size) throw new Error('No recipe master is available.');
+        recipes = recipeResolution.recipes;
+        masterErrors.push(...recipeResolution.errors);
       } catch (error) {
         masterErrors.push(error.message);
       }
@@ -5493,7 +5547,7 @@ function createApp(options = {}) {
         masterErrors.push(error.message);
       }
       const masterError = masterErrors.join(' ');
-      const costResolver = buildCostResolver(movementDateTo, [location.id]);
+      const costResolver = buildCostResolver(balanceDate, [location.id]);
       const consumption = {};
       for (const [field, label] of [['marketing', 'Consumo de marketing'], ['employees', 'Consumo de colaboradores']]) {
         const stored = latestWeeklyFile(location.id, field);
@@ -5535,14 +5589,6 @@ function createApp(options = {}) {
           waste = { label: 'Merma', available: true, error: error.message };
         }
       }
-      const parsed = mergedKardexData(location.id, 'kardex');
-      const hasCustomSelection = req.body?.initialInventoryDate || req.body?.finalInventoryDate;
-      const selection = hasCustomSelection ? {
-        initialDate: req.body?.initialInventoryDate,
-        initialBasis: req.body?.initialInventoryBasis,
-        finalDate: req.body?.finalInventoryDate,
-        finalBasis: req.body?.finalInventoryBasis
-      } : null;
       const report = enrichKardexReport(
         buildKardexInventoryReport(parsed, movementDateFrom, movementDateTo, selection),
         consumption,
@@ -5848,11 +5894,12 @@ function createApp(options = {}) {
       ['dineIn', 'Servir en el local'],
       ['unknown', 'Sin información']
     ];
-    const recipeMaster = latestMasterFile('master-recipes', todayKey);
+    const recipeResolution = resolveRecipes(todayKey);
+    const recipeMaster = recipeResolution.primary;
     const catalogMaster = latestMasterFile('master-catalog', todayKey);
     let recipes = new Map();
     let catalog = new Map();
-    try { if (recipeMaster) recipes = parseRecipes(recipeMaster.filePath); } catch { recipes = new Map(); }
+    if (recipeMaster) recipes = recipeResolution.recipes;
     try { if (catalogMaster) catalog = parseIngredientCatalog(catalogMaster.filePath); } catch { catalog = new Map(); }
     const summarize = period => {
       const selectedOrders = orderFacts.filter(fact => fact.date >= period.from && fact.date <= period.to);
@@ -6351,7 +6398,8 @@ function createApp(options = {}) {
     };
 
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
-    const recipeMaster = latestMasterFile('master-recipes', dateTo);
+    const recipeResolution = resolveRecipes(dateTo);
+    const recipeMaster = recipeResolution.primary;
     const hierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
     const findingsCostResolver = buildCostResolver(dateTo, auditedLocations.map(location => location.id));
     masterSource('Catálogo', catalogMaster);
@@ -6525,15 +6573,17 @@ function createApp(options = {}) {
     });
 
     let recipes = new Map();
-    if (!recipeMaster) {
+    if (!recipeMaster || !recipeResolution.recipes.size) {
       add('recipes', {
         severity: 'high', title: 'No hay un maestro de recetas vigente', detail: `No fue posible validar recetas al ${dateTo}.`,
         action: 'Carga un maestro de recetas con vigencia aplicable.'
       });
     } else {
-      try { recipes = parseRecipes(recipeMaster.filePath); } catch (error) {
-        add('recipes', { severity: 'high', title: 'El maestro de recetas no se pudo interpretar', detail: error.message, action: 'Revisa su estructura y encabezados.' });
-      }
+      recipes = recipeResolution.recipes;
+      recipeResolution.errors.forEach(error => add('recipes', {
+        severity: 'high', title: 'Un maestro de recetas no se pudo interpretar', detail: error,
+        action: 'Revisa su estructura y encabezados.'
+      }));
     }
     const recipesByCode = new Map([...recipes].map(([code, lines]) => [String(code).toUpperCase(), lines]));
     const usedIngredientCodes = new Set();

@@ -226,7 +226,31 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     usageQuantity: 55 - index,
     usageUnit: 'UN',
     usageCost: 55 - index,
-    products: []
+    products: index === 0 ? [{
+      code: 'P1',
+      name: 'Producto Uno',
+      recipeQuantity: 1,
+      recipeUnit: 'UN',
+      yieldRate: 97,
+      effectiveQuantity: 1 / 0.97,
+      effectiveUnit: 'UN',
+      periodProductQuantity: 2,
+      periodIngredientQuantity: 2 / 0.97,
+      periodIngredientEffectiveQuantity: 2 / 0.97,
+      periodIngredientUnit: 'UN'
+    }] : index === 1 ? [{
+      code: 'P2',
+      name: 'Producto Rendimiento Completo',
+      recipeQuantity: 1,
+      recipeUnit: 'UN',
+      yieldRate: 100,
+      effectiveQuantity: 1,
+      effectiveUnit: 'UN',
+      periodProductQuantity: 1,
+      periodIngredientQuantity: 1,
+      periodIngredientEffectiveQuantity: 1,
+      periodIngredientUnit: 'UN'
+    }] : []
   }));
   const ingredientRankingRoute = route => route.fulfill({
     contentType: 'application/json',
@@ -249,6 +273,22 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').count(), 20);
   await page.locator('#ingredients-ranking-limit').selectOption('50');
   assert.equal(await page.locator('#ingredients-cost-ranking .ingredient-ranking-row').count(), 50);
+  const yieldReportButton = page.getByRole('button', { name: 'Rend Ingr <> 100%' });
+  assert.equal(await yieldReportButton.isEnabled(), true);
+  const exportButtonBox = await page.locator('#export-ingredients-report').boundingBox();
+  const yieldButtonBox = await yieldReportButton.boundingBox();
+  assert.ok(yieldButtonBox.y > exportButtonBox.y);
+  const yieldDownloadPromise = page.waitForEvent('download');
+  await yieldReportButton.click();
+  const yieldDownload = await yieldDownloadPromise;
+  assert.equal(yieldDownload.suggestedFilename(), 'rendimiento-ingredientes-no-100-2026-07-12-2026-08-10.xlsx');
+  const yieldWorkbook = XLSX.readFile(await yieldDownload.path());
+  assert.deepEqual(yieldWorkbook.SheetNames, ['Información', 'Productos', 'Detalle rendimientos']);
+  assert.equal(yieldWorkbook.Sheets.Productos.A2.v, 'P1');
+  assert.equal(yieldWorkbook.Sheets['Detalle rendimientos'].G2.v, 97);
+  assert.equal(yieldWorkbook.Sheets['Detalle rendimientos'].H2.v, 1 / 0.97);
+  assert.equal(XLSX.utils.sheet_to_json(yieldWorkbook.Sheets['Detalle rendimientos']).length, 1);
+  await page.locator('#ingredients-status').filter({ hasText: /1 producto.*1 ingrediente/i }).waitFor();
   await page.unroute('**/api/ingredients?**', ingredientRankingRoute);
 
   const findingSections = [
