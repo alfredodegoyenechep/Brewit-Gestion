@@ -5,9 +5,13 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const XLSX = require('xlsx');
+const { chromium } = require('playwright-core');
 const { createApp, createToteatAutomation } = require('../server');
 
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME_PATH = [
+  chromium.executablePath(),
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+].find(candidate => fs.existsSync(candidate));
 
 async function startTestServer(t, options = {}) {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-test-'));
@@ -470,6 +474,29 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
     ['download', 'store-1', 'Tienda 1'],
     ['download-payment-details', 'store-1', 'Tienda 1']
   ]);
+});
+
+test('Toteat automation prefers the browser bundled for its Playwright version', async t => {
+  const profilesRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-toteat-browser-'));
+  const bundledExecutable = path.join(profilesRoot, 'chrome-for-testing');
+  fs.writeFileSync(bundledExecutable, 'test executable');
+  t.after(() => fs.rmSync(profilesRoot, { recursive: true, force: true }));
+  let launchOptions = null;
+  const automation = createToteatAutomation(profilesRoot, {
+    chromium: {
+      executablePath: () => bundledExecutable,
+      async launchPersistentContext(_profileRoot, options) {
+        launchOptions = options;
+        throw new Error('launch inspected');
+      }
+    }
+  });
+
+  await assert.rejects(
+    automation.downloadSales('store-browser-selection'),
+    /launch inspected/
+  );
+  assert.equal(launchOptions.executablePath, bundledExecutable);
 });
 
 test('Toteat automation selects the restaurant, uses translated menu fallbacks, and records useful diagnostics', {

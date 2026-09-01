@@ -1707,9 +1707,10 @@ const TOTEAT_PAYMENT_DETAILS_REPORT_URLS = [
   'https://res8.toteat.com/#/reportes/detalle-pagos'
 ];
 
-function chromeExecutablePath() {
+function chromeExecutablePath(playwrightExecutablePath = null) {
   return [
     process.env.BREWIT_CHROME_PATH,
+    playwrightExecutablePath,
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     '/usr/bin/google-chrome',
@@ -1933,6 +1934,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     return attempt.path;
   };
   const pageState = async (page, report) => {
+    if (page.isClosed()) return 'browser_closed';
     if (await expiredSessionDialog(page)) return 'session_expired';
     if (await authenticationRequired(page)) return 'authentication_required';
     if (await findDownloadButton(page, report)) return 'report_ready';
@@ -1984,7 +1986,9 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     try { if (!chromium) ({ chromium } = require('playwright-core')); } catch {
       throw automationError('La automatización de Toteat no está instalada en este servidor.', 'TOTEAT_BROWSER_UNAVAILABLE');
     }
-    const executablePath = factoryOptions.executablePath || chromeExecutablePath();
+    let playwrightExecutablePath = null;
+    try { playwrightExecutablePath = chromium.executablePath?.() || null; } catch {}
+    const executablePath = factoryOptions.executablePath || chromeExecutablePath(playwrightExecutablePath);
     if (!executablePath) {
       throw automationError('No se encontró Google Chrome o Chromium para conectarse a Toteat.', 'TOTEAT_BROWSER_UNAVAILABLE');
     }
@@ -2118,9 +2122,16 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
         buffer: Buffer.concat(chunks)
       };
     } catch (caught) {
-      const error = caught?.code ? caught : automationError(
-        caught?.message || 'La automatización de Toteat falló inesperadamente.', 'TOTEAT_AUTOMATION_FAILED', 502
-      );
+      const browserClosed = /Target page, context or browser has been closed|Target closed/i.test(caught?.message || '');
+      const error = caught?.code ? caught : browserClosed
+        ? automationError(
+          'El navegador usado para descargar desde Toteat se cerró inesperadamente.',
+          'TOTEAT_BROWSER_CLOSED', 502
+        )
+        : automationError(
+          caught?.message || 'La automatización de Toteat falló inesperadamente.', 'TOTEAT_AUTOMATION_FAILED', 502
+        );
+      if (browserClosed) error.state = 'browser_closed';
       if (page) throw await attachDiagnostic(error, page, locationId, error.attempts || attempts, report);
       throw error;
     } finally {
