@@ -182,13 +182,17 @@ function buildProductAnalytics(snapshot, filters) {
   const aggregateProducts = (lines, dates) => {
     const map = new Map();
     for (const item of lines) {
-      const product = productMap.get(item.code) || { code: item.code, name: item.name, hierarchyPath: item.hierarchyPath || [], unitCost: 0, costSource: 'missing' };
+      const product = productMap.get(item.code) || {
+        code: item.code, name: item.name, hierarchyPath: item.hierarchyPath || [], unitCost: 0,
+        costSource: 'missing', costAvailable: false
+      };
       const value = map.get(item.code) || {
         code: item.code, name: product.name || item.name, hierarchyPath: product.hierarchyPath || item.hierarchyPath || [],
         units: 0, netSales: 0, cost: 0, orders: new Set(), dailyUnits: {}, dailySales: {},
         weekdayUnits: Array(7).fill(0), hourUnits: Array(24).fill(0), modes: {}, prices: [],
         listPrice: product.listPrice || 0, unitCost: product.unitCost || 0,
-        costSource: product.costSource || 'missing', costSourceDate: product.costSourceDate || null
+        costSource: product.costSource || 'missing', costSourceDate: product.costSourceDate || null,
+        costAvailable: product.costAvailable !== false && product.costSource !== 'missing'
       };
       value.units += item.quantity;
       value.netSales += item.netSales;
@@ -211,7 +215,7 @@ function buildProductAnalytics(snapshot, filters) {
         ...value,
         orders: value.orders.size,
         averagePrice: value.units ? value.netSales / value.units : 0,
-        margin: value.netSales ? (value.netSales - value.cost) / value.netSales * 100 : null,
+        margin: value.costAvailable && value.netSales ? (value.netSales - value.cost) / value.netSales * 100 : null,
         dailyStatistics: statistics(daily),
         trendPercent: mean(daily) ? regression.slope * Math.max(1, dates.length - 1) / mean(daily) * 100 : 0,
         trendStrength: regression.rSquared
@@ -244,7 +248,9 @@ function buildProductAnalytics(snapshot, filters) {
       units: round(product.units, 2), netSales: round(product.netSales), orderCount: product.orders,
       salesShare: totalNetSales ? round(product.netSales / totalNetSales * 100, 1) : 0,
       unitShare: totalUnits ? round(product.units / totalUnits * 100, 1) : 0,
-      averagePrice: round(product.averagePrice), unitCost: round(product.unitCost), cost: round(product.cost),
+      averagePrice: round(product.averagePrice),
+      unitCost: product.costAvailable ? round(product.unitCost) : null,
+      cost: product.costAvailable ? round(product.cost) : null,
       listPrice: round(product.listPrice),
       marginPercent: product.margin === null ? null : round(product.margin, 1), costSource: product.costSource,
       costSourceDate: product.costSourceDate, salesGrowthPercent: salesGrowth === null ? null : round(salesGrowth, 1),
@@ -656,11 +662,21 @@ function buildProductAnalytics(snapshot, filters) {
   if (pairs[0]?.lift >= 1.5) addFinding({ impact: pairs[0].supportPercent >= 5 ? 'medio' : 'bajo', confidence: pairs[0].orders >= 20 ? 'alta' : 'media', section: 'canasta', title: `${pairs[0].leftName} y ${pairs[0].rightName} aparecen juntos más de lo esperado`, detail: `Lift ${pairs[0].lift} en ${pairs[0].orders} pedidos (${pairs[0].supportPercent}% de soporte).`, evidence: [`Confianza ${pairs[0].confidenceLeftToRightPercent}% / ${pairs[0].confidenceRightToLeftPercent}%`], action: 'Evaluar combo, recomendación cruzada, disposición en menú y capacidad conjunta.' });
   if (priceSensitivity[0]) addFinding({ impact: 'informativo', confidence: priceSensitivity[0].confidence, section: 'precio', title: `Señal de sensibilidad observada en ${priceSensitivity[0].name}`, detail: `Coeficiente log-log ${priceSensitivity[0].observedElasticity}, R² ${priceSensitivity[0].rSquared}, con ${priceSensitivity[0].observations} observaciones. No prueba causalidad.`, evidence: [`Rango de precio ${priceSensitivity[0].priceRangePercent}%`, `${priceSensitivity[0].pricePoints} niveles observados`], action: 'Antes de decidir precios, controlar promociones, mix de canal, día de semana, disponibilidad y cambios simultáneos.' });
   const lowMargin = productRows.filter(item => item.marginPercent !== null && item.marginPercent < 25 && item.netSales >= totalNetSales * 0.005).sort((a, b) => a.marginPercent - b.marginPercent)[0];
-  if (lowMargin) addFinding({ impact: lowMargin.salesShare >= 3 ? 'alto' : 'medio', confidence: lowMargin.costSource === 'purchase' ? 'alta' : 'media', section: 'margen', title: `Margen reducido en ${lowMargin.name}`, detail: `Margen estimado ${lowMargin.marginPercent}% usando costo ${lowMargin.costSource === 'purchase' ? 'de compra vigente' : 'maestro'}.`, evidence: [`Venta neta ${lowMargin.netSales}`, `Costo unitario ${lowMargin.unitCost}`], action: 'Confirmar receta, rendimiento, último costo y precio neto antes de intervenir.' });
+  if (lowMargin) addFinding({
+    impact: lowMargin.salesShare >= 3 ? 'alto' : 'medio',
+    confidence: ['recipe', 'purchase'].includes(lowMargin.costSource) ? 'alta' : 'media',
+    section: 'margen',
+    title: `Margen reducido en ${lowMargin.name}`,
+    detail: `Margen estimado ${lowMargin.marginPercent}% usando ${lowMargin.costSource === 'recipe' ? 'la receta y sus ingredientes valorizados' : lowMargin.costSource === 'purchase' ? 'la compra vigente' : 'el costo directo de respaldo'}.`,
+    evidence: [`Venta neta ${lowMargin.netSales}`, `Costo unitario ${lowMargin.unitCost}`],
+    action: 'Confirmar receta, rendimiento, último costo y precio neto antes de intervenir.'
+  });
   findings.sort((a, b) => ['alto', 'medio', 'bajo', 'informativo'].indexOf(a.impact) - ['alto', 'medio', 'bajo', 'informativo'].indexOf(b.impact));
 
   const recipeCoverage = productRows.length ? productRows.filter(product => (snapshot.recipes[product.code] || []).length).length / productRows.length * 100 : 0;
-  const purchaseCostCoverage = productRows.length ? productRows.filter(product => product.costSource === 'purchase').length / productRows.length * 100 : 0;
+  const purchaseCostCoverage = productRows.length
+    ? productRows.filter(product => product.costSource !== 'missing').length / productRows.length * 100
+    : 0;
   const reportCoverage = {
     orders: currentScopedOrders.length, orderLines: currentLines.length, products: productRows.length, openDays: openDates.length,
     paymentMatchPercent: round(snapshot.coverage.paymentMatchPercent || 0, 1), recipeCoveragePercent: round(recipeCoverage, 1),
@@ -683,7 +699,10 @@ function buildProductAnalytics(snapshot, filters) {
       extraUnits: round(extraUnits, 1),
       orders: currentScopedOrders.length,
       averageTicket: round(currentScopedOrders.length ? orderNetSales / currentScopedOrders.length : 0),
-      cost: round(totalCost), grossMarginPercent: totalNetSales ? round((totalNetSales - totalCost) / totalNetSales * 100, 1) : null,
+      cost: productRows.every(product => product.costSource !== 'missing') ? round(totalCost) : null,
+      grossMarginPercent: totalNetSales && productRows.every(product => product.costSource !== 'missing')
+        ? round((totalNetSales - totalCost) / totalNetSales * 100, 1)
+        : null,
       productCount: productRows.length, anomalyCount: anomalies.length, findingCount: findings.length,
       highImpactCount: findings.filter(item => item.impact === 'alto').length
     },

@@ -2948,14 +2948,18 @@ function formatPurchaseConversion(value) {
 }
 
 function costSourceDescription(item) {
+  if (item?.costSource === 'recipe') {
+    return `Calculado desde receta e ingredientes${item.costSourceDate ? ` · compras hasta ${formatReportDate(item.costSourceDate)}` : ''}`;
+  }
   if (item?.costSource === 'purchase') {
     return `Última compra${item.costSourceDate ? ` · ${formatReportDate(item.costSourceDate)}` : ''}`;
   }
   if (item?.costSource === 'master') return 'Costo del maestro vigente (sin compra anterior comparable)';
-  return 'Sin costo de compra ni costo maestro compatible';
+  return 'No fue posible calcular el costo con receta, compras o maestro disponibles';
 }
 
 function costSourceShort(item) {
+  if (item?.costSource === 'recipe') return 'Receta calculada';
   if (item?.costSource === 'purchase') return `Compra${item.costSourceDate ? ` ${formatReportDate(item.costSourceDate)}` : ''}`;
   if (item?.costSource === 'master') return 'Maestro';
   return 'Sin costo';
@@ -3233,7 +3237,7 @@ function exportRelevantProductsReport() {
     const values = groups.flatMap(group => sortRows(group.products, productsSort).map(product => [
       group.path.join(' › '), product.code, product.name, product.previousPrice,
       product.price, product.netPrice, product.cost,
-      product.costSource === 'purchase' ? 'Última compra' : product.costSource === 'master' ? 'Maestro' : 'Sin costo',
+      product.costSource === 'recipe' ? 'Receta calculada' : product.costSource === 'purchase' ? 'Última compra' : product.costSource === 'master' ? 'Maestro' : 'Sin costo',
       product.costSourceDate,
       product.marginPercent,
       product.averageWeeklyUnits8, product.unitsLast7Days, product.unitsChangePercent
@@ -3885,7 +3889,7 @@ function renderProductAnalysis() {
     ['Detalle Pagos vinculado', formatProductAnalysisPercent(report.coverage.paymentMatchPercent), 'Cobertura para modalidad de consumo'],
     ['Modalidad sin información', formatProductAnalysisPercent(report.coverage.unknownModePercent), 'No se imputa una modalidad cuando el comentario no es concluyente'],
     ['Productos con receta', formatProductAnalysisPercent(report.coverage.recipeCoveragePercent), 'Necesario para análisis de ingredientes'],
-    ['Costo desde compra vigente', formatProductAnalysisPercent(report.coverage.purchaseCostCoveragePercent), 'El resto usa maestro o queda sin costo'],
+    ['Productos con costo calculable', formatProductAnalysisPercent(report.coverage.purchaseCostCoveragePercent), 'Receta calculada; sin receta, compra o costo directo como respaldo'],
     ['Productos aptos para sensibilidad de precio', report.coverage.priceAnalysisEligibleProducts.toLocaleString('es-CL'), 'Exige muestra y variación mínima de precio']
   ]));
 
@@ -4141,7 +4145,7 @@ function printIngredientsReport() {
   ], items.map(item => [
     item.code, item.name, item.supplier, item.unit || '—', formatClp(item.unitCost),
     item.latestPurchaseCost === null ? '—' : formatClp(item.latestPurchaseCost),
-    item.costSource === 'purchase' ? 'Última compra' : item.costSource === 'master' ? 'Maestro' : 'Sin costo',
+    item.costSource === 'recipe' ? 'Receta calculada' : item.costSource === 'purchase' ? 'Última compra' : item.costSource === 'master' ? 'Maestro' : 'Sin costo',
     item.costSourceDate ? formatReportDate(item.costSourceDate) : '—',
     item.costChangePercent === null ? '—' : `${item.costChangePercent >= 0 ? '+' : ''}${item.costChangePercent.toFixed(1)}%`,
     `${formatProductUnits(item.usageQuantity)} ${item.usageUnit || item.unit}`, formatClp(item.usageCost), item.products.length
@@ -4205,7 +4209,7 @@ function exportIngredientsReport() {
     ];
     const ingredientRows = items.map(item => [
       item.code, item.name, item.supplier, item.unit, item.unitCost, item.latestPurchaseCost,
-      item.costSource === 'purchase' ? 'Última compra' : item.costSource === 'master' ? 'Maestro' : 'Sin costo',
+      item.costSource === 'recipe' ? 'Receta calculada' : item.costSource === 'purchase' ? 'Última compra' : item.costSource === 'master' ? 'Maestro' : 'Sin costo',
       item.costSourceDate,
       item.costChangePercent, item.usageQuantity, item.usageUnit || item.unit, item.usageCost, item.products.length
     ]);
@@ -6785,7 +6789,7 @@ function renderCostReconciliation(data) {
   const comparison = document.createElement('p');
   comparison.textContent = `Productos: ${formatClp(productCost)} · Ingredientes: ${formatClp(ingredientCost)} · Diferencia: ${formatClp(difference)} (${percentage.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%).`;
   const method = document.createElement('p');
-  method.textContent = 'El costo de productos usa el costo unitario del maestro vigente. El costo de ingredientes se recalcula desde cada receta, considerando cantidades, rendimiento y conversiones de unidad. La comparación correcta es entre los costos totales; sumar costos unitarios es solo una referencia y no representa por sí sola el costo consumido.';
+  method.textContent = 'El costo de cada producto se calcula desde su receta con las cantidades, rendimientos y conversiones de unidad. Cada ingrediente usa su última compra disponible y, sólo si no existe, el costo directo del maestro. El costo directo del producto se usa únicamente cuando no hay receta.';
   box.append(title, comparison, method);
 
   const reasons = [];
@@ -6795,7 +6799,7 @@ function renderCostReconciliation(data) {
   if (withoutRecipe.length) reasons.push(`Productos sin receta: ${withoutRecipe.join(', ')}. Su costo aparece en productos, pero no puede descomponerse en ingredientes.`);
   if (withoutCost.length) reasons.push(`Ingredientes sin costo de compra o maestro: ${withoutCost.join(', ')}.`);
   if (withoutConversion.length) reasons.push(`Ingredientes con unidades incompatibles: ${withoutConversion.join(', ')}.`);
-  if (Math.abs(difference) >= 1) reasons.push('La diferencia restante puede deberse a redondeos, tasas de rendimiento o a que productos e ingredientes tienen referencias de compra distintas.');
+  if (Math.abs(difference) >= 1 && !withoutRecipe.length && !withoutCost.length && !withoutConversion.length) reasons.push('Hay una diferencia no conciliada que debe revisarse; los productos con receta completa deberían coincidir con sus ingredientes valorizados.');
   if (reasons.length) {
     const list = document.createElement('ul');
     for (const reason of reasons) {

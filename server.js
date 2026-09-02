@@ -3367,7 +3367,7 @@ function createApp(options = {}) {
     };
   }
 
-  function buildCostResolver(dateTo, locationIds = []) {
+  function buildDirectCostResolver(dateTo, locationIds = []) {
     const cutoffDate = isValidDate(dateTo) ? dateTo : projectionToday();
     const activeLocations = readLocations().locations.filter(location => location.status === 'active');
     const activeStores = activeLocations.filter(location => location.type === 'store');
@@ -3471,6 +3471,127 @@ function createApp(options = {}) {
           fallback: true
         };
       }
+    };
+  }
+
+  function buildCostResolver(dateTo, locationIds = [], options = {}) {
+    const directResolver = buildDirectCostResolver(dateTo, locationIds);
+    const cutoffDate = directResolver.dateTo;
+    let catalog = options.catalog || null;
+    let recipes = options.recipes || null;
+
+    if (!catalog) {
+      try {
+        const catalogMaster = latestMasterFile('master-catalog', cutoffDate);
+        catalog = catalogMaster ? parseIngredientCatalog(catalogMaster.filePath) : new Map();
+      } catch {
+        catalog = new Map();
+      }
+    }
+    if (!recipes) {
+      try {
+        recipes = resolveRecipes(cutoffDate).recipes;
+      } catch {
+        recipes = new Map();
+      }
+    }
+
+    const catalogByCode = new Map([...catalog].map(([code, item]) => [String(code).trim().toUpperCase(), item]));
+    const recipesByCode = new Map([...recipes].map(([code, lines]) => [String(code).trim().toUpperCase(), lines]));
+    const cache = new Map();
+
+    const resolve = (code, targetUnit, suppliedCatalogItem = null, ancestors = new Set()) => {
+      const key = String(code || '').trim().toUpperCase();
+      const catalogItem = suppliedCatalogItem || catalogByCode.get(key) || null;
+      const requestedUnit = targetUnit || catalogItem?.unit || '';
+      const cacheKey = `${key}|${normalizedUnit(requestedUnit)}`;
+      if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+      const recipe = recipesByCode.get(key);
+      if (!recipe?.length) {
+        const direct = directResolver.resolve(key, requestedUnit, catalogItem);
+        cache.set(cacheKey, direct);
+        return direct;
+      }
+      if (ancestors.has(key)) {
+        return {
+          unitCost: 0,
+          source: 'missing',
+          sourceDate: null,
+          fallback: false,
+          reason: 'recipe-cycle'
+        };
+      }
+
+      const nextAncestors = new Set(ancestors);
+      nextAncestors.add(key);
+      const components = [];
+      let recipeCost = 0;
+      for (const line of recipe) {
+        const ingredientKey = String(line.ingredientId || '').trim().toUpperCase();
+        const ingredient = catalogByCode.get(ingredientKey) || null;
+        const component = resolve(ingredientKey, line.unit, ingredient, nextAncestors);
+        const quantity = Number(line.quantity);
+        const yieldFactor = Number(line.yieldRate) > 0 ? Number(line.yieldRate) / 100 : 1;
+        if (!ingredientKey || !Number.isFinite(quantity) || component.source === 'missing'
+          || !Number.isFinite(component.unitCost)) {
+          const missing = {
+            unitCost: 0,
+            source: 'missing',
+            sourceDate: null,
+            fallback: false,
+            reason: component.reason || 'recipe-component-missing',
+            missingComponent: ingredientKey || line.ingredientId || null
+          };
+          cache.set(cacheKey, missing);
+          return missing;
+        }
+        const effectiveQuantity = quantity / yieldFactor;
+        const lineCost = effectiveQuantity * component.unitCost;
+        recipeCost += lineCost;
+        components.push({
+          code: ingredientKey,
+          quantity,
+          effectiveQuantity,
+          unit: line.unit,
+          unitCost: component.unitCost,
+          totalCost: lineCost,
+          costSource: component.source,
+          costSourceDate: component.sourceDate
+        });
+      }
+
+      const baseUnit = catalogItem?.unit || requestedUnit;
+      const convertedCost = unitCostForRecipeUnit({ unitCost: recipeCost, unit: baseUnit }, requestedUnit);
+      if (convertedCost === null) {
+        const missing = {
+          unitCost: 0,
+          source: 'missing',
+          sourceDate: null,
+          fallback: false,
+          reason: 'recipe-unit-conversion'
+        };
+        cache.set(cacheKey, missing);
+        return missing;
+      }
+      const sourceDates = components.map(component => component.costSourceDate).filter(Boolean).sort();
+      const calculated = {
+        unitCost: convertedCost,
+        source: 'recipe',
+        sourceDate: sourceDates.at(-1) || null,
+        fallback: false,
+        recipeCode: key,
+        components
+      };
+      cache.set(cacheKey, calculated);
+      return calculated;
+    };
+
+    return {
+      dateTo: cutoffDate,
+      locationIds: directResolver.locationIds,
+      resolve,
+      resolveDirect: directResolver.resolve
     };
   }
 
@@ -4268,7 +4389,9 @@ function createApp(options = {}) {
           cost,
           costSource: costReference.source,
           costSourceDate: costReference.sourceDate,
-          marginPercent: product.netPrice ? ((product.netPrice - cost) / product.netPrice) * 100 : null
+          marginPercent: costReference.source !== 'missing' && product.netPrice
+            ? ((product.netPrice - cost) / product.netPrice) * 100
+            : null
         };
       });
       const { hierarchyMap, pathFor } = parseProductHierarchies(hierarchyMaster.filePath);
@@ -4585,7 +4708,8 @@ function createApp(options = {}) {
         listPrice: product.price,
         unitCost: cost.unitCost,
         costSource: cost.source,
-        costSourceDate: cost.sourceDate
+        costSourceDate: cost.sourceDate,
+        costAvailable: cost.source !== 'missing'
       };
     });
     const productLookup = new Map(products.map(product => [product.code, product]));
@@ -5128,7 +5252,8 @@ function createApp(options = {}) {
               totalCost,
               unitCost: costReference.unitCost,
               costSource: costReference.source,
-              costSourceDate: costReference.sourceDate
+              costSourceDate: costReference.sourceDate,
+              costAvailable: costReference.source !== 'missing'
             });
           }
           filesRead += 1;
@@ -5140,10 +5265,13 @@ function createApp(options = {}) {
     const productsSold = new Map();
     for (const fact of facts) {
       const key = fact.code.toUpperCase() || normalizeHeader(fact.name);
-      const current = productsSold.get(key) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0 };
+      const current = productsSold.get(key) || {
+        code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0, costAvailable: true
+      };
       current.quantity += fact.quantity;
       current.netSales += fact.netSales;
       current.totalCost += fact.totalCost;
+      current.costAvailable = current.costAvailable && fact.costAvailable;
       productsSold.set(key, current);
     }
     const matchedProductKeys = new Set();
@@ -5182,6 +5310,7 @@ function createApp(options = {}) {
       const productUnits = products.reduce((sum, item) => sum + item.quantity, 0);
       const netSales = products.reduce((sum, item) => sum + item.netSales, 0);
       const totalCost = products.reduce((sum, item) => sum + item.totalCost, 0);
+      const costAvailable = products.every(item => item.costAvailable);
       return {
         ...option,
         type: isIngredient ? 'ingredient' : 'extra',
@@ -5192,7 +5321,8 @@ function createApp(options = {}) {
           ingredientUnit,
           netSales,
           totalCost,
-          contributionMarginPercent: netSales ? (netSales - totalCost) / netSales * 100 : null
+          costAvailable,
+          contributionMarginPercent: costAvailable && netSales ? (netSales - totalCost) / netSales * 100 : null
         },
         shareOfPeriodSales: facts.reduce((sum, fact) => sum + fact.netSales, 0) ? netSales / facts.reduce((sum, fact) => sum + fact.netSales, 0) * 100 : 0
       };
@@ -5201,6 +5331,7 @@ function createApp(options = {}) {
     const periodNetSales = facts.reduce((sum, fact) => sum + fact.netSales, 0);
     const uniqueNetSales = uniqueProducts.reduce((sum, item) => sum + item.netSales, 0);
     const uniqueTotalCost = uniqueProducts.reduce((sum, item) => sum + item.totalCost, 0);
+    const uniqueCostAvailable = uniqueProducts.every(item => item.costAvailable);
     return {
       date: today,
       period: { from: dateFrom, to: dateTo },
@@ -5222,7 +5353,10 @@ function createApp(options = {}) {
         productUnits: uniqueProducts.reduce((sum, item) => sum + item.quantity, 0),
         netSales: uniqueNetSales,
         totalCost: uniqueTotalCost,
-        contributionMarginPercent: uniqueNetSales ? (uniqueNetSales - uniqueTotalCost) / uniqueNetSales * 100 : null,
+        costAvailable: uniqueCostAvailable,
+        contributionMarginPercent: uniqueCostAvailable && uniqueNetSales
+          ? (uniqueNetSales - uniqueTotalCost) / uniqueNetSales * 100
+          : null,
         periodNetSales,
         shareOfPeriodSales: periodNetSales ? uniqueNetSales / periodNetSales * 100 : 0
       },
@@ -6111,6 +6245,7 @@ function createApp(options = {}) {
               unitCost: costReference.unitCost,
               costSource: costReference.source,
               costSourceDate: costReference.sourceDate,
+              costAvailable: costReference.source !== 'missing',
               hierarchy,
               hierarchyPath: resolvedHierarchyPath
             });
@@ -6160,27 +6295,38 @@ function createApp(options = {}) {
         hierarchies.set(fact.hierarchy, (hierarchies.get(fact.hierarchy) || 0) + fact.net);
       });
       const totalHierarchySales = [...hierarchies.values()].reduce((sum, value) => sum + value, 0);
-      const hierarchyRoot = { name: 'Todas las jerarquías', path: [], netSales: 0, totalCost: 0, children: new Map(), products: new Map() };
+      const hierarchyRoot = {
+        name: 'Todas las jerarquías', path: [], netSales: 0, totalCost: 0, costAvailable: true,
+        children: new Map(), products: new Map()
+      };
       const addProductToNode = (node, fact) => {
         const productKey = fact.code || normalizeHeader(fact.name);
-        const product = node.products.get(productKey) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0 };
+        const product = node.products.get(productKey) || {
+          code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0, costAvailable: true
+        };
         product.quantity += fact.quantity;
         product.netSales += fact.net;
         product.totalCost += fact.cost;
+        product.costAvailable = product.costAvailable && fact.costAvailable;
         node.products.set(productKey, product);
       };
       selected.forEach(fact => {
         hierarchyRoot.netSales += fact.net;
         hierarchyRoot.totalCost += fact.cost;
+        hierarchyRoot.costAvailable = hierarchyRoot.costAvailable && fact.costAvailable;
         addProductToNode(hierarchyRoot, fact);
         let node = hierarchyRoot;
         fact.hierarchyPath.forEach((name, index) => {
           if (!node.children.has(name)) {
-            node.children.set(name, { name, path: fact.hierarchyPath.slice(0, index + 1), netSales: 0, totalCost: 0, children: new Map(), products: new Map() });
+            node.children.set(name, {
+              name, path: fact.hierarchyPath.slice(0, index + 1), netSales: 0, totalCost: 0,
+              costAvailable: true, children: new Map(), products: new Map()
+            });
           }
           node = node.children.get(name);
           node.netSales += fact.net;
           node.totalCost += fact.cost;
+          node.costAvailable = node.costAvailable && fact.costAvailable;
           addProductToNode(node, fact);
         });
       });
@@ -6189,7 +6335,7 @@ function createApp(options = {}) {
         path: node.path,
         netSales: node.netSales,
         totalCost: node.totalCost,
-        contributionMarginPercent: node.netSales
+        contributionMarginPercent: node.costAvailable && node.netSales
           ? (node.netSales - node.totalCost) / node.netSales * 100
           : null,
         children: [...node.children.values()]
@@ -6198,7 +6344,7 @@ function createApp(options = {}) {
         products: [...node.products.values()]
           .map(product => ({
             ...product,
-            contributionMarginPercent: product.netSales
+            contributionMarginPercent: product.costAvailable && product.netSales
               ? (product.netSales - product.totalCost) / product.netSales * 100
               : null
           }))
@@ -6429,7 +6575,9 @@ function createApp(options = {}) {
             cost,
             costSource: costReference.source,
             costSourceDate: costReference.sourceDate,
-            marginPercent: product.netPrice ? ((product.netPrice - cost) / product.netPrice) * 100 : null
+            marginPercent: costReference.source !== 'missing' && product.netPrice
+              ? ((product.netPrice - cost) / product.netPrice) * 100
+              : null
           };
         });
         productByCode = new Map(products.map(product => [product.code.toUpperCase(), product]));
@@ -6547,8 +6695,8 @@ function createApp(options = {}) {
       if (product.cost <= 0) add('products', {
         severity: salesQuantityByCode.has(code) ? 'high' : 'medium', title: `Producto activo sin costo: ${product.name}`,
         detail: salesQuantityByCode.has(code)
-          ? 'El producto fue vendido en el período y no tiene costo de compra ni costo maestro aplicable.'
-          : 'No tiene costo de compra ni costo maestro aplicable.',
+          ? 'El producto fue vendido en el período y su receta no permite calcular un costo completo.'
+          : 'Su receta no permite calcular un costo completo y no existe un respaldo aplicable.',
         observed: product.cost, code: product.code, action: 'Confirma el costo o revisa la composición de su receta.'
       });
       if (product.netPrice > 0 && product.cost > product.netPrice) add('products', {

@@ -70,6 +70,17 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     'P1\tProducto Uno\tPAC008\tTapa Vaso Caliente\t1\tUN\t97'
   ]), 'recetas-ui.txt');
   recipeMaster.append('master-recipes-from', '2026-08-01');
+  const recipeCostCatalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(recipeCostCatalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['P1', 'Producto Uno', 500, 'UN'],
+    ['PAC003', 'Vaso Caliente 12 oz', 10, 'UN'],
+    ['PAC008', 'Tapa Vaso Caliente', 5, 'UN']
+  ]), 'Prod');
+  recipeMaster.append('master-catalog', new Blob([
+    XLSX.write(recipeCostCatalog, { type: 'buffer', bookType: 'xlsx' })
+  ]), 'catalogo-ui.xlsx');
+  recipeMaster.append('master-catalog-from', '2026-08-01');
   assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/upload/master`, {
     method: 'POST', body: recipeMaster
   })).status, 200);
@@ -499,9 +510,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#sales-service-mode-status').textContent(), /1 de 1 pedidos.*100,0%/i);
   assert.match(await page.locator('#sales-service-mode-hierarchies').textContent(), /Bebidas.*\$100.*1 pedido/is);
   assert.match(await page.locator('#sales-service-mode-hierarchy-totals').textContent(), /Total jerarquías.*\$0.*\$100.*\$0.*\$100/is);
-  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Vaso.*Vaso Caliente 12 oz.*PAC003.*1 UN.*Costo de compra o maestro no disponible/is);
-  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Tapa.*Tapa Vaso Caliente.*PAC008.*1 UN.*Costo de compra o maestro no disponible/is);
-  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Ahorro total valorizado.*\$0.*2 tipo\(s\) sin costo de compra o maestro/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Vaso.*Vaso Caliente 12 oz.*PAC003.*1 UN.*Costo unitario \$10.*Ahorro \$10/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Tapa.*Tapa Vaso Caliente.*PAC008.*1 UN.*Costo unitario \$5.*Ahorro \$5/is);
+  assert.match(await page.locator('#sales-avoided-cups').textContent(), /Ahorro total valorizado.*\$15/is);
   await page.locator('#sales-service-mode-period').selectOption('custom');
   assert.equal(await page.locator('#sales-service-mode-custom-range').isVisible(), true);
   await page.locator('#sales-service-mode-from').fill('2026-08-09');
@@ -517,7 +528,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#sales-top-products').textContent(), /Producto Uno/);
   await page.getByRole('button', { name: 'Ver detalle de Bebidas' }).click();
   assert.equal(await page.locator('#sales-hierarchy-title').textContent(), 'Productos vendidos');
-  assert.match(await page.locator('#sales-hierarchy-share').textContent(), /Producto Uno.*P1.*1 un\..*Margen -400,?\.?(0)?%.*\$100/s);
+  assert.match(await page.locator('#sales-hierarchy-share').textContent(), /Producto Uno.*P1.*1 un\..*Margen 84,?\.?5%.*\$100/s);
   assert.equal(await page.locator('#sales-hierarchy-share').getAttribute('class'), 'sales-share-list hierarchy-product-list');
   assert.equal(await page.locator('#sales-hierarchy-back').isVisible(), true);
   await page.locator('#sales-hierarchy-back').click();
@@ -637,7 +648,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('heading', { name: 'Ventas por ingredientes' }).waitFor();
   assert.equal(await page.locator('#sales-ingredients-location option').count(), 3);
   assert.equal(await page.getByRole('button', { name: 'Generar reporte' }).isDisabled(), true);
-  await page.locator('#sales-ingredients-status').filter({ hasText: /maestro de productos e ingredientes/i }).waitFor();
+  await page.locator('#sales-ingredients-status').filter({ hasText: /1 archivo\(s\) procesado\(s\)/i }).waitFor();
 
   await page.getByRole('link', { name: 'Compras', exact: true }).click();
   await page.getByRole('heading', { name: 'Historial de compras e insumos' }).waitFor();
@@ -679,6 +690,33 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('heading', { name: 'Proyección de compras' }).waitFor();
   await page.locator('#projection-location-filter').selectOption('store-2');
   await page.locator('#purchase-projection-status').filter({ hasText: /Consumo considerado/i }).waitFor();
+  const projectionFontSizes = await page.locator('#purchase-projection-workspace').evaluate(workspace => {
+    const fontSize = selector => getComputedStyle(workspace.querySelector(selector)).fontSize;
+    return {
+      workspace: getComputedStyle(workspace).fontSize,
+      eyebrow: fontSize('.panel-eyebrow'),
+      heading: fontSize('h2'),
+      description: fontSize('.panel-description'),
+      control: fontSize('.purchase-projection-controls label'),
+      status: fontSize('#purchase-projection-status'),
+      summary: fontSize('#purchase-projection-summary .chip'),
+      action: fontSize('.purchase-projection-actions button'),
+      table: fontSize('.purchase-projection-table'),
+      tableHeader: fontSize('.purchase-projection-table th')
+    };
+  });
+  assert.deepEqual(projectionFontSizes, {
+    workspace: '17px',
+    eyebrow: '12px',
+    heading: '25px',
+    description: '14px',
+    control: '12px',
+    status: '14px',
+    summary: '11px',
+    action: '14.3333px',
+    table: '12px',
+    tableHeader: '11px'
+  });
   assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 1);
   const projectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
   assert.equal(await page.locator('.purchase-projection-table th').nth(4).innerText(), 'Unidad\ninterna');
@@ -872,7 +910,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     buttons.map(button => button.title.replace('Ordenar por ', ''))), [
     'Jerarquía', 'Código', 'Producto', 'Unidad', 'Inventario teórico', 'Costo unitario', 'Origen costo', 'Valorización'
   ]);
-  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /Sin jerarquía.*P1.*Producto Uno.*UN.*10,00.*\$500.*Compra 05 ago 2026.*\$5\.000/s);
+  assert.match(await page.locator('#current-inventory-table tbody').textContent(), /Sin jerarquía.*P1.*Producto Uno.*UN.*10,00.*\$15.*Receta calculada.*\$155/s);
   assert.equal(await page.locator('#current-inventory-missing-cost').isHidden(), true);
   await page.evaluate(() => {
     const data = currentInventoryTableState.data;
@@ -883,13 +921,13 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     );
     data.report.itemCount = 4;
     data.report.hierarchyCount = 2;
-    data.report.totalValue = 5550;
+    data.report.totalValue = 705;
     data.report.itemsWithoutCost = ['P4'];
     renderCurrentInventoryReport(data);
   });
   assert.equal(await page.locator('#current-inventory-table tbody tr').count(), 3);
   assert.match(await page.locator('#current-inventory-table tbody').textContent(), /Producto Alfa.*3,00.*\$100.*\$300.*Producto Beta.*2,50.*\$100.*\$250/s);
-  assert.match(await page.locator('#current-inventory-table tfoot').textContent(), /TOTAL VALORIZADO.*\$5\.550/s);
+  assert.match(await page.locator('#current-inventory-table tfoot').textContent(), /TOTAL VALORIZADO.*\$705/s);
   assert.equal(await page.locator('#current-inventory-missing-cost-table tbody tr').count(), 1);
   assert.match(await page.locator('#current-inventory-missing-cost-table tbody').textContent(), /P4.*Producto Sin Costo.*Sin costo/s);
   await page.locator('#current-inventory-search').fill('P4');
@@ -979,7 +1017,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'MOV-IN' }).count(), 1);
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'Costo unitario' }).count(), 1);
   assert.equal(await page.locator('#waste-summary-table th', { hasText: 'Costo total' }).count(), 1);
-  assert.match(await page.locator('#waste-summary-table tfoot').textContent(), /TOTAL.*5.*\$2\.500/s);
+  assert.match(await page.locator('#waste-summary-table tfoot').textContent(), /TOTAL.*5.*\$77/s);
   assert.equal(await page.locator('#waste-summary-results').getByRole('button', { name: 'Imprimir / PDF' }).count(), 1);
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#waste-summary-results').getByRole('button', { name: 'Exportar Excel' }).click();
@@ -1085,6 +1123,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     const item = inventoryKardexTableState.report.items[0];
     item.costAvailable = true;
     item.unitCost = 500;
+    item.totalCost = item.difference * item.unitCost;
     renderInventoryKardexTable();
   });
   const inventoryResultCells = page.locator('#inventory-results-table tbody tr').first().locator('td');
@@ -1100,13 +1139,16 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     section.classList.add('inventory-print-target');
     const card = section.querySelector('.consumption-report-card');
     const wrap = section.querySelector('.consumption-table-wrap, .inventory-results-table-wrap');
+    const kardexHeader = section.querySelector('#inventory-results-table .inventory-sort-button');
     const styles = getComputedStyle(section);
     return {
       position: styles.position,
       maxHeight: styles.maxHeight,
       overflow: styles.overflow,
       cardBreakInside: getComputedStyle(card || section).breakInside,
-      tableWrapMaxHeight: getComputedStyle(wrap).maxHeight
+      tableWrapMaxHeight: getComputedStyle(wrap).maxHeight,
+      kardexHeaderDisplay: getComputedStyle(kardexHeader).display,
+      kardexHeaderText: kardexHeader.textContent.trim()
     };
   });
   assert.equal(printLayout.position, 'static');
@@ -1114,6 +1156,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(printLayout.overflow, 'visible');
   assert.equal(printLayout.cardBreakInside, 'auto');
   assert.equal(printLayout.tableWrapMaxHeight, 'none');
+  assert.notEqual(printLayout.kardexHeaderDisplay, 'none');
+  assert.equal(printLayout.kardexHeaderText, 'Código');
   await page.locator('#inventory-report-results').evaluate(section => {
     section.classList.remove('inventory-print-target');
     document.body.classList.remove('printing-inventory-report');
@@ -1228,7 +1272,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('button', { name: 'Sí, eliminar' }).click();
   await page.getByText('Archivo maestro eliminado.').waitFor();
   assert.equal(await page.locator('.master-record', { hasText: 'catalogo.xlsx' }).count(), 0);
-  assert.equal(await page.locator('[data-master-field="master-catalog"]').textContent(), 'Última vigencia: —');
+  assert.equal(await page.locator('[data-master-field="master-catalog"]').textContent(), 'Última vigencia: 2026-08-01');
 
   await page.getByRole('link', { name: 'Configuracion' }).click();
   await page.getByRole('heading', { name: 'Ubicaciones', exact: true }).waitFor({ state: 'visible' });

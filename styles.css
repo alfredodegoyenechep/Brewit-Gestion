@@ -1919,6 +1919,11 @@ body {
     display: none !important;
   }
 
+  body.printing-inventory-report .inventory-print-target button.inventory-sort-button {
+    display: block !important;
+    cursor: default;
+  }
+
   body.printing-inventory-report .inventory-results-table-wrap,
   body.printing-inventory-report .consumption-table-wrap {
     height: auto !important;
@@ -4021,6 +4026,32 @@ body {
   gap: 22px;
 }
 
+.purchase-projection-workspace {
+  font-size: 17px;
+}
+
+.purchase-projection-workspace > .purchase-projection-head .panel-eyebrow {
+  font-size: 12px;
+}
+
+.purchase-projection-workspace > .purchase-projection-head h2 {
+  font-size: 25px;
+}
+
+.purchase-projection-workspace > .purchase-projection-head .panel-description,
+.purchase-projection-workspace > .form-status {
+  font-size: 14px;
+}
+
+.purchase-projection-workspace > .products-summary .chip {
+  font-size: 11px;
+}
+
+.purchase-projection-workspace > .purchase-projection-head button,
+.purchase-projection-workspace > .purchase-projection-actions button {
+  font-size: 14.3333px;
+}
+
 .purchase-projection-controls {
   display: grid;
   grid-template-columns: minmax(170px, 1fr) minmax(190px, 1fr) auto auto;
@@ -4032,7 +4063,7 @@ body {
   display: grid;
   gap: 6px;
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -4080,7 +4111,7 @@ body {
   min-width: 1740px;
   border-collapse: collapse;
   background: white;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .purchase-projection-table th,
@@ -4094,7 +4125,7 @@ body {
 .purchase-projection-table th {
   color: var(--text-soft);
   background: #fcfaf6;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .purchase-projection-table th[data-header-lines] {
@@ -4177,6 +4208,7 @@ body {
   max-width: 190px;
   margin-top: 4px;
   color: var(--text-muted);
+  font-size: 10.1667px;
   white-space: normal;
 }
 

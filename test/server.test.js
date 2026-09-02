@@ -1084,9 +1084,9 @@ test('reports product sales by selected recipe ingredients and extras hierarchie
   assert.equal(ingredient.totals.productUnits, 4);
   assert.equal(ingredient.totals.ingredientQuantity, 2.5);
   assert.equal(Math.round(ingredient.totals.netSales), 2000);
-  assert.equal(ingredient.totals.totalCost, 2000);
-  assert.equal(Math.round(ingredient.totals.contributionMarginPercent), 0);
-  assert.equal(ingredient.products[0].totalCost, 2000);
+  assert.equal(ingredient.totals.totalCost, 20250);
+  assert.equal(Math.round(ingredient.totals.contributionMarginPercent * 10) / 10, -912.5);
+  assert.equal(ingredient.products[0].totalCost, 20250);
   assert.equal(Math.round(ingredient.shareOfPeriodSales * 10) / 10, 66.7);
   const sub = report.groups.find(group => group.key === 'ingredient:SUB005');
   assert.equal(sub.source, 'recipe-extra');
@@ -1096,8 +1096,8 @@ test('reports product sales by selected recipe ingredients and extras hierarchie
   assert.equal(report.totals.uniqueProducts, 1);
   assert.equal(report.totals.productUnits, 4);
   assert.equal(Math.round(report.totals.netSales), 2000);
-  assert.equal(report.totals.totalCost, 2000);
-  assert.equal(Math.round(report.totals.contributionMarginPercent), 0);
+  assert.equal(report.totals.totalCost, 20250);
+  assert.equal(Math.round(report.totals.contributionMarginPercent * 10) / 10, -912.5);
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
@@ -1973,6 +1973,15 @@ test('processes marketing and employee consumption into product and recipe ingre
     { field: 'employees', contents: consumptionWorkbook('Bebidas Equipo Agosto', employeeRows), filename: 'colaboradores.xlsx' }
   ]).then(response => response.json());
   assert.equal((await confirm(baseUrl, inspection, { from: '2026-08-04', to: '2026-08-06' })).status, 200);
+  const purchaseRows = [
+    'Fecha emisión\tTipo Documento\tDocumento\tProveedor/Para\tNúmero identificador fiscal\tLin\tCod\tPRODUCTO\tQ.Rec\tUm.Rec\tCosto\tMonto neto\tDescuento\tMonto total',
+    '2026-08-04\tFactura\t1\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t6\t6\t0\t6',
+    '2026-08-07\tFactura\t2\tProveedor Uno\t111\t1\tI1\tIngrediente Uno\t1\tkg\t9\t9\t0\t9'
+  ].join('\n');
+  const purchaseInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'purchases', contents: purchaseRows, filename: 'compras.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, purchaseInspection, 'keep', { from: '2026-08-04', to: '2026-08-07' })).status, 200);
 
   const response = await fetch(`${baseUrl}/api/inventory/process`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1983,24 +1992,28 @@ test('processes marketing and employee consumption into product and recipe ingre
   assert.equal(data.consumption.marketing.products.sheetName, 'Productos Agosto');
   assert.equal(data.consumption.marketing.products.products.length, 2);
   assert.equal(data.consumption.marketing.products.totalQuantity, 4);
-  assert.equal(data.consumption.marketing.products.totalCost, 40);
+  assert.equal(data.consumption.marketing.products.totalCost, 17.25);
+  assert.ok(data.consumption.marketing.products.products.every(product => product.costSource === 'recipe'));
   assert.deepEqual(data.consumption.marketing.products.productsWithoutMasterCost, []);
   assert.equal(data.consumption.marketing.ingredients.items[0].quantity, 2.875);
-  assert.equal(data.consumption.marketing.ingredients.totalCost, 11.5);
+  assert.equal(data.consumption.marketing.ingredients.totalCost, 17.25);
   assert.equal(data.consumption.employees.products.sheetName, 'Bebidas Equipo Agosto');
   assert.equal(data.consumption.employees.products.totalQuantity, 2);
-  assert.equal(data.consumption.employees.products.totalCost, 16);
+  assert.equal(data.consumption.employees.products.totalCost, 7.5);
+  assert.ok(data.consumption.employees.products.products.every(product => product.costSource === 'recipe'));
   assert.equal(data.consumption.employees.ingredients.items[0].quantity, 1.25);
-  assert.equal(data.consumption.employees.ingredients.totalCost, 5);
+  assert.equal(data.consumption.employees.ingredients.totalCost, 7.5);
   assert.equal(data.report.items[0].employeeConsumption, 1.25);
   assert.equal(data.report.items[0].marketingConsumption, 2.875);
   assert.equal(data.report.items[0].baseTheoreticalFinal, 17);
   assert.equal(data.report.items[0].theoreticalFinal, 12.875);
   assert.equal(data.report.items[0].difference, 4.125);
   assert.equal('adjustedDifference' in data.report.items[0], false);
-  assert.equal(data.report.items[0].unitCost, 4);
-  assert.equal(data.report.items[0].totalCost, 16.5);
-  assert.equal(data.report.totalCost, 16.5);
+  assert.equal(data.report.items[0].unitCost, 6);
+  assert.equal(data.report.items[0].costSource, 'purchase');
+  assert.equal(data.report.items[0].costSourceDate, '2026-08-04');
+  assert.equal(data.report.items[0].totalCost, 24.75);
+  assert.equal(data.report.totalCost, 24.75);
   assert.equal(data.masterSources.recipes.validFrom, '2026-08-06');
   assert.equal(data.masterSources.catalog.validFrom, '2026-08-06');
 
@@ -2026,8 +2039,8 @@ test('processes marketing and employee consumption into product and recipe ingre
   assert.equal(marketingSummaryResponse.status, 200);
   const marketingSummary = await marketingSummaryResponse.json();
   assert.equal(marketingSummary.summary.products.totalQuantity, 4);
-  assert.equal(marketingSummary.summary.products.totalCost, 40);
-  assert.equal(marketingSummary.summary.ingredients.totalCost, 11.5);
+  assert.equal(marketingSummary.summary.products.totalCost, 17.25);
+  assert.equal(marketingSummary.summary.ingredients.totalCost, 17.25);
 });
 
 test('creates, renames, trashes, and restores locations with their weekly data', async t => {
@@ -2490,10 +2503,10 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].name, 'Bebidas');
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].name, 'Café');
   assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].quantity, 2);
-  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].totalCost, 200);
-  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 33.3);
-  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].totalCost, 200);
-  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].contributionMarginPercent * 10) / 10, 33.3);
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].totalCost, 30.927835051546396);
+  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].products[0].contributionMarginPercent * 10) / 10, 89.7);
+  assert.equal(dashboard.sales.productInsights.day.hierarchyTree.children[0].totalCost, 30.927835051546396);
+  assert.equal(Math.round(dashboard.sales.productInsights.day.hierarchyTree.children[0].contributionMarginPercent * 10) / 10, 89.7);
   assert.equal(dashboard.sales.serviceModes.paymentDetailsFilesRead, 1);
   assert.equal(dashboard.sales.serviceModes.classificationField, 'Comentario General / General Comment');
   assert.deepEqual(dashboard.sales.serviceModes.amountFields, ['Due']);
