@@ -77,6 +77,10 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     ['PAC003', 'Vaso Caliente 12 oz', 10, 'UN'],
     ['PAC008', 'Tapa Vaso Caliente', 5, 'UN']
   ]), 'Prod');
+  XLSX.utils.book_append_sheet(recipeCostCatalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['P1', 'Producto Uno', 500, 'UN']
+  ]), 'Ingr');
   recipeMaster.append('master-catalog', new Blob([
     XLSX.write(recipeCostCatalog, { type: 'buffer', bookType: 'xlsx' })
   ]), 'catalogo-ui.xlsx');

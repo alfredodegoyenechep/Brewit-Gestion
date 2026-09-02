@@ -1343,6 +1343,55 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(secondOrder.orderNumber, 'OC-000002');
 });
 
+test('limits purchase projections to ingredients plus the SUB005 extra', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-02' });
+  const catalog = XLSX.utils.book_new();
+  const sheet = rows => XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ...rows
+  ]);
+  XLSX.utils.book_append_sheet(catalog, sheet([
+    ['P100', 'Producto terminado', 1000, 'UN']
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, sheet([
+    ['I100', 'Ingrediente permitido', 100, 'UN']
+  ]), 'Ingr');
+  XLSX.utils.book_append_sheet(catalog, sheet([
+    ['SUB005', 'Extra permitido por excepción', 200, 'UN'],
+    ['EX100', 'Otro extra', 300, 'UN']
+  ]), 'Extras');
+  const catalogResponse = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog',
+      contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }),
+      filename: 'catalogo-clasificado.xlsx'
+    }], { 'master-catalog-from': '2026-08-01' })
+  });
+  assert.equal(catalogResponse.status, 200);
+
+  const kardex = [
+    ['Código', 'Nombre', 'Unidad', '2026-08-01', '', '', '2026-08-02', '', ''],
+    ['', '', '', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'IF - Inventario Final', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'IF - Inventario Final'],
+    ['P100', 'Producto terminado', 'UN', 10, 1, 9, 9, 1, 8],
+    ['I100', 'Ingrediente permitido', 'UN', 10, 1, 9, 9, 1, 8],
+    ['SUB005', 'Extra permitido por excepción', 'UN', 10, 1, 9, 9, 1, 8],
+    ['EX100', 'Otro extra', 'UN', 10, 1, 9, 9, 1, 8]
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspect(baseUrl, 'store-1', '2026-07-27', [{
+    field: 'kardex', contents: kardex, filename: 'kardex-clasificado.xls'
+  }]).then(response => response.json());
+  assert.equal((await confirm(baseUrl, inspection)).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/purchase-projections?location=store-1`);
+  assert.equal(response.status, 200, await response.clone().text());
+  const projection = await response.json();
+  assert.deepEqual(projection.items.map(item => item.code).sort(), ['I100', 'SUB005']);
+  assert.equal(projection.summary.itemCount, 2);
+  assert.equal(projection.items.some(item => item.code === 'P100'), false);
+  assert.equal(projection.items.some(item => item.code === 'EX100'), false);
+});
+
 test('consolidates selected branch orders to CODE SPA in the main warehouse projection', async t => {
   const baseUrl = await startTestServer(t, {
     reportToday: '2026-08-26',
@@ -1389,6 +1438,20 @@ test('consolidates selected branch orders to CODE SPA in the main warehouse proj
       fixtures.forEach(item => fs.writeFileSync(path.join(ordersRoot, `${item.id}.json`), JSON.stringify(item)));
     }
   });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['I1', 'Insumo Uno', 100, 'UN']
+  ]), 'Ingr');
+  const catalogResponse = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{
+      field: 'master-catalog',
+      contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }),
+      filename: 'catalogo-bodega.xlsx'
+    }], { 'master-catalog-from': '2026-08-01' })
+  });
+  assert.equal(catalogResponse.status, 200);
   const warehouseKardex = [
     ['Código', 'Nombre', 'Unidad', '2026-08-25', '', '', '', '2026-08-26', '', '', ''],
     ['', '', '', 'II - Inventario Inicial', 'BUY - Compras', 'Costo', 'IF - Inventario Final', 'II - Inventario Inicial', 'TRN-OUT - Transformaciones Salientes', 'Costo', 'IF - Inventario Final'],

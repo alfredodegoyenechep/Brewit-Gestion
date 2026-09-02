@@ -3902,12 +3902,22 @@ function createApp(options = {}) {
       : null;
     const purchaseOrders = projectionPurchaseOrderSelection(location.id, selectedPurchaseOrderIds);
     const catalogMaster = latestMasterFile('master-catalog', today);
-    const conversions = catalogMaster ? parsePurchaseUnitConversions(catalogMaster.filePath) : new Map();
-    const costCatalog = catalogMaster ? parseIngredientCatalog(catalogMaster.filePath) : new Map();
+    if (!catalogMaster) {
+      const error = new Error('Se requiere un maestro de productos, ingredientes y extras vigente para identificar los ingredientes de la proyección.');
+      error.status = 404;
+      throw error;
+    }
+    const catalogAssignments = parseInventoryHierarchyAssignments(catalogMaster.filePath);
+    const isProjectionItem = product => {
+      const key = String(product.code || '').trim().toUpperCase();
+      return key === 'SUB005' || catalogAssignments.get(key)?.type === 'ingredient';
+    };
+    const conversions = parsePurchaseUnitConversions(catalogMaster.filePath);
+    const costCatalog = parseIngredientCatalog(catalogMaster.filePath);
     const costResolver = buildCostResolver(today, [location.id]);
     const supplierOptions = new Map(references.suppliers);
     supplierOptions.set('unassigned', { key: 'unassigned', name: 'Proveedor no asignado', taxId: '' });
-    const items = parsed.products.filter(product => product.code || product.name).map(product => {
+    const items = parsed.products.filter(product => (product.code || product.name) && isProjectionItem(product)).map(product => {
       const key = (product.code || normalizeHeader(product.name)).toUpperCase();
       const policy = policies[key] || {};
       const minDays = Number.isFinite(Number(policy.minDays)) ? Number(policy.minDays) : 7;
