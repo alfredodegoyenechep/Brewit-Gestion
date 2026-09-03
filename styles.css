@@ -1441,6 +1441,75 @@ body {
   font-size: 18px;
 }
 
+.inventory-executive-summary {
+  margin-top: 20px;
+  border-color: var(--border);
+  background: linear-gradient(135deg, var(--bg-soft), var(--coffee-soft-2));
+}
+
+.inventory-executive-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.inventory-executive-summary-head h4 {
+  margin-top: 4px;
+}
+
+.inventory-executive-table-wrap {
+  margin-top: 14px;
+}
+
+#inventory-executive-summary-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+#inventory-executive-summary-table th:first-child,
+#inventory-executive-summary-table td:first-child {
+  width: 29%;
+  font-weight: 800;
+}
+
+#inventory-executive-summary-table th:nth-child(2),
+#inventory-executive-summary-table td:nth-child(2),
+#inventory-executive-summary-table th:nth-child(3),
+#inventory-executive-summary-table td:nth-child(3) {
+  width: 15%;
+  text-align: right;
+}
+
+#inventory-executive-summary-table th:nth-child(4),
+#inventory-executive-summary-table td:nth-child(4) {
+  width: 41%;
+  text-align: left;
+  white-space: normal;
+}
+
+.inventory-executive-comparison {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border-left: 3px solid var(--clay);
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#inventory-executive-summary-table tr.executive-negative-concept td:nth-child(-n + 3),
+#inventory-executive-summary-table tr.executive-negative-result td:nth-child(-n + 3) {
+  color: var(--red);
+  font-weight: 900;
+}
+
+#inventory-executive-summary-table tr.executive-positive-result td:nth-child(-n + 3),
+#inventory-executive-summary-table tr.executive-benefit td:nth-child(-n + 3) {
+  color: #2869a8;
+  font-weight: 900;
+}
+
 #inventory-lac001-substitution-report,
 .inventory-analysis-report {
   margin-top: 20px;
@@ -4203,6 +4272,10 @@ body {
   text-align: right;
 }
 
+.purchase-projection-table input.projection-package-input {
+  width: 76px;
+}
+
 .purchase-projection-table td small {
   display: block;
   max-width: 190px;
@@ -4465,6 +4538,30 @@ body {
   background: rgba(209, 112, 69, 0.12);
   color: var(--red);
   font-weight: 800;
+}
+
+.purchase-order-editor-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.purchase-order-editor-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.purchase-order-editor-tools input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--clay);
 }
 
 .purchase-order-editor-table-wrap {

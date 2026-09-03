@@ -1374,13 +1374,19 @@ test('limits purchase projections to ingredients plus the SUB005 extra', async t
     ['Código', 'Nombre', 'Unidad', '2026-08-01', '', '', '2026-08-02', '', ''],
     ['', '', '', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'IF - Inventario Final', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'IF - Inventario Final'],
     ['P100', 'Producto terminado', 'UN', 10, 1, 9, 9, 1, 8],
-    ['I100', 'Ingrediente permitido', 'UN', 10, 1, 9, 9, 1, 8],
+    ['I100', 'Ingrediente permitido', 'UN', 4.161, 3.943, 0.218, 0.218, 0, 0.218],
     ['SUB005', 'Extra permitido por excepción', 'UN', 10, 1, 9, 9, 1, 8],
     ['EX100', 'Otro extra', 'UN', 10, 1, 9, 9, 1, 8]
   ].map(row => row.join('\t')).join('\n');
-  const inspection = await inspect(baseUrl, 'store-1', '2026-07-27', [{
-    field: 'kardex', contents: kardex, filename: 'kardex-clasificado.xls'
-  }]).then(response => response.json());
+  const purchases = [
+    ['Fecha emisión', 'Tipo Documento', 'Documento', 'Proveedor/Para', 'Número identificador fiscal', 'Lin', 'Cod', 'PRODUCTO', 'Q.Rec', 'Um.Rec', 'Costo', 'Monto neto', 'Descuento', 'Monto total'],
+    ['2026-08-01', 'Factura', '100', 'Proveedor Uno', '111', '1', 'I100', 'Ingrediente permitido', '1', 'UN', '100', '100', '0', '100'],
+    ['2026-08-01', 'Factura', '100', 'Proveedor Uno', '111', '2', 'SUB005', 'Extra permitido por excepción', '1', 'UN', '200', '200', '0', '200']
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspect(baseUrl, 'store-1', '2026-07-27', [
+    { field: 'kardex', contents: kardex, filename: 'kardex-clasificado.xls' },
+    { field: 'purchases', contents: purchases, filename: 'compras-clasificadas.xls' }
+  ]).then(response => response.json());
   assert.equal((await confirm(baseUrl, inspection)).status, 200);
 
   const response = await fetch(`${baseUrl}/api/purchase-projections?location=store-1`);
@@ -1390,6 +1396,52 @@ test('limits purchase projections to ingredients plus the SUB005 extra', async t
   assert.equal(projection.summary.itemCount, 2);
   assert.equal(projection.items.some(item => item.code === 'P100'), false);
   assert.equal(projection.items.some(item => item.code === 'EX100'), false);
+  assert.equal(projection.items.every(item => item.supplierKey === '111'), true);
+
+  const policyResponse = await fetch(`${baseUrl}/api/purchase-projections/policies`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'store-1',
+      items: [{ key: 'I100', minDays: 7, maxDays: 14, unitsPerPackage: 1.36, supplierKey: '111', managed: true }]
+    })
+  });
+  assert.equal(policyResponse.status, 200);
+  const decimalProjection = await fetch(`${baseUrl}/api/purchase-projections?location=store-1`).then(result => result.json());
+  const decimalItem = decimalProjection.items.find(item => item.code === 'I100');
+  assert.ok(Math.abs(decimalItem.rawSuggestedInternalQuantity - 1.622066666666667) < 1e-12);
+  assert.equal(decimalItem.suggestedInternalQuantity, 2.72);
+  assert.equal(decimalItem.unitsPerPurchaseUnit, 1);
+  assert.equal(decimalItem.suggestedPurchaseUnits, 3);
+  assert.equal(decimalItem.projectedInternalQuantity, 3);
+  assert.equal(decimalItem.estimatedTotal, 300);
+
+  const createResponse = await fetch(`${baseUrl}/api/purchase-orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      location: 'store-1', supplierKey: '111',
+      items: [{ key: 'I100', quantity: 1, unitCost: 100 }]
+    })
+  });
+  assert.equal(createResponse.status, 201, await createResponse.clone().text());
+  const order = await createResponse.json();
+  assert.deepEqual(order.items.map(item => item.key), ['I100']);
+
+  const updateResponse = await fetch(`${baseUrl}/api/purchase-orders/${order.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items: [
+        { key: 'I100', quantity: 1, unitCost: 100 },
+        { key: 'SUB005', quantity: 2, unitCost: 200 }
+      ]
+    })
+  });
+  assert.equal(updateResponse.status, 200, await updateResponse.clone().text());
+  const updated = await updateResponse.json();
+  assert.deepEqual(updated.items.map(item => item.key), ['I100', 'SUB005']);
+  assert.equal(updated.total, 500);
 });
 
 test('consolidates selected branch orders to CODE SPA in the main warehouse projection', async t => {
@@ -1426,7 +1478,7 @@ test('consolidates selected branch orders to CODE SPA in the main warehouse proj
           id: 'OC-20260825-120000-bbbbbbbb', orderNumber: 'OC-000002',
           locationId: 'store-2', locationName: 'Tienda 2',
           supplier: { key: 'code-spa', name: 'CODE SPA', taxId: '' },
-          confirmedAt: '2026-08-25T12:00:00.000Z', internalQuantity: 12
+          confirmedAt: '2026-08-25T12:00:00.000Z', internalQuantity: 5
         }),
         order({
           id: 'OC-20260825-130000-cccccccc', orderNumber: 'OC-000003',
@@ -1468,10 +1520,11 @@ test('consolidates selected branch orders to CODE SPA in the main warehouse proj
   assert.equal(projection.branchOrders.available, true);
   assert.deepEqual(projection.branchOrders.selectedLocationIds.sort(), ['store-1', 'store-2']);
   assert.equal(projection.branchOrders.selectedOrderCount, 2);
-  assert.equal(projection.items[0].branchOrderInternalQuantity, 36);
+  assert.equal(projection.items[0].branchOrderInternalQuantity, 29);
   assert.equal(projection.items[0].ownSuggestedInternalQuantity, 0);
-  assert.equal(projection.items[0].suggestedInternalQuantity, 36);
-  assert.equal(projection.items[0].suggestedPurchaseUnits, 36);
+  assert.equal(projection.items[0].inventoryAfterBranchOrders, -19);
+  assert.equal(projection.items[0].suggestedInternalQuantity, 19);
+  assert.equal(projection.items[0].suggestedPurchaseUnits, 19);
   assert.equal(projection.branchOrders.locations.find(item => item.id === 'store-1').latestOrder.stale, true);
   assert.equal(projection.branchOrders.locations.find(item => item.id === 'store-2').latestOrder.stale, false);
 
@@ -1479,8 +1532,10 @@ test('consolidates selected branch orders to CODE SPA in the main warehouse proj
     .then(response => response.json());
   assert.deepEqual(selected.branchOrders.selectedLocationIds, ['store-2']);
   assert.equal(selected.branchOrders.selectedOrderCount, 1);
-  assert.equal(selected.items[0].branchOrderInternalQuantity, 12);
-  assert.equal(selected.items[0].suggestedInternalQuantity, 12);
+  assert.equal(selected.items[0].branchOrderInternalQuantity, 5);
+  assert.equal(selected.items[0].inventoryAfterBranchOrders, 5);
+  assert.equal(selected.items[0].suggestedInternalQuantity, 0);
+  assert.equal(selected.items[0].needsPurchase, false);
 
   const none = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse&branches=`)
     .then(response => response.json());
@@ -1859,7 +1914,8 @@ test('reports LAC001 volume substituted by BX1010, BX1020, and BX1030 sales extr
     body: JSON.stringify({ location: 'store-1', dateFrom: '2026-08-04', dateTo: '2026-08-05' })
   });
   assert.equal(response.status, 200);
-  const summary = (await response.json()).lac001Substitutions;
+  const payload = await response.json();
+  const summary = payload.lac001Substitutions;
   assert.equal(summary.salesCount, 3);
   assert.equal(summary.substitutionCount, 4);
   assert.equal(summary.matchedSubstitutionCount, 3);
@@ -1867,6 +1923,10 @@ test('reports LAC001 volume substituted by BX1010, BX1020, and BX1030 sales extr
   assert.equal(summary.lac001VolumeLiters, 0.75);
   assert.equal(summary.lac001UnitCost, 2000);
   assert.equal(summary.totalSubstitutedCost, 1500);
+  assert.equal(payload.executiveSummary.metrics.lac001AdjustedKardexCost.kardexCost, 0);
+  assert.equal(payload.executiveSummary.metrics.lac001AdjustedKardexCost.compensationCost, 1500);
+  assert.equal(payload.executiveSummary.metrics.lac001AdjustedKardexCost.amount, -1500);
+  assert.equal(payload.executiveSummary.metrics.lac001AdjustedKardexCost.matchedItemCount, 1);
   assert.deepEqual(summary.items.map(item => ({ code: item.code, sales: item.salesCount, substitutions: item.substitutionCount })), [
     { code: 'BX1010', sales: 1, substitutions: 1 },
     { code: 'BX1020', sales: 1, substitutions: 2 },
@@ -1916,7 +1976,7 @@ test('reports BA.090 syrup substitutions and avoided dine-in packaging in the in
   const kardex = [
     ['Código', 'Nombre', 'Unidad', '2026-08-04', '', '2026-08-05', '', '2026-08-06', ''],
     ['', '', '', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final', 'II - Inventario Inicial', 'IF - Inventario Final'],
-    ['PAC003', 'Vaso Caliente 12 oz', 'UN', 10, 10, 8, 8, 8, 8]
+    ['PAC003', 'Vaso Caliente 12 oz', 'UN', 10, 10, 8, 8, 7, 7]
   ].map(row => row.join('\t')).join('\n');
   const kardexInspection = await inspectTransactions(baseUrl, 'store-1', [
     { field: 'kardex', contents: kardex, filename: 'kardex.csv' }
@@ -1966,6 +2026,27 @@ test('reports BA.090 syrup substitutions and avoided dine-in packaging in the in
     ['PAC008', 2, 36, 72]
   ]);
   assert.equal(payload.avoidedPackaging.totalAvoidedPackagingCost, 346);
+  assert.equal(payload.executiveSummary.netSales, 1000);
+  assert.equal(payload.executiveSummary.netSalesOrderCount, 1);
+  assert.equal(payload.executiveSummary.salesFilesRead, 1);
+  assert.equal(payload.executiveSummary.metrics.kardexTotalCost.amount, -137);
+  assert.equal(payload.executiveSummary.metrics.kardexTotalCost.percentOfNetSales, -13.700000000000001);
+  assert.equal(payload.executiveSummary.metrics.theoreticalFinalInventoryValue.amount, 1096);
+  assert.equal(payload.executiveSummary.metrics.physicalInventoryValue.amount, 959);
+  assert.equal(payload.executiveSummary.metrics.syrupSauceSubstitutions.amount, 40);
+  assert.equal(payload.executiveSummary.metrics.syrupSauceSubstitutions.percentOfNetSales, 4);
+  assert.equal(payload.executiveSummary.metrics.syrupSauceAdjustedKardexCost.kardexCost, 0);
+  assert.equal(payload.executiveSummary.metrics.syrupSauceAdjustedKardexCost.compensationCost, 40);
+  assert.equal(payload.executiveSummary.metrics.syrupSauceAdjustedKardexCost.amount, -40);
+  assert.deepEqual(payload.executiveSummary.metrics.syrupSauceAdjustedKardexCost.codes, ['SSR005']);
+  assert.equal(payload.executiveSummary.metrics.avoidedPackaging.amount, 346);
+  assert.equal(payload.executiveSummary.metrics.avoidedPackaging.percentOfNetSales, 34.599999999999994);
+  assert.equal(payload.executiveSummary.metrics.packagingKardexCost.amount, -137);
+  assert.equal(payload.executiveSummary.metrics.packagingKardexCost.matchedItemCount, 1);
+  assert.equal(payload.executiveSummary.metrics.packagingAdjustedKardexCost.kardexCost, -137);
+  assert.equal(payload.executiveSummary.metrics.packagingAdjustedKardexCost.compensationCost, 346);
+  assert.equal(payload.executiveSummary.metrics.packagingAdjustedKardexCost.amount, -483);
+  assert.equal(payload.executiveSummary.packagingComparison.adjustedKardexCost, -483);
 });
 
 test('processes marketing and employee consumption into product and recipe ingredient summaries', async t => {
@@ -2077,6 +2158,10 @@ test('processes marketing and employee consumption into product and recipe ingre
   assert.equal(data.report.items[0].costSourceDate, '2026-08-04');
   assert.equal(data.report.items[0].totalCost, 24.75);
   assert.equal(data.report.totalCost, 24.75);
+  assert.equal(data.executiveSummary.metrics.marketingConsumption.amount, 17.25);
+  assert.equal(data.executiveSummary.metrics.employeeConsumption.amount, 7.5);
+  assert.equal(data.executiveSummary.metrics.marketingConsumption.percentOfNetSales, null);
+  assert.deepEqual(data.executiveSummary.period.locations.map(location => location.id), ['store-1']);
   assert.equal(data.masterSources.recipes.validFrom, '2026-08-06');
   assert.equal(data.masterSources.catalog.validFrom, '2026-08-06');
 

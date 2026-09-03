@@ -1078,6 +1078,116 @@ function enrichKardexReport(report, consumption, catalog, costResolver = null) {
   };
 }
 
+function buildInventoryExecutiveSummary({
+  location,
+  dateFrom,
+  dateTo,
+  report,
+  waste,
+  consumption,
+  lac001Substitutions,
+  syrupSauceSubstitutions,
+  avoidedPackaging,
+  salesData
+}) {
+  const netSales = (salesData?.orderFacts || []).reduce((sum, order) => sum + (Number(order.net) || 0), 0);
+  const metric = (amount, available = true, detail = {}) => {
+    const numericAmount = available ? Number(amount) || 0 : null;
+    return {
+      amount: numericAmount,
+      percentOfNetSales: numericAmount !== null && netSales !== 0 ? numericAmount / netSales * 100 : null,
+      available,
+      ...detail
+    };
+  };
+  const consumptionMetric = entry => metric(
+    entry?.products?.totalCost ?? entry?.ingredients?.totalCost ?? 0,
+    entry?.available === true && !entry?.error,
+    { quantity: Number(entry?.products?.totalQuantity) || 0 }
+  );
+  const physicalQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
+  const inventoryValue = quantityField => report.items.reduce((sum, item) =>
+    item.costAvailable ? sum + (Number(quantityField(item)) || 0) * (Number(item.unitCost) || 0) : sum, 0);
+  const packaging = avoidedPackaging?.avoidedDisposablePackaging
+    || avoidedPackaging?.avoidedDisposableCups
+    || [];
+  const kardexCostForCodes = codes => {
+    const wanted = new Set(codes.map(code => String(code || '').trim().toUpperCase()).filter(Boolean));
+    const items = report.items.filter(item => wanted.has(String(item.code || '').trim().toUpperCase()));
+    return {
+      amount: items.reduce((sum, item) => item.costAvailable ? sum + (Number(item.totalCost) || 0) : sum, 0),
+      matchedItemCount: items.length,
+      codes: [...wanted]
+    };
+  };
+  const lac001Kardex = kardexCostForCodes(['LAC001']);
+  const lac001SubstitutedCost = Number(lac001Substitutions?.totalSubstitutedCost) || 0;
+  const lac001AdjustedCost = lac001Kardex.amount - lac001SubstitutedCost;
+  const syrupSauceCodes = [...new Set((syrupSauceSubstitutions?.items || [])
+    .map(item => String(item.originalCode || '').trim().toUpperCase()).filter(Boolean))];
+  const syrupSauceKardex = kardexCostForCodes(syrupSauceCodes);
+  const syrupSauceSubstitutedCost = Number(syrupSauceSubstitutions?.totalSubstitutedCost) || 0;
+  const syrupSauceAdjustedCost = syrupSauceKardex.amount - syrupSauceSubstitutedCost;
+  const packagingKardex = kardexCostForCodes(packaging.map(item => item.code));
+  const avoidedPackagingCost = Number(avoidedPackaging?.totalAvoidedPackagingCost) || 0;
+  const packagingAdjustedCost = packagingKardex.amount - avoidedPackagingCost;
+
+  return {
+    period: {
+      dateFrom,
+      dateTo,
+      locations: [{ id: location.id, name: location.name, type: location.type }]
+    },
+    netSales,
+    netSalesOrderCount: salesData?.orderFacts?.length || 0,
+    salesFilesRead: salesData?.filesRead || 0,
+    metrics: {
+      marketingConsumption: consumptionMetric(consumption?.marketing),
+      employeeConsumption: consumptionMetric(consumption?.employees),
+      waste: metric(waste?.report?.totalCost || 0, waste?.available === true && !waste?.error, {
+        itemCount: Number(waste?.report?.itemCount) || 0
+      }),
+      kardexTotalCost: metric(report.totalCost),
+      theoreticalFinalInventoryValue: metric(inventoryValue(item => item.theoreticalFinal)),
+      physicalInventoryValue: metric(inventoryValue(physicalQuantity)),
+      lac001AdjustedKardexCost: metric(lac001AdjustedCost, Boolean(lac001Substitutions), {
+        kardexCost: lac001Kardex.amount,
+        compensationCost: lac001SubstitutedCost,
+        substitutedQuantity: Number(lac001Substitutions?.lac001VolumeLiters) || 0,
+        substitutionCount: Number(lac001Substitutions?.substitutionCount) || 0,
+        matchedItemCount: lac001Kardex.matchedItemCount
+      }),
+      syrupSauceSubstitutions: metric(syrupSauceSubstitutions?.totalSubstitutedCost || 0, Boolean(syrupSauceSubstitutions), {
+        substitutionCount: Number(syrupSauceSubstitutions?.substitutionCount) || 0
+      }),
+      syrupSauceAdjustedKardexCost: metric(syrupSauceAdjustedCost, Boolean(syrupSauceSubstitutions), {
+        kardexCost: syrupSauceKardex.amount,
+        compensationCost: syrupSauceSubstitutedCost,
+        substitutionCount: Number(syrupSauceSubstitutions?.substitutionCount) || 0,
+        matchedItemCount: syrupSauceKardex.matchedItemCount,
+        codes: syrupSauceCodes
+      }),
+      avoidedPackaging: metric(avoidedPackagingCost, Boolean(avoidedPackaging), {
+        quantity: packaging.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+      }),
+      packagingKardexCost: metric(packagingKardex.amount, Boolean(avoidedPackaging), {
+        matchedItemCount: packagingKardex.matchedItemCount
+      }),
+      packagingAdjustedKardexCost: metric(packagingAdjustedCost, Boolean(avoidedPackaging), {
+        kardexCost: packagingKardex.amount,
+        compensationCost: avoidedPackagingCost,
+        avoidedQuantity: packaging.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+        matchedItemCount: packagingKardex.matchedItemCount
+      })
+    },
+    packagingComparison: {
+      avoidedPackagingCost,
+      kardexTotalCost: packagingKardex.amount,
+      adjustedKardexCost: packagingAdjustedCost
+    }
+  };
+}
+
 function buildIngredientConsumption(products, recipes, catalog, costResolver = null) {
   const ingredients = new Map();
   const productsWithoutRecipe = new Set();
@@ -2323,10 +2433,13 @@ function createApp(options = {}) {
     const rowsByOrder = new Map();
     const seenRows = new Set();
     const warnings = [];
+    let filesRead = 0;
 
     for (const stored of storedSalesFiles(locationId)) {
       try {
-        for (const row of readSalesRows(stored.filePath)) {
+        const fileRows = readSalesRows(stored.filePath);
+        filesRead += 1;
+        for (const row of fileRows) {
           const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
           if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
           const canonicalRow = Object.entries(row)
@@ -2375,7 +2488,7 @@ function createApp(options = {}) {
         item.baseProductName = currentBase?.name || soleBase?.name || null;
       }
     }
-    return { rows, orderFacts: [...orderMap.values()], warnings };
+    return { rows, orderFacts: [...orderMap.values()], warnings, filesRead };
   }
 
   function recipeLinesForProduct(recipes, code) {
@@ -3852,24 +3965,11 @@ function createApp(options = {}) {
     return Number((Math.ceil((value / packageSize) - 1e-9) * packageSize).toPrecision(12));
   }
 
-  function greatestCommonDivisor(left, right) {
-    let first = Math.abs(left);
-    let second = Math.abs(right);
-    while (second) [first, second] = [second, first % second];
-    return first || 1;
-  }
-
-  function purchaseUnitsRespectingPackage(quantity, unitsPerPurchaseUnit, unitsPerPackage) {
+  function purchaseUnitsForInternalQuantity(quantity, unitsPerPurchaseUnit) {
     const value = Number(quantity);
     const conversion = Number(unitsPerPurchaseUnit);
-    const packageSize = Number(unitsPerPackage);
-    if (!(value > 0) || !(conversion > 0) || !(packageSize > 0)) return null;
-    const minimumPurchaseUnits = Math.ceil((value / conversion) - 1e-9);
-    const scale = 1000000;
-    const conversionInteger = Math.max(1, Math.round(conversion * scale));
-    const packageInteger = Math.max(1, Math.round(packageSize * scale));
-    const purchaseUnitMultiple = packageInteger / greatestCommonDivisor(conversionInteger, packageInteger);
-    return Math.ceil(minimumPurchaseUnits / purchaseUnitMultiple) * purchaseUnitMultiple;
+    if (!(value > 0) || !(conversion > 0)) return null;
+    return Math.ceil((value / conversion) - 1e-9);
   }
 
   function buildPurchaseProjection(locationId, selectedBranchLocationIds = null, selectedPurchaseOrderIds = null) {
@@ -3966,8 +4066,13 @@ function createApp(options = {}) {
         if (converted === null) branchOrderConversionMissing = true;
         return sum + (converted ?? 0);
       }, 0);
-      const needsPurchase = ownNeedsPurchase || branchOrderInternalQuantity > 0;
-      const rawSuggestedInternalQuantity = ownSuggestedInternalQuantity + branchOrderInternalQuantity;
+      const inventoryAfterBranchOrders = currentInventory - branchOrderInternalQuantity;
+      const rawSuggestedInternalQuantity = averageDailyConsumption > 0
+        ? (inventoryAfterBranchOrders <= minimumStock
+          ? Math.max(0, maximumStock - inventoryAfterBranchOrders)
+          : 0)
+        : Math.max(0, -inventoryAfterBranchOrders);
+      const needsPurchase = rawSuggestedInternalQuantity > 0;
       const suggestedInternalQuantity = roundUpToPackageMultiple(rawSuggestedInternalQuantity, unitsPerPackage);
       let purchaseOrderConversionMissing = false;
       const purchaseOrderInternalQuantity = (purchaseOrders.demandByItem.get(key) || []).reduce((sum, demand) => {
@@ -3981,8 +4086,8 @@ function createApp(options = {}) {
       const coverageAfterPurchaseOrdersDays = averageDailyConsumption > 0
         ? inventoryAfterPurchaseOrders / averageDailyConsumption
         : null;
-      const suggestedPurchaseUnits = purchaseUnitsRespectingPackage(
-        suggestedInternalQuantity, unitsPerPurchaseUnit, unitsPerPackage
+      const suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(
+        suggestedInternalQuantity, unitsPerPurchaseUnit
       );
       const projectedInternalQuantity = suggestedPurchaseUnits === null
         ? suggestedInternalQuantity
@@ -4014,6 +4119,7 @@ function createApp(options = {}) {
         rawSuggestedInternalQuantity,
         branchOrderInternalQuantity,
         branchOrderConversionMissing,
+        inventoryAfterBranchOrders,
         purchaseOrderInternalQuantity,
         purchaseOrderConversionMissing,
         inventoryAfterPurchaseOrders,
@@ -4210,9 +4316,8 @@ function createApp(options = {}) {
       error.status = 400;
       throw error;
     }
-    const allowed = existingItems
-      ? new Map(existingItems.map(item => [item.key, item]))
-      : new Map(availableItems.map(item => [item.key, item]));
+    const allowed = new Map(availableItems.map(item => [item.key, item]));
+    for (const item of existingItems || []) allowed.set(item.key, item);
     const seen = new Set();
     return requested.map(requestedItem => {
       const key = String(requestedItem.key || '').trim().toUpperCase();
@@ -4315,7 +4420,9 @@ function createApp(options = {}) {
       const filePath = purchaseOrderPath(req.params.orderId);
       const existing = filePath ? readJson(filePath, null) : null;
       if (!existing) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
-      const items = normalizedPurchaseOrderItems(req.body?.items, [], existing.items);
+      const projection = buildPurchaseProjection(existing.location.id);
+      const availableItems = projection.items.filter(item => item.supplierKey === existing.supplier.key);
+      const items = normalizedPurchaseOrderItems(req.body?.items, availableItems, existing.items);
       const updatedAt = new Date().toISOString();
       const order = {
         ...existing,
@@ -5766,6 +5873,18 @@ function createApp(options = {}) {
         ingredientCatalog,
         costResolver
       );
+      const executiveSummary = buildInventoryExecutiveSummary({
+        location,
+        dateFrom: movementDateFrom,
+        dateTo: movementDateTo,
+        report,
+        waste,
+        consumption,
+        lac001Substitutions,
+        syrupSauceSubstitutions,
+        avoidedPackaging,
+        salesData
+      });
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       return res.json({
@@ -5776,6 +5895,7 @@ function createApp(options = {}) {
         lac001Substitutions,
         syrupSauceSubstitutions,
         avoidedPackaging,
+        executiveSummary,
         masterSources: { recipes: publicMaster(recipeMaster), catalog: publicMaster(catalogMaster), error: masterError },
         report
       });

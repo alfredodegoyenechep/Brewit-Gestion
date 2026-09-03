@@ -730,6 +730,12 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('.purchase-projection-table th').nth(19).innerText(), 'Costo UDC\nestimado');
   assert.match(await page.locator('.purchase-projection-table thead th').nth(5).textContent(), /Unidades x\s*empaque/);
   assert.equal(await page.locator('.projection-package-input').inputValue(), '1');
+  assert.equal(await page.locator('.projection-package-input').evaluate(input => getComputedStyle(input).width), '76px');
+  await page.locator('.projection-package-input').fill('1.36');
+  await projectionRow.locator('td').nth(16).filter({ hasText: /^5$/ }).waitFor();
+  assert.equal(await projectionRow.locator('td').nth(12).textContent(), '4,1 UN');
+  await page.locator('.projection-package-input').fill('1');
+  await projectionRow.locator('td').nth(16).filter({ hasText: /^4$/ }).waitFor();
   assert.equal(await projectionRow.locator('td').nth(6).textContent(), '0,00');
   assert.equal(await projectionRow.locator('td').nth(7).textContent(), '7,00');
   assert.equal(await projectionRow.locator('td').nth(8).textContent(), '0,23');
@@ -745,11 +751,33 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#projection-supplier-filter').selectOption('111');
   assert.equal(await page.getByRole('button', { name: 'Generar Orden de Compra PDF' }).isEnabled(), true);
   await page.evaluate(() => {
+    const base = purchaseProjectionState.items[0];
+    purchaseProjectionState.items.push({
+      ...base,
+      key: 'P2',
+      code: 'P2',
+      name: 'Ingrediente adicional del proveedor',
+      managed: false,
+      needsPurchase: false,
+      suggestedPurchaseUnits: 0,
+      suggestedInternalQuantity: 0,
+      estimatedTotal: 0
+    });
     window.__purchaseOrderPrintCalled = false;
     window.print = () => { window.__purchaseOrderPrintCalled = true; };
   });
   await page.getByRole('button', { name: 'Generar Orden de Compra PDF' }).click();
   await page.getByRole('dialog', { name: 'Nueva orden de compra' }).waitFor();
+  assert.equal(await page.locator('#purchase-order-editor-body tr[data-key]').count(), 1);
+  assert.match(await page.locator('#purchase-order-editor-item-count').textContent(), /1 visibles · 2 del proveedor/);
+  await page.locator('#purchase-order-show-all-supplier-items').check();
+  assert.equal(await page.locator('#purchase-order-editor-body tr[data-key]').count(), 2);
+  const additionalOrderRow = page.locator('#purchase-order-editor-body tr[data-key="P2"]');
+  await additionalOrderRow.locator('.purchase-order-select').check();
+  assert.equal(await additionalOrderRow.locator('.purchase-order-quantity').inputValue(), '1');
+  assert.match(await additionalOrderRow.locator('.purchase-order-row-warning').textContent(), /Ítem adicional/);
+  await additionalOrderRow.locator('.purchase-order-select').uncheck();
+  await page.locator('#purchase-order-show-all-supplier-items').uncheck();
   assert.equal(await page.locator('#purchase-order-editor-body tr[data-key]').count(), 1);
   assert.equal(await page.locator('.purchase-order-cost').inputValue(), '500');
   assert.equal(await page.locator('.purchase-order-cost').getAttribute('inputmode'), 'numeric');
@@ -765,8 +793,24 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.doesNotMatch(await page.locator('.purchase-order-row-warning').textContent(), /no múltiplo del empaque/i);
   await page.getByRole('button', { name: 'Confirmar y guardar orden' }).click();
   await page.locator('#purchase-order-editor-status').filter({ hasText: /guardada correctamente/i }).waitFor();
+  await page.evaluate(() => {
+    const savedItem = purchaseOrderEditorState.items.find(item => item.selected);
+    purchaseOrderEditorState.items.push({
+      ...savedItem,
+      key: 'ZERO',
+      code: 'ZERO',
+      name: 'Ítem con cantidad cero',
+      quantity: 0,
+      internalQuantity: 0,
+      total: 0,
+      selected: true
+    });
+  });
   await page.getByRole('button', { name: 'Imprimir / PDF' }).click();
   assert.equal(await page.evaluate(() => window.__purchaseOrderPrintCalled), true);
+  assert.equal(await page.locator('#purchase-order-document tbody tr').count(), 1);
+  assert.doesNotMatch(await page.locator('#purchase-order-document').textContent(), /Ingrediente adicional|cantidad cero/i);
+  assert.match(await page.locator('#purchase-order-document tfoot').textContent(), /TOTAL ORDEN.*\$2\.000/s);
   await page.getByRole('button', { name: 'Cerrar' }).click();
   await page.getByRole('button', { name: 'Órdenes de Compra Pasadas' }).click();
   const pastOrdersDialog = page.getByRole('dialog', { name: 'Órdenes de Compra Pasadas' });
@@ -824,6 +868,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const warehouseProjectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
   assert.equal(await warehouseProjectionRow.locator('td').nth(12).textContent(), '5 UN');
   assert.equal(await warehouseProjectionRow.locator('td').nth(16).textContent(), '—');
+  await page.locator('#projection-only-required').check();
+  assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 0);
+  await page.locator('#projection-only-required').uncheck();
   await page.getByRole('button', { name: 'OC Suc' }).click();
   await page.getByRole('dialog', { name: 'Órdenes de compra de sucursales' }).waitFor();
   assert.equal(await page.locator('#projection-branch-orders-body tr').count(), 2);
@@ -1057,6 +1104,37 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#inventory-movement-to').fill('2026-08-05');
   await page.locator('#confirm-inventory-process').click();
   await page.locator('#inventory-source-status').filter({ hasText: /procesado correctamente/i }).waitFor();
+  assert.equal(await page.locator('#inventory-executive-summary').isVisible(), true);
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').count(), 11);
+  assert.deepEqual(await page.locator('#inventory-executive-summary-table th').allTextContents(),
+    ['Indicador', 'Total', '% de venta neta', 'Contexto']);
+  assert.match(await page.locator('#inventory-executive-net-sales').textContent(), /Venta neta.*\$0/i);
+  assert.match(await page.locator('#inventory-executive-period').textContent(), /04.*ago.*2026.*05.*ago.*2026.*Ubicación considerada.*Tienda 2/i);
+  assert.match(await page.locator('#inventory-executive-summary-table').textContent(), /Costo consumo marketing.*Costo consumo colaboradores.*Costo de merma.*Costo Total del Kardex.*Valor Inventario Final Teórico.*Valor Inventario Físico.*Costo Total Kardex LAC001 ajustado.*Sustituciones de syrup y salsas.*Costo Total Kardex syrup y salsas ajustado.*Vasos y tapas no utilizados.*Costo Total Kardex vasos y tapas ajustado/s);
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody td:nth-child(3)').evaluateAll(cells =>
+    cells.every(cell => cell.textContent === '—')), true);
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(0).getAttribute('class'), 'executive-negative-concept');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(1).getAttribute('class'), 'executive-negative-concept');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(2).getAttribute('class'), 'executive-negative-concept');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(3).getAttribute('class'), 'executive-negative-result');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(7).getAttribute('class'), 'executive-benefit');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(9).getAttribute('class'), 'executive-benefit');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(0).locator('td').nth(1).evaluate(cell =>
+    getComputedStyle(cell).color), 'rgb(209, 112, 69)');
+  assert.deepEqual(await page.evaluate(() => [
+    inventoryExecutiveResultTone({ amount: 1 }),
+    inventoryExecutiveResultTone({ amount: -1 }),
+    inventoryExecutiveResultTone({ amount: 0 })
+  ]), ['executive-positive-result', 'executive-negative-result', '']);
+  assert.match(await page.locator('#inventory-executive-packaging-comparison').textContent(), /Criterio de compensación.*Costo Total del Kardex/i);
+  assert.match(await page.locator('#inventory-report-period').textContent(), /Ubicación considerada.*Tienda 2.*Venta neta del período.*\$0/i);
+  const inventorySectionOrder = await page.locator('#inventory-report-results').evaluate(section => ({
+    executive: section.querySelector('#inventory-executive-summary').getBoundingClientRect().top,
+    consumption: section.querySelector('#inventory-consumption-reports').getBoundingClientRect().top,
+    kardex: section.querySelector('.inventory-kardex-heading').getBoundingClientRect().top
+  }));
+  assert.ok(inventorySectionOrder.executive < inventorySectionOrder.consumption);
+  assert.ok(inventorySectionOrder.executive < inventorySectionOrder.kardex);
   assert.equal(await page.locator('#inventory-results-table tbody tr').count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: /^Inventario Final Teórico$/ }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencia de Inventario' }).count(), 1);
@@ -1173,6 +1251,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const consolidatedDownload = await consolidatedDownloadPromise;
   const consolidatedWorkbook = XLSX.readFile(await consolidatedDownload.path());
   assert.equal(consolidatedWorkbook.SheetNames[0], 'Información');
+  assert.equal(consolidatedWorkbook.SheetNames.includes('Resumen ejecutivo'), true);
   assert.equal(consolidatedWorkbook.SheetNames.includes('Merma'), true);
   assert.equal(consolidatedWorkbook.SheetNames.includes('Kardex consolidado'), true);
   assert.equal(await page.locator('#inventory-waste-report').isVisible(), true);

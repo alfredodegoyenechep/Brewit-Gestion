@@ -5010,24 +5010,11 @@ function roundUpToPackageMultiple(quantity, unitsPerPackage) {
   return Number((Math.ceil((value / packageSize) - 1e-9) * packageSize).toPrecision(12));
 }
 
-function greatestCommonDivisor(left, right) {
-  let first = Math.abs(left);
-  let second = Math.abs(right);
-  while (second) [first, second] = [second, first % second];
-  return first || 1;
-}
-
-function purchaseUnitsRespectingPackage(quantity, unitsPerPurchaseUnit, unitsPerPackage) {
+function purchaseUnitsForInternalQuantity(quantity, unitsPerPurchaseUnit) {
   const value = Number(quantity);
   const conversion = Number(unitsPerPurchaseUnit);
-  const packageSize = Number(unitsPerPackage);
-  if (!(value > 0) || !(conversion > 0) || !(packageSize > 0)) return null;
-  const minimumPurchaseUnits = Math.ceil((value / conversion) - 1e-9);
-  const scale = 1000000;
-  const conversionInteger = Math.max(1, Math.round(conversion * scale));
-  const packageInteger = Math.max(1, Math.round(packageSize * scale));
-  const purchaseUnitMultiple = packageInteger / greatestCommonDivisor(conversionInteger, packageInteger);
-  return Math.ceil(minimumPurchaseUnits / purchaseUnitMultiple) * purchaseUnitMultiple;
+  if (!(value > 0) || !(conversion > 0)) return null;
+  return Math.ceil((value / conversion) - 1e-9);
 }
 
 function purchaseQuantityPackageWarning(item, purchaseQuantity) {
@@ -5065,11 +5052,16 @@ function recalculatePurchaseProjectionItem(item) {
   item.ownNeedsPurchase = item.averageDailyConsumption > 0 && item.currentInventory <= item.minimumStock;
   item.ownSuggestedInternalQuantity = item.ownNeedsPurchase
     ? Math.max(0, item.maximumStock - item.currentInventory) : 0;
-  item.needsPurchase = item.ownNeedsPurchase || item.branchOrderInternalQuantity > 0;
-  item.rawSuggestedInternalQuantity = item.ownSuggestedInternalQuantity + item.branchOrderInternalQuantity;
+  item.inventoryAfterBranchOrders = item.currentInventory - item.branchOrderInternalQuantity;
+  item.rawSuggestedInternalQuantity = item.averageDailyConsumption > 0
+    ? (item.inventoryAfterBranchOrders <= item.minimumStock
+      ? Math.max(0, item.maximumStock - item.inventoryAfterBranchOrders)
+      : 0)
+    : Math.max(0, -item.inventoryAfterBranchOrders);
+  item.needsPurchase = item.rawSuggestedInternalQuantity > 0;
   item.suggestedInternalQuantity = roundUpToPackageMultiple(item.rawSuggestedInternalQuantity, item.unitsPerPackage);
-  item.suggestedPurchaseUnits = purchaseUnitsRespectingPackage(
-    item.suggestedInternalQuantity, item.unitsPerPurchaseUnit, item.unitsPerPackage
+  item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(
+    item.suggestedInternalQuantity, item.unitsPerPurchaseUnit
   );
   item.projectedInternalQuantity = item.suggestedPurchaseUnits === null
     ? item.suggestedInternalQuantity : item.suggestedPurchaseUnits * item.unitsPerPurchaseUnit;
@@ -5522,27 +5514,57 @@ function purchaseOrderHasChangedCosts() {
     && Number(item.unitCost) !== roundedPurchaseOrderCost(item.referenceUnitCost || 0)) || false;
 }
 
-function editableSavedPurchaseOrder(order) {
+function editablePurchaseOrderSupplierItem(item, options = {}) {
+  const referenceUnitCost = roundedPurchaseOrderCost(
+    item.estimatedPurchaseUnitCost ?? item.referenceUnitCost ?? item.unitCost ?? 0
+  );
+  const quantity = Number(item.quantity ?? item.suggestedPurchaseUnits ?? 0);
+  const unitCost = roundedPurchaseOrderCost(item.unitCost ?? referenceUnitCost);
+  const selected = options.selected === true;
+  return {
+    ...item,
+    unitsPerPackage: Number(item.unitsPerPackage) > 0 ? Number(item.unitsPerPackage) : 1,
+    referenceUnitCost,
+    quantity,
+    unitCost,
+    selected,
+    editorDefaultVisible: options.editorDefaultVisible === true,
+    savedSelected: options.savedSelected === true,
+    savedQuantity: Number(options.savedQuantity ?? quantity),
+    savedUnitCost: roundedPurchaseOrderCost(options.savedUnitCost ?? unitCost)
+  };
+}
+
+function editableSavedPurchaseOrder(order, supplierItems = []) {
+  const availableByKey = new Map(supplierItems.map(item => [item.key, item]));
+  const savedKeys = new Set(order.items.map(item => item.key));
+  const savedItems = order.items.map(item => editablePurchaseOrderSupplierItem({
+    ...(availableByKey.get(item.key) || {}),
+    ...item
+  }, {
+    selected: true,
+    editorDefaultVisible: true,
+    savedSelected: true,
+    savedQuantity: item.quantity,
+    savedUnitCost: item.unitCost
+  }));
+  const additionalItems = supplierItems
+    .filter(item => !savedKeys.has(item.key))
+    .map(item => editablePurchaseOrderSupplierItem(item))
+    .sort((left, right) => left.name.localeCompare(right.name, 'es'));
   return {
     ...order,
-    items: order.items.map(item => ({
-      ...item,
-      unitsPerPackage: Number(item.unitsPerPackage) > 0 ? Number(item.unitsPerPackage) : 1,
-      referenceUnitCost: roundedPurchaseOrderCost(item.referenceUnitCost || 0),
-      unitCost: roundedPurchaseOrderCost(item.unitCost),
-      selected: true,
-      savedSelected: true,
-      savedQuantity: Number(item.quantity),
-      savedUnitCost: roundedPurchaseOrderCost(item.unitCost)
-    }))
+    showAllSupplierItems: false,
+    items: [...savedItems, ...additionalItems]
   };
 }
 
 function purchaseOrderEditorIsDirty() {
   if (!purchaseOrderEditorState?.id) return true;
   return purchaseOrderEditorState.items.some(item => item.selected !== item.savedSelected
-    || Math.abs(Number(item.quantity) - Number(item.savedQuantity)) > 0.000001
-    || Number(item.unitCost) !== Number(item.savedUnitCost));
+    || ((item.selected || item.savedSelected)
+      && (Math.abs(Number(item.quantity) - Number(item.savedQuantity)) > 0.000001
+        || Number(item.unitCost) !== Number(item.savedUnitCost))));
 }
 
 function updatePurchaseOrderEditorTotals() {
@@ -5561,7 +5583,8 @@ function updatePurchaseOrderEditorTotals() {
       ? item.quantity * item.unitCost : 0;
     row.querySelector('.purchase-order-row-total').textContent = formatClp(rowTotal);
     row.querySelector('.purchase-order-row-warning').textContent = [
-      changed ? 'Costo modificado' : '', packageWarning
+      changed ? 'Costo modificado' : '', packageWarning,
+      !item.editorDefaultVisible && item.selected ? 'Ítem adicional' : ''
     ].filter(Boolean).join(' · ');
     row.classList.toggle('purchase-order-cost-modified', changed);
     row.classList.toggle('purchase-order-package-warning', Boolean(packageWarning));
@@ -5591,8 +5614,17 @@ function renderPurchaseOrderEditor() {
   document.getElementById('purchase-order-editor-status').textContent = state.id
     ? `Orden guardada. Última actualización: ${new Date(state.updatedAt).toLocaleString('es-CL')}.` :
       'Selecciona los ítems y confirma sus cantidades y costos antes de guardar.';
+  const showAll = document.getElementById('purchase-order-show-all-supplier-items');
+  const defaultItems = state.items.filter(item => item.editorDefaultVisible || item.selected);
+  const visibleItems = state.showAllSupplierItems ? state.items : defaultItems;
+  showAll.checked = state.showAllSupplierItems === true;
+  showAll.disabled = state.items.length <= defaultItems.length;
+  document.getElementById('purchase-order-show-all-supplier-items-label').textContent =
+    `Mostrar todos los ítems de ${state.supplier.name}`;
+  document.getElementById('purchase-order-editor-item-count').textContent =
+    `${visibleItems.length} visibles · ${state.items.length} del proveedor`;
   const body = document.getElementById('purchase-order-editor-body');
-  body.replaceChildren(...state.items.map(item => {
+  body.replaceChildren(...visibleItems.map(item => {
     const row = document.createElement('tr');
     row.dataset.key = item.key;
     const selectCell = document.createElement('td');
@@ -5647,6 +5679,8 @@ function openPurchaseOrderEditor() {
   const supplier = data.suppliers.find(item => item.key === supplierKey);
   const visibleItems = filteredPurchaseProjectionItems().filter(item => item.supplierKey === supplierKey);
   if (!supplier || !visibleItems.length) return;
+  const visibleKeys = new Set(visibleItems.map(item => item.key));
+  const supplierItems = data.items.filter(item => item.supplierKey === supplierKey);
   purchaseOrderEditorState = {
     id: null,
     orderNumber: null,
@@ -5659,12 +5693,10 @@ function openPurchaseOrderEditor() {
       branchLocationIds: data.branchOrders?.selectedLocationIds || [],
       selectedPurchaseOrderIds: data.purchaseOrders?.selectedOrderIds || []
     },
-    items: visibleItems.map(item => ({
-      ...item,
-      referenceUnitCost: roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0),
-      quantity: Number(item.suggestedPurchaseUnits || 0),
-      unitCost: roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0),
-      selected: Number(item.suggestedPurchaseUnits || 0) > 0
+    showAllSupplierItems: false,
+    items: supplierItems.map(item => editablePurchaseOrderSupplierItem(item, {
+      selected: visibleKeys.has(item.key) && Number(item.suggestedPurchaseUnits || 0) > 0,
+      editorDefaultVisible: visibleKeys.has(item.key)
     }))
   };
   renderPurchaseOrderEditor();
@@ -5696,7 +5728,8 @@ async function confirmPurchaseOrder() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    purchaseOrderEditorState = editableSavedPurchaseOrder(saved);
+    const supplierItems = purchaseOrderEditorState.items;
+    purchaseOrderEditorState = editableSavedPurchaseOrder(saved, supplierItems);
     renderPurchaseOrderEditor();
     setStatus(status, `Orden ${saved.orderNumber} guardada correctamente. Ya puedes imprimirla o volver a modificarla.`, 'success');
   } catch (error) {
@@ -5708,6 +5741,10 @@ async function confirmPurchaseOrder() {
 
 function printPurchaseOrder(order = purchaseOrderEditorState) {
   if (!order?.id || !order.items?.length) return;
+  const printableItems = order.items.filter(item => item.selected !== false && Number(item.quantity) > 0);
+  if (!printableItems.length) return;
+  const printableTotal = printableItems.reduce((total, item) =>
+    total + (Number(item.quantity) * Number(item.unitCost) || 0), 0);
   const documentSection = document.getElementById('purchase-order-document');
   const heading = document.createElement('div');
   heading.className = 'purchase-order-heading';
@@ -5746,7 +5783,7 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   const table = document.createElement('table');
   table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDC</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDC</th><th>Total</th></tr></thead>';
   const body = document.createElement('tbody');
-  order.items.forEach(item => {
+  printableItems.forEach(item => {
     const row = document.createElement('tr');
     [
       item.code || '', item.name, formatProjectionQuantity(item.quantity), item.purchaseUnit,
@@ -5762,12 +5799,12 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   const footer = document.createElement('tfoot');
   const totalRow = document.createElement('tr');
   totalRow.className = 'purchase-order-total-row';
-  totalRow.innerHTML = `<td colspan="6">TOTAL ORDEN</td><td>${formatClp(order.total)}</td>`;
+  totalRow.innerHTML = `<td colspan="6">TOTAL ORDEN</td><td>${formatClp(printableTotal)}</td>`;
   footer.appendChild(totalRow);
   table.append(body, footer);
   const note = document.createElement('p');
   note.className = 'purchase-order-note';
-  note.textContent = order.items.some(item => item.costModified)
+  note.textContent = printableItems.some(item => item.costModified)
     ? 'Esta orden contiene costos modificados manualmente respecto de la estimación original. Verificar impuestos y condiciones comerciales antes de enviarla.'
     : 'Verificar disponibilidad, impuestos y condiciones comerciales antes de enviar la orden al proveedor.';
   documentSection.replaceChildren(heading, supplierBlock, table, note);
@@ -5879,8 +5916,15 @@ async function openSavedPurchaseOrder(orderId, printOnly = false) {
   try {
     const order = await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}`);
     if (printOnly) return printPurchaseOrder(order);
+    let supplierItems = [];
+    try {
+      const projection = await apiRequest(`/api/purchase-projections?location=${encodeURIComponent(order.location.id)}`);
+      supplierItems = projection.items.filter(item => item.supplierKey === order.supplier.key);
+    } catch {
+      supplierItems = [];
+    }
     document.getElementById('past-purchase-orders-dialog').close();
-    purchaseOrderEditorState = editableSavedPurchaseOrder(order);
+    purchaseOrderEditorState = editableSavedPurchaseOrder(order, supplierItems);
     renderPurchaseOrderEditor();
     document.getElementById('purchase-order-editor-dialog').showModal();
   } catch (error) {
@@ -7325,6 +7369,112 @@ function renderInventoryAvoidedPackagingReport(report) {
   section.hidden = false;
 }
 
+function formatInventoryExecutivePercent(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+  return `${Number(value).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
+function inventoryExecutiveResultTone(metric) {
+  const amount = Number(metric?.amount) || 0;
+  if (amount > 0) return 'executive-positive-result';
+  if (amount < 0) return 'executive-negative-result';
+  return '';
+}
+
+function renderInventoryExecutiveSummary(summary) {
+  const section = document.getElementById('inventory-executive-summary');
+  if (!summary?.metrics) {
+    section.hidden = true;
+    return;
+  }
+  const locations = (summary.period?.locations || []).map(location => location.name).filter(Boolean);
+  const locationLabel = locations.length === 1 ? 'Ubicación considerada' : 'Ubicaciones consideradas';
+  document.getElementById('inventory-executive-net-sales').textContent =
+    `Venta neta: ${formatKardexCost(summary.netSales)}`;
+  document.getElementById('inventory-executive-period').textContent =
+    `${formatReportDate(summary.period.dateFrom)} – ${formatReportDate(summary.period.dateTo)} · ${locationLabel}: ${locations.join(', ') || 'Sin ubicación'}.${summary.salesFilesRead ? '' : ' No se encontró un archivo de ventas legible para el período.'}`;
+
+  const metrics = summary.metrics;
+  const lac001 = metrics.lac001AdjustedKardexCost;
+  const syrupSauce = metrics.syrupSauceAdjustedKardexCost;
+  const packaging = metrics.packagingAdjustedKardexCost;
+  const rows = [
+    {
+      label: 'Costo consumo marketing', metric: metrics.marketingConsumption, tone: 'executive-negative-concept',
+      context: `${formatInventoryQuantity(metrics.marketingConsumption.quantity)} unidad(es) de producto consumida(s). Se presenta en rojo porque corresponde a consumo interno.`
+    },
+    {
+      label: 'Costo consumo colaboradores', metric: metrics.employeeConsumption, tone: 'executive-negative-concept',
+      context: `${formatInventoryQuantity(metrics.employeeConsumption.quantity)} unidad(es) de producto consumida(s). Se presenta en rojo porque corresponde a consumo interno.`
+    },
+    {
+      label: 'Costo de merma', metric: metrics.waste, tone: 'executive-negative-concept',
+      context: `${metrics.waste.itemCount} ítem(s) con adiciones. Se presenta en rojo porque representa pérdida o merma.`
+    },
+    {
+      label: 'Costo Total del Kardex', metric: metrics.kardexTotalCost,
+      tone: inventoryExecutiveResultTone(metrics.kardexTotalCost),
+      context: 'Diferencia entre inventario físico y teórico valorizada. Un resultado positivo se muestra en azul; uno negativo, en rojo.'
+    },
+    { label: 'Valor Inventario Final Teórico', metric: metrics.theoreticalFinalInventoryValue, context: 'Saldo teórico valorizado al cierre.' },
+    { label: 'Valor Inventario Físico', metric: metrics.physicalInventoryValue, context: 'Saldo físico valorizado al cierre.' },
+    {
+      label: 'Costo Total Kardex LAC001 ajustado', metric: lac001, tone: inventoryExecutiveResultTone(lac001),
+      context: `Costo Total Kardex LAC001 ${formatKardexCost(lac001.kardexCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(lac001.compensationCost)} = ${formatKardexCost(lac001.amount)}. Compensación calculada sobre ${formatInventoryQuantity(lac001.substitutedQuantity)} L y ${formatInventoryQuantity(lac001.substitutionCount)} sustitución(es).`
+    },
+    {
+      label: 'Sustituciones de syrup y salsas', metric: metrics.syrupSauceSubstitutions, tone: 'executive-benefit',
+      context: `${formatInventoryQuantity(metrics.syrupSauceSubstitutions.substitutionCount)} sustitución(es); corresponde al costo teórico del ingrediente original no utilizado.`
+    },
+    {
+      label: 'Costo Total Kardex syrup y salsas ajustado', metric: syrupSauce,
+      tone: inventoryExecutiveResultTone(syrupSauce),
+      context: `Costo Total Kardex de ${syrupSauce.matchedItemCount} ingrediente(s) original(es) sustituido(s) ${formatKardexCost(syrupSauce.kardexCost)} − costo sustituido ${formatKardexCost(syrupSauce.compensationCost)} = ${formatKardexCost(syrupSauce.amount)}.${syrupSauce.codes.length ? ` Códigos: ${syrupSauce.codes.join(', ')}.` : ''}`
+    },
+    {
+      label: 'Vasos y tapas no utilizados', metric: metrics.avoidedPackaging, tone: 'executive-benefit',
+      context: `${formatInventoryQuantity(metrics.avoidedPackaging.quantity)} unidad(es) desechable(s) evitada(s); corresponde a su costo teórico no consumido.`
+    },
+    {
+      label: 'Costo Total Kardex vasos y tapas ajustado', metric: packaging,
+      tone: inventoryExecutiveResultTone(packaging),
+      context: `Costo Total Kardex de ${packaging.matchedItemCount} código(s) de vasos y tapas ${formatKardexCost(packaging.kardexCost)} − costo no utilizado ${formatKardexCost(packaging.compensationCost)} = ${formatKardexCost(packaging.amount)}.`
+    }
+  ];
+  const table = document.getElementById('inventory-executive-summary-table');
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Indicador', 'Total', '% de venta neta', 'Contexto'].forEach(label => {
+    const cell = document.createElement('th');
+    cell.textContent = label;
+    headRow.appendChild(cell);
+  });
+  head.appendChild(headRow);
+  const body = document.createElement('tbody');
+  rows.forEach(({ label, metric, context, tone = '' }) => {
+    const row = document.createElement('tr');
+    row.className = tone;
+    [
+      label,
+      metric.available ? formatKardexCost(metric.amount) : 'No disponible',
+      metric.available ? formatInventoryExecutivePercent(metric.percentOfNetSales) : '—',
+      context
+    ].forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  table.replaceChildren(head, body);
+
+  const comparison = summary.packagingComparison;
+  const comparisonElement = document.getElementById('inventory-executive-packaging-comparison');
+  comparisonElement.textContent =
+    `Criterio de compensación: los costos teóricos no utilizados se restan del Costo Total del Kardex del mismo ingrediente o grupo de insumos. Para vasos y tapas: ${formatKardexCost(comparison.kardexTotalCost)} − ${formatKardexCost(comparison.avoidedPackagingCost)} = ${formatKardexCost(comparison.adjustedKardexCost)}.`;
+  section.hidden = false;
+}
+
 function renderInventoryResults(data) {
   const report = data.report;
   const physicalInventoryQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
@@ -7333,6 +7483,7 @@ function renderInventoryResults(data) {
     (sum, item) => item.costAvailable ? sum + inventoryValue(item, quantity(item)) : sum,
     0
   ));
+  renderInventoryExecutiveSummary(data.executiveSummary);
   renderConsumptionReports(data.consumption);
   const wasteSection = document.getElementById('inventory-waste-report');
   if (data.waste?.available && data.waste.report) {
@@ -7344,9 +7495,15 @@ function renderInventoryResults(data) {
     wasteSection.hidden = true;
   }
   const basisLabel = basis => basis === 'final' ? 'Inventario Final' : 'Inventario Inicial';
-  document.getElementById('inventory-report-period').textContent = report.selection
+  const reportPeriod = report.selection
     ? `Saldo inicial: ${basisLabel(report.selection.initialBasis)} del ${formatReportDate(report.selection.initialDate)} · movimientos: ${formatReportDate(report.dateFrom)} a ${formatReportDate(report.dateTo)}, ambas fechas incluidas · saldo final: ${basisLabel(report.selection.finalBasis)} del ${formatReportDate(report.selection.finalDate)}.`
     : `${formatReportDate(report.dateFrom)} a ${formatReportDate(report.dateTo)} · inventario físico tomado del inicio del ${formatReportDate(report.physicalInventoryDate)}.`;
+  const executiveLocations = (data.executiveSummary?.period?.locations || []).map(location => location.name).filter(Boolean);
+  const executiveLocationLabel = executiveLocations.length === 1 ? 'Ubicación considerada' : 'Ubicaciones consideradas';
+  const netSalesHeader = data.executiveSummary
+    ? ` ${executiveLocationLabel}: ${executiveLocations.join(', ') || 'Sin ubicación'} · Venta neta del período: ${formatKardexCost(data.executiveSummary.netSales)}.`
+    : '';
+  document.getElementById('inventory-report-period').textContent = `${reportPeriod}${netSalesHeader}`;
   document.getElementById('inventory-report-item-count').textContent = `${report.itemCount} productos`;
   const columns = [
     { label: 'Código', value: item => item.code, sortValue: item => item.code },
@@ -8001,6 +8158,7 @@ function printInventoryReport(sectionId) {
 }
 
 function excelSheetLabel(table, index) {
+  if (table.id === 'inventory-executive-summary-table') return 'Resumen ejecutivo';
   if (table.id === 'inventory-results-table') return 'Kardex consolidado';
   if (table.id === 'current-inventory-table') return 'Inventario valorizado';
   if (table.id === 'current-inventory-missing-cost-table') return 'Productos sin costo';
@@ -8526,10 +8684,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('purchase-order-editor-body').addEventListener('input', updatePurchaseOrderEditorTotals);
   document.getElementById('purchase-order-editor-body').addEventListener('change', event => {
+    if (event.target.matches('.purchase-order-select') && event.target.checked) {
+      const row = event.target.closest('tr[data-key]');
+      const quantity = row?.querySelector('.purchase-order-quantity');
+      const item = purchaseOrderEditorState?.items.find(candidate => candidate.key === row?.dataset.key);
+      if (quantity && !(Number(quantity.value) > 0)) {
+        quantity.value = String(Number(item?.suggestedPurchaseUnits) > 0 ? item.suggestedPurchaseUnits : 1);
+      }
+    }
     if (event.target.matches('.purchase-order-cost')) {
       event.target.value = formatPurchaseOrderCost(roundedPurchaseOrderCost(parseLocalizedNumber(event.target.value)));
     }
     updatePurchaseOrderEditorTotals();
+  });
+  document.getElementById('purchase-order-show-all-supplier-items').addEventListener('change', event => {
+    if (!purchaseOrderEditorState) return;
+    updatePurchaseOrderEditorTotals();
+    purchaseOrderEditorState.showAllSupplierItems = event.target.checked;
+    renderPurchaseOrderEditor();
   });
   document.getElementById('confirm-purchase-order').addEventListener('click', confirmPurchaseOrder);
   document.getElementById('print-saved-purchase-order').addEventListener('click', () => printPurchaseOrder());

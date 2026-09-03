@@ -1176,6 +1176,13 @@
         <div id="purchase-order-cost-warning" class="purchase-order-cost-warning" hidden>
           Advertencia: modificaste el costo de uno o más ítems respecto del costo estimado. Confirma cuidadosamente estos valores antes de guardar.
         </div>
+        <div class="purchase-order-editor-tools">
+          <label for="purchase-order-show-all-supplier-items">
+            <input id="purchase-order-show-all-supplier-items" type="checkbox" />
+            <span id="purchase-order-show-all-supplier-items-label">Mostrar todos los ítems del proveedor</span>
+          </label>
+          <span id="purchase-order-editor-item-count" class="chip neutral"></span>
+        </div>
         <div class="purchase-order-editor-table-wrap">
           <table class="purchase-order-editor-table">
             <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>UDC</th><th>Unidades x UDC</th><th>Unidades x empaque</th><th>UDC sugeridas</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
@@ -1420,6 +1427,20 @@
             <button id="close-inventory-report" class="icon-button small" type="button">Cerrar</button>
           </div>
         </div>
+        <section id="inventory-executive-summary" class="consumption-report-card inventory-executive-summary" hidden>
+          <div class="inventory-executive-summary-head">
+            <div>
+              <div class="panel-eyebrow">Visión general del período</div>
+              <h4>Resumen ejecutivo</h4>
+            </div>
+            <span id="inventory-executive-net-sales" class="chip neutral"></span>
+          </div>
+          <p id="inventory-executive-period" class="panel-description"></p>
+          <div class="inventory-results-table-wrap inventory-executive-table-wrap">
+            <table id="inventory-executive-summary-table" class="inventory-results-table"></table>
+          </div>
+          <p id="inventory-executive-packaging-comparison" class="inventory-executive-comparison"></p>
+        </section>
         <div id="inventory-consumption-reports" class="inventory-consumption-reports"></div>
         <section id="inventory-waste-report" class="consumption-report-card" hidden>
           <h4>Resumen de Merma</h4>
