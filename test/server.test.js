@@ -321,8 +321,10 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(report.previousDay.comparisonToAveragePercent), 100);
   assert.equal(report.week.from, '2026-08-10');
   assert.equal(Math.round(report.week.netSales), 800);
+  assert.deepEqual(report.week.equivalentRank, { position: 1, total: 9 });
   assert.equal(report.month.from, '2026-08-01');
   assert.equal(Math.round(report.month.netSales), 1900);
+  assert.deepEqual(report.month.equivalentRank, { position: 1, total: 2 });
   assert.equal(report.statistics.months.length, 14);
   assert.deepEqual(report.statistics.months[0], {
     key: '2026-08', from: '2026-08-01', to: '2026-08-13', netSales: 1900, variationPercent: 280
@@ -353,8 +355,10 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(Math.round(includingToday.previousDay.netSales), 400);
   assert.equal(includingToday.week.to, '2026-08-14');
   assert.equal(Math.round(includingToday.week.netSales), 1200);
+  assert.deepEqual(includingToday.week.equivalentRank, { position: 1, total: 9 });
   assert.equal(includingToday.month.to, '2026-08-14');
   assert.equal(Math.round(includingToday.month.netSales), 2300);
+  assert.deepEqual(includingToday.month.equivalentRank, { position: 1, total: 2 });
   assert.equal(Math.round(includingToday.statistics.months[0].netSales), 2300);
   assert.equal(Math.round(includingToday.statistics.weeks[0].netSales), 1200);
   assert.deepEqual(includingToday.statistics.days[0], {
@@ -2031,6 +2035,13 @@ test('reports BA.090 syrup substitutions and avoided dine-in packaging in the in
   assert.equal(payload.executiveSummary.salesFilesRead, 1);
   assert.equal(payload.executiveSummary.metrics.kardexTotalCost.amount, -137);
   assert.equal(payload.executiveSummary.metrics.kardexTotalCost.percentOfNetSales, -13.700000000000001);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.kardexTotalCost, -137);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.syrupSauceSubstitutionCost, 40);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.lac001SubstitutionCost, 0);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.avoidedPackagingCost, 346);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.totalAdjustmentCost, 386);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.amount, -523);
+  assert.equal(payload.executiveSummary.metrics.adjustedKardexTotalCost.adjustedTheoreticalFinalInventoryValue, 1482);
   assert.equal(payload.executiveSummary.metrics.theoreticalFinalInventoryValue.amount, 1096);
   assert.equal(payload.executiveSummary.metrics.physicalInventoryValue.amount, 959);
   assert.equal(payload.executiveSummary.metrics.syrupSauceSubstitutions.amount, 40);

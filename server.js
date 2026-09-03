@@ -1131,6 +1131,13 @@ function buildInventoryExecutiveSummary({
   const packagingKardex = kardexCostForCodes(packaging.map(item => item.code));
   const avoidedPackagingCost = Number(avoidedPackaging?.totalAvoidedPackagingCost) || 0;
   const packagingAdjustedCost = packagingKardex.amount - avoidedPackagingCost;
+  const theoreticalFinalInventoryValue = inventoryValue(item => item.theoreticalFinal);
+  const totalSubstitutionAndPackagingCost = lac001SubstitutedCost
+    + syrupSauceSubstitutedCost
+    + avoidedPackagingCost;
+  const adjustedKardexTotalCost = report.totalCost - totalSubstitutionAndPackagingCost;
+  const adjustedTheoreticalFinalInventoryValue = theoreticalFinalInventoryValue
+    + totalSubstitutionAndPackagingCost;
 
   return {
     period: {
@@ -1148,7 +1155,16 @@ function buildInventoryExecutiveSummary({
         itemCount: Number(waste?.report?.itemCount) || 0
       }),
       kardexTotalCost: metric(report.totalCost),
-      theoreticalFinalInventoryValue: metric(inventoryValue(item => item.theoreticalFinal)),
+      adjustedKardexTotalCost: metric(adjustedKardexTotalCost, true, {
+        kardexTotalCost: report.totalCost,
+        syrupSauceSubstitutionCost: syrupSauceSubstitutedCost,
+        lac001SubstitutionCost: lac001SubstitutedCost,
+        avoidedPackagingCost,
+        totalAdjustmentCost: totalSubstitutionAndPackagingCost,
+        theoreticalFinalInventoryValue,
+        adjustedTheoreticalFinalInventoryValue
+      }),
+      theoreticalFinalInventoryValue: metric(theoreticalFinalInventoryValue),
       physicalInventoryValue: metric(inventoryValue(physicalQuantity)),
       lac001AdjustedKardexCost: metric(lac001AdjustedCost, Boolean(lac001Substitutions), {
         kardexCost: lac001Kardex.amount,
@@ -1637,6 +1653,15 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
     position: hasReferenceDay && dates.length ? 1 + dates.filter(date => dailySales[date].net > reference.net).length : null,
     total: dates.length
   });
+  const rankTotals = (totals, currentKey) => {
+    const currentTotal = totals.get(currentKey);
+    return {
+      position: currentTotal !== undefined
+        ? 1 + [...totals.values()].filter(total => total > currentTotal).length
+        : null,
+      total: totals.size
+    };
+  };
   const sumRange = (from, to) => historicalDates
     .filter(date => date >= from && date <= to)
     .reduce((sum, date) => sum + dailySales[date].net, 0);
@@ -1685,6 +1710,24 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
     const date = addDays(referenceDate, -7 * index);
     return { date, netSales: dailySales[date]?.net || 0 };
   }));
+  const referenceWeekOffset = (referenceDayNumber + 6) % 7;
+  const comparableWeekTotals = new Map();
+  const comparableMonthTotals = new Map();
+  historicalDates.forEach(date => {
+    const dateObject = new Date(`${date}T00:00:00.000Z`);
+    const weekOffset = (dateObject.getUTCDay() + 6) % 7;
+    if (weekOffset <= referenceWeekOffset) {
+      const comparableWeekStart = addDays(date, -weekOffset);
+      comparableWeekTotals.set(
+        comparableWeekStart,
+        (comparableWeekTotals.get(comparableWeekStart) || 0) + dailySales[date].net
+      );
+    }
+    if (dateObject.getUTCDate() <= Number(referenceDate.slice(8, 10))) {
+      const monthKey = date.slice(0, 7);
+      comparableMonthTotals.set(monthKey, (comparableMonthTotals.get(monthKey) || 0) + dailySales[date].net);
+    }
+  });
 
   return {
     basis: 'gross-plus-signed-discounts-divided-by-1.19',
@@ -1704,8 +1747,18 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
         : null,
       averageSampleSize: priorEight.length
     },
-    week: { from: weekStart, to: referenceDate, netSales: sumRange(weekStart, referenceDate) },
-    month: { from: monthStart, to: referenceDate, netSales: sumRange(monthStart, referenceDate) },
+    week: {
+      from: weekStart,
+      to: referenceDate,
+      netSales: sumRange(weekStart, referenceDate),
+      equivalentRank: rankTotals(comparableWeekTotals, weekStart)
+    },
+    month: {
+      from: monthStart,
+      to: referenceDate,
+      netSales: sumRange(monthStart, referenceDate),
+      equivalentRank: rankTotals(comparableMonthTotals, referenceDate.slice(0, 7))
+    },
     statistics: { months, weeks, days, equivalentDays },
     coverage: historicalDates.length ? { from: historicalDates[0], to: historicalDates.at(-1) } : null
   };

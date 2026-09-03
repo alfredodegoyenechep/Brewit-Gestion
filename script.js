@@ -1098,8 +1098,10 @@ async function loadWeeklySalesReport() {
       : `Vs. promedio 8 semanas: ${comparison >= 0 ? '+' : ''}${comparison.toFixed(1)}%`;
     document.getElementById('report-week-value').textContent = formatClp(report.week.netSales);
     document.getElementById('report-week-range').textContent = `${formatReportDate(report.week.from)} – ${formatReportDate(report.week.to)}`;
+    document.getElementById('report-week-rank').textContent = rankText('Ranking semanas equivalentes', report.week.equivalentRank);
     document.getElementById('report-month-value').textContent = formatClp(report.month.netSales);
     document.getElementById('report-month-range').textContent = `${formatReportDate(report.month.from)} – ${formatReportDate(report.month.to)}`;
+    document.getElementById('report-month-rank').textContent = rankText('Ranking meses equivalentes', report.month.equivalentRank);
     document.getElementById('report-weekday-average').textContent = formatClp(report.previousDay.sameWeekdayAverage);
     const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(report.previousDay.date));
     document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
@@ -7398,6 +7400,7 @@ function renderInventoryExecutiveSummary(summary) {
   const lac001 = metrics.lac001AdjustedKardexCost;
   const syrupSauce = metrics.syrupSauceAdjustedKardexCost;
   const packaging = metrics.packagingAdjustedKardexCost;
+  const adjustedKardex = metrics.adjustedKardexTotalCost;
   const rows = [
     {
       label: 'Costo consumo marketing', metric: metrics.marketingConsumption, tone: 'executive-negative-concept',
@@ -7415,6 +7418,11 @@ function renderInventoryExecutiveSummary(summary) {
       label: 'Costo Total del Kardex', metric: metrics.kardexTotalCost,
       tone: inventoryExecutiveResultTone(metrics.kardexTotalCost),
       context: 'Diferencia entre inventario físico y teórico valorizada. Un resultado positivo se muestra en azul; uno negativo, en rojo.'
+    },
+    {
+      label: 'Costo Total Kardex ajustado por sustit. y vasos no ut.', metric: adjustedKardex,
+      tone: inventoryExecutiveResultTone(adjustedKardex),
+      context: `Costo Total del Kardex ${formatKardexCost(adjustedKardex.kardexTotalCost)} − sustituciones de syrup y salsas ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} − vasos y tapas no utilizados ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.amount)}. Valor Inventario Final Teórico ajustado: ${formatKardexCost(adjustedKardex.theoreticalFinalInventoryValue)} + ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} + ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} + ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.adjustedTheoreticalFinalInventoryValue)}.`
     },
     { label: 'Valor Inventario Final Teórico', metric: metrics.theoreticalFinalInventoryValue, context: 'Saldo teórico valorizado al cierre.' },
     { label: 'Valor Inventario Físico', metric: metrics.physicalInventoryValue, context: 'Saldo físico valorizado al cierre.' },

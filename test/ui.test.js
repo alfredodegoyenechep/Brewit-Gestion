@@ -431,6 +431,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-yesterday-value').filter({ hasText: '100' }).waitFor();
   assert.match(await page.locator('#report-general-rank').textContent(), /#1 de 1/);
   assert.match(await page.locator('#report-week-range').textContent(), /03.*ago.*2026.*09.*ago.*2026/i);
+  assert.match(await page.locator('#report-week-rank').textContent(), /Ranking semanas equivalentes.*#1 de 1/i);
+  assert.match(await page.locator('#report-month-rank').textContent(), /Ranking meses equivalentes.*#1 de 1/i);
   assert.equal(await page.locator('#intraday-title').textContent(), 'Venta acumulada del día anterior');
   assert.equal(await page.locator('#intraday-reference-title').textContent(), 'Día anterior');
   assert.match(await page.locator('#intraday-today-date').textContent(), /09.*ago.*2026/i);
@@ -1105,20 +1107,20 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#confirm-inventory-process').click();
   await page.locator('#inventory-source-status').filter({ hasText: /procesado correctamente/i }).waitFor();
   assert.equal(await page.locator('#inventory-executive-summary').isVisible(), true);
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').count(), 11);
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').count(), 12);
   assert.deepEqual(await page.locator('#inventory-executive-summary-table th').allTextContents(),
     ['Indicador', 'Total', '% de venta neta', 'Contexto']);
   assert.match(await page.locator('#inventory-executive-net-sales').textContent(), /Venta neta.*\$0/i);
   assert.match(await page.locator('#inventory-executive-period').textContent(), /04.*ago.*2026.*05.*ago.*2026.*Ubicación considerada.*Tienda 2/i);
-  assert.match(await page.locator('#inventory-executive-summary-table').textContent(), /Costo consumo marketing.*Costo consumo colaboradores.*Costo de merma.*Costo Total del Kardex.*Valor Inventario Final Teórico.*Valor Inventario Físico.*Costo Total Kardex LAC001 ajustado.*Sustituciones de syrup y salsas.*Costo Total Kardex syrup y salsas ajustado.*Vasos y tapas no utilizados.*Costo Total Kardex vasos y tapas ajustado/s);
+  assert.match(await page.locator('#inventory-executive-summary-table').textContent(), /Costo consumo marketing.*Costo consumo colaboradores.*Costo de merma.*Costo Total del Kardex.*Costo Total Kardex ajustado por sustit\. y vasos no ut\..*Valor Inventario Final Teórico.*Valor Inventario Físico.*Costo Total Kardex LAC001 ajustado.*Sustituciones de syrup y salsas.*Costo Total Kardex syrup y salsas ajustado.*Vasos y tapas no utilizados.*Costo Total Kardex vasos y tapas ajustado/s);
   assert.equal(await page.locator('#inventory-executive-summary-table tbody td:nth-child(3)').evaluateAll(cells =>
     cells.every(cell => cell.textContent === '—')), true);
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(0).getAttribute('class'), 'executive-negative-concept');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(1).getAttribute('class'), 'executive-negative-concept');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(2).getAttribute('class'), 'executive-negative-concept');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(3).getAttribute('class'), 'executive-negative-result');
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(7).getAttribute('class'), 'executive-benefit');
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(9).getAttribute('class'), 'executive-benefit');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(8).getAttribute('class'), 'executive-benefit');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(10).getAttribute('class'), 'executive-benefit');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(0).locator('td').nth(1).evaluate(cell =>
     getComputedStyle(cell).color), 'rgb(209, 112, 69)');
   assert.deepEqual(await page.evaluate(() => [
