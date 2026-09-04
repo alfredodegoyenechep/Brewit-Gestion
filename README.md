@@ -102,7 +102,7 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Revenue is net of VAT and reconciled to order totals. Every product-hierarchy line shows sales, sales share, contribution-margin percentage, and contribution-margin amount.
 - Each hierarchy expands into two mutually reconciling views: Barra Caliente / Barra Fría / Sin Barra from the product catalog's BA.001 and BA.002 assignments, and Café / Matcha / Otros from recipe components SUB005 and CAF008. Sold extras inherit the base product classification in their order.
 - Known operating expenses reuse the inventory calculations for marketing consumption, employee consumption, waste, and valued inventory difference. The inventory difference uses the same executive-summary adjustment for LAC001 milk substitutions, syrup/sauce substitutions, and unused dine-in cups/lids. Inventory shortages become positive expenses and surpluses reduce expense.
-- MercadoPago expense sums the absolute `FEE_AMOUNT` (or another recognized fee column) for de-duplicated `SETTLEMENT` rows in the selected period. The response exposes detected fields and coverage warnings.
+- MercadoPago expense sums the absolute `FEE_AMOUNT` (or another recognized fee column) for de-duplicated `SETTLEMENT` rows in the selected period, then divides that gross commission by 1.18 to report its net value. The response exposes the gross amount, net amount, VAT factor, detected fields, and coverage warnings.
 - The bottom line is deliberately labeled partial while any selected location lacks a required source or while future operating-expense categories remain outside the system.
 
 ## Purchases workspace

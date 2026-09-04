@@ -774,7 +774,10 @@ function renderFinancialStatement(data) {
   const total = data.revenue.total;
   const statement = data.statement;
   const rows = [];
-  const append = ({ label, amount, margin = null, contribution = null, coverage = '', className = '', context = '' }) => {
+  const percentOfSales = amount => amount === null || amount === undefined || !statement.netSales
+    ? null
+    : Number(amount) / statement.netSales * 100;
+  const append = ({ label, amount, percentage = null, className = '', context = '' }) => {
     const row = document.createElement('tr');
     row.className = className;
     const labelCell = financialCell(label);
@@ -787,29 +790,30 @@ function renderFinancialStatement(data) {
     row.append(
       labelCell,
       financialCell(amount === null ? '—' : formatClp(amount), 'numeric-cell'),
-      financialCell(financialPercent(margin), 'numeric-cell'),
-      financialCell(contribution === null ? '—' : formatClp(contribution), 'numeric-cell'),
-      financialCell(coverage)
+      financialCell(financialPercent(percentage), 'numeric-cell financial-sales-percent')
     );
     rows.push(row);
   };
   append({
     label: 'Ventas netas sin IVA', amount: statement.netSales,
-    margin: statement.contributionMarginPercent, contribution: statement.contributionMargin,
-    coverage: `${data.revenue.filesRead} archivo(s)`, className: 'financial-primary-row'
+    percentage: 100,
+    context: `${data.revenue.filesRead} archivo(s) de ventas procesado(s).`, className: 'financial-primary-row'
   });
+  const productCostAmount = statement.productCost === null ? null : -statement.productCost;
   append({
     label: 'Costo directo de productos',
-    amount: statement.productCost === null ? null : -statement.productCost,
-    coverage: total.costAvailable ? 'Completa' : 'Incompleta', className: 'financial-cost-row'
+    amount: productCostAmount,
+    percentage: percentOfSales(productCostAmount),
+    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'}.`, className: 'financial-cost-row'
   });
   append({
     label: 'Margen de contribución comercial', amount: statement.contributionMargin,
-    margin: statement.contributionMarginPercent, contribution: statement.contributionMargin,
-    coverage: total.costAvailable ? 'Completa' : 'Incompleta', className: 'financial-subtotal-row'
+    percentage: percentOfSales(statement.contributionMargin),
+    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'}.`, className: 'financial-subtotal-row'
   });
   statement.expenses.forEach(expense => {
-    let context = '';
+    const coverage = financialCoverageLabel(expense);
+    let context = `Cobertura: ${coverage}.`;
     if (expense.key === 'inventoryDifference' && expense.available) {
       const adjustments = (expense.locations || []).reduce((totalAdjustment, location) => {
         const detail = location.adjustments || {};
@@ -818,23 +822,31 @@ function renderFinancialStatement(data) {
         totalAdjustment.packaging += Number(detail.avoidedPackagingCost) || 0;
         return totalAdjustment;
       }, { lac001: 0, syrup: 0, packaging: 0 });
-      context = `Ajustes descontados: leche ${formatClp(adjustments.lac001)}, syrup/salsas ${formatClp(adjustments.syrup)} y vasos/tapas ${formatClp(adjustments.packaging)}.`;
+      context = `Ajustes descontados: leche ${formatClp(adjustments.lac001)}, syrup/salsas ${formatClp(adjustments.syrup)} y vasos/tapas ${formatClp(adjustments.packaging)}. Cobertura: ${coverage}.`;
+    } else if (expense.key === 'mercadoPago' && expense.available) {
+      const detail = expense.detail || {};
+      context = `Comisión con IVA ${formatClp(detail.grossAmount)} ÷ ${detail.vatFactor || 1.18} = neto ${formatClp(expense.amount)}. Cobertura: ${coverage}.`;
     }
+    const amount = expense.available ? -expense.amount : null;
     append({
       label: expense.label,
-      amount: expense.available ? -expense.amount : null,
-      coverage: financialCoverageLabel(expense),
+      amount,
+      percentage: percentOfSales(amount),
       className: expense.available ? 'financial-expense-row' : 'financial-incomplete-row',
       context
     });
   });
+  const knownExpenseAmount = -statement.knownOperatingExpenses;
   append({
-    label: 'Total gastos operacionales conocidos', amount: -statement.knownOperatingExpenses,
-    coverage: statement.dataCoverageComplete ? 'Fuentes completas' : 'Fuentes incompletas', className: 'financial-subtotal-row'
+    label: 'Total gastos operacionales conocidos', amount: knownExpenseAmount,
+    percentage: percentOfSales(knownExpenseAmount),
+    context: statement.dataCoverageComplete ? 'Fuentes conocidas completas.' : 'Existen fuentes conocidas incompletas.',
+    className: 'financial-subtotal-row'
   });
   append({
     label: 'Resultado operacional parcial', amount: statement.partialResult,
-    coverage: statement.partial ? 'Pendiente de completar' : 'Completa',
+    percentage: percentOfSales(statement.partialResult),
+    context: statement.partial ? 'Pendiente de incorporar las demás categorías de gastos.' : 'Cobertura completa.',
     className: `financial-result-row ${(statement.partialResult || 0) < 0 ? 'negative' : 'positive'}`
   });
   body.replaceChildren(...rows);

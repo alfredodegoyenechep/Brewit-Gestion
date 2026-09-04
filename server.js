@@ -5716,6 +5716,7 @@ function createApp(options = {}) {
   }
 
   function mercadoPagoFeesForPeriod(stores, dateFrom, dateTo) {
+    const vatFactor = 1.18;
     const facts = [];
     const seen = new Set();
     const fields = new Set();
@@ -5754,9 +5755,14 @@ function createApp(options = {}) {
       }
     }
     const withFee = facts.filter(item => item.fee !== null);
+    const grossAmount = withFee.reduce((sum, item) => sum + item.fee, 0);
+    const netAmount = grossAmount / vatFactor;
     if (facts.length && !withFee.length) warnings.push('Las transacciones MercadoPago del período no contienen una columna de comisión reconocida.');
     return {
-      amount: withFee.reduce((sum, item) => sum + item.fee, 0),
+      amount: netAmount,
+      grossAmount,
+      netAmount,
+      vatFactor,
       available: withFee.length > 0,
       transactions: facts.length,
       transactionsWithFee: withFee.length,
@@ -5976,7 +5982,7 @@ function createApp(options = {}) {
       expenseFromInventory('waste', 'Merma'),
       expenseFromInventory('inventoryDifference', 'Diferencia de Inventario ajustada'),
       {
-        key: 'mercadoPago', label: 'Cobros de MercadoPago', amount: mercadoPago.amount,
+        key: 'mercadoPago', label: 'Cobros netos de MercadoPago', amount: mercadoPago.amount,
         available: mercadoPago.available, complete: mercadoPago.locationsWithFee === selectedStores.length,
         coveredLocations: mercadoPago.locationsWithFee,
         totalLocations: selectedStores.length,

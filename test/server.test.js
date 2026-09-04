@@ -1194,7 +1194,10 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
     ['coffee', 1000], ['matcha', 1000], ['other', 1000]
   ]);
   const mpExpense = report.statement.expenses.find(item => item.key === 'mercadoPago');
-  assert.equal(mpExpense.amount, 60);
+  assert.ok(Math.abs(mpExpense.amount - (60 / 1.18)) < 1e-9);
+  assert.equal(mpExpense.detail.grossAmount, 60);
+  assert.equal(mpExpense.detail.netAmount, 60 / 1.18);
+  assert.equal(mpExpense.detail.vatFactor, 1.18);
   assert.deepEqual(mpExpense.detail.detectedFields, ['FEE_AMOUNT']);
   assert.equal(report.statement.partial, true);
 });

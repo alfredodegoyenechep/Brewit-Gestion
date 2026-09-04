@@ -192,7 +192,10 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#financial-results-to').fill('2026-08-10');
   await page.getByRole('button', { name: 'Generar resultados' }).click();
   await page.waitForFunction(() => document.getElementById('financial-results-status').classList.contains('success'));
+  assert.deepEqual(await page.locator('.financial-statement-table th').allTextContents(), ['Concepto', 'Importe', '% de ventas netas']);
   assert.match(await page.locator('#financial-statement-body').textContent(), /Ventas netas sin IVA.*Costo directo de productos.*Resultado operacional parcial/s);
+  assert.match(await page.locator('#financial-statement-body tr').first().locator('td').nth(2).textContent(), /100,0%/);
+  assert.notEqual(await page.locator('#financial-statement-body tr').nth(1).locator('td').nth(2).textContent(), '—');
   assert.match(await page.locator('#financial-bars-body').textContent(), /Barra Caliente.*Barra Fría.*Sin Barra/s);
   assert.match(await page.locator('#financial-ingredients-body').textContent(), /Café.*Matcha.*Otros/s);
   await page.getByRole('link', { name: 'Resumen General Ventas' }).click();

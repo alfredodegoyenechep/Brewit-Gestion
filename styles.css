@@ -136,7 +136,16 @@
 .financial-table th:not(:first-child),
 .financial-table td.numeric-cell { text-align: right; }
 
-.financial-statement-table td:first-child { font-weight: 750; }
+.financial-statement-table {
+  min-width: 620px;
+  table-layout: fixed;
+}
+.financial-statement-table th:first-child,
+.financial-statement-table td:first-child { width: 68%; font-weight: 750; }
+.financial-statement-table th:nth-child(2),
+.financial-statement-table td:nth-child(2) { width: 20%; }
+.financial-statement-table th:nth-child(3),
+.financial-statement-table td:nth-child(3) { width: 12%; }
 .financial-line-context {
   display: block;
   max-width: 520px;
@@ -147,8 +156,8 @@
   line-height: 1.4;
 }
 .financial-primary-row td { font-weight: 900; }
-.financial-cost-row td:nth-child(2),
-.financial-expense-row td:nth-child(2) { color: var(--red); }
+.financial-cost-row td:nth-child(n+2),
+.financial-expense-row td:nth-child(n+2) { color: var(--red); }
 
 .financial-subtotal-row td {
   border-top: 2px solid var(--border);
@@ -163,8 +172,8 @@
   font-weight: 900;
 }
 
-.financial-result-row.positive td:nth-child(2) { color: var(--green); }
-.financial-result-row.negative td:nth-child(2) { color: var(--red); }
+.financial-result-row.positive td:nth-child(n+2) { color: var(--green); }
+.financial-result-row.negative td:nth-child(n+2) { color: var(--red); }
 .financial-incomplete-row { color: var(--text-muted); }
 
 .financial-future-note {
