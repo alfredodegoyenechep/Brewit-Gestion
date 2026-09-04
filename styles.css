@@ -23,6 +23,249 @@
   --shadow: 0 6px 24px rgba(74, 47, 16, 0.06);
 }
 
+/* Resultados financieros */
+.financial-results-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.financial-results-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.financial-results-heading h2 {
+  margin: 6px 0 5px;
+  font-size: 30px;
+}
+
+.financial-results-heading > div {
+  max-width: 660px;
+}
+
+.financial-results-filters {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.financial-results-filters label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.financial-results-filters select { min-width: 180px; }
+
+.financial-results-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(145px, 1fr));
+  gap: 12px;
+}
+
+.financial-summary-card {
+  padding: 17px 18px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.financial-summary-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.financial-summary-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 22px;
+}
+
+.financial-summary-card.expense strong,
+.financial-summary-card.negative strong { color: var(--red); }
+.financial-summary-card.positive strong { color: var(--green); }
+
+.financial-panel-head { align-items: flex-start; }
+.financial-panel-head h3 { margin: 5px 0 3px; }
+
+.financial-table-wrap {
+  margin-top: 17px;
+  overflow-x: auto;
+}
+
+.financial-table {
+  width: 100%;
+  min-width: 650px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.financial-table th,
+.financial-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+}
+
+.financial-table th {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.financial-table th:not(:first-child),
+.financial-table td.numeric-cell { text-align: right; }
+
+.financial-statement-table td:first-child { font-weight: 750; }
+.financial-line-context {
+  display: block;
+  max-width: 520px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.financial-primary-row td { font-weight: 900; }
+.financial-cost-row td:nth-child(2),
+.financial-expense-row td:nth-child(2) { color: var(--red); }
+
+.financial-subtotal-row td {
+  border-top: 2px solid var(--border);
+  background: var(--coffee-soft-2);
+  font-weight: 900;
+}
+
+.financial-result-row td {
+  padding-top: 15px;
+  border-top: 2px solid var(--coffee);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.financial-result-row.positive td:nth-child(2) { color: var(--green); }
+.financial-result-row.negative td:nth-child(2) { color: var(--red); }
+.financial-incomplete-row { color: var(--text-muted); }
+
+.financial-future-note {
+  margin-top: 14px;
+  padding: 11px 13px;
+  border-left: 3px solid var(--clay);
+  background: var(--coffee-soft-2);
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.financial-breakdowns-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.financial-hierarchy-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.financial-hierarchy-item {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-soft);
+}
+
+.financial-hierarchy-item summary {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(480px, 2fr);
+  align-items: center;
+  gap: 16px;
+  padding: 15px 17px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.financial-hierarchy-item summary > strong { font-size: 13px; }
+.financial-hierarchy-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  gap: 12px;
+}
+
+.financial-hierarchy-metrics > span { text-align: right; }
+.financial-hierarchy-metrics small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.financial-hierarchy-metrics b { display: block; margin-top: 3px; font-size: 11px; }
+
+.financial-hierarchy-breakdowns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 4px 17px 17px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.financial-hierarchy-detail { min-width: 0; padding-top: 14px; }
+.financial-hierarchy-detail h4 { margin-bottom: 8px; font-size: 12px; }
+.financial-table.compact { min-width: 560px; font-size: 10px; }
+.financial-table.compact th,
+.financial-table.compact td { padding: 8px; }
+.financial-empty { padding: 18px 0; }
+
+.financial-warnings {
+  padding: 17px 20px;
+  border: 1px solid #efcf9b;
+  border-radius: 16px;
+  background: #fff8e9;
+  color: #79511e;
+}
+.financial-warnings h3 { font-size: 14px; }
+.financial-warnings ul { margin: 9px 0 0 18px; }
+.financial-warnings li { margin-top: 5px; font-size: 12px; line-height: 1.45; }
+
+@media (max-width: 1200px) {
+  .financial-results-heading { display: grid; }
+  .financial-results-filters { justify-content: flex-start; }
+  .financial-results-summary { grid-template-columns: repeat(3, minmax(145px, 1fr)); }
+  .financial-breakdowns-grid,
+  .financial-hierarchy-breakdowns { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 700px) {
+  .financial-results-summary { grid-template-columns: 1fr; }
+  .financial-results-filters { display: grid; }
+  .financial-results-filters select { min-width: 0; width: 100%; }
+  .financial-hierarchy-item summary { grid-template-columns: 1fr; }
+  .financial-hierarchy-metrics { grid-template-columns: repeat(2, 1fr); }
+  .financial-hierarchy-metrics > span { text-align: left; }
+}
+
 .transaction-audit-workspace {
   display: grid;
   gap: 20px;

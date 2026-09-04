@@ -186,6 +186,16 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('link', { name: 'Resumen General Ventas' }).evaluate(link => {
     if (!link.classList.contains('active')) throw new Error('Resumen General Ventas no quedó como vista inicial activa.');
   });
+  await page.getByRole('link', { name: 'Resultados Financieros' }).click();
+  await page.getByRole('heading', { name: 'Resultados Financieros' }).waitFor({ state: 'visible' });
+  await page.locator('#financial-results-from').fill('2026-08-01');
+  await page.locator('#financial-results-to').fill('2026-08-10');
+  await page.getByRole('button', { name: 'Generar resultados' }).click();
+  await page.waitForFunction(() => document.getElementById('financial-results-status').classList.contains('success'));
+  assert.match(await page.locator('#financial-statement-body').textContent(), /Ventas netas sin IVA.*Costo directo de productos.*Resultado operacional parcial/s);
+  assert.match(await page.locator('#financial-bars-body').textContent(), /Barra Caliente.*Barra Fría.*Sin Barra/s);
+  assert.match(await page.locator('#financial-ingredients-body').textContent(), /Café.*Matcha.*Otros/s);
+  await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
   await page.evaluate(() => {
     productAnalysisOptions = { availablePeriod: { from: '2026-05-18', to: '2026-08-10' } };
   });

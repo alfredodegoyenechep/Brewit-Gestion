@@ -5543,6 +5543,489 @@ function createApp(options = {}) {
     }
   });
 
+  function financialLineMetric(items) {
+    const netSales = items.reduce((sum, item) => sum + (Number(item.netSales) || 0), 0);
+    const totalCost = items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0);
+    const costAvailable = items.every(item => item.costAvailable !== false);
+    return {
+      netSales,
+      totalCost: costAvailable ? totalCost : null,
+      contributionMargin: costAvailable ? netSales - totalCost : null,
+      marginPercent: costAvailable && netSales ? (netSales - totalCost) / netSales * 100 : null,
+      salesSharePercent: 0,
+      costAvailable
+    };
+  }
+
+  function financialGroupedMetrics(items, key, labels) {
+    const totalSales = items.reduce((sum, item) => sum + (Number(item.netSales) || 0), 0);
+    return Object.entries(labels).map(([value, label]) => {
+      const metric = financialLineMetric(items.filter(item => item[key] === value));
+      metric.salesSharePercent = totalSales ? metric.netSales / totalSales * 100 : 0;
+      return { key: value, label, ...metric };
+    });
+  }
+
+  function financialInventoryForLocation(location, dateFrom, dateTo, ingredientCatalog, recipes) {
+    const result = {
+      location: publicLocation(location),
+      marketing: { amount: 0, available: false },
+      employees: { amount: 0, available: false },
+      waste: { amount: 0, available: false },
+      inventoryDifference: { amount: 0, available: false },
+      warnings: []
+    };
+    let parsed;
+    let kardexReadFailed = false;
+    try {
+      parsed = mergedKardexData(location.id, 'kardex');
+    } catch (error) {
+      kardexReadFailed = true;
+      result.warnings.push(`No se pudo consolidar el Kardex de ${location.name}: ${error.message}.`);
+    }
+    if (!parsed && !kardexReadFailed) {
+      result.warnings.push(`No hay Kardex disponible para ${location.name}.`);
+    }
+    const movementGroups = parsed?.groups.filter(group => group.date >= dateFrom && group.date <= dateTo) || [];
+    const nextBalanceGroup = movementGroups.length
+      ? parsed.groups.find(group => group.date > movementGroups.at(-1).date)
+      : null;
+    const balanceDate = nextBalanceGroup?.date || dateTo;
+    let inventoryCatalog = ingredientCatalog;
+    let inventoryCatalogAssignments = new Map();
+    const inventoryCatalogMaster = latestMasterFile('master-catalog', balanceDate);
+    if (inventoryCatalogMaster) {
+      try {
+        inventoryCatalog = parseIngredientCatalog(inventoryCatalogMaster.filePath);
+        inventoryCatalogAssignments = parseInventoryHierarchyAssignments(inventoryCatalogMaster.filePath);
+      } catch {}
+    }
+    const costResolver = buildCostResolver(balanceDate, [location.id]);
+    const consumption = {};
+    for (const [field, label] of [['marketing', 'Marketing'], ['employees', 'Colaboradores']]) {
+      try {
+        if (!chronologicalSources(location.id, field).length) throw new Error('no hay archivo cargado');
+        const products = applyCatalogProductCosts(
+          mergedConsumptionProducts(location.id, field, dateFrom, dateTo),
+          inventoryCatalog,
+          costResolver
+        );
+        const ingredients = buildIngredientConsumption(products.products, recipes, inventoryCatalog, costResolver);
+        consumption[field] = { available: true, products, ingredients };
+        result[field] = { amount: products.totalCost, available: true };
+      } catch (error) {
+        consumption[field] = { available: false, error: error.message };
+        result.warnings.push(`Consumo de ${label.toLowerCase()} no disponible para ${location.name}: ${error.message}.`);
+      }
+    }
+    try {
+      const wasteData = mergedKardexData(location.id, 'waste');
+      if (!wasteData) throw new Error('no hay archivo cargado');
+      const waste = buildWasteSummary(wasteData, dateFrom, dateTo, inventoryCatalog, costResolver);
+      result.waste = { amount: waste.totalCost, available: true };
+    } catch (error) {
+      result.warnings.push(`Merma no disponible para ${location.name}: ${error.message}.`);
+    }
+    try {
+      if (!parsed) throw new Error('no hay Kardex disponible');
+      if (!movementGroups.length) throw new Error('el Kardex no contiene movimientos dentro del período');
+      const initialGroup = parsed.groups.filter(group => group.date <= movementGroups[0].date).at(-1) || movementGroups[0];
+      const nextGroup = nextBalanceGroup;
+      const finalGroup = nextGroup || movementGroups.at(-1);
+      const selection = {
+        initialDate: initialGroup.date,
+        initialBasis: 'initial',
+        finalDate: finalGroup.date,
+        finalBasis: nextGroup ? 'initial' : 'final'
+      };
+      const usesInventoryReportBasis = movementGroups[0].date === dateFrom
+        && movementGroups.at(-1).date === dateTo
+        && Boolean(nextGroup);
+      const report = enrichKardexReport(
+        buildKardexInventoryReport(
+          parsed,
+          movementGroups[0].date,
+          movementGroups.at(-1).date,
+          usesInventoryReportBasis ? null : selection
+        ),
+        consumption,
+        inventoryCatalog,
+        costResolver
+      );
+      const salesData = periodSalesData(location.id, dateFrom, dateTo);
+      const lac001Substitutions = lac001SubstitutionSummary(
+        salesData,
+        dateFrom,
+        dateTo,
+        recipes,
+        inventoryCatalog,
+        costResolver
+      );
+      const syrupSauceSubstitutions = syrupSauceSubstitutionSummary(
+        salesData,
+        dateFrom,
+        dateTo,
+        recipes,
+        inventoryCatalog,
+        inventoryCatalogAssignments,
+        costResolver
+      );
+      const avoidedPackaging = inventoryAvoidedPackagingSummary(
+        location,
+        salesData,
+        dateFrom,
+        dateTo,
+        recipes,
+        inventoryCatalog,
+        costResolver
+      );
+      const lac001SubstitutionCost = Number(lac001Substitutions.totalSubstitutedCost) || 0;
+      const syrupSauceSubstitutionCost = Number(syrupSauceSubstitutions.totalSubstitutedCost) || 0;
+      const avoidedPackagingCost = Number(avoidedPackaging.totalAvoidedPackagingCost) || 0;
+      const totalAdjustmentCost = lac001SubstitutionCost + syrupSauceSubstitutionCost + avoidedPackagingCost;
+      const adjustedDifferenceValue = report.totalCost - totalAdjustmentCost;
+      result.inventoryDifference = {
+        // The inventory report expresses physical minus theoretical. A shortage is
+        // therefore negative there and becomes a positive expense in the P&L.
+        // This is the same adjusted Kardex formula used by the inventory executive
+        // summary: raw difference minus milk, syrup/sauce and packaging adjustments.
+        amount: -adjustedDifferenceValue,
+        available: true,
+        rawDifferenceValue: report.totalCost,
+        adjustedDifferenceValue,
+        adjustments: {
+          lac001SubstitutionCost,
+          syrupSauceSubstitutionCost,
+          avoidedPackagingCost,
+          totalAdjustmentCost
+        },
+        openingDate: initialGroup.date,
+        closingDate: finalGroup.date,
+        closingBasis: selection.finalBasis
+      };
+      if (movementGroups[0].date !== dateFrom || movementGroups.at(-1).date !== dateTo) {
+        result.warnings.push(`La diferencia de inventario de ${location.name} usa movimientos disponibles entre ${movementGroups[0].date} y ${movementGroups.at(-1).date}.`);
+      }
+      if (!nextGroup) {
+        result.warnings.push(`La diferencia de inventario de ${location.name} usa el inventario final del ${finalGroup.date}; no existe un inventario inicial posterior al período.`);
+      }
+    } catch (error) {
+      result.warnings.push(`Diferencia de inventario no disponible para ${location.name}: ${error.message}.`);
+    }
+    return result;
+  }
+
+  function mercadoPagoFeesForPeriod(stores, dateFrom, dateTo) {
+    const facts = [];
+    const seen = new Set();
+    const fields = new Set();
+    const locationsWithFiles = new Set();
+    const locationsWithFee = new Set();
+    const warnings = [];
+    let filesRead = 0;
+    for (const location of stores) {
+      for (const stored of storedTransactionFiles(location.id, 'mercadopago')) {
+        try {
+          for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+            const header = sheet.rows[0] || [];
+            for (const values of sheet.rows.slice(1)) {
+              const row = Object.fromEntries(header.map((name, index) => [String(name || `column-${index}`), values[index]]));
+              const transactionType = String(rowValue(row, ['TRANSACTION_TYPE']) || '').trim().toUpperCase();
+              if (transactionType && transactionType !== 'SETTLEMENT') continue;
+              const date = mercadoPagoDateTime(row)?.slice(0, 10);
+              if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+              const sourceId = String(rowValue(row, ['SOURCE_ID']) ?? '').trim();
+              const uniqueId = `${location.id}:${sourceId || genericTransactionRowKey(values)}`;
+              if (seen.has(uniqueId)) continue;
+              seen.add(uniqueId);
+              const candidates = ['FEE_AMOUNT', 'MP_FEE', 'COMMISSION_AMOUNT', 'COMISION', 'COMISIÓN', 'FEE'];
+              const field = candidates.find(name => rowValue(row, [name]) !== null);
+              const fee = field ? numericValue(rowValue(row, [field])) : null;
+              if (field) fields.add(field);
+              if (fee !== null) locationsWithFee.add(location.id);
+              facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee) });
+            }
+          }
+          locationsWithFiles.add(location.id);
+          filesRead += 1;
+        } catch (error) {
+          warnings.push(`No se pudo leer MercadoPago para ${location.name}: ${stored.record.originalName || stored.record.name}.`);
+        }
+      }
+    }
+    const withFee = facts.filter(item => item.fee !== null);
+    if (facts.length && !withFee.length) warnings.push('Las transacciones MercadoPago del período no contienen una columna de comisión reconocida.');
+    return {
+      amount: withFee.reduce((sum, item) => sum + item.fee, 0),
+      available: withFee.length > 0,
+      transactions: facts.length,
+      transactionsWithFee: withFee.length,
+      filesRead,
+      locationsWithFiles: locationsWithFiles.size,
+      locationsWithFee: locationsWithFee.size,
+      detectedFields: [...fields],
+      warnings
+    };
+  }
+
+  function buildFinancialResultsPayload(query = {}) {
+    const today = projectionToday();
+    const dateTo = String(query.dateTo || today);
+    const dateFrom = String(query.dateFrom || addDays(dateTo, -29));
+    if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo
+      || (new Date(`${dateTo}T00:00:00Z`) - new Date(`${dateFrom}T00:00:00Z`)) / 86400000 > 366) {
+      const error = new Error('Selecciona un período válido de hasta 367 días.');
+      error.status = 400;
+      throw error;
+    }
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const requestedLocation = String(query.location || 'all');
+    const selectedStore = requestedLocation === 'all' ? null : stores.find(location => location.id === requestedLocation);
+    if (requestedLocation !== 'all' && !selectedStore) {
+      const error = new Error('Selecciona una cafetería válida.');
+      error.status = 400;
+      throw error;
+    }
+    const selectedStores = selectedStore ? [selectedStore] : stores;
+    const warnings = [];
+    const catalogMaster = latestMasterFile('master-catalog', dateTo);
+    const productHierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
+    const extrasHierarchyMaster = latestMasterFile('extras-hierarchy', dateTo);
+    const recipeResolution = resolveRecipes(dateTo);
+    const recipes = new Map([...recipeResolution.recipes].map(([code, lines]) => [String(code).toUpperCase(), lines]));
+    let analysisCatalog = { products: new Map(), ingredients: new Map(), recipeExtras: new Map() };
+    let costCatalog = new Map();
+    let hierarchyLookup = null;
+    let extrasLookup = null;
+    if (catalogMaster) {
+      try {
+        analysisCatalog = parseSalesAnalysisCatalog(catalogMaster.filePath);
+        costCatalog = parseIngredientCatalog(catalogMaster.filePath);
+      } catch (error) {
+        warnings.push(`No se pudo leer el catálogo maestro: ${error.message}.`);
+      }
+    } else warnings.push('No hay un catálogo maestro vigente para clasificar barras y costos.');
+    if (productHierarchyMaster) {
+      try { hierarchyLookup = parseProductHierarchies(productHierarchyMaster.filePath); }
+      catch (error) { warnings.push(`No se pudo leer la jerarquía de productos: ${error.message}.`); }
+    }
+    if (extrasHierarchyMaster) {
+      try { extrasLookup = parseNamedHierarchies(extrasHierarchyMaster.filePath, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Nombre Jerarquía *']); }
+      catch (error) { warnings.push(`No se pudo leer la jerarquía de extras: ${error.message}.`); }
+    }
+    if (!recipes.size) warnings.push('No hay recetas vigentes; la clasificación Café / Matcha / Otros quedará incompleta.');
+
+    const hotIds = extrasLookup?.descendantIds('BA.001') || new Set(['BA.001']);
+    const coldIds = extrasLookup?.descendantIds('BA.002') || new Set(['BA.002']);
+    const costResolver = buildCostResolver(dateTo, selectedStores.map(location => location.id));
+    const facts = [];
+    const seenRows = new Set();
+    let salesFilesRead = 0;
+    const orderTargets = new Map();
+    for (const location of selectedStores) {
+      for (const stored of storedSalesFiles(location.id)) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+            if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const canonicalRow = Object.entries(row)
+              .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+              .sort(([left], [right]) => left.localeCompare(right));
+            const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonicalRow)).digest('hex')}`;
+            if (seenRows.has(rowKey)) continue;
+            seenRows.add(rowKey);
+            const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
+            const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code;
+            if (!code && !name) continue;
+            const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
+            const paidLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
+            const listLine = numericValue(rowValue(row, ['Precio Lista'])) || 0;
+            const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
+            const grossLine = paidLine !== null ? paidLine : listLine + discount;
+            const orderKey = `${location.id}:${salesTransactionKey(row)}`;
+            if (!orderTargets.has(orderKey)) {
+              const orderGross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+              if (orderGross !== null) {
+                const orderDiscounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
+                orderTargets.set(orderKey, (orderGross + orderDiscounts) / 1.19);
+              }
+            }
+            const catalogItem = costCatalog.get(code);
+            const costReference = costResolver.resolve(code, catalogItem?.unit, catalogItem);
+            const reportedCost = numericValue(rowValue(row, ['Costo']));
+            const usesResolvedCost = costReference.source !== 'missing';
+            const totalCost = usesResolvedCost ? quantity * costReference.unitCost : reportedCost;
+            const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim();
+            const hierarchyPath = hierarchyLookup?.pathFor(hierarchyId) || [];
+            const fallbackHierarchy = repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos'])) || 'Sin jerarquía';
+            const product = analysisCatalog.products.get(code);
+            const barIds = product?.hierarchyIds || [];
+            const isHot = barIds.some(id => hotIds.has(id));
+            const isCold = barIds.some(id => coldIds.has(id));
+            const recipeCodes = new Set((recipes.get(code) || []).map(line => String(line.ingredientId || '').toUpperCase()));
+            const ingredientType = recipeCodes.has('CAF008') ? 'matcha' : recipeCodes.has('SUB005') ? 'coffee' : 'other';
+            facts.push({
+              locationId: location.id,
+              locationName: location.name,
+              orderKey,
+              code,
+              name,
+              quantity,
+              netSales: grossLine / 1.19,
+              listGross: listLine,
+              totalCost: totalCost ?? 0,
+              costAvailable: totalCost !== null,
+              hierarchy: hierarchyPath.length ? hierarchyPath.join(' / ') : fallbackHierarchy,
+              hierarchyPath: hierarchyPath.length ? hierarchyPath : [fallbackHierarchy],
+              barType: isCold ? 'cold' : isHot ? 'hot' : 'none',
+              ingredientType,
+              extraHierarchyId: String(rowValue(row, ['BA.']) ?? '').trim()
+            });
+          }
+          salesFilesRead += 1;
+        } catch (error) {
+          warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}): ${error.message}.`);
+        }
+      }
+    }
+    // Attribute extras to their base product so their revenue follows the same
+    // product hierarchy, bar and main-ingredient classification.
+    const factsByOrder = new Map();
+    facts.forEach(fact => {
+      const rows = factsByOrder.get(fact.orderKey) || [];
+      rows.push(fact);
+      factsByOrder.set(fact.orderKey, rows);
+    });
+    for (const [orderKey, orderFacts] of factsByOrder) {
+      if (!orderTargets.has(orderKey)) continue;
+      const reconciled = reconcileOrderLineSales({
+        orderKey,
+        netSales: orderTargets.get(orderKey),
+        lines: orderFacts
+      }, analysisCatalog.products);
+      reconciled.lines.forEach((line, index) => {
+        orderFacts[index].netSales = line.netSales;
+        orderFacts[index].salesAllocation = line.salesAllocation;
+      });
+    }
+    for (const orderFacts of factsByOrder.values()) {
+      const bases = orderFacts.filter(fact => !fact.extraHierarchyId && !fact.code.startsWith('BX'));
+      const soleBase = bases.length === 1 ? bases[0] : null;
+      let currentBase = null;
+      for (const fact of orderFacts) {
+        if (bases.includes(fact)) currentBase = fact;
+        else if (fact.extraHierarchyId || fact.code.startsWith('BX')) {
+          const base = currentBase || soleBase;
+          if (base) {
+            fact.hierarchy = base.hierarchy;
+            fact.hierarchyPath = base.hierarchyPath;
+            fact.barType = base.barType;
+            fact.ingredientType = base.ingredientType;
+          }
+        }
+      }
+    }
+    const missingCostCodes = [...new Set(facts.filter(fact => !fact.costAvailable).map(fact => fact.code || fact.name))];
+    if (missingCostCodes.length) {
+      warnings.push(`${missingCostCodes.length} producto(s) vendido(s) no tienen costo disponible: ${missingCostCodes.slice(0, 12).join(', ')}${missingCostCodes.length > 12 ? ', …' : ''}.`);
+    }
+
+    const barLabels = { hot: 'Barra Caliente', cold: 'Barra Fría', none: 'Sin Barra' };
+    const ingredientLabels = { coffee: 'Café (SUB005)', matcha: 'Matcha (CAF008)', other: 'Otros' };
+    const totalRevenue = facts.reduce((sum, fact) => sum + fact.netSales, 0);
+    const hierarchyGroups = new Map();
+    facts.forEach(fact => {
+      const group = hierarchyGroups.get(fact.hierarchy) || { label: fact.hierarchy, path: fact.hierarchyPath, facts: [] };
+      group.facts.push(fact);
+      hierarchyGroups.set(fact.hierarchy, group);
+    });
+    const hierarchies = [...hierarchyGroups.values()].map(group => {
+      const metric = financialLineMetric(group.facts);
+      metric.salesSharePercent = totalRevenue ? metric.netSales / totalRevenue * 100 : 0;
+      return {
+        label: group.label,
+        path: group.path,
+        ...metric,
+        bars: financialGroupedMetrics(group.facts, 'barType', barLabels),
+        ingredients: financialGroupedMetrics(group.facts, 'ingredientType', ingredientLabels)
+      };
+    }).sort((left, right) => right.netSales - left.netSales || left.label.localeCompare(right.label, 'es'));
+    const revenueMetric = financialLineMetric(facts);
+    revenueMetric.salesSharePercent = totalRevenue ? 100 : 0;
+    const inventoryByLocation = selectedStores.map(location => financialInventoryForLocation(location, dateFrom, dateTo, costCatalog, recipes));
+    inventoryByLocation.forEach(item => warnings.push(...item.warnings));
+    const expenseFromInventory = (key, label) => {
+      const entries = inventoryByLocation.map(item => ({ location: item.location, ...item[key] }));
+      const availableEntries = entries.filter(item => item.available);
+      return {
+        key,
+        label,
+        amount: availableEntries.reduce((sum, item) => sum + (Number(item.amount) || 0), 0),
+        available: availableEntries.length > 0,
+        complete: availableEntries.length === selectedStores.length,
+        coveredLocations: availableEntries.length,
+        totalLocations: selectedStores.length,
+        locations: entries
+      };
+    };
+    const mercadoPago = mercadoPagoFeesForPeriod(selectedStores, dateFrom, dateTo);
+    warnings.push(...mercadoPago.warnings);
+    const expenses = [
+      expenseFromInventory('marketing', 'Consumo de Marketing'),
+      expenseFromInventory('employees', 'Consumo de Colaboradores'),
+      expenseFromInventory('waste', 'Merma'),
+      expenseFromInventory('inventoryDifference', 'Diferencia de Inventario ajustada'),
+      {
+        key: 'mercadoPago', label: 'Cobros de MercadoPago', amount: mercadoPago.amount,
+        available: mercadoPago.available, complete: mercadoPago.locationsWithFee === selectedStores.length,
+        coveredLocations: mercadoPago.locationsWithFee,
+        totalLocations: selectedStores.length,
+        detail: mercadoPago
+      }
+    ];
+    const knownExpenses = expenses.filter(item => item.available).reduce((sum, item) => sum + item.amount, 0);
+    const contributionMargin = revenueMetric.contributionMargin;
+    const dataCoverageComplete = salesFilesRead > 0 && revenueMetric.costAvailable && expenses.every(item => item.complete);
+    return {
+      date: today,
+      period: { from: dateFrom, to: dateTo },
+      scope: selectedStore
+        ? { location: selectedStore.id, label: selectedStore.name }
+        : { location: 'all', label: 'Todas las cafeterías' },
+      locations: stores.map(publicLocation),
+      revenue: {
+        total: revenueMetric,
+        bars: financialGroupedMetrics(facts, 'barType', barLabels),
+        ingredients: financialGroupedMetrics(facts, 'ingredientType', ingredientLabels),
+        hierarchies,
+        filesRead: salesFilesRead,
+        lineCount: facts.length
+      },
+      statement: {
+        netSales: revenueMetric.netSales,
+        productCost: revenueMetric.totalCost,
+        contributionMargin,
+        contributionMarginPercent: revenueMetric.marginPercent,
+        expenses,
+        knownOperatingExpenses: knownExpenses,
+        partialResult: contributionMargin === null ? null : contributionMargin - knownExpenses,
+        partial: true,
+        dataCoverageComplete,
+        pendingExpenseCategories: ['Otros gastos operacionales', 'Remuneraciones y arriendos', 'Impuestos y gastos financieros']
+      },
+      inventoryByLocation,
+      warnings: [...new Set(warnings)]
+    };
+  }
+
+  app.get('/api/financial-results', (req, res) => {
+    try {
+      return res.json(buildFinancialResultsPayload(req.query));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el estado de resultados.' });
+    }
+  });
+
   app.get('/api/products/reports', (req, res) => {
     const requestedLocation = String(req.query.location || 'all');
     if (requestedLocation !== 'all') {

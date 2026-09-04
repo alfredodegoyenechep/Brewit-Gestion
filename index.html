@@ -93,6 +93,13 @@
         </svg>
         <span class="nav-text">Cargar Archivos</span>
       </a>
+      <a href="#" class="nav-link" data-view="financial-results">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 20V10M10 20V4M16 20v-7M3 20h18" />
+          <path d="m15 7 2-2 2 2M17 5v5" />
+        </svg>
+        <span class="nav-text">Resultados Financieros</span>
+      </a>
       <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
@@ -1272,6 +1279,78 @@
         <div id="past-purchase-orders-list" class="past-purchase-orders-list"></div>
       </dialog>
       <section id="purchase-order-document" class="purchase-order-document" hidden></section>
+    </section>
+
+    <section id="financial-results-workspace" class="financial-results-workspace" style="display:none;">
+      <div class="financial-results-heading">
+        <div>
+          <div class="panel-eyebrow">Estado de resultados</div>
+          <h2>Resultados Financieros</h2>
+          <p class="panel-description">Ingresos, margen de contribución y gastos operacionales conocidos para el período seleccionado. La venta se presenta neta de IVA.</p>
+        </div>
+        <form id="financial-results-filters" class="financial-results-filters">
+          <label for="financial-results-location">Ubicación
+            <select id="financial-results-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="financial-results-from">Desde
+            <input id="financial-results-from" type="date" required />
+          </label>
+          <label for="financial-results-to">Hasta
+            <input id="financial-results-to" type="date" required />
+          </label>
+          <button class="primary" type="submit">Generar resultados</button>
+        </form>
+      </div>
+      <div id="financial-results-status" class="form-status" aria-live="polite"></div>
+      <div id="financial-results-summary" class="financial-results-summary"></div>
+
+      <section class="panel financial-statement-panel">
+        <div class="panel-head financial-panel-head">
+          <div>
+            <div class="panel-eyebrow">Vista consolidada</div>
+            <h3>Estado de resultados parcial</h3>
+            <p id="financial-statement-context" class="panel-description"></p>
+          </div>
+          <span id="financial-statement-badge" class="chip neutral">Resultado parcial</span>
+        </div>
+        <div class="financial-table-wrap">
+          <table class="financial-table financial-statement-table">
+            <thead><tr><th>Concepto</th><th>Venta / importe</th><th>Margen %</th><th>Margen contribución</th><th>Cobertura</th></tr></thead>
+            <tbody id="financial-statement-body"></tbody>
+          </table>
+        </div>
+        <p class="financial-future-note">Este estado se irá completando cuando se incorporen los demás gastos operacionales al sistema.</p>
+      </section>
+
+      <div class="financial-breakdowns-grid">
+        <section class="panel">
+          <div class="panel-head"><div><div class="panel-eyebrow">Origen operativo</div><h3>Participación por barra</h3></div></div>
+          <div class="financial-table-wrap">
+            <table class="financial-table"><thead><tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr></thead><tbody id="financial-bars-body"></tbody></table>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><div><div class="panel-eyebrow">Ingrediente principal</div><h3>Café, Matcha y Otros</h3></div></div>
+          <div class="financial-table-wrap">
+            <table class="financial-table"><thead><tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr></thead><tbody id="financial-ingredients-body"></tbody></table>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel financial-hierarchy-panel">
+        <div class="panel-head financial-panel-head">
+          <div>
+            <div class="panel-eyebrow">Jerarquía de productos</div>
+            <h3>Ingresos y aporte al margen</h3>
+            <p class="panel-description">Abre una jerarquía para ver su composición por barra y por ingrediente principal.</p>
+          </div>
+        </div>
+        <div id="financial-hierarchy-list" class="financial-hierarchy-list"></div>
+      </section>
+      <section id="financial-warnings" class="financial-warnings" hidden>
+        <h3>Datos que requieren revisión</h3>
+        <ul id="financial-warnings-list"></ul>
+      </section>
     </section>
 
     <section id="inventory-workspace" class="panel" style="display:none;">

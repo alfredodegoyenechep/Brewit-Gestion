@@ -44,6 +44,7 @@ let hourlySalesDemandState = null;
 let hourlyAnalysisState = null;
 let findingsViewState = null;
 let salesIngredientsState = null;
+let financialResultsState = null;
 let salesHierarchyPath = [];
 let hourlySalesHierarchyPath = [];
 let hourlySalesProductKey = null;
@@ -145,6 +146,13 @@ function setView(view) {
     salesIngredients.hidden = false;
     salesIngredients.style.display = '';
     loadSalesIngredientsView();
+    return;
+  }
+  if (view === 'financial-results') {
+    const financialResults = document.getElementById('financial-results-workspace');
+    financialResults.hidden = false;
+    financialResults.style.display = '';
+    loadFinancialResults();
     return;
   }
   if (view === 'inventory') {
@@ -712,6 +720,256 @@ function offsetIsoDate(value, amount) {
 function browserIsoToday() {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function refreshFinancialResultsLocationFilter() {
+  const select = document.getElementById('financial-results-location');
+  if (!select) return;
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las cafeterías', 'all')];
+  Object.values(locationRegistry)
+    .filter(location => location.type === 'store')
+    .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+    .forEach(location => options.push(new Option(location.name, location.id)));
+  select.replaceChildren(...options);
+  select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function financialPercent(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+  return `${Number(value).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
+function financialCell(value, className = '') {
+  const cell = document.createElement('td');
+  cell.textContent = value;
+  if (className) cell.className = className;
+  return cell;
+}
+
+function renderFinancialMetricRows(targetId, rows) {
+  const body = document.getElementById(targetId);
+  body.replaceChildren(...rows.map(item => {
+    const row = document.createElement('tr');
+    row.append(
+      financialCell(item.label),
+      financialCell(formatClp(item.netSales), 'numeric-cell'),
+      financialCell(financialPercent(item.salesSharePercent), 'numeric-cell'),
+      financialCell(financialPercent(item.marginPercent), 'numeric-cell'),
+      financialCell(item.contributionMargin === null ? '—' : formatClp(item.contributionMargin), 'numeric-cell')
+    );
+    if (!item.costAvailable) row.classList.add('financial-incomplete-row');
+    return row;
+  }));
+}
+
+function financialCoverageLabel(expense) {
+  if (!expense.available) return 'Sin datos';
+  if (expense.complete) return 'Completa';
+  return `${expense.coveredLocations} de ${expense.totalLocations} ubic.`;
+}
+
+function renderFinancialStatement(data) {
+  const body = document.getElementById('financial-statement-body');
+  const total = data.revenue.total;
+  const statement = data.statement;
+  const rows = [];
+  const append = ({ label, amount, margin = null, contribution = null, coverage = '', className = '', context = '' }) => {
+    const row = document.createElement('tr');
+    row.className = className;
+    const labelCell = financialCell(label);
+    if (context) {
+      const detail = document.createElement('small');
+      detail.className = 'financial-line-context';
+      detail.textContent = context;
+      labelCell.appendChild(detail);
+    }
+    row.append(
+      labelCell,
+      financialCell(amount === null ? '—' : formatClp(amount), 'numeric-cell'),
+      financialCell(financialPercent(margin), 'numeric-cell'),
+      financialCell(contribution === null ? '—' : formatClp(contribution), 'numeric-cell'),
+      financialCell(coverage)
+    );
+    rows.push(row);
+  };
+  append({
+    label: 'Ventas netas sin IVA', amount: statement.netSales,
+    margin: statement.contributionMarginPercent, contribution: statement.contributionMargin,
+    coverage: `${data.revenue.filesRead} archivo(s)`, className: 'financial-primary-row'
+  });
+  append({
+    label: 'Costo directo de productos',
+    amount: statement.productCost === null ? null : -statement.productCost,
+    coverage: total.costAvailable ? 'Completa' : 'Incompleta', className: 'financial-cost-row'
+  });
+  append({
+    label: 'Margen de contribución comercial', amount: statement.contributionMargin,
+    margin: statement.contributionMarginPercent, contribution: statement.contributionMargin,
+    coverage: total.costAvailable ? 'Completa' : 'Incompleta', className: 'financial-subtotal-row'
+  });
+  statement.expenses.forEach(expense => {
+    let context = '';
+    if (expense.key === 'inventoryDifference' && expense.available) {
+      const adjustments = (expense.locations || []).reduce((totalAdjustment, location) => {
+        const detail = location.adjustments || {};
+        totalAdjustment.lac001 += Number(detail.lac001SubstitutionCost) || 0;
+        totalAdjustment.syrup += Number(detail.syrupSauceSubstitutionCost) || 0;
+        totalAdjustment.packaging += Number(detail.avoidedPackagingCost) || 0;
+        return totalAdjustment;
+      }, { lac001: 0, syrup: 0, packaging: 0 });
+      context = `Ajustes descontados: leche ${formatClp(adjustments.lac001)}, syrup/salsas ${formatClp(adjustments.syrup)} y vasos/tapas ${formatClp(adjustments.packaging)}.`;
+    }
+    append({
+      label: expense.label,
+      amount: expense.available ? -expense.amount : null,
+      coverage: financialCoverageLabel(expense),
+      className: expense.available ? 'financial-expense-row' : 'financial-incomplete-row',
+      context
+    });
+  });
+  append({
+    label: 'Total gastos operacionales conocidos', amount: -statement.knownOperatingExpenses,
+    coverage: statement.dataCoverageComplete ? 'Fuentes completas' : 'Fuentes incompletas', className: 'financial-subtotal-row'
+  });
+  append({
+    label: 'Resultado operacional parcial', amount: statement.partialResult,
+    coverage: statement.partial ? 'Pendiente de completar' : 'Completa',
+    className: `financial-result-row ${(statement.partialResult || 0) < 0 ? 'negative' : 'positive'}`
+  });
+  body.replaceChildren(...rows);
+}
+
+function financialMiniTable(title, items) {
+  const section = document.createElement('section');
+  section.className = 'financial-hierarchy-detail';
+  const heading = document.createElement('h4');
+  heading.textContent = title;
+  const table = document.createElement('table');
+  table.className = 'financial-table compact';
+  const head = document.createElement('thead');
+  head.innerHTML = '<tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr>';
+  const body = document.createElement('tbody');
+  body.replaceChildren(...items.map(item => {
+    const row = document.createElement('tr');
+    row.append(
+      financialCell(item.label),
+      financialCell(formatClp(item.netSales), 'numeric-cell'),
+      financialCell(financialPercent(item.salesSharePercent), 'numeric-cell'),
+      financialCell(financialPercent(item.marginPercent), 'numeric-cell'),
+      financialCell(item.contributionMargin === null ? '—' : formatClp(item.contributionMargin), 'numeric-cell')
+    );
+    return row;
+  }));
+  table.append(head, body);
+  section.append(heading, table);
+  return section;
+}
+
+function renderFinancialHierarchies(groups) {
+  const list = document.getElementById('financial-hierarchy-list');
+  if (!groups.length) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-description financial-empty';
+    empty.textContent = 'No hay líneas de venta disponibles para este período.';
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...groups.map((group, index) => {
+    const details = document.createElement('details');
+    details.className = 'financial-hierarchy-item';
+    if (index === 0) details.open = true;
+    const summary = document.createElement('summary');
+    const title = document.createElement('strong');
+    title.textContent = group.label;
+    const metrics = document.createElement('span');
+    metrics.className = 'financial-hierarchy-metrics';
+    [
+      ['Venta', formatClp(group.netSales)],
+      ['Participación', financialPercent(group.salesSharePercent)],
+      ['Margen', financialPercent(group.marginPercent)],
+      ['Aporte', group.contributionMargin === null ? '—' : formatClp(group.contributionMargin)]
+    ].forEach(([label, value]) => {
+      const metric = document.createElement('span');
+      const caption = document.createElement('small');
+      caption.textContent = label;
+      const amount = document.createElement('b');
+      amount.textContent = value;
+      metric.append(caption, amount);
+      metrics.appendChild(metric);
+    });
+    summary.append(title, metrics);
+    const breakdowns = document.createElement('div');
+    breakdowns.className = 'financial-hierarchy-breakdowns';
+    breakdowns.append(financialMiniTable('Por barra', group.bars), financialMiniTable('Por ingrediente principal', group.ingredients));
+    details.append(summary, breakdowns);
+    return details;
+  }));
+}
+
+function renderFinancialResults(data) {
+  const statement = data.statement;
+  const cards = [
+    ['Ventas netas', formatClp(statement.netSales), ''],
+    ['Margen contribución', statement.contributionMargin === null ? '—' : formatClp(statement.contributionMargin), ''],
+    ['Margen %', financialPercent(statement.contributionMarginPercent), ''],
+    ['Gastos conocidos', formatClp(statement.knownOperatingExpenses), 'expense'],
+    ['Resultado parcial', statement.partialResult === null ? '—' : formatClp(statement.partialResult), (statement.partialResult || 0) < 0 ? 'negative' : 'positive']
+  ];
+  document.getElementById('financial-results-summary').replaceChildren(...cards.map(([label, value, tone]) => {
+    const card = document.createElement('article');
+    card.className = `financial-summary-card ${tone}`.trim();
+    const caption = document.createElement('span');
+    caption.textContent = label;
+    const amount = document.createElement('strong');
+    amount.textContent = value;
+    card.append(caption, amount);
+    return card;
+  }));
+  document.getElementById('financial-statement-context').textContent =
+    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}.`;
+  const badge = document.getElementById('financial-statement-badge');
+  badge.textContent = statement.dataCoverageComplete ? 'Parcial · fuentes completas' : 'Parcial · revisar fuentes';
+  badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
+  renderFinancialStatement(data);
+  renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
+  renderFinancialMetricRows('financial-ingredients-body', data.revenue.ingredients);
+  renderFinancialHierarchies(data.revenue.hierarchies);
+  const warnings = document.getElementById('financial-warnings');
+  const warningList = document.getElementById('financial-warnings-list');
+  warningList.replaceChildren(...data.warnings.map(message => {
+    const item = document.createElement('li');
+    item.textContent = message;
+    return item;
+  }));
+  warnings.hidden = !data.warnings.length;
+}
+
+async function loadFinancialResults() {
+  const status = document.getElementById('financial-results-status');
+  const form = document.getElementById('financial-results-filters');
+  const button = form.querySelector('button[type="submit"]');
+  const location = document.getElementById('financial-results-location').value || 'all';
+  const dateFrom = document.getElementById('financial-results-from').value;
+  const dateTo = document.getElementById('financial-results-to').value;
+  if (!dateFrom || !dateTo || dateFrom > dateTo) {
+    setStatus(status, 'Selecciona un período válido.', 'error');
+    return;
+  }
+  button.disabled = true;
+  setStatus(status, 'Calculando ventas, márgenes, inventario y cobros de MercadoPago…');
+  try {
+    const params = new URLSearchParams({ location, dateFrom, dateTo });
+    const data = await apiRequest(`/api/financial-results?${params}`);
+    if (location !== document.getElementById('financial-results-location').value) return;
+    financialResultsState = data;
+    renderFinancialResults(data);
+    setStatus(status, `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`, 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function transactionAuditPeriodRange() {
@@ -7818,6 +8076,7 @@ async function refreshLocationConfiguration() {
     refreshSalesDashboardLocationFilter();
     refreshTransactionAuditLocationFilter();
     refreshFindingsLocationFilter();
+    refreshFinancialResultsLocationFilter();
     refreshSalesIngredientsLocationFilter();
     refreshProductsLocationFilter();
     refreshIngredientsLocationFilter();
@@ -8310,6 +8569,9 @@ async function uploadMasterFiles(replace = false) {
 document.addEventListener('DOMContentLoaded', async () => {
   initializeSidebarToggle();
   syncHourlyDemandControls();
+  const financialToday = browserIsoToday();
+  document.getElementById('financial-results-to').value = financialToday;
+  document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
     const linkLabel = link.querySelector('.nav-text')?.textContent.trim() || '';
@@ -8445,6 +8707,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
+  document.getElementById('financial-results-filters').addEventListener('submit', event => {
+    event.preventDefault();
+    loadFinancialResults();
+  });
   document.getElementById('run-findings').addEventListener('click', loadFindingsView);
   document.getElementById('findings-status-filter').addEventListener('change', renderFindingsView);
   document.getElementById('refresh-sales-ingredients').addEventListener('click', loadSalesIngredientsView);

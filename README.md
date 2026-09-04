@@ -96,6 +96,15 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Recipe yield is included in ingredient usage and cost: required usage is `consumed products × recipe quantity ÷ (yield percentage / 100)`, before converting and consolidating units.
 - For each Kardex item, the report shows its catalog unit cost, selected opening balance, and every movement type consolidated across the confirmed period. Employee and marketing consumption (including recipe-derived ingredient quantities converted to the Kardex unit) appear immediately after the Kardex movements. Both are subtracted when calculating theoretical closing inventory: `opening inventory + Kardex movements − employee consumption − marketing consumption`. The definitive difference is `closing inventory − theoretical closing inventory`, and the total cost is `unit cost × inventory difference`. Kardex quantities use four decimal places, monetary columns use whole CLP, and a footer totals the final cost column without summing unit costs. Negative differences are red, positive values blue, and zero black.
 
+## Financial results workspace
+
+- Resultados Financieros builds a partial income statement for an inclusive date range and one or all active cafeterias.
+- Revenue is net of VAT and reconciled to order totals. Every product-hierarchy line shows sales, sales share, contribution-margin percentage, and contribution-margin amount.
+- Each hierarchy expands into two mutually reconciling views: Barra Caliente / Barra Fría / Sin Barra from the product catalog's BA.001 and BA.002 assignments, and Café / Matcha / Otros from recipe components SUB005 and CAF008. Sold extras inherit the base product classification in their order.
+- Known operating expenses reuse the inventory calculations for marketing consumption, employee consumption, waste, and valued inventory difference. The inventory difference uses the same executive-summary adjustment for LAC001 milk substitutions, syrup/sauce substitutions, and unused dine-in cups/lids. Inventory shortages become positive expenses and surpluses reduce expense.
+- MercadoPago expense sums the absolute `FEE_AMOUNT` (or another recognized fee column) for de-duplicated `SETTLEMENT` rows in the selected period. The response exposes detected fields and coverage warnings.
+- The bottom line is deliberately labeled partial while any selected location lacks a required source or while future operating-expense categories remain outside the system.
+
 ## Purchases workspace
 
 - Compras replaces the dashboard mockup with the purchase lines stored in the cumulative cafeteria data.
