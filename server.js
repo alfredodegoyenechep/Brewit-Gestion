@@ -1643,7 +1643,7 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
   const monthStart = `${referenceDate.slice(0, 7)}-01`;
   const historicalDates = Object.keys(dailySales).filter(date => date <= referenceDate).sort();
   const hasReferenceDay = Object.hasOwn(dailySales, referenceDate);
-  const reference = dailySales[referenceDate] || { gross: 0, discounts: 0, net: 0 };
+  const reference = dailySales[referenceDate] || { gross: 0, discounts: 0, net: 0, orders: 0 };
   const sameWeekdayDates = historicalDates.filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceDayNumber);
   const priorEight = sameWeekdayDates.filter(date => date < referenceDate).sort().reverse().slice(0, 8);
   const sameWeekdayAverage = priorEight.length
@@ -1669,11 +1669,50 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
     if (!previous) return current ? 100 : 0;
     return ((current / previous) - 1) * 100;
   };
-  const addSequentialVariation = rows => rows.map((item, index) => ({
+  const addSequentialVariation = (rows, valueKey = 'netSales') => rows.map((item, index) => ({
     ...item,
     variationPercent: index === rows.length - 1
       ? null
-      : variationPercent(item.netSales, rows[index + 1].netSales)
+      : variationPercent(item[valueKey], rows[index + 1][valueKey])
+  }));
+
+  const averageTicketRange = (from, to) => {
+    const totals = historicalDates
+      .filter(date => date >= from && date <= to)
+      .reduce((result, date) => {
+        const sales = dailySales[date];
+        result.grossSalesWithVat += sales.gross + sales.discounts;
+        result.orders += sales.orders || 0;
+        return result;
+      }, { grossSalesWithVat: 0, orders: 0 });
+    return {
+      ...totals,
+      averageTicketWithVat: totals.orders ? totals.grossSalesWithVat / totals.orders : 0
+    };
+  };
+  const discountRange = (from, to) => {
+    const totals = historicalDates
+      .filter(date => date >= from && date <= to)
+      .reduce((result, date) => {
+        const sales = dailySales[date];
+        result.grossSalesBeforeDiscounts += sales.gross;
+        result.signedDiscounts += sales.discounts;
+        return result;
+      }, { grossSalesBeforeDiscounts: 0, signedDiscounts: 0 });
+    const discountAmount = Math.max(0, -totals.signedDiscounts);
+    return {
+      ...totals,
+      discountAmount,
+      discountPercent: totals.grossSalesBeforeDiscounts
+        ? discountAmount / totals.grossSalesBeforeDiscounts * 100
+        : 0
+    };
+  };
+  const addSequentialPointVariation = rows => rows.map((item, index) => ({
+    ...item,
+    variationPoints: index === rows.length - 1
+      ? null
+      : item.discountPercent - rows[index + 1].discountPercent
   }));
 
   const monthKeyAtOffset = offset => {
@@ -1709,6 +1748,46 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
   const equivalentDays = addSequentialVariation(Array.from({ length: 14 }, (_, index) => {
     const date = addDays(referenceDate, -7 * index);
     return { date, netSales: dailySales[date]?.net || 0 };
+  }));
+  const averageTicketMonths = addSequentialVariation(months.map(({ key, from, to }) => ({
+    key, from, to, ...averageTicketRange(from, to)
+  })), 'averageTicketWithVat');
+  const averageTicketWeeks = addSequentialVariation(weeks.map(({ from, to }) => ({
+    from, to, ...averageTicketRange(from, to)
+  })), 'averageTicketWithVat');
+  const averageTicketDays = Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(referenceDate, -index);
+    const current = averageTicketRange(date, date);
+    const priorWeek = averageTicketRange(addDays(date, -7), addDays(date, -7));
+    return {
+      date,
+      ...current,
+      variationPercent: index === 13 ? null : variationPercent(current.averageTicketWithVat, priorWeek.averageTicketWithVat)
+    };
+  });
+  const averageTicketEquivalentDays = addSequentialVariation(Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(referenceDate, -7 * index);
+    return { date, ...averageTicketRange(date, date) };
+  }), 'averageTicketWithVat');
+  const discountMonths = addSequentialPointVariation(months.map(({ key, from, to }) => ({
+    key, from, to, ...discountRange(from, to)
+  })));
+  const discountWeeks = addSequentialPointVariation(weeks.map(({ from, to }) => ({
+    from, to, ...discountRange(from, to)
+  })));
+  const discountDays = Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(referenceDate, -index);
+    const current = discountRange(date, date);
+    const priorWeek = discountRange(addDays(date, -7), addDays(date, -7));
+    return {
+      date,
+      ...current,
+      variationPoints: index === 13 ? null : current.discountPercent - priorWeek.discountPercent
+    };
+  });
+  const discountEquivalentDays = addSequentialPointVariation(Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(referenceDate, -7 * index);
+    return { date, ...discountRange(date, date) };
   }));
   const referenceWeekOffset = (referenceDayNumber + 6) % 7;
   const comparableWeekTotals = new Map();
@@ -1760,6 +1839,22 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
       equivalentRank: rankTotals(comparableMonthTotals, referenceDate.slice(0, 7))
     },
     statistics: { months, weeks, days, equivalentDays },
+    averageTicketStatistics: {
+      basis: 'gross-plus-signed-discounts',
+      includesVat: true,
+      months: averageTicketMonths,
+      weeks: averageTicketWeeks,
+      days: averageTicketDays,
+      equivalentDays: averageTicketEquivalentDays
+    },
+    discountStatistics: {
+      basis: 'discount-amount-divided-by-gross-sales-before-discounts',
+      comparisonUnit: 'percentage-points',
+      months: discountMonths,
+      weeks: discountWeeks,
+      days: discountDays,
+      equivalentDays: discountEquivalentDays
+    },
     coverage: historicalDates.length ? { from: historicalDates[0], to: historicalDates.at(-1) } : null
   };
 }
@@ -8534,10 +8629,11 @@ function createApp(options = {}) {
               seenOrders.add(uniqueOrder);
               const discounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
               const net = (gross + discounts) / 1.19;
-              if (!dailySales[date]) dailySales[date] = { gross: 0, discounts: 0, net: 0 };
+              if (!dailySales[date]) dailySales[date] = { gross: 0, discounts: 0, net: 0, orders: 0 };
               dailySales[date].gross += gross;
               dailySales[date].discounts += discounts;
               dailySales[date].net += net;
+              dailySales[date].orders += 1;
               if (!transactionsByDate[date]) transactionsByDate[date] = [];
               const dateTime = salesTransactionDateTime(row);
               transactionsByDate[date].push({ time: dateTime?.slice(11) || '00:00:00', net });

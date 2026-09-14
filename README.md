@@ -159,6 +159,8 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 ## Weekly sales report
 
 - Resumen General Ventas consolidates the sales files from all active cafeterias; warehouses are excluded.
+- Its monthly, weekly, daily, and equivalent-day histories also show average ticket including VAT. Each value uses gross sales after signed discounts divided by the number of unique orders in that period; variations follow the same comparisons as the net-sales histories.
+- A third set of histories shows discounts granted as a weighted percentage of gross sales before discounts. Its comparisons are expressed as percentage-point changes (`pp`) for monthly, weekly, daily, and equivalent-day periods.
 - Sales imports are incremental across the complete history of each cafeteria. Existing order IDs are discarded from a new export, while every row belonging to a genuinely new order is retained. Rows without an order ID use a stable content fingerprint.
 - Sales imports keep only new order identities unless the user explicitly replaces coincident dates.
 - Net sales exclude VAT and are calculated per transaction as `(gross sale + signed discounts) / 1.19`. The sales export already represents discounts as negative values.

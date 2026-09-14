@@ -224,6 +224,12 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     document.getElementById('product-analysis-period').value = 'last-30-days';
     syncProductAnalysisPeriod();
   });
+  await page.evaluate(() => {
+    document.getElementById('transaction-audit-period').value = 'custom';
+    document.getElementById('transaction-audit-from').value = '2026-08-01';
+    document.getElementById('transaction-audit-to').value = '2026-08-10';
+    syncTransactionAuditPeriod();
+  });
   await page.getByRole('link', { name: 'Auditoría Transacciones' }).click();
   await page.getByRole('heading', { name: 'Auditoría de transacciones' }).waitFor();
   await page.locator('#transaction-audit-body .transaction-audit-row').first().waitFor();
@@ -453,13 +459,23 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#intraday-sales-body tr').count(), 7);
   assert.match(await page.locator('#intraday-sales-body tr').first().locator('td').first().textContent(), /07:00.*09:00/);
   assert.match(await page.locator('#intraday-sales-body tr').last().locator('td').first().textContent(), /19:00.*cierre/);
-  assert.equal(await page.locator('.sales-statistics-card').count(), 4);
+  assert.equal(await page.locator('.sales-statistics-card').count(), 12);
   assert.equal(await page.locator('#sales-statistics-months tr').count(), 14);
   assert.equal(await page.locator('#sales-statistics-weeks tr').count(), 14);
   assert.equal(await page.locator('#sales-statistics-days tr').count(), 14);
   assert.equal(await page.locator('#sales-statistics-equivalent-days tr').count(), 14);
-  assert.equal(await page.locator('.sales-statistics-variation').count(), 52);
+  assert.equal(await page.locator('#average-ticket-statistics-months tr').count(), 14);
+  assert.equal(await page.locator('#average-ticket-statistics-weeks tr').count(), 14);
+  assert.equal(await page.locator('#average-ticket-statistics-days tr').count(), 14);
+  assert.equal(await page.locator('#average-ticket-statistics-equivalent-days tr').count(), 14);
+  assert.equal(await page.locator('#discount-statistics-months tr').count(), 14);
+  assert.equal(await page.locator('#discount-statistics-weeks tr').count(), 14);
+  assert.equal(await page.locator('#discount-statistics-days tr').count(), 14);
+  assert.equal(await page.locator('#discount-statistics-equivalent-days tr').count(), 14);
+  assert.equal(await page.locator('.sales-statistics-variation').count(), 156);
   assert.match(await page.locator('#sales-statistics-days tr').first().textContent(), /09.*ago.*2026.*\+100\.0%.*\$100/i);
+  assert.match(await page.locator('#average-ticket-statistics-days tr').first().textContent(), /09.*ago.*2026.*\+100\.0%.*\$119/i);
+  assert.match(await page.locator('#discount-statistics-days tr').first().textContent(), /09.*ago.*2026.*0\.0 pp.*0\.0%/i);
   assert.equal(await page.locator('#sales-statistics-days tr').last().locator('.sales-statistics-variation').count(), 0);
   assert.equal(await page.locator('#report-include-today').isChecked(), false);
   assert.equal(await page.locator('.summary-card.highlight .report-cutoff-toggle').count(), 1);

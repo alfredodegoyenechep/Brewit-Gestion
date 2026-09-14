@@ -347,6 +347,45 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(report.statistics.weeks.at(-1).variationPercent, null);
   assert.equal(report.statistics.days.at(-1).variationPercent, null);
   assert.equal(report.statistics.equivalentDays.at(-1).variationPercent, null);
+  assert.equal(report.averageTicketStatistics.basis, 'gross-plus-signed-discounts');
+  assert.equal(report.averageTicketStatistics.includesVat, true);
+  assert.deepEqual(report.averageTicketStatistics.months[0], {
+    key: '2026-08', from: '2026-08-01', to: '2026-08-13',
+    grossSalesWithVat: 2261, orders: 6, averageTicketWithVat: 376.8333333333333,
+    variationPercent: 216.66666666666666
+  });
+  assert.deepEqual(report.averageTicketStatistics.weeks[0], {
+    from: '2026-08-10', to: '2026-08-13',
+    grossSalesWithVat: 952, orders: 4, averageTicketWithVat: 238, variationPercent: 100
+  });
+  assert.deepEqual(report.averageTicketStatistics.days.slice(0, 2), [
+    { date: '2026-08-13', grossSalesWithVat: 238, orders: 1, averageTicketWithVat: 238, variationPercent: 100 },
+    { date: '2026-08-12', grossSalesWithVat: 357, orders: 1, averageTicketWithVat: 357, variationPercent: 100 }
+  ]);
+  assert.deepEqual(report.averageTicketStatistics.equivalentDays.slice(0, 2), [
+    { date: '2026-08-13', grossSalesWithVat: 238, orders: 1, averageTicketWithVat: 238, variationPercent: 100 },
+    { date: '2026-08-06', grossSalesWithVat: 119, orders: 1, averageTicketWithVat: 119, variationPercent: 0 }
+  ]);
+  assert.equal(report.discountStatistics.basis, 'discount-amount-divided-by-gross-sales-before-discounts');
+  assert.equal(report.discountStatistics.comparisonUnit, 'percentage-points');
+  assert.deepEqual(report.discountStatistics.months[0], {
+    key: '2026-08', from: '2026-08-01', to: '2026-08-13',
+    grossSalesBeforeDiscounts: 2380, signedDiscounts: -119, discountAmount: 119,
+    discountPercent: 5, variationPoints: 5
+  });
+  assert.deepEqual(report.discountStatistics.weeks[0], {
+    from: '2026-08-10', to: '2026-08-13',
+    grossSalesBeforeDiscounts: 1071, signedDiscounts: -119, discountAmount: 119,
+    discountPercent: 11.11111111111111, variationPoints: 11.11111111111111
+  });
+  assert.deepEqual(report.discountStatistics.days.slice(0, 2), [
+    { date: '2026-08-13', grossSalesBeforeDiscounts: 357, signedDiscounts: -119, discountAmount: 119, discountPercent: 33.33333333333333, variationPoints: 33.33333333333333 },
+    { date: '2026-08-12', grossSalesBeforeDiscounts: 357, signedDiscounts: 0, discountAmount: 0, discountPercent: 0, variationPoints: 0 }
+  ]);
+  assert.deepEqual(report.discountStatistics.equivalentDays.slice(0, 2), [
+    { date: '2026-08-13', grossSalesBeforeDiscounts: 357, signedDiscounts: -119, discountAmount: 119, discountPercent: 33.33333333333333, variationPoints: 33.33333333333333 },
+    { date: '2026-08-06', grossSalesBeforeDiscounts: 119, signedDiscounts: 0, discountAmount: 0, discountPercent: 0, variationPoints: 0 }
+  ]);
 
   const includingToday = await fetch(`${baseUrl}/api/reports/weekly-sales?includeToday=true`).then(response => response.json());
   assert.equal(includingToday.includeToday, true);
@@ -361,6 +400,10 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.deepEqual(includingToday.month.equivalentRank, { position: 1, total: 2 });
   assert.equal(Math.round(includingToday.statistics.months[0].netSales), 2300);
   assert.equal(Math.round(includingToday.statistics.weeks[0].netSales), 1200);
+  assert.equal(Math.round(includingToday.averageTicketStatistics.months[0].averageTicketWithVat), 391);
+  assert.equal(Math.round(includingToday.averageTicketStatistics.weeks[0].averageTicketWithVat), 286);
+  assert.equal(Math.round(includingToday.discountStatistics.months[0].discountPercent * 10) / 10, 4.2);
+  assert.equal(Math.round(includingToday.discountStatistics.weeks[0].discountPercent * 10) / 10, 7.7);
   assert.deepEqual(includingToday.statistics.days[0], {
     date: '2026-08-14', netSales: 400, variationPercent: 100
   });

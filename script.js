@@ -1294,7 +1294,7 @@ function renderIntradayReport(intraday, includeToday = true) {
   }));
 }
 
-function renderSalesStatistics(statistics) {
+function renderSalesStatistics(statistics, averageTicketStatistics, discountStatistics) {
   const shortDate = (value, includeWeekday = false) => {
     if (!value) return '—';
     const [year, month, day] = value.split('-').map(Number);
@@ -1311,7 +1311,11 @@ function renderSalesStatistics(statistics) {
       .format(new Date(year, month - 1, 1)).replace(/\./g, '');
     return label.charAt(0).toUpperCase() + label.slice(1);
   };
-  const renderRows = (bodyId, rows, labelFor) => {
+  const renderRows = (bodyId, rows, labelFor, options = {}) => {
+    const valueKey = options.valueKey || 'netSales';
+    const variationKey = options.variationKey || 'variationPercent';
+    const variationSuffix = options.variationSuffix ?? '%';
+    const formatValue = options.formatValue || formatClp;
     const body = document.getElementById(bodyId);
     body.replaceChildren(...rows.map(item => {
       const row = document.createElement('tr');
@@ -1320,14 +1324,15 @@ function renderSalesStatistics(statistics) {
       const amount = document.createElement('td');
       const amountContent = document.createElement('span');
       amountContent.className = 'sales-statistics-value-wrap';
-      if (item.variationPercent !== null && Number.isFinite(item.variationPercent)) {
+      const variationValue = item[variationKey];
+      if (variationValue !== null && Number.isFinite(variationValue)) {
         const variation = document.createElement('span');
-        variation.className = `sales-statistics-variation ${item.variationPercent < 0 ? 'negative' : 'positive'}`;
-        variation.textContent = `${item.variationPercent > 0 ? '+' : ''}${item.variationPercent.toFixed(1)}%`;
+        variation.className = `sales-statistics-variation ${variationValue < 0 ? 'negative' : 'positive'}`;
+        variation.textContent = `${variationValue > 0 ? '+' : ''}${variationValue.toFixed(1)}${variationSuffix}`;
         amountContent.appendChild(variation);
       }
       const value = document.createElement('span');
-      value.textContent = formatClp(item.netSales);
+      value.textContent = formatValue(item[valueKey]);
       amountContent.appendChild(value);
       amount.appendChild(amountContent);
       row.append(label, amount);
@@ -1338,6 +1343,21 @@ function renderSalesStatistics(statistics) {
   renderRows('sales-statistics-weeks', statistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`);
   renderRows('sales-statistics-days', statistics.days, item => shortDate(item.date, true));
   renderRows('sales-statistics-equivalent-days', statistics.equivalentDays, item => shortDate(item.date, true));
+  const ticketOptions = { valueKey: 'averageTicketWithVat' };
+  renderRows('average-ticket-statistics-months', averageTicketStatistics.months, item => monthLabel(item.key), ticketOptions);
+  renderRows('average-ticket-statistics-weeks', averageTicketStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, ticketOptions);
+  renderRows('average-ticket-statistics-days', averageTicketStatistics.days, item => shortDate(item.date, true), ticketOptions);
+  renderRows('average-ticket-statistics-equivalent-days', averageTicketStatistics.equivalentDays, item => shortDate(item.date, true), ticketOptions);
+  const discountOptions = {
+    valueKey: 'discountPercent',
+    variationKey: 'variationPoints',
+    variationSuffix: ' pp',
+    formatValue: value => `${value.toFixed(1)}%`
+  };
+  renderRows('discount-statistics-months', discountStatistics.months, item => monthLabel(item.key), discountOptions);
+  renderRows('discount-statistics-weeks', discountStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, discountOptions);
+  renderRows('discount-statistics-days', discountStatistics.days, item => shortDate(item.date, true), discountOptions);
+  renderRows('discount-statistics-equivalent-days', discountStatistics.equivalentDays, item => shortDate(item.date, true), discountOptions);
 }
 
 async function loadWeeklySalesReport() {
@@ -1376,7 +1396,7 @@ async function loadWeeklySalesReport() {
     const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(report.previousDay.date));
     document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
     renderIntradayReport(report.intraday, report.includeToday);
-    renderSalesStatistics(report.statistics);
+    renderSalesStatistics(report.statistics, report.averageTicketStatistics, report.discountStatistics);
     if (!report.filesRead) {
       setStatus(status, 'No hay archivos de ventas cargados para las ubicaciones activas.', 'muted');
     } else if (report.warnings.length) {
