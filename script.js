@@ -3,6 +3,7 @@ let exportDecimalSystem = 'comma';
 let toteatMasterDownloadBatchId = null;
 let toteatTransactionalLocations = [];
 let toteatTransactionalCentralWarehouse = null;
+let toteatTransactionalMode = 'all';
 const FIELD_LABELS = {
   kardex: 'Kardex / inventario',
   waste: 'Merma',
@@ -58,6 +59,8 @@ let pendingTransactionDelete = null;
 let inventoryKardexTableState = null;
 let currentInventoryTableState = null;
 let transactionUploadContext = null;
+let reportClassicLocation = 'all';
+let reportLoadSequence = 0;
 const expandedUploadHistories = new Set();
 let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
 let ingredientsSort = { key: 'usageCost', direction: 'desc' };
@@ -531,7 +534,6 @@ async function inspectSelectedTransactionFile(input, locationOverride = null) {
 
 function clearWeeklySelections() {
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => { input.value = ''; });
-  document.getElementById('report-sales-upload-input').value = '';
   updateFileUploadControls();
 }
 
@@ -1395,15 +1397,26 @@ function renderSalesStatistics(statistics, averageTicketStatistics, discountStat
 
 async function loadWeeklySalesReport() {
   const status = document.getElementById('report-status');
-  const refreshButton = document.getElementById('refresh-weekly-report');
   const locationFilter = document.getElementById('report-location-filter');
   const selectedLocation = locationFilter.value || 'all';
+  const networkMode = document.getElementById('report-view-filter').value === 'grid';
+  const sequence = ++reportLoadSequence;
+  document.getElementById('weekly-report').classList.toggle('network-mode', networkMode);
+  document.getElementById('network-sales-dashboard').hidden = !networkMode;
   const includeToday = document.getElementById('report-include-today').checked;
-  refreshButton.disabled = true;
   setStatus(status, 'Calculando ventas netas…');
   try {
+    if (networkMode) {
+      const report = await apiRequest('/api/reports/network-sales');
+      if (sequence !== reportLoadSequence) return;
+      renderNetworkSalesDashboard(report);
+      document.getElementById('report-scope-description').textContent = 'Venta neta sin IVA y métricas comparativas de cada local y de toda la red.';
+      setStatus(status, report.warnings.length ? report.warnings.join(' ') : `${report.filesRead} archivo(s) de ventas procesado(s).`,
+        report.warnings.length ? 'error' : 'success');
+      return;
+    }
     const report = await apiRequest(`/api/reports/weekly-sales?location=${encodeURIComponent(selectedLocation)}&includeToday=${includeToday}`);
-    if (selectedLocation !== locationFilter.value || includeToday !== document.getElementById('report-include-today').checked) return;
+    if (sequence !== reportLoadSequence) return;
     document.getElementById('report-scope-description').textContent = report.scope.type === 'all'
       ? 'Venta neta sin IVA, consolidada para todas las cafeterías.'
       : `Venta neta sin IVA para ${report.scope.label}.`;
@@ -1438,10 +1451,82 @@ async function loadWeeklySalesReport() {
       setStatus(status, `${report.filesRead} archivo(s) de ventas procesado(s).`, 'success');
     }
   } catch (error) {
-    setStatus(status, error.message, 'error');
-  } finally {
-    refreshButton.disabled = false;
+    if (sequence === reportLoadSequence) setStatus(status, error.message, 'error');
   }
+}
+
+const NETWORK_SALES_COLUMNS = [
+  ['today', 'sales', 'Venta', 'Venta neta sin IVA de hoy hasta la hora indicada.'],
+  ['today', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
+  ['today', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['today', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['today', 'vsYesterday', 'vs ayer', 'Hoy hasta la hora actual frente a ayer hasta la misma hora.'],
+  ['today', 'vsEquivalentDays', 'vs 8 días equiv.', 'Hoy hasta la hora actual frente al promedio de los ocho mismos días de la semana anteriores, con igual hora de corte.'],
+  ['yesterday', 'sales', 'Venta', 'Venta neta sin IVA de ayer.'],
+  ['yesterday', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
+  ['yesterday', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['yesterday', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['yesterday', 'vsEquivalentDays', 'vs 8 días equiv.', 'Ayer frente al promedio de los ocho mismos días de la semana anteriores a ayer.'],
+  ['yesterday', 'vsFourWeeks', 'vs prom. 4 sem.', 'Ayer frente al promedio diario de las fechas con operación registrada durante las cuatro semanas anteriores.'],
+  ['currentWeek', 'sales', 'Venta', 'Venta neta acumulada desde el lunes hasta hoy a la hora indicada.'],
+  ['currentWeek', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
+  ['currentWeek', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['currentWeek', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['currentWeek', 'vsPreviousWeek', 'vs sem. ant.', 'Semana actual hasta hoy y hora actual frente al mismo tramo de la semana anterior.'],
+  ['previousWeek', 'sales', 'Venta', 'Venta neta de la semana anterior completa, lunes a domingo.'],
+  ['previousWeek', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
+  ['previousWeek', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['previousWeek', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['previousWeek', 'vsEightWeeks', 'vs 8 sem.', 'Semana anterior completa frente al promedio de las ocho semanas completas anteriores a ella.'],
+  ['currentMonth', 'sales', 'Venta', 'Venta neta acumulada desde el día 1 hasta hoy a la hora indicada.'],
+  ['currentMonth', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
+  ['currentMonth', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['currentMonth', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['currentMonth', 'vsPreviousMonth', 'vs mes ant.', 'Mes actual hasta hoy y hora actual frente a un tramo equivalente del mes anterior.'],
+  ['previousMonth', 'sales', 'Venta', 'Venta neta del mes anterior completo.'],
+  ['previousMonth', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
+  ['previousMonth', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['previousMonth', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.']
+];
+
+function networkMetricCell(period, metric) {
+  const value = period?.[metric];
+  const cell = document.createElement('td');
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    cell.textContent = '—';
+    cell.className = 'network-empty';
+  } else if (metric === 'sales' || metric === 'averageTicket') {
+    cell.textContent = metric === 'averageTicket' && !period.transactions ? '—' : formatClp(value);
+  } else {
+    const comparison = metric.startsWith('vs');
+    cell.textContent = `${comparison && value > 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`;
+    if (comparison) cell.className = value > 0.05 ? 'network-positive' : value < -0.05 ? 'network-negative' : 'network-neutral';
+  }
+  return cell;
+}
+
+function renderNetworkSalesDashboard(report) {
+  const headings = document.getElementById('network-sales-metric-headings');
+  headings.replaceChildren(...NETWORK_SALES_COLUMNS.map(([, , label, tooltip]) => {
+    const cell = document.createElement('th');
+    cell.scope = 'col';
+    cell.textContent = label;
+    cell.title = tooltip;
+    return cell;
+  }));
+  const renderRow = (item, total = false) => {
+    const row = document.createElement('tr');
+    if (total) row.className = 'network-total-row';
+    const name = document.createElement('th');
+    name.scope = 'row';
+    name.textContent = item.name;
+    row.append(name, ...NETWORK_SALES_COLUMNS.map(([period, metric]) => networkMetricCell(item[period], metric)));
+    return row;
+  };
+  document.getElementById('network-sales-rows').replaceChildren(...report.rows.map(item => renderRow(item)));
+  document.getElementById('network-sales-total').replaceChildren(renderRow(report.total, true));
+  document.getElementById('network-sales-cutoff').textContent = `${formatReportDate(report.today)} · corte ${report.cutoff} · America/Santiago`;
+  document.getElementById('network-sales-coverage').textContent = report.coverageNote || '';
 }
 
 function refreshReportLocationFilter() {
@@ -1453,118 +1538,40 @@ function refreshReportLocationFilter() {
   }
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : 'all';
+  if (!options.some(option => option.value === reportClassicLocation)) reportClassicLocation = 'all';
 }
 
-function closeReportSalesLocationDialog() {
-  const dialog = document.getElementById('report-sales-location-dialog');
-  if (dialog.open) dialog.close();
-}
-
-function openReportSalesFilePicker(location) {
-  if (!location || !locationRegistry[location] || locationRegistry[location].type !== 'store') {
-    return setStatus(document.getElementById('report-status'), 'Selecciona una cafetería válida para cargar sus ventas.', 'error');
+function changeReportView() {
+  const locationFilter = document.getElementById('report-location-filter');
+  if (document.getElementById('report-view-filter').value === 'grid') {
+    if (!locationFilter.disabled) reportClassicLocation = locationFilter.value || 'all';
+    locationFilter.value = 'all';
+    locationFilter.disabled = true;
+    locationFilter.title = 'La vista grilla muestra todos los locales simultáneamente.';
+  } else {
+    locationFilter.disabled = false;
+    locationFilter.value = [...locationFilter.options].some(option => option.value === reportClassicLocation)
+      ? reportClassicLocation : 'all';
+    locationFilter.removeAttribute('title');
   }
-  transactionUploadContext = { source: 'report', statusId: 'report-status', location, refreshReport: true };
-  const input = document.getElementById('report-sales-upload-input');
-  input.value = '';
-  input.click();
+  loadWeeklySalesReport();
 }
 
-function startReportSalesUpload() {
-  const selected = document.getElementById('report-location-filter').value || 'all';
-  if (selected !== 'all') return openReportSalesFilePicker(selected);
-  const select = document.getElementById('report-sales-upload-location');
-  const stores = Object.values(locationRegistry).filter(location => location.type === 'store');
-  select.replaceChildren(...stores.map(location => new Option(location.name, location.id)));
-  if (!stores.length) {
-    return setStatus(document.getElementById('report-status'), 'No hay cafeterías activas disponibles para cargar ventas.', 'error');
-  }
-  document.getElementById('report-sales-location-dialog').showModal();
-}
-
-async function downloadReportSalesFromToteat() {
-  const status = document.getElementById('report-status');
-  const button = document.getElementById('report-download-toteat-sales');
+function downloadReportSalesFromToteat() {
   const location = document.getElementById('report-location-filter').value || 'all';
-  if (location === 'all' || locationRegistry[location]?.type !== 'store') {
-    return setStatus(status, 'Selecciona una cafetería específica antes de descargar sus ventas desde Toteat.', 'error');
+  if (location === 'all') return startToteatTransactionalDownloads({ mode: 'sales' });
+  if (locationRegistry[location]?.type !== 'store') {
+    return setStatus(document.getElementById('report-status'), 'Selecciona una cafetería válida.', 'error');
   }
-  button.disabled = true;
-  setStatus(status, `Conectando con Toteat para ${locationRegistry[location].name}…`);
-  try {
-    const downloadReport = async (endpoint, fallbackFilename) => {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location })
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        const error = new Error(payload.error || 'No se pudo descargar el reporte desde Toteat.');
-        error.code = payload.code;
-        error.state = payload.state;
-        error.status = response.status;
-        throw error;
-      }
-      const blob = await response.blob();
-      const disposition = response.headers.get('Content-Disposition') || '';
-      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      return { blob, filename };
-    };
-    const validateAndSave = async (download, field) => {
-      transactionUploadContext = {
-        source: 'report', statusId: 'report-status', location, refreshReport: true,
-        downloadedFrom: 'toteat', toteatField: field
-      };
-      setStatus(status, `${download.filename} descargado. Validando estructura y fechas…`);
-      const saved = await inspectTransactionFile(
-        new File([download.blob], download.filename, { type: download.blob.type || 'text/csv' }),
-        field,
-        location
-      );
-      if (!saved) throw new Error(status.textContent || `No se pudo validar y guardar ${FIELD_LABELS[field] || field}.`);
-    };
+  document.getElementById('report-sales-download-location-name').textContent = locationRegistry[location].name;
+  document.getElementById('report-sales-download-scope-dialog').showModal();
+}
 
-    const sales = await downloadReport('/api/integrations/toteat/download-sales', `ventas-toteat-${location}.xlsx`);
-    await validateAndSave(sales, 'sales');
-    setStatus(status, 'Ventas procesadas correctamente. Descargando ahora Detalle Pagos desde Toteat…', 'success');
-    const paymentDetails = await downloadReport(
-      '/api/integrations/toteat/download-payment-details',
-      `detalle-pagos-toteat-${location}.csv`
-    );
-    await validateAndSave(paymentDetails, 'payment-details');
-    setStatus(status, 'Ventas y Detalle Pagos fueron descargados, validados y actualizados correctamente.', 'success');
-    return;
-  } catch (error) {
-    if (error.status !== 409 || error.code !== 'TOTEAT_AUTH_REQUIRED') {
-      return setStatus(status, error.message, 'error');
-    }
-    const expiredSession = error.state === 'session_expired';
-    setStatus(status, expiredSession
-      ? `La sesión vencida de Toteat fue detectada. Abriendo una nueva sesión para ${locationRegistry[location].name}…`
-      : `Abriendo Toteat para conectar ${locationRegistry[location].name}…`);
-    const connectResponse = await fetch('/api/integrations/toteat/connect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location })
-    });
-    const connection = await connectResponse.json().catch(() => ({}));
-    if (!connectResponse.ok) throw new Error(connection.error || 'No se pudo abrir la sesión de Toteat.');
-    setStatus(status, expiredSession
-      ? `Se cerró la sesión vencida y se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`
-      : `Se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`,
-    'muted');
-  } finally {
-    button.disabled = false;
-  }
+function chooseReportSalesDownloadScope(allLocations) {
+  const dialog = document.getElementById('report-sales-download-scope-dialog');
+  if (dialog.open) dialog.close();
+  const selected = document.getElementById('report-location-filter').value || 'all';
+  return startToteatTransactionalDownloads({ mode: 'sales', locationId: allLocations ? 'all' : selected });
 }
 
 async function saveToteatMasterDownload(endpoint, fallbackFilename) {
@@ -1665,7 +1672,13 @@ const TOTEAT_CENTRAL_KARDEX_REPORTS = [
 ];
 const toteatReportsForLocation = location => location.central
   ? TOTEAT_CENTRAL_KARDEX_REPORTS
-  : [...TOTEAT_TRANSACTION_REPORTS, ...TOTEAT_LOCAL_KARDEX_REPORTS];
+  : toteatTransactionalMode === 'sales'
+    ? TOTEAT_TRANSACTION_REPORTS.slice(0, 2)
+    : [...TOTEAT_TRANSACTION_REPORTS, ...TOTEAT_LOCAL_KARDEX_REPORTS];
+
+const toteatTransactionalStatus = () => document.getElementById(
+  toteatTransactionalMode === 'sales' ? 'report-status' : 'toteat-master-download-status'
+);
 
 function createToteatTransactionalProgress(locations) {
   const panel = document.getElementById('toteat-transactional-progress');
@@ -1758,15 +1771,21 @@ async function importToteatTransactionalFile(location, report, blob, filename) {
   return result;
 }
 
-async function startToteatTransactionalDownloads() {
-  const button = document.getElementById('download-all-toteat-transactions');
-  const status = document.getElementById('toteat-master-download-status');
+async function startToteatTransactionalDownloads({ mode = 'all', locationId = 'all' } = {}) {
+  toteatTransactionalMode = mode;
+  const button = document.getElementById(mode === 'sales'
+    ? 'report-download-toteat-sales' : 'download-all-toteat-transactions');
+  const status = toteatTransactionalStatus();
   button.disabled = true;
   setStatus(status, 'Preparando la descarga transaccional por cafetería…');
   try {
-    const payload = await apiRequest('/api/integrations/toteat/transactional-downloads/connect', { method: 'POST' });
-    toteatTransactionalLocations = payload.locations || [];
-    toteatTransactionalCentralWarehouse = payload.centralWarehouse
+    const payload = await apiRequest('/api/integrations/toteat/transactional-downloads/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: locationId, includeCentral: mode === 'all' })
+    });
+    toteatTransactionalLocations = (payload.locations || []).filter(location => locationId === 'all' || location.id === locationId);
+    if (!toteatTransactionalLocations.length) throw new Error('No hay cafeterías activas para descargar.');
+    toteatTransactionalCentralWarehouse = mode === 'all' && payload.centralWarehouse
       ? { ...payload.centralWarehouse, central: true } : null;
     document.getElementById('toteat-transactional-progress').hidden = true;
     document.getElementById('confirm-toteat-transactional-download').textContent = 'Ya inicié sesión, descargar reportes';
@@ -1781,7 +1800,8 @@ async function startToteatTransactionalDownloads() {
       const range = document.createElement('small');
       const latestDetail = location.latestTransactionAt
         ? ` · último registro: ${new Date(location.latestTransactionAt).toLocaleString('es-CL')}` : ' · sin registros previos';
-      range.textContent = `Ventas: ${formatReportDate(location.dateFrom)} – ${formatReportDate(location.dateTo)}${latestDetail} · Detalle Pagos: ${formatReportDate(location.paymentDetailsDateFrom)} – ${formatReportDate(location.dateTo)} · Compras: ${formatReportDate(location.purchasesDateFrom)} – ${formatReportDate(location.dateTo)} · Kardex Local: ${formatReportDate(location.kardexDateFrom)} – ${formatReportDate(location.dateTo)} · Merma: ${formatReportDate(location.wasteDateFrom)} – ${formatReportDate(location.dateTo)}`;
+      range.textContent = `Ventas: ${formatReportDate(location.dateFrom)} – ${formatReportDate(location.dateTo)}${latestDetail} · Detalle Pagos: ${formatReportDate(location.paymentDetailsDateFrom)} – ${formatReportDate(location.dateTo)}`
+        + (mode === 'sales' ? '' : ` · Compras: ${formatReportDate(location.purchasesDateFrom)} – ${formatReportDate(location.dateTo)} · Kardex Local: ${formatReportDate(location.kardexDateFrom)} – ${formatReportDate(location.dateTo)} · Merma: ${formatReportDate(location.wasteDateFrom)} – ${formatReportDate(location.dateTo)}`);
       details.append(name, range);
       list.append(number, details);
     });
@@ -1800,9 +1820,11 @@ async function startToteatTransactionalDownloads() {
     document.getElementById('toteat-transactional-download-title').textContent = payload.requiresAuthentication
       ? 'Inicia sesión en la ventana de TotEat'
       : 'Sesión de TotEat actualizada';
-    document.getElementById('toteat-transactional-download-copy').textContent = payload.requiresAuthentication
-      ? 'Completa el login y vuelve aquí. Brewit descargará los reportes por cafetería y bodega; al finalizar, validará y cargará cada archivo.'
-      : 'Brewit descargará los reportes desde el último registro guardado y después actualizará cada ubicación, reemplazando solo las fechas presentes en los archivos.';
+    document.getElementById('toteat-transactional-download-copy').textContent = mode === 'sales'
+      ? 'Brewit descargará Ventas Totales y Detalle Pagos por cafetería, desde el último registro guardado hasta hoy. Luego validará y cargará cada archivo sin duplicar fechas.'
+      : payload.requiresAuthentication
+        ? 'Completa el login y vuelve aquí. Brewit descargará los reportes por cafetería y bodega; al finalizar, validará y cargará cada archivo.'
+        : 'Brewit descargará los reportes desde el último registro guardado y después actualizará cada ubicación, reemplazando solo las fechas presentes en los archivos.';
     setStatus(document.getElementById('toteat-transactional-dialog-status'), '', 'muted');
     document.getElementById('toteat-transactional-download-dialog').showModal();
     setStatus(status, payload.requiresAuthentication
@@ -1820,7 +1842,7 @@ async function confirmToteatTransactionalDownloads() {
   const closeButton = document.getElementById('close-toteat-transactional-download');
   const cancelButton = document.getElementById('cancel-toteat-transactional-download');
   const dialogStatus = document.getElementById('toteat-transactional-dialog-status');
-  const status = document.getElementById('toteat-master-download-status');
+  const status = toteatTransactionalStatus();
   button.disabled = true;
   closeButton.disabled = true;
   cancelButton.disabled = true;
@@ -1897,6 +1919,7 @@ async function confirmToteatTransactionalDownloads() {
       }
     }
     await loadTransactionFiles();
+    if (toteatTransactionalMode === 'sales') await loadWeeklySalesReport();
     const skipped = withoutData.length ? ` Sin registros: ${withoutData.join(', ')}.` : '';
     const failures = importErrors.length ? ` No se cargaron ${importErrors.length}: ${importErrors.join(' · ')}.` : '';
     const summary = `${completed.length} archivo(s) descargados; ${imported.length} actualizado(s).${skipped}${failures}`;
@@ -8591,6 +8614,35 @@ function renderLocationManagement(data) {
       toteatFields.appendChild(wrapper);
       return [field, input];
     });
+    let openingInput = null;
+    let weekdayInputs = [];
+    const operationFields = document.createElement('div');
+    operationFields.className = 'location-operation-fields';
+    if (location.type === 'store') {
+      const openingLabel = document.createElement('label');
+      openingLabel.textContent = 'Fecha de apertura';
+      openingInput = document.createElement('input');
+      openingInput.type = 'date';
+      openingInput.value = location.openingDate || '';
+      openingInput.setAttribute('aria-label', `Fecha de apertura de ${location.name}`);
+      openingLabel.append(openingInput);
+      operationFields.append(openingLabel);
+      const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      const days = document.createElement('fieldset');
+      const legend = document.createElement('legend');
+      legend.textContent = 'Días programados de operación';
+      days.append(legend);
+      weekdayInputs = dayNames.map((day, index) => {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = location.operatingWeekdays?.includes(index) || false;
+        label.append(input, document.createTextNode(day));
+        days.append(label);
+        return input;
+      });
+      operationFields.append(days);
+    }
     const type = document.createElement('span');
     type.className = 'location-type-badge';
     type.textContent = location.type === 'warehouse' ? 'Bodega' : 'Cafetería';
@@ -8607,6 +8659,8 @@ function renderLocationManagement(data) {
           body: JSON.stringify({
             name: nameInput.value,
             address: addressInput.value,
+            ...(openingInput ? { openingDate: openingInput.value,
+              operatingWeekdays: weekdayInputs.flatMap((input, index) => input.checked ? [index] : []) } : {}),
             ...Object.fromEntries(toteatInputs.map(([field, input]) => [field, input.value]))
           })
         });
@@ -8622,7 +8676,7 @@ function renderLocationManagement(data) {
     trashButton.className = 'delete-button small';
     trashButton.textContent = 'Enviar a papelera';
     trashButton.addEventListener('click', () => openLocationTrashDialog(location));
-    row.append(nameInput, addressInput, type, toteatFields, saveButton, trashButton);
+    row.append(nameInput, addressInput, type, toteatFields, operationFields, saveButton, trashButton);
     activeList.appendChild(row);
   }
 
@@ -9103,13 +9157,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       inspectSelectedTransactionFile(input);
     });
   });
-  document.getElementById('report-sales-upload-input').addEventListener('change', event => {
-    inspectSelectedTransactionFile(event.currentTarget, transactionUploadContext?.location);
-  });
-  document.getElementById('report-upload-sales').addEventListener('click', startReportSalesUpload);
   document.getElementById('report-download-toteat-sales').addEventListener('click', downloadReportSalesFromToteat);
+  document.getElementById('report-sales-download-selected').addEventListener('click', () => chooseReportSalesDownloadScope(false));
+  document.getElementById('report-sales-download-all').addEventListener('click', () => chooseReportSalesDownloadScope(true));
+  document.getElementById('report-sales-download-cancel').addEventListener('click', () => document.getElementById('report-sales-download-scope-dialog').close());
   document.getElementById('download-all-toteat-files').addEventListener('click', startToteatMasterDownloads);
-  document.getElementById('download-all-toteat-transactions').addEventListener('click', startToteatTransactionalDownloads);
+  document.getElementById('download-all-toteat-transactions').addEventListener('click', () => startToteatTransactionalDownloads());
   document.getElementById('confirm-toteat-master-download').addEventListener('click', confirmToteatMasterDownloads);
   document.getElementById('close-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
   document.getElementById('cancel-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
@@ -9119,15 +9172,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('toteat-transactional-download-dialog').addEventListener('cancel', event => {
     if (document.getElementById('confirm-toteat-transactional-download').disabled) event.preventDefault();
   });
-  document.getElementById('confirm-report-sales-location').addEventListener('click', () => {
-    const location = document.getElementById('report-sales-upload-location').value;
-    closeReportSalesLocationDialog();
-    openReportSalesFilePicker(location);
-  });
-  for (const id of ['close-report-sales-location', 'cancel-report-sales-location']) {
-    document.getElementById(id).addEventListener('click', closeReportSalesLocationDialog);
-  }
-
+  document.body.appendChild(document.getElementById('toteat-transactional-download-dialog'));
   document.getElementById('weekly-upload-form').addEventListener('submit', event => event.preventDefault());
 
   document.getElementById('transaction-delete-confirmation').addEventListener('input', event => {
@@ -9187,8 +9232,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('close-master-preview').addEventListener('click', () => {
     document.getElementById('master-preview-dialog').close();
   });
-  document.getElementById('refresh-weekly-report').addEventListener('click', loadWeeklySalesReport);
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
+  document.getElementById('report-view-filter').addEventListener('change', changeReportView);
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);

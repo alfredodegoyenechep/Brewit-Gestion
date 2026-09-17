@@ -447,6 +447,13 @@ test('filters the sales report by cafeteria and defaults to all cafeterias', asy
   assert.equal(first.scope.label, 'Tienda 1');
   assert.equal(Math.round(second.previousDay.netSales), 200);
   assert.equal((await fetch(`${baseUrl}/api/reports/weekly-sales?location=main-warehouse`)).status, 400);
+  const network = await fetch(`${baseUrl}/api/reports/network-sales`).then(response => response.json());
+  assert.equal(network.rows.length, 2);
+  assert.equal(Math.round(network.rows[0].yesterday.sales), 100);
+  assert.equal(Math.round(network.rows[1].yesterday.sales), 200);
+  assert.equal(Math.round(network.total.yesterday.sales), 300);
+  assert.equal(network.total.yesterday.transactions, 2);
+  assert.equal(Math.round(network.total.yesterday.averageTicket), 150);
 });
 
 test('downloads Toteat sales for a specific cafeteria and keeps authentication external', async t => {
@@ -719,6 +726,28 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
       kind: 'central-waste', dateFrom: '2026-05-18', dateTo: '2026-09-17'
     }]
   ]);
+});
+
+test('sales-only TotEat connection can target one configured cafeteria without the others', async t => {
+  const baseUrl = await startTestServer(t, {
+    toteatAutomation: { async connectTransactionalDownloads() { return { opened: true, requiresAuthentication: false }; } }
+  });
+  const location = (await fetch(`${baseUrl}/api/config/locations`).then(response => response.json())).active.find(item => item.id === 'store-1');
+  const configured = await fetch(`${baseUrl}/api/config/locations/store-1`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      name: location.name, address: location.address || '', toteatRestaurantId: '1774666275011576',
+      toteatLocalId: '1', toteatName: 'Brewit', toteatSimpleId: '23026'
+    })
+  });
+  assert.equal(configured.status, 200);
+  const response = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/connect`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-1', includeCentral: false })
+  });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.deepEqual(payload.locations.map(item => item.id), ['store-1']);
+  assert.equal(payload.centralWarehouse, null);
 });
 
 test('Toteat automation prefers the browser bundled for its Playwright version', async t => {

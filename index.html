@@ -607,15 +607,35 @@
           <select id="report-location-filter">
             <option value="all">Todas las cafeterías</option>
           </select>
-          <div class="report-refresh-stack">
-            <button id="refresh-weekly-report" class="icon-button" type="button">Actualizar</button>
-            <button id="report-upload-sales" class="primary" type="button">Cargar Archivo</button>
-            <button id="report-download-toteat-sales" class="icon-button toteat-download-button" type="button">Descargar Ventas desde web</button>
-            <input id="report-sales-upload-input" class="native-file-input" name="sales" type="file" accept=".csv,.xls,.xlsx,.txt" hidden />
-          </div>
+          <button id="report-download-toteat-sales" class="icon-button toteat-download-button" type="button">Descargar Ventas desde web</button>
         </div>
       </div>
-      <div id="report-status" class="form-status" aria-live="polite"></div>
+      <div class="report-status-row">
+        <div id="report-status" class="form-status" aria-live="polite"></div>
+        <select id="report-view-filter" aria-label="Vista de ventas">
+          <option value="classic">Vista clásica</option>
+          <option value="grid">Vista grilla</option>
+        </select>
+      </div>
+
+      <section id="network-sales-dashboard" class="network-sales-dashboard" hidden aria-label="Vista comparativa de todos los locales">
+        <div class="network-sales-intro">
+          <div><div class="panel-eyebrow">PERFORMANCE DE LA RED</div><h3>Comparativo por local</h3></div>
+          <span id="network-sales-cutoff"></span>
+        </div>
+        <p id="network-sales-coverage" class="panel-description"></p>
+        <div class="network-sales-scroll" role="region" tabindex="0" aria-label="Tabla comparativa de ventas, desplazable horizontal y verticalmente">
+          <table class="network-sales-table">
+            <thead>
+              <tr><th class="network-local-heading" rowspan="3" scope="col">Local</th><th colspan="12" scope="colgroup">DÍA</th><th colspan="10" scope="colgroup">SEMANA</th><th colspan="9" scope="colgroup">MES</th></tr>
+              <tr><th colspan="6" scope="colgroup">HOY</th><th colspan="6" scope="colgroup">AYER</th><th colspan="5" scope="colgroup">ESTA SEMANA</th><th colspan="5" scope="colgroup">SEMANA ANTERIOR</th><th colspan="5" scope="colgroup">ESTE MES</th><th colspan="4" scope="colgroup">MES ANTERIOR</th></tr>
+              <tr id="network-sales-metric-headings"></tr>
+            </thead>
+            <tbody id="network-sales-rows"></tbody>
+            <tfoot id="network-sales-total"></tfoot>
+          </table>
+        </div>
+      </section>
 
       <div class="summary-grid report-summary-grid">
         <article class="summary-card highlight">
@@ -836,21 +856,18 @@
         </article>
       </section>
 
-      <dialog id="report-sales-location-dialog" class="inventory-criteria-dialog report-sales-location-dialog">
+      <dialog id="report-sales-download-scope-dialog" class="inventory-criteria-dialog report-sales-location-dialog">
         <div class="preview-dialog-head">
           <div>
-            <div class="panel-eyebrow">Cargar transacciones de venta</div>
-            <h3>Selecciona la cafetería</h3>
-            <p class="panel-description">Indica a qué cafetería pertenecen las transacciones antes de seleccionar el archivo.</p>
+            <div class="panel-eyebrow">Descargar ventas desde TotEat</div>
+            <h3>¿Qué cafeterías deseas actualizar?</h3>
+            <p class="panel-description">Está seleccionada <strong id="report-sales-download-location-name"></strong>. Se descargarán Ventas Totales y Detalle Pagos.</p>
           </div>
-          <button id="close-report-sales-location" class="icon-button" type="button">Cerrar</button>
         </div>
-        <label class="report-sales-location-field">Cafetería
-          <select id="report-sales-upload-location"></select>
-        </label>
         <div class="conflict-actions">
-          <button id="confirm-report-sales-location" class="primary" type="button">Seleccionar archivo</button>
-          <button id="cancel-report-sales-location" class="icon-button" type="button">Cancelar</button>
+          <button id="report-sales-download-selected" class="primary" type="button">Solo esta cafetería</button>
+          <button id="report-sales-download-all" class="icon-button" type="button">Todas las cafeterías</button>
+          <button id="report-sales-download-cancel" class="icon-button" type="button">Cancelar</button>
         </div>
       </dialog>
     </section>

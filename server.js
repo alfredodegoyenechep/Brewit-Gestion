@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
+const { businessClock, buildNetworkSalesDashboard } = require('./network-sales');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -4059,8 +4060,17 @@ function createApp(options = {}) {
     if (registry.locations.some(item => item.id !== location.id && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
       return res.status(409).json({ error: 'A location with this name already exists, including locations in trash.' });
     }
+    if (req.body?.openingDate !== undefined && req.body.openingDate && !isValidDate(req.body.openingDate)) {
+      return res.status(400).json({ error: 'Indica una fecha de apertura válida.' });
+    }
+    if (req.body?.operatingWeekdays !== undefined && (!Array.isArray(req.body.operatingWeekdays)
+      || req.body.operatingWeekdays.some(day => !Number.isInteger(day) || day < 0 || day > 6))) {
+      return res.status(400).json({ error: 'Selecciona días de operación válidos.' });
+    }
     location.name = name;
     location.address = address;
+    if (req.body?.openingDate !== undefined) location.openingDate = String(req.body.openingDate || '');
+    if (req.body?.operatingWeekdays !== undefined) location.operatingWeekdays = [...new Set(req.body.operatingWeekdays)];
     for (const field of ['toteatRestaurantId', 'toteatLocalId', 'toteatName', 'toteatSimpleId']) {
       if (req.body?.[field] !== undefined) location[field] = String(req.body[field] || '').trim();
     }
@@ -9325,13 +9335,19 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/api/integrations/toteat/transactional-downloads/connect', async (req, res) => {
+  app.post('/api/integrations/toteat/transactional-downloads/connect', express.json(), async (req, res) => {
     try {
       const activeLocations = readLocations().locations.filter(location => location.status === 'active');
-      const stores = activeLocations.filter(location => location.type === 'store');
+      const requestedLocation = String(req.body?.location || 'all');
+      const includeCentral = req.body?.includeCentral !== false;
+      const stores = activeLocations.filter(location => location.type === 'store'
+        && (requestedLocation === 'all' || location.id === requestedLocation));
+      if (!stores.length) {
+        return res.status(400).json({ code: 'TOTEAT_LOCATION_REQUIRED', error: 'Selecciona una cafetería activa para descargar.' });
+      }
       const centralOwner = stores.find(location => Number(location.toteatLocalId) === 1);
       const centralLocation = activeLocations.find(location => location.id === 'main-warehouse');
-      if (!centralOwner || !centralLocation) {
+      if (includeCentral && (!centralOwner || !centralLocation)) {
         return res.status(422).json({
           code: 'TOTEAT_CENTRAL_CONFIGURATION_REQUIRED',
           error: 'Se requiere el local 001 y la Bodega principal activos para descargar los Kardex centrales.'
@@ -9348,7 +9364,7 @@ function createApp(options = {}) {
       return res.json({
         ...connection,
         loginUrl: TOTEAT_LOGIN_URL,
-        centralWarehouse: {
+        centralWarehouse: includeCentral ? {
           id: centralLocation.id,
           name: centralLocation.name,
           ownerLocationId: centralOwner.id,
@@ -9356,7 +9372,7 @@ function createApp(options = {}) {
           kardexDateFrom: latestKardexAt(centralLocation.id, 'kardex') || FIRST_WEEK,
           wasteDateFrom: latestKardexAt(centralLocation.id, 'waste') || FIRST_WEEK,
           dateTo: projectionToday()
-        },
+        } : null,
         locations: stores.map(location => {
           const latestTransactionAt = salesHistory(location.id).latestTransactionAt;
           const latestPaymentDetailsAt = latestGenericTransactionAt(location.id, 'payment-details');
@@ -9843,6 +9859,85 @@ function createApp(options = {}) {
       });
     } catch (error) {
       return res.status(500).json({ error: 'Could not calculate the weekly sales report.' });
+    }
+  });
+
+  app.get('/api/reports/network-sales', (req, res) => {
+    try {
+      const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+      const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
+      const clock = configuredToday ? { today: configuredToday, cutoff: '23:59:59' } : businessClock();
+      const catalogMaster = latestMasterFile('master-catalog', clock.today);
+      let costCatalog = new Map();
+      if (catalogMaster) costCatalog = parseIngredientCatalog(catalogMaster.filePath);
+      const facts = [];
+      const warnings = [];
+      let filesRead = 0;
+      for (const location of stores) {
+        const resolver = buildCostResolver(clock.today, [location.id], { catalog: costCatalog });
+        const orders = new Map();
+        const seenRows = new Set();
+        for (const stored of storedSalesFiles(location.id)) {
+          try {
+            for (const row of readSalesRows(stored.filePath)) {
+              const dateTime = salesTransactionDateTime(row);
+              if (!dateTime || dateTime.slice(0, 10) > clock.today || dateIsExcluded(dateTime.slice(0, 10), stored.excludedRanges)) continue;
+              const canonical = Object.entries(row)
+                .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
+                .sort(([left], [right]) => left.localeCompare(right));
+              const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`;
+              if (seenRows.has(rowKey)) continue;
+              seenRows.add(rowKey);
+              const orderKey = salesTransactionKey(row);
+              let order = orders.get(orderKey);
+              if (!order) {
+                order = { locationId: location.id, date: dateTime.slice(0, 10), time: dateTime.slice(11),
+                  sales: 0, cost: 0, discounts: 0, grossBeforeDiscount: 0, transactions: 1,
+                  costAvailable: true, target: null, hasLine: false };
+                orders.set(orderKey, order);
+              }
+              const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+              if (gross !== null && order.target === null) {
+                const signedDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
+                order.target = (gross + signedDiscount) / 1.19;
+                order.grossBeforeDiscount = gross;
+                order.discounts = Math.max(0, -signedDiscount);
+              }
+              const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
+              if (!code) {
+                order.costAvailable = false;
+                continue;
+              }
+              const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
+              const catalogItem = costCatalog.get(code);
+              const costReference = resolver.resolve(code, catalogItem?.unit, catalogItem);
+              const reportedCost = numericValue(rowValue(row, ['Costo']));
+              const totalCost = costReference.source !== 'missing' ? quantity * costReference.unitCost : reportedCost;
+              if (totalCost === null) order.costAvailable = false;
+              else order.cost += totalCost;
+              const paidLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
+              const listLine = numericValue(rowValue(row, ['Precio Lista'])) || 0;
+              const lineDiscount = numericValue(rowValue(row, ['Descuento'])) || 0;
+              order.sales += (paidLine !== null ? paidLine : listLine + lineDiscount) / 1.19;
+              order.hasLine = true;
+            }
+            filesRead += 1;
+          } catch (error) {
+            warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
+          }
+        }
+        for (const order of orders.values()) {
+          if (order.target !== null) order.sales = order.target;
+          if (!order.hasLine) order.costAvailable = false;
+          facts.push(order);
+        }
+      }
+      return res.json({ ...buildNetworkSalesDashboard({ stores, facts, ...clock }), filesRead, warnings,
+        coverageNote: stores.some(store => !store.operatingWeekdays?.length)
+          ? 'Algunos locales no tienen calendario de apertura: sus promedios diarios consideran solo fechas con ventas registradas. Configura los días de operación en Configuración para incluir días abiertos con venta cero.'
+          : 'Los días abiertos con venta cero se incluyen según el calendario configurado. Comprueba que los archivos de ventas estén completos; una fecha sin archivo no puede distinguirse automáticamente de una venta cero.' });
+    } catch (error) {
+      return res.status(500).json({ error: 'No se pudo calcular la vista consolidada de ventas.' });
     }
   });
 

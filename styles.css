@@ -2733,7 +2733,8 @@ body {
   font-weight: 900;
 }
 
-.report-actions select {
+.report-actions select,
+.report-status-row select {
   min-width: 210px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2743,14 +2744,31 @@ body {
   font-weight: 700;
 }
 
-.report-refresh-stack {
-  display: grid;
-  justify-items: stretch;
-  gap: 7px;
+.report-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
 }
 
-.report-refresh-stack > button {
-  width: 100%;
+.report-status-row .form-status {
+  min-width: 0;
+  margin-top: 0;
+}
+
+.report-status-row select {
+  flex: 0 0 auto;
+}
+
+.report-actions select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .report-status-row { align-items: stretch; flex-direction: column; }
+  .report-status-row select { width: 100%; }
 }
 
 .report-cutoff-toggle {
@@ -2805,6 +2823,70 @@ body {
 .report-summary-grid {
   margin-top: 22px;
 }
+
+#weekly-report.network-mode > .report-summary-grid,
+#weekly-report.network-mode > .intraday-panel,
+#weekly-report.network-mode > .sales-statistics-grid {
+  display: none;
+}
+
+.network-sales-dashboard {
+  margin-top: 22px;
+  min-width: 0;
+}
+
+.network-sales-dashboard[hidden] { display: none; }
+.network-sales-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
+.network-sales-intro h3 { margin: 5px 0 0; }
+.network-sales-intro > span { color: var(--text-soft); font-size: calc(12px * var(--font-scale)); }
+.network-sales-scroll {
+  margin-top: 18px;
+  width: 100%;
+  max-height: min(62vh, 720px);
+  overflow-x: auto;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+}
+.network-sales-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: calc(12px * var(--font-scale));
+  font-variant-numeric: tabular-nums;
+}
+.network-sales-table th,
+.network-sales-table td {
+  min-width: 104px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+  text-align: right;
+}
+.network-sales-table thead th { text-align: center; background: #302b26; color: var(--text-soft); }
+.network-sales-table thead tr:nth-child(1) th { position: sticky; top: 0; z-index: 4; height: 36px; }
+.network-sales-table thead tr:nth-child(2) th { position: sticky; top: 36px; z-index: 4; height: 36px; background: #292521; }
+.network-sales-table thead tr:nth-child(3) th { position: sticky; top: 72px; z-index: 4; height: 39px; background: #24211e; }
+.network-sales-table thead .network-local-heading { position: sticky; left: 0; top: 0; z-index: 7 !important; min-width: 170px; text-align: left; background: #302b26; }
+.network-sales-table tbody th,
+.network-sales-table tfoot th { position: sticky; left: 0; z-index: 2; min-width: 170px; text-align: left; background: #24211e; }
+.network-sales-table tbody td { background: #211e1b; }
+.network-sales-table tbody tr:nth-child(even) td,
+.network-sales-table tbody tr:nth-child(even) th { background: #27231f; }
+.network-sales-table tfoot th,
+.network-sales-table tfoot td { background: #3b2d21; font-weight: 800; border-top: 2px solid var(--clay); }
+.network-sales-table tfoot th { z-index: 3; }
+.network-positive { color: #69b8e8; }
+.network-negative { color: #df8159; }
+.network-neutral,
+.network-empty { color: var(--text-soft); }
+.location-operation-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.location-operation-fields > label { display: grid; gap: 5px; font-size: calc(12px * var(--font-scale)); }
+.location-operation-fields fieldset { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 7px 10px; border: 1px solid var(--border-soft); border-radius: 8px; }
+.location-operation-fields legend { font-size: calc(11px * var(--font-scale)); }
+.location-operation-fields fieldset label { display: inline-flex; align-items: center; gap: 3px; font-size: calc(11px * var(--font-scale)); }
 
 .report-summary-grid .summary-card.highlight {
   position: relative;

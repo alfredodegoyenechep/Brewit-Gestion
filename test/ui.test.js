@@ -101,6 +101,25 @@ test('transactional downloads show each local and report progressing in order', 
     const stored = await fetch(`${baseUrl}/api/transactions?location=${location}`).then(response => response.json());
     for (const field of fields) assert.equal(stored.files[field].fileCount, 1, `${location}: ${field}`);
   }
+  await page.locator('#close-toteat-transactional-download').click();
+  await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
+  await page.locator('#report-location-filter').selectOption('all');
+  await page.locator('#report-download-toteat-sales').click();
+  await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#report-sales-download-scope-dialog').evaluate(dialog => dialog.open), false);
+  assert.match(await page.locator('#toteat-transactional-locations').innerText(), /Tienda 1.*Tienda 2/s);
+  assert.doesNotMatch(await page.locator('#toteat-transactional-locations').innerText(), /Bodega Principal/);
+  await page.locator('#confirm-toteat-transactional-download').click();
+  await page.waitForFunction(() => document.getElementById('toteat-transactional-progress-count')?.textContent.includes('8 de 8'), null, { timeout: 30000 });
+  assert.equal(await page.locator('.toteat-progress-report[data-state="imported"]').count(), 4);
+  await page.locator('#close-toteat-transactional-download').click();
+  await page.locator('#report-location-filter').selectOption('store-1');
+  await page.locator('#report-download-toteat-sales').click();
+  await page.locator('#report-sales-download-scope-dialog').waitFor({ state: 'visible' });
+  await page.locator('#report-sales-download-all').click();
+  await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#toteat-transactional-locations').innerText(), /Tienda 1.*Tienda 2/s);
+  await page.locator('#cancel-toteat-transactional-download').click();
 });
 
 test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
@@ -125,6 +144,15 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
           buffer: Buffer.from('FechaCierre\tComanda\tComentario General\tA Pagar\n09-08-26 08:30 a. m.\torder-1\tServir en el local\t0.119')
         };
       },
+      async connectTransactionalDownloads() { return { opened: true, requiresAuthentication: false, refreshed: true }; },
+      async selectTransactionalRestaurant() { return { changed: true }; },
+      async downloadTransactionalSales() {
+        return {
+          filename: 'ventas-totales.csv', contentType: 'text/csv; charset=utf-8',
+          buffer: Buffer.from('ID de orden\tFecha de creacion\tHora de creacion\tPago total\tDescuentos\tID Producto\tNombre\tCantidad\tPrecio a Pagar\tDescuento\tCosto\tCategorías de Productos/Platos\norder-1\t2026-08-09\t08:30:00\t119\t0\tP1\tProducto Uno\t1\t119\t0\t20\tBebidas')
+        };
+      },
+      async downloadTransactionalPaymentDetails() { return this.downloadPaymentDetails(); },
       async connectMasterDownloads() { return { opened: true, requiresAuthentication: true, refreshed: false }; },
       async downloadSuppliers() {
         return {
@@ -161,6 +189,19 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     server.once('listening', resolve);
     server.once('error', reject);
   });
+  const testBaseUrl = `http://127.0.0.1:${server.address().port}`;
+  for (const [id, localId, name, simpleId] of [
+    ['store-1', '1', 'Brewit', '23026'], ['store-2', '2', 'Brewit 2', '24335']
+  ]) {
+    const location = (await fetch(`${testBaseUrl}/api/config/locations`).then(response => response.json())).active.find(item => item.id === id);
+    const configured = await fetch(`${testBaseUrl}/api/config/locations/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        name: location.name, address: location.address || '', toteatRestaurantId: '1774666275011576',
+        toteatLocalId: localId, toteatName: name, toteatSimpleId: simpleId
+      })
+    });
+    assert.equal(configured.status, 200);
+  }
   const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
   t.after(async () => {
     await browser.close();
@@ -598,7 +639,38 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('link', { name: 'Resumen General Ventas' }).click();
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
   assert.equal(await page.locator('#report-location-filter').inputValue(), 'all');
+  const reportLayout = await page.evaluate(() => {
+    const box = id => document.getElementById(id).getBoundingClientRect();
+    return { location: box('report-location-filter').toJSON(), download: box('report-download-toteat-sales').toJSON(),
+      status: box('report-status').toJSON(), view: box('report-view-filter').toJSON() };
+  });
+  assert.ok(reportLayout.download.left > reportLayout.location.right);
+  assert.ok(Math.abs((reportLayout.download.top + reportLayout.download.height / 2)
+    - (reportLayout.location.top + reportLayout.location.height / 2)) < 12);
+  assert.ok(reportLayout.view.top > reportLayout.download.bottom);
+  assert.ok(reportLayout.view.top < reportLayout.status.bottom);
   assert.equal(await page.locator('#report-location-filter option').count(), 3);
+  assert.equal(await page.locator('#report-view-filter').inputValue(), 'classic');
+  assert.equal(await page.locator('#report-upload-sales').count(), 0);
+  assert.equal(await page.locator('#refresh-weekly-report').count(), 0);
+  await page.locator('#report-view-filter').selectOption('grid');
+  await page.locator('#network-sales-dashboard').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#report-location-filter').isDisabled(), true);
+  assert.equal(await page.locator('#network-sales-rows tr').count(), 2);
+  assert.match(await page.locator('#network-sales-total').innerText(), /TOTAL RED/);
+  assert.equal(await page.locator('#network-sales-metric-headings th').count(), 31);
+  const sticky = await page.locator('.network-sales-scroll').evaluate(element => {
+    element.scrollLeft = 700;
+    const local = element.querySelector('tbody th');
+    const before = local.getBoundingClientRect().left;
+    element.scrollLeft = 1400;
+    return { before, after: local.getBoundingClientRect().left, headerPosition: getComputedStyle(element.querySelector('thead tr:first-child th')).position };
+  });
+  assert.equal(sticky.before, sticky.after);
+  assert.equal(sticky.headerPosition, 'sticky');
+  await page.locator('#report-view-filter').selectOption('classic');
+  await page.locator('#network-sales-dashboard').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('#report-location-filter').isEnabled(), true);
   assert.equal(await page.locator('#report-include-today').isChecked(), true);
   assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta hoy');
   await page.locator('.report-cutoff-toggle').click();
@@ -645,10 +717,6 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#report-cutoff-label').textContent(), 'Venta hoy');
   assert.equal(await page.locator('#report-week-chip').textContent(), 'Lun–hoy');
   assert.equal(await page.locator('#report-month-chip').textContent(), 'Mes–hoy');
-  await page.locator('#report-upload-sales').click();
-  await page.locator('#report-sales-location-dialog').waitFor({ state: 'visible' });
-  assert.equal(await page.locator('#report-sales-upload-location option').count(), 2);
-  await page.locator('#cancel-report-sales-location').click();
   await page.locator('#report-location-filter').selectOption('store-2');
   await page.locator('#report-scope-description').filter({ hasText: 'Tienda 2' }).waitFor();
   assert.match(await page.locator('#report-yesterday-value').textContent(), /0/);
@@ -656,30 +724,27 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
   await page.locator('#report-location-filter').selectOption('store-1');
   await page.locator('#report-scope-description').filter({ hasText: 'Tienda 1' }).waitFor();
+  await page.locator('#report-view-filter').selectOption('grid');
+  assert.equal(await page.locator('#report-location-filter').inputValue(), 'all');
+  await page.locator('#report-view-filter').selectOption('classic');
+  assert.equal(await page.locator('#report-location-filter').inputValue(), 'store-1');
   const toteatDownloads = [];
   page.on('download', download => toteatDownloads.push(download.suggestedFilename()));
   await page.locator('#report-download-toteat-sales').click();
-  await page.locator('#report-status').filter({
-    hasText: 'Ventas y Detalle Pagos fueron descargados, validados y actualizados correctamente.'
-  }).waitFor();
-  assert.deepEqual(toteatDownloads, ['ventas-totales.csv', 'detalle-pagos.csv']);
+  await page.locator('#report-sales-download-scope-dialog').waitFor({ state: 'visible' });
+  await page.locator('#report-sales-download-selected').click();
+  await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
+  await page.locator('#confirm-toteat-transactional-download').click();
+  await page.locator('#toteat-transactional-dialog-status').filter({ hasText: '2 actualizado(s)' }).waitFor();
+  await page.locator('#close-toteat-transactional-download').click();
+  assert.equal(toteatDownloads.length, 2);
+  assert.match(toteatDownloads[0], /^001_ventas-totales-store-1-/);
+  assert.match(toteatDownloads[1], /^001_payment-details-toteat-store-1-/);
   const downloadedTransactions = await fetch(`http://127.0.0.1:${server.address().port}/api/transactions?location=store-1`)
     .then(response => response.json());
   assert.equal(downloadedTransactions.files['payment-details'].fileCount, 2);
-  assert.equal(downloadedTransactions.files['payment-details'].latest.originalName, 'detalle-pagos.csv');
+  assert.match(downloadedTransactions.files['payment-details'].latest.originalName, /^001_payment-details-toteat-store-1-/);
   assert.equal(await page.locator('#date-confirmation').evaluate(dialog => dialog.open), false);
-  const reportSalesChooserPromise = page.waitForEvent('filechooser');
-  await page.locator('#report-upload-sales').click();
-  const reportSalesChooser = await reportSalesChooserPromise;
-  await reportSalesChooser.setFiles({
-    name: 'ventas-desde-resumen.csv',
-    mimeType: 'text/csv',
-    buffer: Buffer.from('ID de orden\tFecha de creacion\tPago total\tDescuentos\nreport-upload-test\t2026-08-09\t119\t0')
-  });
-  await page.locator('#date-confirmation').waitFor({ state: 'visible' });
-  assert.match(await page.locator('#detected-files-list').textContent(), /ventas-desde-resumen\.csv.*2026-08-09/s);
-  await page.locator('#cancel-transaction-confirmation').click();
-  await page.locator('#report-status').filter({ hasText: 'Carga cancelada' }).waitFor();
   await page.locator('#report-location-filter').selectOption('all');
   await page.locator('#report-scope-description').filter({ hasText: 'todas las cafeterías' }).waitFor();
 
@@ -839,7 +904,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('heading', { name: 'Ventas por ingredientes' }).waitFor();
   assert.equal(await page.locator('#sales-ingredients-location option').count(), 3);
   assert.equal(await page.getByRole('button', { name: 'Generar reporte' }).isDisabled(), true);
-  await page.locator('#sales-ingredients-status').filter({ hasText: /1 archivo\(s\) procesado\(s\)/i }).waitFor();
+  await page.locator('#sales-ingredients-status').filter({ hasText: /\d+ archivo\(s\) procesado\(s\)/i }).waitFor();
 
   await page.getByRole('link', { name: 'Compras', exact: true }).click();
   await page.getByRole('heading', { name: 'Historial de compras e insumos' }).waitFor();
@@ -1452,7 +1517,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
 
   const salesRow = page.locator('[data-weekly-field="sales"]');
   await salesRow.getByRole('button', { name: 'Previsualizar' }).click();
-  await page.locator('#master-preview-title').filter({ hasText: 'ventas-semana.csv' }).waitFor();
+  await page.locator('#master-preview-title').filter({ hasText: '001_ventas-totales-store-1-' }).waitFor();
   await page.getByRole('button', { name: 'Cerrar' }).click();
   await salesRow.getByRole('button', { name: 'Eliminar' }).click();
   await page.getByRole('heading', { name: 'Eliminar Ventas' }).waitFor();
@@ -1462,7 +1527,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#transaction-delete-confirmation').fill('ELIMINAR');
   await page.getByRole('button', { name: 'Confirmar eliminación' }).click();
   await page.getByText(/Se revirtió la última carga de Ventas/).waitFor();
-  assert.equal(await salesRow.locator('.file-upload-state').textContent(), 'Sin archivos subidos');
+  assert.match(await salesRow.locator('.file-upload-state').textContent(), /Último archivo subido/);
   await page.locator('#file-sales').setInputFiles({
     name: 'compras-en-ventas.xls',
     mimeType: 'application/vnd.ms-excel',
