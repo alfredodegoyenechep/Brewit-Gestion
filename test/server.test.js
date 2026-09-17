@@ -1845,6 +1845,32 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(secondOrder.orderNumber, 'OC-000002');
 });
 
+test('accepts TotEat purchases with English headers and includes them in purchase reports', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-09-17' });
+  const headers = [
+    'Broadcast date', 'Document Type', 'Document', 'Supplier/To', 'Tax ID number',
+    'Lin', 'Cod', 'PRODUCT', 'Q.Rec', 'Um.Rec', 'Cost', 'Monto neto', 'Monto total'
+  ];
+  const row = [
+    '2026-09-17', 'Normal Invoice', '02921438', 'QUILLAYES SURLAT', '969542102',
+    '1', 'LAC001', 'Leche Semidescr Sin Lactosa', '60', 'L', '1007', '60420', '60420'
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, row]), 'listado_compras_detalle');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'purchases', filename: '001_purchases-toteat-store-1.xls',
+    contents: XLSX.write(workbook, { type: 'buffer', bookType: 'biff8' })
+  }]).then(response => response.json());
+  assert.equal(inspection.files[0].structure.ok, true);
+  assert.deepEqual(inspection.files[0].recordDates, ['2026-09-17']);
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+  const report = await fetch(`${baseUrl}/api/purchases?location=store-1&supplier=all`).then(response => response.json());
+  assert.equal(report.rows.length, 1);
+  assert.equal(report.rows[0].supplier, 'QUILLAYES SURLAT');
+  assert.equal(report.rows[0].document, '02921438');
+  assert.equal(report.rows[0].totalAmount, 60420);
+});
+
 test('limits purchase projections to ingredients plus the SUB005 extra', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-02' });
   const catalog = XLSX.utils.book_new();
@@ -2999,6 +3025,43 @@ test('stores transactions without a week and confirms whether overlapping dates 
   assert.equal(removedAll.remainingCount, 0);
   const empty = await fetch(`${baseUrl}/api/transactions?location=store-1`).then(response => response.json());
   assert.equal(empty.files.sales.fileCount, 0);
+});
+
+test('automatic replacement changes only dates present in the downloaded file', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-07' });
+  const header = ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos'];
+  const initial = [
+    header,
+    ['old-4', '2026-08-04', 119, 0],
+    ['old-5', '2026-08-05', 119, 0],
+    ['old-6', '2026-08-06', 119, 0]
+  ];
+  const first = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', filename: 'ventas-iniciales.csv', contents: initial.map(row => row.join('\t')).join('\n')
+  }]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, first)).status, 200);
+
+  const revised = [
+    header,
+    ['new-4', '2026-08-04', 238, 0],
+    ['new-6', '2026-08-06', 357, 0]
+  ];
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'sales', filename: 'ventas-2026-08-04-2026-08-06.csv', contents: revised.map(row => row.join('\t')).join('\n')
+  }]).then(response => response.json());
+  assert.deepEqual(inspection.files[0].recordDates, ['2026-08-04', '2026-08-06']);
+  const saved = await fetch(`${baseUrl}/api/uploads/transactions/confirm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: inspection.token, dateFrom: '2026-08-04', dateTo: '2026-08-06',
+      confirmed: true, overlapAction: 'replace', replaceOnlyIncomingDates: true
+    })
+  });
+  assert.equal(saved.status, 200);
+  const latest = await fetch(`${baseUrl}/api/sales/latest?location=store-1`).then(response => response.json());
+  assert.equal(latest.transactionCount, 3);
+  const report = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1`).then(response => response.json());
+  assert.equal(report.month.netSales, 600);
 });
 
 test('accepts MercadoPago files without a structural reference and avoids duplicate rows', async t => {

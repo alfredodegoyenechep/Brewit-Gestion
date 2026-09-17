@@ -12,21 +12,48 @@ const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrom
 test('transactional downloads show each local and report progressing in order', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-transaction-progress-'));
   const calls = [];
-  const file = (filename, contents) => ({ filename, contentType: 'application/octet-stream', buffer: Buffer.from(contents) });
+  const workbook = rows => {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), 'Reporte');
+    return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+  };
+  const file = (filename, rows) => ({ filename, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: workbook(rows) });
   const server = createApp({
     uploadsRoot,
     reportToday: '2026-09-17',
     toteatAutomation: {
       async connectTransactionalDownloads() { return { opened: true, requiresAuthentication: false, refreshed: true }; },
       async selectTransactionalRestaurant(restaurant) { calls.push(`select:${restaurant.localId}`); return { changed: true }; },
-      async downloadTransactionalSales(options) { calls.push(`sales:${options.restaurant.localId}`); return file('ventas.xlsx', 'sales'); },
+      async downloadTransactionalSales(options) {
+        calls.push(`sales:${options.restaurant.localId}`);
+        return file('ventas.xlsx', [
+          ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos'],
+          [`order-${options.restaurant.localId}`, '2026-09-17', 119, 0]
+        ]);
+      },
       async downloadTransactionalPaymentDetails(options) {
         calls.push(`payments:${options.restaurant.localId}`);
         await new Promise(resolve => setTimeout(resolve, 250));
-        return file('pagos.csv', 'payments');
+        return file('pagos.xlsx', [
+          ['FechaCierre', 'Comanda', 'Comentario General', 'A Pagar'],
+          ['17-09-26 08:30 a. m.', `order-${options.restaurant.localId}`, 'Servir en el local', 119]
+        ]);
       },
-      async downloadTransactionalPurchases(options) { calls.push(`purchases:${options.restaurant.localId}`); return file('compras.xls', 'purchases'); },
-      async downloadTransactionalKardex(options) { calls.push(`kardex-${options.kind}:${options.restaurant.localId}`); return file('kardex.xlsx', 'kardex'); }
+      async downloadTransactionalPurchases(options) {
+        calls.push(`purchases:${options.restaurant.localId}`);
+        return file('compras.xlsx', [
+          ['Broadcast date', 'Document', 'Supplier/To', 'PRODUCT'],
+          ['2026-09-17', `factura-${options.restaurant.localId}`, 'Proveedor', 'Café']
+        ]);
+      },
+      async downloadTransactionalKardex(options) {
+        calls.push(`kardex-${options.kind}:${options.restaurant.localId}`);
+        return file('kardex.xlsx', [
+          ['Código', 'Nombre', 'Unidad', '17-09-2026', null],
+          [null, null, null, 'II - Inventario Inicial', 'IF - Inventario Final'],
+          ['SUB005', 'Café', 'KG', 10, 9]
+        ]);
+      }
     }
   }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
@@ -56,15 +83,24 @@ test('transactional downloads show each local and report progressing in order', 
   await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
   assert.match(await page.locator('#toteat-transactional-locations').innerText(), /ID local 1/);
   await page.locator('#confirm-toteat-transactional-download').click();
-  await page.waitForFunction(() => document.getElementById('toteat-transactional-progress-count')?.textContent.includes('12 de 12'), null, { timeout: 30000 });
+  await page.waitForFunction(() => document.getElementById('toteat-transactional-progress-count')?.textContent.includes('24 de 24'), null, { timeout: 30000 });
   assert.equal(await page.locator('#toteat-transactional-progress-percent').innerText(), '100%');
-  assert.equal(await page.locator('.toteat-progress-report[data-state="done"]').count(), 12);
+  await page.waitForFunction(() => document.getElementById('toteat-transactional-dialog-status')?.textContent.includes('12 actualizado(s)'), null, { timeout: 30000 });
+  assert.equal(await page.locator('.toteat-progress-report[data-state="imported"]').count(), 12);
   assert.deepEqual(calls, [
     'select:1', 'sales:1', 'payments:1', 'purchases:1', 'kardex-local:1', 'kardex-waste:1',
     'select:2', 'sales:2', 'payments:2', 'purchases:2', 'kardex-local:2', 'kardex-waste:2',
     'select:1', 'kardex-central:1', 'kardex-central-waste:1'
   ]);
-  assert.match(await page.locator('#toteat-transactional-dialog-status').innerText(), /12 archivo\(s\) descargados/);
+  assert.match(await page.locator('#toteat-transactional-dialog-status').innerText(), /12 archivo\(s\) descargados; 12 actualizado\(s\)/);
+  for (const [location, fields] of [
+    ['store-1', ['sales', 'payment-details', 'purchases', 'kardex', 'waste']],
+    ['store-2', ['sales', 'payment-details', 'purchases', 'kardex', 'waste']],
+    ['main-warehouse', ['kardex', 'waste']]
+  ]) {
+    const stored = await fetch(`${baseUrl}/api/transactions?location=${location}`).then(response => response.json());
+    for (const field of fields) assert.equal(stored.files[field].fileCount, 1, `${location}: ${field}`);
+  }
 });
 
 test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME_PATH) }, async t => {

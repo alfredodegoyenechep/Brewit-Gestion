@@ -5474,11 +5474,13 @@ body {
   font-weight: 800;
 }
 
-.toteat-progress-report[data-state="done"] {
+.toteat-progress-report[data-state="done"],
+.toteat-progress-report[data-state="imported"] {
   color: var(--green);
 }
 
-.toteat-progress-report[data-state="error"] {
+.toteat-progress-report[data-state="error"],
+.toteat-progress-report[data-state="import-error"] {
   color: var(--red);
 }
 

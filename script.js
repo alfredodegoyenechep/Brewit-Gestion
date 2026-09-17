@@ -1651,17 +1651,17 @@ function closeToteatTransactionalDownloadDialog() {
 }
 
 const TOTEAT_TRANSACTION_REPORTS = [
-  { label: 'Ventas Totales', route: 'sales', emptyCode: 'TOTEAT_NO_SALES_AVAILABLE' },
-  { label: 'Detalle Pagos', route: 'payment-details', emptyCode: 'TOTEAT_NO_PAYMENT_DETAILS_AVAILABLE' },
-  { label: 'Compras', route: 'purchases', emptyCode: 'TOTEAT_NO_PURCHASES_AVAILABLE' }
+  { label: 'Ventas Totales', route: 'sales', field: 'sales', emptyCode: 'TOTEAT_NO_SALES_AVAILABLE' },
+  { label: 'Detalle Pagos', route: 'payment-details', field: 'payment-details', emptyCode: 'TOTEAT_NO_PAYMENT_DETAILS_AVAILABLE' },
+  { label: 'Compras', route: 'purchases', field: 'purchases', emptyCode: 'TOTEAT_NO_PURCHASES_AVAILABLE' }
 ];
 const TOTEAT_LOCAL_KARDEX_REPORTS = [
-  { label: 'Kardex Bodega Local', route: 'kardex-local', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
-  { label: 'Kardex Bodega Merma', route: 'kardex-waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
+  { label: 'Kardex Bodega Local', route: 'kardex-local', field: 'kardex', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
+  { label: 'Kardex Bodega Merma', route: 'kardex-waste', field: 'waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
 ];
 const TOTEAT_CENTRAL_KARDEX_REPORTS = [
-  { label: 'Kardex Bodega Central', route: 'kardex-central', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
-  { label: 'Kardex Bodega Central Merma', route: 'kardex-central-waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
+  { label: 'Kardex Bodega Central', route: 'kardex-central', field: 'kardex', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
+  { label: 'Kardex Bodega Central Merma', route: 'kardex-central-waste', field: 'waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
 ];
 const toteatReportsForLocation = location => location.central
   ? TOTEAT_CENTRAL_KARDEX_REPORTS
@@ -1673,14 +1673,16 @@ function createToteatTransactionalProgress(locations) {
   const bar = document.getElementById('toteat-transactional-progress-bar');
   const count = document.getElementById('toteat-transactional-progress-count');
   const percent = document.getElementById('toteat-transactional-progress-percent');
-  const total = locations.reduce((sum, location) => sum + toteatReportsForLocation(location).length, 0);
+  const total = locations.reduce((sum, location) => sum + toteatReportsForLocation(location).length * 2, 0);
   const rows = new Map();
+  const downloaded = new Set();
+  const finished = new Set();
   let processed = 0;
   list.replaceChildren();
   panel.hidden = false;
   bar.max = Math.max(total, 1);
   bar.value = 0;
-  count.textContent = `0 de ${total} reportes procesados`;
+  count.textContent = `0 de ${total} pasos completados`;
   percent.textContent = '0%';
   for (const location of locations) {
     const group = document.createElement('div');
@@ -1704,18 +1706,56 @@ function createToteatTransactionalProgress(locations) {
   }
   return {
     update(location, report, status, message) {
-      const entry = rows.get(`${location.id}:${report.route}`);
+      const key = `${location.id}:${report.route}`;
+      const entry = rows.get(key);
       entry.row.dataset.state = status;
       entry.state.textContent = message;
       if (status === 'active') entry.row.scrollIntoView({ block: 'nearest' });
-      if (status === 'done' || status === 'empty') {
+      if (['done', 'empty'].includes(status) && !downloaded.has(key)) {
+        downloaded.add(key);
         processed += 1;
+      }
+      if (['empty', 'imported', 'import-error'].includes(status) && !finished.has(key)) {
+        finished.add(key);
+        processed += 1;
+      }
+      if (['done', 'empty', 'imported', 'import-error'].includes(status)) {
         bar.value = processed;
-        count.textContent = `${processed} de ${total} reportes procesados`;
+        count.textContent = `${processed} de ${total} pasos completados`;
         percent.textContent = `${Math.round(processed / Math.max(total, 1) * 100)}%`;
       }
     }
   };
+}
+
+async function importToteatTransactionalFile(location, report, blob, filename) {
+  const form = new FormData();
+  form.append(report.field, blob, filename);
+  const inspection = await apiRequest(`/api/uploads/transactions/inspect?location=${encodeURIComponent(location.id)}`, {
+    method: 'POST', body: form
+  });
+  const file = inspection.files?.[0];
+  const dates = file?.recordDates || [];
+  if (inspection.location !== location.id || inspection.files?.length !== 1
+    || file.field !== report.field || !file.structure?.ok || !dates.length) {
+    throw new Error('El archivo no pasó la validación de estructura o no contiene registros con fecha. Se conservó la información anterior.');
+  }
+  const result = await apiRequest('/api/uploads/transactions/confirm', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: inspection.token,
+      dateFrom: dates[0],
+      dateTo: dates.at(-1),
+      confirmed: true,
+      categoryConfirmed: ['kardex', 'waste'].includes(report.field),
+      overlapAction: 'replace',
+      replaceOnlyIncomingDates: true
+    })
+  });
+  if (!result.imports?.[report.field]?.saved) {
+    throw new Error('El archivo fue revisado, pero no se guardaron registros nuevos. Se conservó la información anterior.');
+  }
+  return result;
 }
 
 async function startToteatTransactionalDownloads() {
@@ -1761,8 +1801,8 @@ async function startToteatTransactionalDownloads() {
       ? 'Inicia sesión en la ventana de TotEat'
       : 'Sesión de TotEat actualizada';
     document.getElementById('toteat-transactional-download-copy').textContent = payload.requiresAuthentication
-      ? 'Completa el login y vuelve aquí. Brewit descargará cinco reportes por cafetería y, al final, los dos Kardex de la Bodega principal.'
-      : 'Brewit descargará cinco reportes por cafetería y, al final, los dos Kardex de la Bodega principal; cada rango empieza en el último registro guardado.';
+      ? 'Completa el login y vuelve aquí. Brewit descargará los reportes por cafetería y bodega; al finalizar, validará y cargará cada archivo.'
+      : 'Brewit descargará los reportes desde el último registro guardado y después actualizará cada ubicación, reemplazando solo las fechas presentes en los archivos.';
     setStatus(document.getElementById('toteat-transactional-dialog-status'), '', 'muted');
     document.getElementById('toteat-transactional-download-dialog').showModal();
     setStatus(status, payload.requiresAuthentication
@@ -1786,6 +1826,9 @@ async function confirmToteatTransactionalDownloads() {
   cancelButton.disabled = true;
   const completed = [];
   const withoutData = [];
+  const downloaded = [];
+  const imported = [];
+  const importErrors = [];
   const jobs = toteatTransactionalLocations.map(location => ({ location, selectionLocationId: location.id }));
   if (toteatTransactionalCentralWarehouse) jobs.push({
     location: toteatTransactionalCentralWarehouse,
@@ -1836,12 +1879,29 @@ async function confirmToteatTransactionalDownloads() {
         link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         completed.push(`${report.label} de ${location.name}`);
+        downloaded.push({ location, report, blob, filename });
         progress.update(location, report, 'done', 'Descargado');
       }
     }
+    for (const [index, item] of downloaded.entries()) {
+      const { location, report, blob, filename } = item;
+      progress.update(location, report, 'active', 'Cargando…');
+      setStatus(dialogStatus, `Validando y cargando ${report.label} de ${location.name} (${index + 1} de ${downloaded.length})…`);
+      try {
+        await importToteatTransactionalFile(location, report, blob, filename);
+        imported.push(`${report.label} de ${location.name}`);
+        progress.update(location, report, 'imported', 'Actualizado');
+      } catch (error) {
+        importErrors.push(`${report.label} de ${location.name}: ${error.message}`);
+        progress.update(location, report, 'import-error', 'No cargado');
+      }
+    }
+    await loadTransactionFiles();
     const skipped = withoutData.length ? ` Sin registros: ${withoutData.join(', ')}.` : '';
-    setStatus(status, `${completed.length} archivo(s) transaccionales descargados.${skipped}`, 'success');
-    setStatus(dialogStatus, `Descarga finalizada: ${completed.length} archivo(s) descargados y ${withoutData.length} reporte(s) sin datos.`, 'success');
+    const failures = importErrors.length ? ` No se cargaron ${importErrors.length}: ${importErrors.join(' · ')}.` : '';
+    const summary = `${completed.length} archivo(s) descargados; ${imported.length} actualizado(s).${skipped}${failures}`;
+    setStatus(status, summary, importErrors.length ? 'error' : 'success');
+    setStatus(dialogStatus, summary, importErrors.length ? 'error' : 'success');
     button.textContent = 'Descargar nuevamente';
   } catch (error) {
     if (activeLocation && activeReport) progress.update(activeLocation, activeReport, 'error', 'Error');

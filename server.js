@@ -340,7 +340,8 @@ function detectUploadStructure(file) {
       reason: 'Se detectaron los encabezados en inglés de Detalle Pagos; sus fechas se interpretan como mes/día/año.'
     };
   }
-  if (structureHasHeader(sheets, ['Fecha emisión', 'Documento', 'Proveedor/Para', 'PRODUCTO'])) {
+  if (structureHasHeader(sheets, ['Fecha emisión', 'Documento', 'Proveedor/Para', 'PRODUCTO'])
+    || structureHasHeader(sheets, ['Broadcast date', 'Document', 'Supplier/To', 'PRODUCT'])) {
     return { field: 'purchases', reason: 'Se detectaron columnas de fecha de emisión, proveedor, documento y producto.' };
   }
   const inventorySheet = sheets.find(sheet => {
@@ -1588,25 +1589,25 @@ function supplierNamesByTaxId(filePath) {
 }
 
 function purchaseRecord(row, location, supplierNames) {
-  const date = cellDate(rowValue(row, ['Fecha emisión', 'Fecha de emisión', 'Fecha']));
+  const date = cellDate(rowValue(row, ['Fecha emisión', 'Fecha de emisión', 'Fecha', 'Broadcast date', 'Issue Date']));
   if (!date) return null;
-  const supplierTaxId = String(rowValue(row, ['Número identificador fiscal', 'RUT/Fiscal ID', 'RUT']) || '')
+  const supplierTaxId = String(rowValue(row, ['Número identificador fiscal', 'RUT/Fiscal ID', 'RUT', 'Tax ID number']) || '')
     .replace(/[^0-9kK]/g, '').toUpperCase();
-  const sourceSupplier = String(rowValue(row, ['Proveedor/Para', 'Proveedor']) || '').trim() || 'Proveedor sin identificar';
+  const sourceSupplier = String(rowValue(row, ['Proveedor/Para', 'Proveedor', 'Supplier/To']) || '').trim() || 'Proveedor sin identificar';
   const supplier = supplierNames.get(supplierTaxId) || sourceSupplier;
   const billedQuantity = numericValue(rowValue(row, ['Q.Fac', 'Cantidad facturada']));
   const receivedQuantity = numericValue(rowValue(row, ['Q.Rec', 'Cantidad recibida']));
   const quantity = billedQuantity ?? receivedQuantity ?? 0;
   const unit = String(rowValue(row, ['Um.Fac', 'Unidad facturada', 'Um.Rec', 'Unidad recibida']) || '').trim();
-  const listedUnitPrice = numericValue(rowValue(row, ['Costo'])) || 0;
-  const negotiatedUnitPrice = numericValue(rowValue(row, ['Costo negociado'])) || 0;
-  const netAmount = numericValue(rowValue(row, ['Monto neto'])) || 0;
-  const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
-  const totalAmount = numericValue(rowValue(row, ['Monto total'])) ?? netAmount - discount;
+  const listedUnitPrice = numericValue(rowValue(row, ['Costo', 'Cost'])) || 0;
+  const negotiatedUnitPrice = numericValue(rowValue(row, ['Costo negociado', 'Negotiated cost'])) || 0;
+  const netAmount = numericValue(rowValue(row, ['Monto neto', 'Net amount'])) || 0;
+  const discount = numericValue(rowValue(row, ['Descuento', 'Discount'])) || 0;
+  const totalAmount = numericValue(rowValue(row, ['Monto total', 'Total amount'])) ?? netAmount - discount;
   const effectiveUnitPrice = quantity ? totalAmount / quantity : listedUnitPrice;
-  const document = String(rowValue(row, ['Documento', 'Número documento']) || '').trim();
-  const line = String(rowValue(row, ['Lin', 'Línea']) || '').trim();
-  const code = String(rowValue(row, ['Cod', 'Código', 'Código producto']) || '').trim();
+  const document = String(rowValue(row, ['Documento', 'Número documento', 'Document']) || '').trim();
+  const line = String(rowValue(row, ['Lin', 'Línea', 'Line']) || '').trim();
+  const code = String(rowValue(row, ['Cod', 'Código', 'Código producto', 'Code']) || '').trim();
   const product = String(rowValue(row, ['PRODUCTO', 'Producto', 'Insumo']) || '').trim();
   const supplierKey = supplierTaxId || normalizeHeader(supplier);
   return {
@@ -1616,7 +1617,7 @@ function purchaseRecord(row, location, supplierNames) {
     supplierKey,
     supplier,
     supplierTaxId,
-    documentType: String(rowValue(row, ['Tipo Documento', 'Tipo de documento']) || '').trim(),
+    documentType: String(rowValue(row, ['Tipo Documento', 'Tipo de documento', 'Document Type']) || '').trim(),
     document,
     line,
     code,
@@ -2919,6 +2920,13 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
         await page.waitForTimeout(transitionDelay);
         const download = await downloadReport(locationId, { context, preparedPage: page }, reports.purchases);
+        const workbook = XLSX.read(download.buffer, { type: 'buffer' });
+        const hasRecords = workbook.SheetNames.some(name => XLSX.utils.sheet_to_json(workbook.Sheets[name], {
+          header: 1, blankrows: false
+        }).slice(1).some(row => row.some(value => String(value ?? '').trim())));
+        if (!hasRecords) {
+          throw automationError('TotEat no entregó registros de Compras para el local y período seleccionados.', 'TOTEAT_NO_PURCHASES_AVAILABLE', 422);
+        }
         download.dateFrom = dateFrom;
         return download;
       } finally {
@@ -2980,6 +2988,11 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
         if (!normalizeToteatText(await frame.locator('.multiselect').first().innerText()).includes(normalizeToteatText(warehouseName))) {
           throw automationError(`TotEat no confirmó la bodega “${warehouseName}”.`, 'TOTEAT_KARDEX_WAREHOUSE_NOT_SELECTED', 502);
         }
+        const costSelect = frame.locator('#cost');
+        await costSelect.selectOption('cost_last_inbound');
+        if (await costSelect.inputValue() !== 'cost_last_inbound') {
+          throw automationError('No se pudo seleccionar “Costo Última Compra” en TotEat. Se canceló el Kardex para evitar usar otro costo.', 'TOTEAT_KARDEX_COST_NOT_SELECTED', 502);
+        }
         await frame.locator('#filter').selectOption('custom');
         await frame.locator('#date_init').fill(dateFrom);
         await frame.locator('#date_end').fill(options.dateTo);
@@ -2988,10 +3001,13 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
         const download = await downloadReport(locationId, { context, preparedPage: page }, reports.kardex);
         const workbook = XLSX.read(download.buffer, { type: 'buffer' });
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const headers = firstSheet ? XLSX.utils.sheet_to_json(firstSheet, { header: 1, range: 0, blankrows: false }).slice(0, 2) : [];
-        if (!rowContainsAll(headers[0] || [], ['Código', 'Nombre', 'Unidad'])
-          || !(headers[0] || []).some(value => cellDate(value))) {
+        const rows = firstSheet ? XLSX.utils.sheet_to_json(firstSheet, { header: 1, range: 0, defval: null, blankrows: false }) : [];
+        if (!rowContainsAll(rows[0] || [], ['Código', 'Nombre', 'Unidad'])
+          || !(rows[0] || []).some(value => cellDate(value))) {
           throw automationError('TotEat descargó un archivo que no coincide con Kardex resumen diario.', 'TOTEAT_KARDEX_INVALID_FILE', 502);
+        }
+        if (!rows.slice(2).some(row => String(row[0] ?? '').trim() || String(row[1] ?? '').trim())) {
+          throw automationError(`TotEat no entregó registros de Kardex para “${warehouseName}” en el período seleccionado.`, 'TOTEAT_NO_KARDEX_AVAILABLE', 422);
         }
         download.dateFrom = dateFrom;
         download.warehouseName = warehouseName;
@@ -3861,6 +3877,33 @@ function createApp(options = {}) {
       if (data?.groups?.length) return data.groups[data.groups.length - 1].date;
     } catch {}
     return latestWeeklyFile(locationId, field)?.dataThrough || null;
+  }
+
+  function transactionRecordDates(file) {
+    const field = file.fieldname;
+    if (['kardex', 'waste'].includes(field)) {
+      return [...new Set(parseKardexWorkbook(file.path).groups.map(group => group.date))].sort();
+    }
+    if (field === 'sales') {
+      return [...new Set(readSalesRows(file.path)
+        .map(row => cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre'])))
+        .filter(Boolean))].sort();
+    }
+    if (['purchases', 'payment-details'].includes(field)) {
+      const dates = [];
+      for (const sheet of readGenericTransactionSheets(file.path)) {
+        const header = sheet.rows[0] || [];
+        for (const row of sheet.rows.slice(1)) {
+          const record = Object.fromEntries(header.map((name, index) => [name, row[index]]));
+          const date = field === 'purchases'
+            ? cellDate(rowValue(record, ['Fecha emisión', 'Fecha emision', 'Broadcast date', 'Issue Date']))
+            : cellDate(rowValue(record, ['FechaCierre', 'Fecha Cierre', 'DateClosing', 'Closing Date', 'Fecha']), dateOrderForHeaders(header));
+          if (date) dates.push(date);
+        }
+      }
+      return [...new Set(dates)].sort();
+    }
+    return [];
   }
 
   function prepareIncrementalGenericTransactions(staged, locationId, stagingDirectory, field, sheetName, additionalExcludedRanges = []) {
@@ -9915,6 +9958,7 @@ function createApp(options = {}) {
       try {
         const inspectedFiles = files.map((file, index) => {
           const detectedRange = detectFileDateRange(file);
+          const recordDates = transactionRecordDates(file);
           const existingSources = storedFieldFiles(locationId, file.fieldname).flatMap(stored => {
             const existingRange = stored.record.confirmedRange || stored.record.detectedRange;
             const overlap = intersectDateRanges(detectedRange, existingRange);
@@ -9926,6 +9970,7 @@ function createApp(options = {}) {
             originalName: file.originalname,
             size: file.size,
             detectedRange,
+            recordDates,
             existingRange: combinedDateRange(existingSources.map(source => ({ detectedRange: source.existingRange }))),
             overlapRange: combinedDateRange(existingSources.map(source => ({ detectedRange: source.overlap }))),
             existingSources,
@@ -9951,7 +9996,7 @@ function createApp(options = {}) {
   });
 
   app.post('/api/uploads/transactions/confirm', (req, res) => {
-    const { token, dateFrom, dateTo, confirmed, categoryConfirmed, overlapAction = 'keep' } = req.body || {};
+    const { token, dateFrom, dateTo, confirmed, categoryConfirmed, overlapAction = 'keep', replaceOnlyIncomingDates = false } = req.body || {};
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(token || '')) {
       return res.status(400).json({ error: 'La revisión de carga es inválida o expiró.' });
     }
@@ -9973,6 +10018,10 @@ function createApp(options = {}) {
       fs.rmSync(stagingDirectory, { recursive: true, force: true });
       return res.status(410).json({ error: 'Esta revisión expiró. Selecciona nuevamente los archivos.' });
     }
+    if (replaceOnlyIncomingDates && (overlapAction !== 'replace' || manifest.files.length !== 1
+      || !manifest.files[0].recordDates?.some(date => date >= dateFrom && date <= dateTo))) {
+      return res.status(422).json({ error: 'El archivo no contiene fechas válidas para reemplazar registros.' });
+    }
     const destination = transactionLocationRoot(manifest.location);
     ensureDir(destination);
     const index = readTransactionIndex(manifest.location);
@@ -9981,13 +10030,19 @@ function createApp(options = {}) {
     try {
       for (const staged of manifest.files) {
         const incomingRange = intersectDateRanges(staged.detectedRange, { from: dateFrom, to: dateTo }) || { from: dateFrom, to: dateTo };
+        const replacementRanges = replaceOnlyIncomingDates
+          ? (staged.recordDates || []).filter(date => date >= dateFrom && date <= dateTo)
+            .map(date => ({ from: date, to: date }))
+          : [incomingRange];
         const overlaps = storedFieldFiles(manifest.location, staged.field).flatMap(stored => {
           const existingRange = stored.record.confirmedRange || stored.record.detectedRange;
           const overlap = intersectDateRanges(incomingRange, existingRange);
           return overlap ? [{ stored, overlap }] : [];
         });
         const replacementEffects = overlapAction === 'replace'
-          ? overlaps.map(({ stored, overlap }) => ({ sourceId: stored.sourceId, range: overlap }))
+          ? overlaps.flatMap(({ stored, overlap }) => replacementRanges
+            .filter(range => intersectDateRanges(range, overlap))
+            .map(range => ({ sourceId: stored.sourceId, range })))
           : [];
         let stagedFile = staged;
         if (staged.field === 'sales') {
@@ -9995,7 +10050,7 @@ function createApp(options = {}) {
             staged,
             manifest.location,
             stagingDirectory,
-            overlapAction === 'replace' ? [incomingRange] : []
+            overlapAction === 'replace' ? replacementRanges : []
           );
           imports.sales = prepared.stats;
           stagedFile = prepared.staged;
@@ -10005,7 +10060,7 @@ function createApp(options = {}) {
             staged,
             manifest.location,
             stagingDirectory,
-            overlapAction === 'replace' ? [incomingRange] : []
+            overlapAction === 'replace' ? replacementRanges : []
           );
           imports.mercadopago = prepared.stats;
           stagedFile = prepared.staged;
@@ -10015,7 +10070,7 @@ function createApp(options = {}) {
             staged,
             manifest.location,
             stagingDirectory,
-            overlapAction === 'replace' ? [incomingRange] : []
+            overlapAction === 'replace' ? replacementRanges : []
           );
           imports['payment-details'] = prepared.stats;
           stagedFile = prepared.staged;
