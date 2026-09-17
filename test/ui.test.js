@@ -12,6 +12,7 @@ const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrom
 test('transactional downloads show each local and report progressing in order', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-transaction-progress-'));
   const calls = [];
+  const requestedPurchaseRanges = [];
   const workbook = rows => {
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), 'Reporte');
@@ -41,6 +42,7 @@ test('transactional downloads show each local and report progressing in order', 
       },
       async downloadTransactionalPurchases(options) {
         calls.push(`purchases:${options.restaurant.localId}`);
+        requestedPurchaseRanges.push({ localId: options.restaurant.localId, dateFrom: options.dateFrom, dateTo: options.dateTo });
         return file('compras.xlsx', [
           ['Broadcast date', 'Document', 'Supplier/To', 'PRODUCT'],
           ['2026-09-17', `factura-${options.restaurant.localId}`, 'Proveedor', 'Café']
@@ -82,11 +84,23 @@ test('transactional downloads show each local and report progressing in order', 
   await page.locator('#download-all-toteat-transactions').click();
   await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
   assert.match(await page.locator('#toteat-transactional-locations').innerText(), /ID local 1/);
+  assert.equal(await page.locator('#toteat-transactional-locations .toteat-range-card').count(), 12);
+  const purchasesRange = page.locator('.toteat-range-card[data-location="store-1"][data-route="purchases"]');
+  assert.equal(await purchasesRange.locator('[name="dateFrom"]').inputValue(), '2026-05-18');
+  await purchasesRange.locator('[name="dateFrom"]').fill('2026-09-17');
+  await purchasesRange.locator('[name="dateTo"]').fill('2026-09-16');
+  await page.locator('#confirm-toteat-transactional-download').click();
+  assert.match(await page.locator('#toteat-transactional-dialog-status').innerText(), /Revisa las fechas inicial y final/);
+  assert.equal(calls.length, 0);
+  await purchasesRange.locator('[name="dateFrom"]').fill('2026-09-16');
+  await purchasesRange.locator('[name="dateTo"]').fill('2026-09-17');
   await page.locator('#confirm-toteat-transactional-download').click();
   await page.waitForFunction(() => document.getElementById('toteat-transactional-progress-count')?.textContent.includes('24 de 24'), null, { timeout: 30000 });
   assert.equal(await page.locator('#toteat-transactional-progress-percent').innerText(), '100%');
   await page.waitForFunction(() => document.getElementById('toteat-transactional-dialog-status')?.textContent.includes('12 actualizado(s)'), null, { timeout: 30000 });
   assert.equal(await page.locator('.toteat-progress-report[data-state="imported"]').count(), 12);
+  assert.deepEqual(requestedPurchaseRanges[0], { localId: '1', dateFrom: '2026-09-16', dateTo: '2026-09-17' });
+  assert.deepEqual(requestedPurchaseRanges[1], { localId: '2', dateFrom: '2026-05-18', dateTo: '2026-09-17' });
   assert.deepEqual(calls, [
     'select:1', 'sales:1', 'payments:1', 'purchases:1', 'kardex-local:1', 'kardex-waste:1',
     'select:2', 'sales:2', 'payments:2', 'purchases:2', 'kardex-local:2', 'kardex-waste:2',

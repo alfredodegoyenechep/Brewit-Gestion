@@ -1676,6 +1676,74 @@ const toteatReportsForLocation = location => location.central
     ? TOTEAT_TRANSACTION_REPORTS.slice(0, 2)
     : [...TOTEAT_TRANSACTION_REPORTS, ...TOTEAT_LOCAL_KARDEX_REPORTS];
 
+function toteatSuggestedStart(location, route) {
+  if (route === 'sales') return location.dateFrom;
+  if (route === 'payment-details') return location.paymentDetailsDateFrom;
+  if (route === 'purchases') return location.purchasesDateFrom;
+  if (route === 'kardex-local' || route === 'kardex-central') return location.kardexDateFrom;
+  return location.wasteDateFrom;
+}
+
+function renderToteatTransactionalRanges() {
+  const list = document.getElementById('toteat-transactional-locations');
+  list.replaceChildren();
+  const locations = [...toteatTransactionalLocations,
+    ...(toteatTransactionalCentralWarehouse ? [toteatTransactionalCentralWarehouse] : [])];
+  locations.forEach((location, index) => {
+    const section = document.createElement('section');
+    section.className = 'toteat-range-location';
+    const heading = document.createElement('h4');
+    heading.textContent = `${index + 1}. ${location.name}${location.central
+      ? ` · administrada por ID local ${location.toteatLocalId}`
+      : ` · ${location.toteatName} · ID local ${location.toteatLocalId || location.id}`}`;
+    section.append(heading);
+    const grid = document.createElement('div');
+    grid.className = 'toteat-range-grid';
+    for (const report of toteatReportsForLocation(location)) {
+      const card = document.createElement('div');
+      card.className = 'toteat-range-card';
+      card.dataset.location = location.id;
+      card.dataset.route = report.route;
+      const title = document.createElement('strong');
+      title.textContent = report.label;
+      card.append(title);
+      for (const [field, label, value] of [
+        ['dateFrom', 'Fecha inicial', toteatSuggestedStart(location, report.route)],
+        ['dateTo', 'Fecha final', location.dateTo]
+      ]) {
+        const wrapper = document.createElement('label');
+        wrapper.textContent = label;
+        const input = document.createElement('input');
+        input.type = 'date';
+        input.name = field;
+        input.value = value;
+        input.max = location.dateTo;
+        input.required = true;
+        input.setAttribute('aria-label', `${label} de ${report.label} para ${location.name}`);
+        wrapper.append(input);
+        card.append(wrapper);
+      }
+      grid.append(card);
+    }
+    section.append(grid);
+    list.append(section);
+  });
+}
+
+function selectedToteatTransactionalRanges() {
+  const ranges = new Map();
+  for (const card of document.querySelectorAll('#toteat-transactional-locations .toteat-range-card')) {
+    const from = card.querySelector('[name="dateFrom"]');
+    const to = card.querySelector('[name="dateTo"]');
+    if (!from.checkValidity() || !to.checkValidity() || from.value > to.value) {
+      (from.checkValidity() ? to : from).focus();
+      throw new Error('Revisa las fechas inicial y final de cada archivo. La fecha inicial no puede ser posterior a la final ni la fecha final superar hoy.');
+    }
+    ranges.set(`${card.dataset.location}:${card.dataset.route}`, { dateFrom: from.value, dateTo: to.value });
+  }
+  return ranges;
+}
+
 const toteatTransactionalStatus = () => document.getElementById(
   toteatTransactionalMode === 'sales' ? 'report-status' : 'toteat-master-download-status'
 );
@@ -1789,42 +1857,15 @@ async function startToteatTransactionalDownloads({ mode = 'all', locationId = 'a
       ? { ...payload.centralWarehouse, central: true } : null;
     document.getElementById('toteat-transactional-progress').hidden = true;
     document.getElementById('confirm-toteat-transactional-download').textContent = 'Ya inicié sesión, descargar reportes';
-    const list = document.getElementById('toteat-transactional-locations');
-    list.replaceChildren();
-    toteatTransactionalLocations.forEach((location, index) => {
-      const number = document.createElement('span');
-      number.textContent = String(index + 1);
-      const details = document.createElement('div');
-      const name = document.createElement('strong');
-      name.textContent = `${location.name} · ${location.toteatName} · ID local ${location.toteatLocalId || location.id}`;
-      const range = document.createElement('small');
-      const latestDetail = location.latestTransactionAt
-        ? ` · último registro: ${new Date(location.latestTransactionAt).toLocaleString('es-CL')}` : ' · sin registros previos';
-      range.textContent = `Ventas: ${formatReportDate(location.dateFrom)} – ${formatReportDate(location.dateTo)}${latestDetail} · Detalle Pagos: ${formatReportDate(location.paymentDetailsDateFrom)} – ${formatReportDate(location.dateTo)}`
-        + (mode === 'sales' ? '' : ` · Compras: ${formatReportDate(location.purchasesDateFrom)} – ${formatReportDate(location.dateTo)} · Kardex Local: ${formatReportDate(location.kardexDateFrom)} – ${formatReportDate(location.dateTo)} · Merma: ${formatReportDate(location.wasteDateFrom)} – ${formatReportDate(location.dateTo)}`);
-      details.append(name, range);
-      list.append(number, details);
-    });
-    if (toteatTransactionalCentralWarehouse) {
-      const central = toteatTransactionalCentralWarehouse;
-      const number = document.createElement('span');
-      number.textContent = String(toteatTransactionalLocations.length + 1);
-      const details = document.createElement('div');
-      const name = document.createElement('strong');
-      name.textContent = `${central.name} · administrada por ID local ${central.toteatLocalId}`;
-      const range = document.createElement('small');
-      range.textContent = `Kardex Central: ${formatReportDate(central.kardexDateFrom)} – ${formatReportDate(central.dateTo)} · Merma Central: ${formatReportDate(central.wasteDateFrom)} – ${formatReportDate(central.dateTo)}`;
-      details.append(name, range);
-      list.append(number, details);
-    }
+    renderToteatTransactionalRanges();
     document.getElementById('toteat-transactional-download-title').textContent = payload.requiresAuthentication
       ? 'Inicia sesión en la ventana de TotEat'
       : 'Sesión de TotEat actualizada';
     document.getElementById('toteat-transactional-download-copy').textContent = mode === 'sales'
-      ? 'Brewit descargará Ventas Totales y Detalle Pagos por cafetería, desde el último registro guardado hasta hoy. Luego validará y cargará cada archivo sin duplicar fechas.'
+      ? 'Revisa o ajusta las fechas de Ventas Totales y Detalle Pagos de cada cafetería. Luego Brewit validará y cargará cada archivo sin duplicar fechas.'
       : payload.requiresAuthentication
-        ? 'Completa el login y vuelve aquí. Brewit descargará los reportes por cafetería y bodega; al finalizar, validará y cargará cada archivo.'
-        : 'Brewit descargará los reportes desde el último registro guardado y después actualizará cada ubicación, reemplazando solo las fechas presentes en los archivos.';
+        ? 'Completa el login y vuelve aquí. Puedes ajustar las fechas de cada archivo antes de iniciar las descargas y cargas.'
+        : 'Revisa o ajusta las fechas de cada archivo. Brewit actualizará cada ubicación, reemplazando solo las fechas presentes en los archivos descargados.';
     setStatus(document.getElementById('toteat-transactional-dialog-status'), '', 'muted');
     document.getElementById('toteat-transactional-download-dialog').showModal();
     setStatus(status, payload.requiresAuthentication
@@ -1843,6 +1884,13 @@ async function confirmToteatTransactionalDownloads() {
   const cancelButton = document.getElementById('cancel-toteat-transactional-download');
   const dialogStatus = document.getElementById('toteat-transactional-dialog-status');
   const status = toteatTransactionalStatus();
+  let selectedRanges;
+  try {
+    selectedRanges = selectedToteatTransactionalRanges();
+  } catch (error) {
+    setStatus(dialogStatus, error.message, 'error');
+    return;
+  }
   button.disabled = true;
   closeButton.disabled = true;
   cancelButton.disabled = true;
@@ -1877,7 +1925,8 @@ async function confirmToteatTransactionalDownloads() {
         progress.update(location, report, 'active', 'Descargando…');
         setStatus(dialogStatus, `Local ${location.toteatLocalId || location.id} · ${location.name}: descargando ${report.label} (${index + 1} de ${jobs.length})…`);
         const response = await fetch(`/api/integrations/toteat/transactional-downloads/${report.route}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: location.id })
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ location: location.id, ...selectedRanges.get(`${location.id}:${report.route}`) })
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));

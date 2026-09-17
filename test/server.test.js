@@ -726,6 +726,25 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
       kind: 'central-waste', dateFrom: '2026-05-18', dateTo: '2026-09-17'
     }]
   ]);
+  const customRange = { location: 'store-1', dateFrom: '2026-09-01', dateTo: '2026-09-03' };
+  for (const route of ['sales', 'payment-details', 'purchases', 'kardex-local']) {
+    const response = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/${route}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(customRange)
+    });
+    assert.equal(response.status, 200, route);
+    assert.equal(response.headers.get('x-brewit-date-from'), customRange.dateFrom);
+    assert.equal(response.headers.get('x-brewit-date-to'), customRange.dateTo);
+    assert.match(response.headers.get('content-disposition'), /2026-09-01-2026-09-03/);
+    assert.deepEqual(calls.at(-1)[1].dateFrom, customRange.dateFrom);
+    assert.deepEqual(calls.at(-1)[1].dateTo, customRange.dateTo);
+  }
+  for (const dates of [{ dateFrom: '2026-09-04', dateTo: '2026-09-03' }, { dateFrom: '2026-09-01', dateTo: '2026-09-18' }]) {
+    const response = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/sales`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: 'store-1', ...dates })
+    });
+    assert.equal(response.status, 400);
+  }
 });
 
 test('sales-only TotEat connection can target one configured cafeteria without the others', async t => {

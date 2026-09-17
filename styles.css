@@ -5492,6 +5492,40 @@ body {
   font-size: calc(11px * var(--font-scale));
 }
 
+.toteat-transactional-dialog { width: min(1120px, calc(100vw - 32px)); }
+.toteat-range-list { display: grid; gap: 12px; margin: 20px 0 8px; }
+.toteat-range-location {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border-soft);
+  border-radius: 13px;
+  background: var(--coffee-soft-2);
+}
+.toteat-range-location h4 { margin: 0 0 13px; font-size: calc(14px * var(--font-scale)); }
+.toteat-range-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 10px; }
+.toteat-range-card {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.toteat-range-card strong { min-height: 2.5em; font-size: calc(12px * var(--font-scale)); }
+.toteat-range-card label { display: grid; gap: 4px; color: var(--text-soft); font-size: calc(11px * var(--font-scale)); }
+.toteat-range-card input[type="date"] {
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+}
+
 .toteat-transactional-progress {
   margin-top: 16px;
   padding: 15px;

@@ -9397,12 +9397,25 @@ function createApp(options = {}) {
     }
   });
 
+  function toteatTransactionalRange(body, suggestedFrom) {
+    const custom = body?.dateFrom !== undefined || body?.dateTo !== undefined;
+    if (!custom) return { dateFrom: suggestedFrom, dateTo: projectionToday() };
+    const dateFrom = String(body?.dateFrom || '');
+    const dateTo = String(body?.dateTo || '');
+    if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo || dateTo > projectionToday()) {
+      const error = new Error('Selecciona fechas inicial y final válidas, sin superar la fecha de hoy.');
+      error.status = 400;
+      error.code = 'TOTEAT_INVALID_DATE_RANGE';
+      throw error;
+    }
+    return { dateFrom, dateTo };
+  }
+
   app.post('/api/integrations/toteat/transactional-downloads/sales', express.json(), async (req, res) => {
     try {
       const location = toteatStore(String(req.body?.location || ''));
       const latestTransactionAt = salesHistory(location.id).latestTransactionAt;
-      const dateFrom = latestTransactionAt?.slice(0, 10) || FIRST_WEEK;
-      const dateTo = projectionToday();
+      const { dateFrom, dateTo } = toteatTransactionalRange(req.body, latestTransactionAt?.slice(0, 10) || FIRST_WEEK);
       const download = await toteatAutomation.downloadTransactionalSales({
         restaurant: {
           restaurantId: location.toteatRestaurantId,
@@ -9446,8 +9459,7 @@ function createApp(options = {}) {
     app.post(`/api/integrations/toteat/transactional-downloads/${route}`, express.json(), async (req, res) => {
       try {
         const location = toteatStore(String(req.body?.location || ''));
-        const dateFrom = latestGenericTransactionAt(location.id, field) || FIRST_WEEK;
-        const dateTo = projectionToday();
+        const { dateFrom, dateTo } = toteatTransactionalRange(req.body, latestGenericTransactionAt(location.id, field) || FIRST_WEEK);
         const download = await toteatAutomation[method]({
           restaurant: {
             restaurantId: location.toteatRestaurantId,
@@ -9495,8 +9507,7 @@ function createApp(options = {}) {
           error.code = 'TOTEAT_CENTRAL_OWNER_REQUIRED';
           throw error;
         }
-        const dateFrom = latestKardexAt(source.id, field) || FIRST_WEEK;
-        const dateTo = projectionToday();
+        const { dateFrom, dateTo } = toteatTransactionalRange(req.body, latestKardexAt(source.id, field) || FIRST_WEEK);
         const download = await toteatAutomation.downloadTransactionalKardex({
           restaurant: {
             restaurantId: restaurant.toteatRestaurantId,
