@@ -4,6 +4,7 @@ const XLSX = require('xlsx');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
 
 const DEFAULT_PORT = 3000;
@@ -138,7 +139,7 @@ function migrateLegacySundayWeeks(weeksRoot) {
 
 function fieldsForLocation(type) {
   return type === 'warehouse'
-    ? ['kardex']
+    ? ['kardex', 'waste']
     : ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'];
 }
 
@@ -366,7 +367,10 @@ function detectUploadStructure(file) {
   if (structureHasHeader(sheets, ['Nombre*', 'RUT/Fiscal ID*'])) {
     return { field: 'master-suppliers', reason: 'Se detectaron las columnas de nombre y RUT de proveedores.' };
   }
-  const hierarchySheet = sheets.find(sheet => structureHasHeader([sheet], ['ID Jerarquia', 'ID Nodo **', 'ID nodo padre']));
+  const hierarchySheet = sheets.find(sheet =>
+    structureHasHeader([sheet], ['ID Jerarquia', 'ID Nodo **', 'ID nodo padre'])
+    || structureHasHeader([sheet], ['Hierarchy ID', 'Node ID **', 'Parent node ID'])
+  );
   if (hierarchySheet) {
     const identifiers = hierarchySheet.rows.slice(1).map(row => String(row[0] || '').trim().toUpperCase());
     if (identifiers.some(value => value.startsWith('AB.'))) return { field: 'product-hierarchy', reason: 'Se detectaron nodos de jerarquía AB.' };
@@ -582,7 +586,7 @@ function parseKardexWorkbook(filePath) {
     const date = cellDate(dateHeader[column]);
     if (date) groups.push({ date, startColumn: column, metrics: [] });
   }
-  if (groups.length < 2) throw new Error('Kardex must contain at least two dated inventory groups.');
+  if (groups.length < 1) throw new Error('Kardex must contain a dated inventory group.');
   groups.forEach((group, index) => {
     const endColumn = groups[index + 1]?.startColumn ?? Math.max(dateHeader.length, metricHeader.length);
     for (let column = group.startColumn; column < endColumn; column += 1) {
@@ -1408,13 +1412,16 @@ function parseNamedHierarchies(filePath, nameHeaders) {
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
   const hierarchyMap = new Map();
   for (const row of rows) {
-    const id = String(rowValue(row, ['ID Jerarquia', 'ID Jerarquía']) ?? '').trim();
+    const id = String(rowValue(row, ['ID Jerarquia', 'ID Jerarquía', 'Hierarchy ID']) ?? '').trim();
     if (!id) continue;
     hierarchyMap.set(id, {
       id,
-      name: repairMojibake(rowValue(row, nameHeaders)) || id,
-      parentId: String(rowValue(row, ['ID nodo padre']) ?? '').trim() || null,
-      order: numericValue(rowValue(row, ['Orden'])) || 0
+      name: repairMojibake(rowValue(row, [
+        ...nameHeaders,
+        'Hierarchy Name *', 'Product Hierarchy Name *', 'Ingredient Hierarchy Name *', 'Extras Hierarchy Name *'
+      ])) || id,
+      parentId: String(rowValue(row, ['ID nodo padre', 'Parent node ID']) ?? '').trim() || null,
+      order: numericValue(rowValue(row, ['Orden', 'Order'])) || 0
     });
   }
   const pathFor = id => {
@@ -1450,13 +1457,15 @@ function parseProductHierarchies(filePath) {
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
   const hierarchyMap = new Map();
   for (const row of rows) {
-    const id = String(rowValue(row, ['ID Jerarquia', 'ID Jerarquía']) ?? '').trim();
+    const id = String(rowValue(row, ['ID Jerarquia', 'ID Jerarquía', 'Hierarchy ID']) ?? '').trim();
     if (!id) continue;
     hierarchyMap.set(id, {
       id,
-      name: repairMojibake(rowValue(row, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *'])) || id,
-      parentId: String(rowValue(row, ['ID nodo padre']) ?? '').trim() || null,
-      order: numericValue(rowValue(row, ['Orden'])) || 0
+      name: repairMojibake(rowValue(row, [
+        'Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Product Hierarchy Name *', 'Hierarchy Name *'
+      ])) || id,
+      parentId: String(rowValue(row, ['ID nodo padre', 'Parent node ID']) ?? '').trim() || null,
+      order: numericValue(rowValue(row, ['Orden', 'Order'])) || 0
     });
   }
   const pathFor = id => {
@@ -1954,16 +1963,26 @@ function cleanExpiredStaging(stagingRoot) {
   }
 }
 
-const TOTEAT_REPORT_URL = 'https://res8.toteat.com/#/reportes/cierre';
+const TOTEAT_REPORT_URL = 'https://res8.toteat.com/#/reportes/cierres';
 const TOTEAT_REPORT_URLS = [
   TOTEAT_REPORT_URL,
-  'https://res8.toteat.com/#/reportes/cierres'
+  'https://res8.toteat.com/#/reportes/cierre'
 ];
 const TOTEAT_PAYMENT_DETAILS_REPORT_URL = 'https://res8.toteat.com/#/reportes/detallepagos';
 const TOTEAT_PAYMENT_DETAILS_REPORT_URLS = [
   TOTEAT_PAYMENT_DETAILS_REPORT_URL,
   'https://res8.toteat.com/#/reportes/detalle-pagos'
 ];
+const TOTEAT_PURCHASES_URL = 'https://res8.toteat.com/#/compras';
+const TOTEAT_KARDEX_URL = 'https://res8.toteat.com/#/list-kardex';
+const TOTEAT_LOGIN_URL = 'https://res8.toteat.com/#/logintoteat';
+const TOTEAT_SUPPLIERS_URL = 'https://res8.toteat.com/#/proveedores-new';
+const TOTEAT_PRODUCTS_URL = 'https://res8.toteat.com/#/productos';
+const TOTEAT_PRODUCT_HIERARCHY_URL = 'https://res8.toteat.com/#/jerarquia';
+const TOTEAT_INGREDIENT_HIERARCHY_URL = 'https://res8.toteat.com/#/jerarquiaingredientes';
+const TOTEAT_EXTRAS_HIERARCHY_URL = 'https://res8.toteat.com/#/jerarquiaextras';
+const TOTEAT_RECIPES_URL = 'https://res8.toteat.com/#/ingredientes';
+const TOTEAT_RESTAURANTS_URL = 'https://res8.toteat.com/#/restaurant';
 
 function chromeExecutablePath(playwrightExecutablePath = null) {
   return [
@@ -1988,6 +2007,19 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     : factoryOptions.paymentDetailsReportUrl
       ? [factoryOptions.paymentDetailsReportUrl]
       : TOTEAT_PAYMENT_DETAILS_REPORT_URLS;
+  const purchasesUrl = factoryOptions.purchasesUrl || TOTEAT_PURCHASES_URL;
+  const kardexUrl = factoryOptions.kardexUrl || TOTEAT_KARDEX_URL;
+  const loginUrl = factoryOptions.loginUrl || TOTEAT_LOGIN_URL;
+  const suppliersUrls = factoryOptions.suppliersUrl ? [factoryOptions.suppliersUrl] : [TOTEAT_SUPPLIERS_URL];
+  const productsUrls = factoryOptions.productsUrl ? [factoryOptions.productsUrl] : [TOTEAT_PRODUCTS_URL];
+  const productHierarchyUrls = factoryOptions.productHierarchyUrl
+    ? [factoryOptions.productHierarchyUrl] : [TOTEAT_PRODUCT_HIERARCHY_URL];
+  const ingredientHierarchyUrls = factoryOptions.ingredientHierarchyUrl
+    ? [factoryOptions.ingredientHierarchyUrl] : [TOTEAT_INGREDIENT_HIERARCHY_URL];
+  const extrasHierarchyUrls = factoryOptions.extrasHierarchyUrl
+    ? [factoryOptions.extrasHierarchyUrl] : [TOTEAT_EXTRAS_HIERARCHY_URL];
+  const recipesUrls = factoryOptions.recipesUrl ? [factoryOptions.recipesUrl] : [TOTEAT_RECIPES_URL];
+  const restaurantsUrl = factoryOptions.restaurantsUrl || TOTEAT_RESTAURANTS_URL;
   const readyTimeout = Number(factoryOptions.readyTimeout) > 0 ? Number(factoryOptions.readyTimeout) : 10000;
   const transitionDelay = Number(factoryOptions.transitionDelay) >= 0 ? Number(factoryOptions.transitionDelay) : 900;
   ensureDir(profilesRoot);
@@ -2043,6 +2075,100 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuPath: 'payment-details-report-link',
       routePattern: /reportes\/detalle-?pagos\b|reports\/payment-details\b/i,
       defaultFilename: () => `detalle-pagos-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+    },
+    purchases: {
+      key: 'purchases',
+      label: 'Compras',
+      urls: [purchasesUrl],
+      downloadLabel: /^(?:Exportar|Export)$/i,
+      attributeSelector: '[ng-click*="export" i], [data-testid*="export" i], [aria-label*="export" i], [title*="export" i]',
+      directLinkSelector: 'a[href*="#/compras" i], a[href*="/compras" i]',
+      menuLabel: /^(?:Compras|Purchases|Shopping)$/i,
+      menuPath: 'purchases-link',
+      routePattern: /\/compras\b|\/purchases\b/i,
+      defaultFilename: () => `compras-toteat-${new Date().toISOString().slice(0, 10)}.xls`
+    },
+    kardex: {
+      key: 'kardex-summary',
+      label: 'Kardex resumen diario',
+      urls: [kardexUrl],
+      downloadLabel: /^(?:Export|Exportar)$/i,
+      defaultFilename: () => `kardex-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+    },
+    suppliers: {
+      key: 'suppliers',
+      label: 'Proveedores',
+      urls: suppliersUrls,
+      downloadLabel: /^Exportar$/i,
+      attributeSelector: '[data-testid*="export" i], [aria-label="Exportar" i], [title="Exportar" i]',
+      directLinkSelector: 'a[href*="proveedores-new" i]',
+      menuLabel: /^Proveedores$/i,
+      menuPath: 'suppliers-link',
+      routePattern: /proveedores-new\b/i,
+      skipRestaurantSelection: true,
+      defaultFilename: () => `proveedores-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+    },
+    products: {
+      key: 'products-master',
+      label: 'Productos / Ingredientes / Extras',
+      urls: productsUrls,
+      downloadLabel: /XLS\s*Adv\.?\s*Total/i,
+      attributeSelector: [
+        '[data-testid*="xls-adv-total" i]', '[aria-label*="XLS Adv" i]', '[title*="XLS Adv" i]'
+      ].join(', '),
+      directLinkSelector: 'a[href*="#/productos" i], a[href*="/productos" i]',
+      menuLabel: /^Productos$/i,
+      menuPath: 'products-link',
+      routePattern: /\/productos\b/i,
+      skipRestaurantSelection: true,
+      revealControlLabel: /^(?:Actions|Acciones)$/i,
+      defaultFilename: () => `productos-ingredientes-extras-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+    },
+    productHierarchy: {
+      key: 'product-hierarchy', label: 'Jerarquía de Productos', urls: productHierarchyUrls,
+      downloadLabel: /^CSV\s+AB\.?$/i,
+      attributeSelector: 'button[ng-click="exportaCSV()"]',
+      strictAttributeSelector: true,
+      directLinkSelector: 'a[href*="#/jerarquia" i], a[href*="/jerarquia" i]',
+      menuLabel: /Jerarqu[ií]a/i, menuPath: 'product-hierarchy-link', routePattern: /\/jerarquia\b/i,
+      skipRestaurantSelection: true,
+      revealControlLabel: /^AB\.?$/i,
+      defaultFilename: () => `jerarquia-productos-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+    },
+    ingredientHierarchy: {
+      key: 'ingredient-hierarchy', label: 'Jerarquía de Ingredientes', urls: ingredientHierarchyUrls,
+      downloadLabel: /^CSV\s+IC\.?$/i,
+      attributeSelector: 'button[ng-click="exportaCSV()"]',
+      strictAttributeSelector: true,
+      directLinkSelector: 'a[href*="jerarquiaingredientes" i]',
+      menuLabel: /Jerarqu[ií]a.*Ingredientes/i, menuPath: 'ingredient-hierarchy-link',
+      routePattern: /\/jerarquiaingredientes\b/i, skipRestaurantSelection: true,
+      revealControlLabel: /^IC\.?$/i,
+      defaultFilename: () => `jerarquia-ingredientes-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+    },
+    extrasHierarchy: {
+      key: 'extras-hierarchy', label: 'Jerarquía de Extras', urls: extrasHierarchyUrls,
+      downloadLabel: /^CSV\s+BA\.?$/i,
+      attributeSelector: 'button[ng-click="exportaCSV()"]',
+      strictAttributeSelector: true,
+      directLinkSelector: 'a[href*="jerarquiaextras" i]',
+      menuLabel: /Jerarqu[ií]a.*Extras/i, menuPath: 'extras-hierarchy-link',
+      routePattern: /\/jerarquiaextras\b/i, skipRestaurantSelection: true,
+      revealControlLabel: /^BA\.?$/i,
+      defaultFilename: () => `jerarquia-extras-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+    },
+    recipes: {
+      key: 'recipes-master', label: 'Maestro de Recetas', urls: recipesUrls,
+      expectedDownloads: 2,
+      downloadLabel: /^(?:Exportar\s+Recetas|Export\s+Recipes)$/i,
+      attributeSelector: 'button[ng-click="exportarRecetas()"]',
+      strictAttributeSelector: true,
+      directLinkSelector: 'a[href*="#/ingredientes" i], a[href*="/ingredientes" i]',
+      menuLabel: /^Ingredientes$/i, menuPath: 'ingredients-link', routePattern: /\/ingredientes\b/i,
+      skipRestaurantSelection: true,
+      revealControlLabel: /^(?:Recetas|Recipes)$/i,
+      revealControlSelector: 'a[ng-click="selectTab(2)"]',
+      defaultFilename: () => 'RECETAS_SIN_NOMBRE.txt'
     }
   };
   const elementLabel = async locator => {
@@ -2064,14 +2190,73 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     }
     return null;
   };
+  const findVisibleTextControl = async (page, pattern) => {
+    for (const frame of page.frames()) {
+      const matches = frame.getByText(pattern);
+      const count = Math.min(await matches.count().catch(() => 0), 80);
+      let best = null;
+      let bestLength = Infinity;
+      for (let index = 0; index < count; index += 1) {
+        const candidate = matches.nth(index);
+        if (!await candidate.isVisible().catch(() => false)) continue;
+        const label = String(await candidate.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+        if (!pattern.test(label) || label.length >= bestLength) continue;
+        best = candidate;
+        bestLength = label.length;
+      }
+      if (best) return best;
+    }
+    return null;
+  };
   const findDownloadButton = async (page, report) => {
-    return findVisibleControl(page, report.downloadLabel, `${report.attributeSelector}, button, [role="button"], a`);
+    for (const frame of page.frames()) {
+      const selects = frame.locator('select');
+      const selectCount = Math.min(await selects.count().catch(() => 0), 40);
+      for (let selectIndex = 0; selectIndex < selectCount; selectIndex += 1) {
+        const select = selects.nth(selectIndex);
+        if (!await select.isVisible().catch(() => false)) continue;
+        const options = select.locator('option');
+        const optionCount = Math.min(await options.count().catch(() => 0), 120);
+        for (let optionIndex = 0; optionIndex < optionCount; optionIndex += 1) {
+          const option = options.nth(optionIndex);
+          const label = String(await option.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+          if (!report.downloadLabel.test(label)) continue;
+          const value = await option.getAttribute('value');
+          return {
+            click: () => value === null ? select.selectOption({ label }) : select.selectOption(value)
+          };
+        }
+      }
+    }
+    if (report.attributeSelector) {
+      const attributedControl = await findVisibleControl(page, report.downloadLabel, report.attributeSelector);
+      if (attributedControl) return attributedControl;
+      if (report.strictAttributeSelector) return null;
+    }
+    return await findVisibleControl(
+      page,
+      report.downloadLabel,
+      'button, [role="button"], a, [role="menuitem"], [role="option"], li'
+    ) || findVisibleTextControl(page, report.downloadLabel);
   };
   const waitForDownloadButton = async (page, report, timeout = 12000) => {
     const deadline = Date.now() + timeout;
+    let revealed = false;
     do {
       const button = await findDownloadButton(page, report);
       if (button) return button;
+      if (!revealed && report.revealControlLabel) {
+        const trigger = report.revealControlSelector
+          ? await findVisibleControl(page, report.revealControlLabel, report.revealControlSelector)
+          : await findVisibleControl(page, report.revealControlLabel)
+          || await findVisibleTextControl(page, report.revealControlLabel);
+        if (trigger) {
+          await trigger.click();
+          revealed = true;
+          await page.waitForTimeout(transitionDelay);
+          continue;
+        }
+      }
       await page.waitForTimeout(500);
     } while (Date.now() < deadline);
     return null;
@@ -2266,6 +2451,147 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     await page.goto(report.urls[0], { waitUntil: 'domcontentloaded', timeout: 60000 });
     return page;
   };
+  const selectRestaurantRecord = async (page, restaurant) => {
+    await page.goto(restaurantsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await ensureActiveSession(page, []);
+    const rows = page.locator('tr[ng-click*="selecciona"]');
+    const count = await rows.count();
+    const expected = {
+      restaurantId: String(restaurant.restaurantId || '').trim(),
+      localId: String(restaurant.localId || '').trim(),
+      name: normalizeToteatText(restaurant.name),
+      simpleId: String(restaurant.simpleId || '').trim()
+    };
+    const readActiveRestaurant = () => page.evaluate(() => {
+      try {
+        const active = JSON.parse(localStorage.getItem('resto') || 'null');
+        return active ? {
+          restaurantId: String(active.ir ?? ''),
+          localId: String(active.il ?? ''),
+          name: String(active.nr ?? ''),
+          simpleId: String(active.si ?? ''),
+          createdAt: String(active.fc ?? '')
+        } : null;
+      } catch {
+        return null;
+      }
+    });
+    const isExpectedRestaurant = active => Boolean(active)
+      && (!expected.restaurantId || active.restaurantId === expected.restaurantId)
+      && (!expected.localId || active.localId === expected.localId)
+      && (!expected.name || normalizeToteatText(active.name) === expected.name)
+      && (!expected.simpleId || active.simpleId === expected.simpleId);
+    for (let index = 0; index < count; index += 1) {
+      const row = rows.nth(index);
+      const cells = (await row.locator('td').allTextContents()).map(value => String(value).trim());
+      if (cells.length < 5) continue;
+      const matches = (!expected.restaurantId || cells[0] === expected.restaurantId)
+        && (!expected.localId || cells[1] === expected.localId)
+        && (!expected.name || normalizeToteatText(cells[2]) === expected.name)
+        && (!expected.simpleId || cells[4] === expected.simpleId);
+      if (!matches) continue;
+      const alreadyActive = await readActiveRestaurant();
+      if (isExpectedRestaurant(alreadyActive)) {
+        return { ...alreadyActive, changed: false };
+      }
+      await row.click();
+      await page.waitForFunction(element => element.classList.contains('seleccionado'), await row.elementHandle(), { timeout: 10000 });
+      const confirm = page.locator('button:visible, a:visible, [role="button"]:visible')
+        .filter({ hasText: /^\s*(?:Confirm|Confirmar)\s*$/i }).last();
+      if (!await confirm.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false)) {
+        throw automationError(
+          `TotEat seleccionó “${restaurant.name}”, pero no mostró el botón para confirmar el cambio de local.`,
+          'TOTEAT_RESTAURANT_CONFIRMATION_REQUIRED', 502
+        );
+      }
+      await confirm.click();
+      await page.waitForFunction(target => {
+        try {
+          const active = JSON.parse(localStorage.getItem('resto') || 'null');
+          if (!active) return false;
+          return (!target.restaurantId || String(active.ir ?? '') === target.restaurantId)
+            && (!target.localId || String(active.il ?? '') === target.localId)
+            && (!target.simpleId || String(active.si ?? '') === target.simpleId);
+        } catch {
+          return false;
+        }
+      }, expected, { timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(transitionDelay);
+      const active = await readActiveRestaurant();
+      if (!isExpectedRestaurant(active)) {
+        throw automationError(
+          `TotEat no confirmó “${restaurant.name}” como local activo. Se canceló la descarga para evitar mezclar ventas.`,
+          'TOTEAT_RESTAURANT_SWITCH_FAILED', 502
+        );
+      }
+      return { ...active, changed: true };
+    }
+    throw automationError(`No se encontró el local “${restaurant.name}” en TotEat con los identificadores configurados.`, 'TOTEAT_RESTAURANT_NOT_FOUND', 422);
+  };
+  const assertActiveRestaurant = async (page, restaurant) => {
+    const active = await page.evaluate(() => {
+      try { return JSON.parse(localStorage.getItem('resto') || 'null'); } catch { return null; }
+    });
+    if (!active || String(active.ir ?? '') !== String(restaurant.restaurantId)
+      || String(active.il ?? '') !== String(restaurant.localId)
+      || String(active.si ?? '') !== String(restaurant.simpleId)) {
+      throw automationError(`TotEat no tiene activo el local “${restaurant.name}”. Se detuvo la descarga para evitar mezclar datos.`, 'TOTEAT_RESTAURANT_SWITCH_FAILED', 422);
+    }
+    return active;
+  };
+  const setToteatDateInput = async (page, input, modelField, value) => {
+    await input.fill(value);
+    await input.evaluate((element, date) => {
+      const angular = window.angular;
+      const wrapped = angular?.element(element);
+      const injector = wrapped?.injector();
+      const controller = wrapped?.controller('ngModel');
+      const rootScope = injector?.get('$rootScope');
+      if (!rootScope?.varios || !controller) return;
+      const parsed = new Date(`${date.value}T12:00:00`);
+      rootScope.$apply(() => {
+        rootScope.varios[date.modelField] = parsed;
+        controller.$setValidity('date', true);
+      });
+    }, { modelField, value });
+    await page.waitForFunction(element => element.value && element.getAttribute('aria-invalid') !== 'true', await input.elementHandle(), { timeout: 10000 });
+  };
+  const configureDatedReport = async (page, dateFrom, dateTo, options = {}) => {
+    const rangeLabel = page.locator('label[for="tipoRango"]:visible').last();
+    await rangeLabel.click();
+    const period = page.locator('select[ng-model="varios.seleccionFechas"]:visible').last();
+    await period.selectOption('custom');
+    await page.waitForTimeout(transitionDelay);
+    const from = page.locator('input[ng-model="varios.fechaDesde"]:visible').last();
+    const to = page.locator('input[ng-model="varios.fechaHasta"]:visible').last();
+    await setToteatDateInput(page, from, 'fechaDesde', dateFrom);
+    await setToteatDateInput(page, to, 'fechaHasta', dateTo);
+    if (options.errorFactory?.()) throw options.errorFactory();
+    const refresh = page.locator('button[ng-click="generaReporte()"]:visible').last();
+    await refresh.click();
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    if (options.errorFactory?.()) throw options.errorFactory();
+    const downloadControl = page.locator(options.downloadSelector || 'a[ng-click="exportaTotalVentasExcel()"]:visible');
+    try {
+      await downloadControl.last().waitFor({ state: 'visible', timeout: 45000 });
+    } catch (error) {
+      if (options.errorFactory?.()) throw options.errorFactory();
+      throw automationError(
+        `TotEat no generó un archivo porque no encontró ${options.emptyLabel || 'registros'} para el local y período seleccionados.`,
+        options.emptyCode || 'TOTEAT_NO_DATA_AVAILABLE', 422
+      );
+    }
+    await page.waitForTimeout(transitionDelay);
+  };
+  const configureSalesDateRange = (page, dateFrom, dateTo, reportAccessError = () => null) => configureDatedReport(
+    page, dateFrom, dateTo, {
+      errorFactory: reportAccessError,
+      downloadSelector: 'a[ng-click="exportaTotalVentasExcel()"]:visible',
+      emptyLabel: 'ventas', emptyCode: 'TOTEAT_NO_SALES_AVAILABLE'
+    }
+  );
   const prepareReport = async (page, restaurantName, report) => {
     const attempts = [{ action: 'direct-url', url: page.url() }];
     const requireAuthentication = async () => {
@@ -2296,7 +2622,9 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       let button = await waitForDownloadButton(page, report, readyTimeout);
       await ensureActiveSession(page, attempts);
       if (button) return { button, attempts };
-      const restaurant = await selectRestaurant(page, restaurantName, attempts);
+      const restaurant = report.skipRestaurantSelection
+        ? { required: false, selected: false }
+        : await selectRestaurant(page, restaurantName, attempts);
       if (restaurant.required && !restaurant.selected) {
         const error = automationError(
           `Toteat solicita seleccionar un restaurante, pero no se encontró “${restaurantName}”.`,
@@ -2309,7 +2637,9 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       for (const [index, url] of urlsToTry.entries()) {
         button = await visitReportUrl(url, restaurant.selected && index === 0 ? 'report-after-restaurant' : 'alternate-report-url');
         if (button) return { button, attempts };
-        const routeRestaurant = await selectRestaurant(page, restaurantName, attempts);
+        const routeRestaurant = report.skipRestaurantSelection
+          ? { required: false, selected: false }
+          : await selectRestaurant(page, restaurantName, attempts);
         if (routeRestaurant.required && !routeRestaurant.selected) {
           const error = automationError(
             `Toteat solicita seleccionar un restaurante, pero no se encontró “${restaurantName}”.`,
@@ -2348,37 +2678,73 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     }
   };
   const downloadReport = async (locationId, options, report) => {
-    let context = contexts.get(locationId);
-    const reusedVisibleContext = Boolean(context);
+    let context = options.context || contexts.get(locationId);
+    const reusedVisibleContext = Boolean(contexts.get(locationId));
     if (!context) context = await launch(locationId, true);
     let page = null;
     let attempts = [];
+    let captureDirectory = null;
     try {
-      page = await reportPage(context, report);
-      const prepared = await prepareReport(page, options.restaurantName || locationId, report);
+      page = options.preparedPage || await reportPage(context, report);
+      const prepared = options.preparedPage
+        ? { button: await waitForDownloadButton(page, report, readyTimeout), attempts: [{ action: 'prepared-report', url: page.url() }] }
+        : await prepareReport(page, options.restaurantName || locationId, report);
+      if (!prepared.button) throw automationError(`No se encontró la descarga de ${report.label}.`, 'TOTEAT_REPORT_NOT_READY', 502);
       attempts = prepared.attempts;
       const button = prepared.button;
       attempts.push({ action: 'download-click', report: report.key });
       await ensureActiveSession(page, attempts);
-      const downloadPromise = page.waitForEvent('download', { timeout: 90000 });
-      await button.click();
-      const download = await downloadPromise;
-      const failure = await download.failure();
-      if (failure) throw automationError(`Toteat no pudo generar el archivo: ${failure}`, 'TOTEAT_DOWNLOAD_FAILED', 502);
-      const stream = await download.createReadStream();
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const filename = download.suggestedFilename() || report.defaultFilename();
-      const extension = path.extname(filename).toLowerCase();
-      return {
-        filename,
-        contentType: extension === '.csv'
-          ? 'text/csv; charset=utf-8'
-          : extension === '.xls'
-            ? 'application/vnd.ms-excel'
-            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        buffer: Buffer.concat(chunks)
+      captureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-toteat-download-'));
+      const observedDownloads = [];
+      const captures = [];
+      const observeDownload = download => {
+        const destination = path.join(captureDirectory, `${observedDownloads.length}.download`);
+        observedDownloads.push(download);
+        captures.push(download.saveAs(destination).then(
+          () => ({ destination }),
+          error => ({ error })
+        ));
       };
+      page.on('download', observeDownload);
+      const downloadPromise = page.waitForEvent('download', { timeout: 90000 });
+      try {
+        await button.click();
+        await downloadPromise;
+        const expectedDownloads = Math.max(1, Number(report.expectedDownloads) || 1);
+        const additionalDeadline = Date.now() + 30000;
+        while (observedDownloads.length < expectedDownloads && Date.now() < additionalDeadline) {
+          await page.waitForTimeout(250);
+        }
+        if (observedDownloads.length < expectedDownloads) {
+          throw automationError(
+            `Toteat generó ${observedDownloads.length} de ${expectedDownloads} archivos para ${report.label}.`,
+            'TOTEAT_INCOMPLETE_DOWNLOAD', 502
+          );
+        }
+      } finally {
+        page.off('download', observeDownload);
+      }
+      const files = [];
+      const captured = await Promise.all(captures.slice(0, report.expectedDownloads || 1));
+      const captureError = captured.find(item => item.error)?.error;
+      if (captureError) throw captureError;
+      for (const [index, download] of observedDownloads.slice(0, report.expectedDownloads || 1).entries()) {
+        const suggestedFilename = download.suggestedFilename() || report.defaultFilename();
+        const filename = suggestedFilename.replace(/\.csv\.txt$/i, '.csv');
+        const extension = path.extname(filename).toLowerCase();
+        files.push({
+          filename,
+          contentType: extension === '.csv'
+            ? 'text/csv; charset=utf-8'
+            : extension === '.txt' || extension === '.tsv'
+              ? 'text/plain; charset=utf-8'
+              : extension === '.xls'
+                ? 'application/vnd.ms-excel'
+                : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: fs.readFileSync(captured[index].destination)
+        });
+      }
+      return files.length === 1 ? files[0] : { files };
     } catch (caught) {
       const browserClosed = /Target page, context or browser has been closed|Target closed/i.test(caught?.message || '');
       const error = caught?.code ? caught : browserClosed
@@ -2393,6 +2759,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       if (page) throw await attachDiagnostic(error, page, locationId, error.attempts || attempts, report);
       throw error;
     } finally {
+      if (captureDirectory) fs.rmSync(captureDirectory, { recursive: true, force: true });
       if (!reusedVisibleContext) await context.close().catch(() => {});
     }
   };
@@ -2413,8 +2780,281 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     async downloadSales(locationId, options = {}) {
       return downloadReport(locationId, options, reports.sales);
     },
+    async connectTransactionalDownloads() {
+      const locationId = 'master-downloads';
+      const current = contexts.get(locationId);
+      const context = current || await launch(locationId, false);
+      if (!current) {
+        contexts.set(locationId, context);
+        context.on('close', () => contexts.delete(locationId));
+      }
+      const page = context.pages()[0] || await context.newPage();
+      await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      let requiresAuthentication = await authenticationRequired(page);
+      let refreshed = false;
+      if (!requiresAuthentication) {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        refreshed = true;
+        requiresAuthentication = await authenticationRequired(page);
+      }
+      await page.bringToFront();
+      return { opened: true, requiresAuthentication, refreshed };
+    },
+    async downloadTransactionalSales(options = {}) {
+      const locationId = 'master-downloads';
+      let context = contexts.get(locationId);
+      if (!context) context = await launch(locationId, true);
+      const page = context.pages()[0] || await context.newPage();
+      let reportUnavailable = false;
+      const observeConsole = message => {
+        if (message.type() === 'error' && /permission_denied at \/R\/PROD-/i.test(message.text())) reportUnavailable = true;
+      };
+      const reportAccessError = () => reportUnavailable ? automationError(
+        `TotEat no generó un archivo porque “${options.restaurant?.name || 'el local'}” todavía no tiene ventas disponibles para el período seleccionado.`,
+        'TOTEAT_NO_SALES_AVAILABLE', 422
+      ) : null;
+      page.on('console', observeConsole);
+      try {
+        const selectedRestaurant = await selectRestaurantRecord(page, options.restaurant || {});
+        const restaurantCreatedAt = /^\d{4}-\d{2}-\d{2}/.test(selectedRestaurant.createdAt)
+          ? selectedRestaurant.createdAt.slice(0, 10) : null;
+        const effectiveDateFrom = restaurantCreatedAt && restaurantCreatedAt > options.dateFrom
+          ? restaurantCreatedAt : options.dateFrom;
+        await page.goto(reports.sales.urls[0], { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        if (reportAccessError()) throw reportAccessError();
+        await configureSalesDateRange(page, effectiveDateFrom, options.dateTo, reportAccessError);
+        const download = await downloadReport(locationId, { context, preparedPage: page }, reports.sales);
+        download.dateFrom = effectiveDateFrom;
+        return download;
+      } finally {
+        page.off('console', observeConsole);
+        if (!contexts.has(locationId)) await context.close().catch(() => {});
+      }
+    },
+    async selectTransactionalRestaurant(restaurant) {
+      const locationId = 'master-downloads';
+      let context = contexts.get(locationId);
+      if (!context) context = await launch(locationId, true);
+      const page = context.pages()[0] || await context.newPage();
+      try {
+        return await selectRestaurantRecord(page, restaurant);
+      } finally {
+        if (!contexts.has(locationId)) await context.close().catch(() => {});
+      }
+    },
+    async downloadTransactionalPaymentDetails(options = {}) {
+      const locationId = 'master-downloads';
+      let context = contexts.get(locationId);
+      if (!context) context = await launch(locationId, true);
+      const page = context.pages()[0] || await context.newPage();
+      try {
+        const active = await assertActiveRestaurant(page, options.restaurant);
+        const dateFrom = /^\d{4}-\d{2}-\d{2}/.test(active.fc) && active.fc.slice(0, 10) > options.dateFrom
+          ? active.fc.slice(0, 10) : options.dateFrom;
+        await page.goto(reports.paymentDetails.urls[0], { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        await configureDatedReport(page, dateFrom, options.dateTo, {
+          downloadSelector: 'a[ng-click*="exportaCSVnew"][download$=".csv"]:visible, a:visible[download$=".csv"]',
+          emptyLabel: 'pagos', emptyCode: 'TOTEAT_NO_PAYMENT_DETAILS_AVAILABLE'
+        });
+        const download = await downloadReport(locationId, { context, preparedPage: page }, reports.paymentDetails);
+        download.dateFrom = dateFrom;
+        return download;
+      } finally {
+        if (!contexts.has(locationId)) await context.close().catch(() => {});
+      }
+    },
+    async downloadTransactionalPurchases(options = {}) {
+      const locationId = 'master-downloads';
+      let context = contexts.get(locationId);
+      if (!context) context = await launch(locationId, true);
+      const page = context.pages()[0] || await context.newPage();
+      try {
+        const active = await assertActiveRestaurant(page, options.restaurant);
+        const dateFrom = /^\d{4}-\d{2}-\d{2}/.test(active.fc) && active.fc.slice(0, 10) > options.dateFrom
+          ? active.fc.slice(0, 10) : options.dateFrom;
+        await page.goto(purchasesUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        let purchaseFrame = null;
+        const deadline = Date.now() + 60000;
+        while (!purchaseFrame && Date.now() < deadline) {
+          for (const frame of page.frames()) {
+            if (!/\/purchases\b/i.test(frame.url())) continue;
+            if (await frame.locator('button:visible').filter({ hasText: /^\s*(?:Export|Exportar)\s*$/i }).first().isVisible().catch(() => false)) {
+              purchaseFrame = frame;
+              break;
+            }
+          }
+          if (!purchaseFrame) await page.waitForTimeout(500);
+        }
+        if (!purchaseFrame) throw automationError('No se cargó la vista de Compras en TotEat.', 'TOTEAT_PURCHASE_REPORT_NOT_READY', 502);
+        const exportButton = purchaseFrame.locator('button:visible').filter({ hasText: /^\s*(?:Export|Exportar)\s*$/i }).last();
+        await exportButton.waitFor({ state: 'visible', timeout: 60000 });
+        const moreFilters = purchaseFrame.locator('input[type="checkbox"]:visible').first();
+        await moreFilters.check();
+        await page.waitForTimeout(transitionDelay);
+        const selects = purchaseFrame.locator('select:visible');
+        const selectMatching = async expression => {
+          const count = await selects.count();
+          for (let index = 0; index < count; index += 1) {
+            const select = selects.nth(index);
+            const optionsList = await select.locator('option').evaluateAll(items => items.map(item => ({ value: item.value, text: item.textContent.trim() })));
+            const match = optionsList.find(item => expression.test(item.text));
+            if (match) { await select.selectOption(match.value); return select; }
+          }
+          return null;
+        };
+        const dateRange = await selectMatching(/^(?:Personalizado|Custom)$/i);
+        if (!dateRange) throw automationError('No se encontró el filtro de fechas personalizado en Compras.', 'TOTEAT_PURCHASE_FILTER_NOT_FOUND', 502);
+        await page.waitForTimeout(transitionDelay);
+        const dates = purchaseFrame.locator('input[type="date"]:visible');
+        if (await dates.count() < 2) throw automationError('No se encontraron las fechas de inicio y fin en Compras.', 'TOTEAT_PURCHASE_DATES_NOT_FOUND', 502);
+        await dates.first().fill(dateFrom);
+        await dates.last().fill(options.dateTo);
+        const visualization = await selectMatching(/^(?:Campos Adicionales|Additional Fields)$/i);
+        if (!visualization) throw automationError('No se encontró “Campos Adicionales” en la visualización de Compras.', 'TOTEAT_PURCHASE_VIEW_NOT_FOUND', 502);
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+        await page.waitForTimeout(transitionDelay);
+        const download = await downloadReport(locationId, { context, preparedPage: page }, reports.purchases);
+        download.dateFrom = dateFrom;
+        return download;
+      } finally {
+        if (!contexts.has(locationId)) await context.close().catch(() => {});
+      }
+    },
+    async downloadTransactionalKardex(options = {}) {
+      const locationId = 'master-downloads';
+      let context = contexts.get(locationId);
+      if (!context) context = await launch(locationId, true);
+      const page = context.pages()[0] || await context.newPage();
+      try {
+        if (!page.url().includes('toteat.com')) {
+          await page.goto(restaurantsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        }
+        const active = await assertActiveRestaurant(page, options.restaurant);
+        const dateFrom = /^\d{4}-\d{2}-\d{2}/.test(active.fc) && active.fc.slice(0, 10) > options.dateFrom
+          ? active.fc.slice(0, 10) : options.dateFrom;
+        await page.goto(kardexUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+        let frame = null;
+        const deadline = Date.now() + 60000;
+        while (!frame && Date.now() < deadline) {
+          for (const candidate of page.frames()) {
+            if (!/\/list-kardex\b/i.test(candidate.url()) || candidate === page.mainFrame()) continue;
+            if (await candidate.getByText('Kardex resumen diario', { exact: true }).first().isVisible().catch(() => false)) {
+              frame = candidate;
+              break;
+            }
+          }
+          if (!frame) await page.waitForTimeout(500);
+        }
+        if (!frame) throw automationError('No se cargó Kardex resumen diario en TotEat.', 'TOTEAT_KARDEX_REPORT_NOT_READY', 502);
+        await frame.getByText('Kardex resumen diario', { exact: true }).first().click();
+        await frame.locator('.multiselect').first().click();
+        const localNumber = Number(options.restaurant.localId);
+        if (!Number.isInteger(localNumber) || localNumber <= 0) {
+          throw automationError('El ID Local de TotEat no es válido para seleccionar la bodega.', 'TOTEAT_KARDEX_LOCAL_ID_INVALID', 422);
+        }
+        const prefix = {
+          local: 'bodega local',
+          waste: 'bodega merma local',
+          central: 'bodega central local',
+          'central-waste': 'bodega central merma local'
+        }[options.kind];
+        if (!prefix) throw automationError('Tipo de Kardex no reconocido.', 'TOTEAT_KARDEX_KIND_INVALID', 400);
+        const warehousePrefix = `${prefix} ${String(localNumber).padStart(3, '0')} `;
+        const available = await frame.locator('.multiselect [role="option"]:visible').allTextContents();
+        const matches = available.map(value => value.trim()).filter(value => normalizeToteatText(value).startsWith(warehousePrefix));
+        if (matches.length !== 1) {
+          throw automationError(
+            `Se esperó una bodega “${warehousePrefix.trim()}” en TotEat, pero se encontraron ${matches.length}. Opciones: ${available.map(value => value.trim()).join(', ')}. Se canceló para evitar mezclar inventarios.`,
+            'TOTEAT_KARDEX_WAREHOUSE_NOT_FOUND', 422
+          );
+        }
+        const warehouseName = matches[0];
+        await frame.getByRole('option', { name: warehouseName, exact: true }).click();
+        if (!normalizeToteatText(await frame.locator('.multiselect').first().innerText()).includes(normalizeToteatText(warehouseName))) {
+          throw automationError(`TotEat no confirmó la bodega “${warehouseName}”.`, 'TOTEAT_KARDEX_WAREHOUSE_NOT_SELECTED', 502);
+        }
+        await frame.locator('#filter').selectOption('custom');
+        await frame.locator('#date_init').fill(dateFrom);
+        await frame.locator('#date_end').fill(options.dateTo);
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+        await page.waitForTimeout(transitionDelay);
+        const download = await downloadReport(locationId, { context, preparedPage: page }, reports.kardex);
+        const workbook = XLSX.read(download.buffer, { type: 'buffer' });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const headers = firstSheet ? XLSX.utils.sheet_to_json(firstSheet, { header: 1, range: 0, blankrows: false }).slice(0, 2) : [];
+        if (!rowContainsAll(headers[0] || [], ['Código', 'Nombre', 'Unidad'])
+          || !(headers[0] || []).some(value => cellDate(value))) {
+          throw automationError('TotEat descargó un archivo que no coincide con Kardex resumen diario.', 'TOTEAT_KARDEX_INVALID_FILE', 502);
+        }
+        download.dateFrom = dateFrom;
+        download.warehouseName = warehouseName;
+        return download;
+      } finally {
+        if (!contexts.has(locationId)) await context.close().catch(() => {});
+      }
+    },
     async downloadPaymentDetails(locationId, options = {}) {
       return downloadReport(locationId, options, reports.paymentDetails);
+    },
+    async connectMasterDownloads() {
+      const locationId = 'master-downloads';
+      const current = contexts.get(locationId);
+      if (current) {
+        const pages = current.pages();
+        const page = pages.find(item => item.url().includes('toteat.com')) || pages[0] || await current.newPage();
+        await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        let requiresAuthentication = await authenticationRequired(page);
+        let refreshed = false;
+        if (!requiresAuthentication) {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+          await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+          refreshed = true;
+          requiresAuthentication = await authenticationRequired(page);
+        }
+        await page.bringToFront();
+        return { opened: true, requiresAuthentication, refreshed };
+      }
+      const context = await launch(locationId, false);
+      contexts.set(locationId, context);
+      context.on('close', () => contexts.delete(locationId));
+      const page = context.pages()[0] || await context.newPage();
+      await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      let requiresAuthentication = await authenticationRequired(page);
+      let refreshed = false;
+      if (!requiresAuthentication) {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        refreshed = true;
+        requiresAuthentication = await authenticationRequired(page);
+      }
+      return { opened: true, requiresAuthentication, refreshed };
+    },
+    async downloadSuppliers() {
+      return downloadReport('master-downloads', {}, reports.suppliers);
+    },
+    async downloadProductsMaster() {
+      return downloadReport('master-downloads', {}, reports.products);
+    },
+    async downloadProductHierarchy() {
+      return downloadReport('master-downloads', {}, reports.productHierarchy);
+    },
+    async downloadIngredientHierarchy() {
+      return downloadReport('master-downloads', {}, reports.ingredientHierarchy);
+    },
+    async downloadExtrasHierarchy() {
+      return downloadReport('master-downloads', {}, reports.extrasHierarchy);
+    },
+    async downloadRecipes() {
+      return downloadReport('master-downloads', {}, reports.recipes);
     }
   };
 }
@@ -2437,6 +3077,7 @@ function createApp(options = {}) {
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
   const findingsRegistryPath = path.join(configRoot, 'findings.json');
   const productAnalyticsSourceCache = new Map();
+  const toteatMasterDownloadBatches = new Map();
   ensureDir(weeksRoot);
   ensureDir(mastersRoot);
   ensureDir(stagingRoot);
@@ -3197,6 +3838,31 @@ function createApp(options = {}) {
     return keys;
   }
 
+  function latestGenericTransactionAt(locationId, field) {
+    let latest = null;
+    for (const stored of storedWeeklyFiles(locationId, field)) {
+      for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+        const header = sheet.rows[0] || [];
+        for (const row of sheet.rows.slice(1)) {
+          const record = Object.fromEntries(header.map((name, index) => [name, row[index]]));
+          const date = field === 'purchases'
+            ? cellDate(rowValue(record, ['Fecha emisión', 'Fecha emision', 'Broadcast date', 'Issue Date']))
+            : cellDate(rowValue(record, ['FechaCierre', 'Fecha Cierre', 'DateClosing', 'Closing Date', 'Fecha']), dateOrderForHeaders(header));
+          if (date && !dateIsExcluded(date, stored.excludedRanges) && (!latest || date > latest)) latest = date;
+        }
+      }
+    }
+    return latest;
+  }
+
+  function latestKardexAt(locationId, field) {
+    try {
+      const data = mergedKardexData(locationId, field);
+      if (data?.groups?.length) return data.groups[data.groups.length - 1].date;
+    } catch {}
+    return latestWeeklyFile(locationId, field)?.dataThrough || null;
+  }
+
   function prepareIncrementalGenericTransactions(staged, locationId, stagingDirectory, field, sheetName, additionalExcludedRanges = []) {
     const source = path.join(stagingDirectory, staged.filename);
     const sheets = readGenericTransactionSheets(source);
@@ -3319,6 +3985,10 @@ function createApp(options = {}) {
     const name = String(req.body?.name || '').trim();
     const address = String(req.body?.address || '').trim();
     const type = req.body?.type;
+    const toteatRestaurantId = String(req.body?.toteatRestaurantId || '').trim();
+    const toteatLocalId = String(req.body?.toteatLocalId || '').trim();
+    const toteatName = String(req.body?.toteatName || '').trim();
+    const toteatSimpleId = String(req.body?.toteatSimpleId || '').trim();
     if (name.length < 2 || name.length > 80) return res.status(400).json({ error: 'Location name must be between 2 and 80 characters.' });
     if (address.length > 200) return res.status(400).json({ error: 'La dirección no puede superar 200 caracteres.' });
     if (!['store', 'warehouse'].includes(type)) return res.status(400).json({ error: 'Select a valid location type.' });
@@ -3326,7 +3996,10 @@ function createApp(options = {}) {
     if (registry.locations.some(location => location.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
       return res.status(409).json({ error: 'A location with this name already exists, including locations in trash.' });
     }
-    const location = { id: `location-${crypto.randomUUID()}`, name, address, type, status: 'active', createdAt: new Date().toISOString() };
+    const location = {
+      id: `location-${crypto.randomUUID()}`, name, address, type, status: 'active', createdAt: new Date().toISOString(),
+      toteatRestaurantId, toteatLocalId, toteatName, toteatSimpleId
+    };
     registry.locations.push(location);
     writeJsonAtomic(locationsPath, registry);
     return res.status(201).json(publicLocation(location));
@@ -3345,6 +4018,9 @@ function createApp(options = {}) {
     }
     location.name = name;
     location.address = address;
+    for (const field of ['toteatRestaurantId', 'toteatLocalId', 'toteatName', 'toteatSimpleId']) {
+      if (req.body?.[field] !== undefined) location[field] = String(req.body[field] || '').trim();
+    }
     location.updatedAt = new Date().toISOString();
     writeJsonAtomic(locationsPath, registry);
     for (const week of fs.readdirSync(weeksRoot)) {
@@ -6219,7 +6895,7 @@ function createApp(options = {}) {
     if (!location) return res.status(400).json({ error: 'Select a valid active location.' });
     const definitions = [
       { field: 'kardex', label: 'Kardex / tarjeta de inventario', applicable: true },
-      { field: 'waste', label: 'Merma', applicable: location.type === 'store' },
+      { field: 'waste', label: 'Merma', applicable: true },
       { field: 'marketing', label: 'Consumo de marketing', applicable: location.type === 'store' },
       { field: 'employees', label: 'Consumo de colaboradores', applicable: location.type === 'store' }
     ];
@@ -8541,6 +9217,9 @@ function createApp(options = {}) {
     return location;
   }
 
+  const toteatDownloadPrefix = (localId, central = false) =>
+    central ? '000' : String(localId).padStart(3, '0');
+
   app.post('/api/integrations/toteat/connect', async (req, res) => {
     try {
       const location = toteatStore(String(req.body?.location || ''));
@@ -8555,6 +9234,466 @@ function createApp(options = {}) {
         state: error.state || null,
         diagnosticId: error.diagnosticId || null
       });
+    }
+  });
+
+  const toteatDownloadError = (res, error, fallback) => res.status(error.status || 500).json({
+    error: error.message || fallback,
+    code: error.code || 'TOTEAT_DOWNLOAD_FAILED',
+    state: error.state || null,
+    diagnosticId: error.diagnosticId || null
+  });
+  const sendToteatDownload = (res, download, fallbackFilename) => {
+    const filename = path.basename(download.filename || fallbackFilename).replace(/[\r\n"]/g, '_');
+    res.setHeader('Content-Type', download.contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(download.buffer);
+  };
+  const sendToteatDownloadBundle = (res, download) => res.json({
+    files: download.files.map(file => ({
+      filename: path.basename(file.filename || 'archivo-toteat').replace(/[\r\n"]/g, '_'),
+      contentType: file.contentType || 'application/octet-stream',
+      data: file.buffer.toString('base64')
+    }))
+  });
+  const toteatMasterBatch = req => {
+    const batchId = String(req.query.batchId || req.body?.batchId || '');
+    const batch = toteatMasterDownloadBatches.get(batchId);
+    return batch && Date.now() - batch.createdAt < STAGING_MAX_AGE_MS ? batch : null;
+  };
+  const stageToteatMasterDownload = (req, field, download) => {
+    const batch = toteatMasterBatch(req);
+    if (!batch) return;
+    batch.files.set(field, {
+      filename: path.basename(download.filename),
+      contentType: download.contentType,
+      buffer: Buffer.from(download.buffer)
+    });
+  };
+
+  app.post('/api/integrations/toteat/master-downloads/connect', async (req, res) => {
+    try {
+      const connection = await toteatAutomation.connectMasterDownloads();
+      const batchId = crypto.randomBytes(16).toString('hex');
+      toteatMasterDownloadBatches.set(batchId, { createdAt: Date.now(), files: new Map() });
+      return res.json({ ...connection, opened: true, loginUrl: TOTEAT_LOGIN_URL, batchId });
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudo abrir el inicio de sesión de Toteat.');
+    }
+  });
+
+  app.post('/api/integrations/toteat/transactional-downloads/connect', async (req, res) => {
+    try {
+      const activeLocations = readLocations().locations.filter(location => location.status === 'active');
+      const stores = activeLocations.filter(location => location.type === 'store');
+      const centralOwner = stores.find(location => Number(location.toteatLocalId) === 1);
+      const centralLocation = activeLocations.find(location => location.id === 'main-warehouse');
+      if (!centralOwner || !centralLocation) {
+        return res.status(422).json({
+          code: 'TOTEAT_CENTRAL_CONFIGURATION_REQUIRED',
+          error: 'Se requiere el local 001 y la Bodega principal activos para descargar los Kardex centrales.'
+        });
+      }
+      const missingConfiguration = stores.filter(location => !location.toteatRestaurantId || !location.toteatLocalId || !location.toteatName || !location.toteatSimpleId);
+      if (missingConfiguration.length) {
+        return res.status(422).json({
+          code: 'TOTEAT_LOCATION_CONFIGURATION_REQUIRED',
+          error: `Completa los cuatro identificadores de TotEat en Configuración para: ${missingConfiguration.map(item => item.name).join(', ')}.`
+        });
+      }
+      const connection = await toteatAutomation.connectTransactionalDownloads();
+      return res.json({
+        ...connection,
+        loginUrl: TOTEAT_LOGIN_URL,
+        centralWarehouse: {
+          id: centralLocation.id,
+          name: centralLocation.name,
+          ownerLocationId: centralOwner.id,
+          toteatLocalId: centralOwner.toteatLocalId,
+          kardexDateFrom: latestKardexAt(centralLocation.id, 'kardex') || FIRST_WEEK,
+          wasteDateFrom: latestKardexAt(centralLocation.id, 'waste') || FIRST_WEEK,
+          dateTo: projectionToday()
+        },
+        locations: stores.map(location => {
+          const latestTransactionAt = salesHistory(location.id).latestTransactionAt;
+          const latestPaymentDetailsAt = latestGenericTransactionAt(location.id, 'payment-details');
+          const latestPurchasesAt = latestGenericTransactionAt(location.id, 'purchases');
+          return {
+            id: location.id,
+            name: location.name,
+            toteatName: location.toteatName,
+            toteatLocalId: location.toteatLocalId,
+            latestTransactionAt,
+            dateFrom: latestTransactionAt?.slice(0, 10) || FIRST_WEEK,
+            paymentDetailsDateFrom: latestPaymentDetailsAt || FIRST_WEEK,
+            purchasesDateFrom: latestPurchasesAt || FIRST_WEEK,
+            kardexDateFrom: latestKardexAt(location.id, 'kardex') || FIRST_WEEK,
+            wasteDateFrom: latestKardexAt(location.id, 'waste') || FIRST_WEEK,
+            dateTo: projectionToday()
+          };
+        })
+      });
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudo abrir la sesión transaccional de TotEat.');
+    }
+  });
+
+  app.post('/api/integrations/toteat/transactional-downloads/sales', express.json(), async (req, res) => {
+    try {
+      const location = toteatStore(String(req.body?.location || ''));
+      const latestTransactionAt = salesHistory(location.id).latestTransactionAt;
+      const dateFrom = latestTransactionAt?.slice(0, 10) || FIRST_WEEK;
+      const dateTo = projectionToday();
+      const download = await toteatAutomation.downloadTransactionalSales({
+        restaurant: {
+          restaurantId: location.toteatRestaurantId,
+          localId: location.toteatLocalId,
+          name: location.toteatName,
+          simpleId: location.toteatSimpleId
+        },
+        dateFrom,
+        dateTo
+      });
+      const downloadedDateFrom = download.dateFrom || dateFrom;
+      const extension = path.extname(download.filename || '') || '.xlsx';
+      download.filename = `${toteatDownloadPrefix(location.toteatLocalId)}_ventas-totales-${location.id}-${downloadedDateFrom}-${dateTo}${extension}`;
+      res.setHeader('X-Brewit-Date-From', downloadedDateFrom);
+      res.setHeader('X-Brewit-Date-To', dateTo);
+      return sendToteatDownload(res, download, `ventas-toteat-${location.id}-${dateFrom}-${dateTo}.xlsx`);
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudieron descargar las ventas transaccionales desde TotEat.');
+    }
+  });
+
+  app.post('/api/integrations/toteat/transactional-downloads/select-location', express.json(), async (req, res) => {
+    try {
+      const location = toteatStore(String(req.body?.location || ''));
+      const selected = await toteatAutomation.selectTransactionalRestaurant({
+        restaurantId: location.toteatRestaurantId,
+        localId: location.toteatLocalId,
+        name: location.toteatName,
+        simpleId: location.toteatSimpleId
+      });
+      return res.json({ ok: true, location: location.id, selected });
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudo seleccionar el local en TotEat.');
+    }
+  });
+
+  for (const [field, route, method, fallbackExtension] of [
+    ['payment-details', 'payment-details', 'downloadTransactionalPaymentDetails', '.csv'],
+    ['purchases', 'purchases', 'downloadTransactionalPurchases', '.xls']
+  ]) {
+    app.post(`/api/integrations/toteat/transactional-downloads/${route}`, express.json(), async (req, res) => {
+      try {
+        const location = toteatStore(String(req.body?.location || ''));
+        const dateFrom = latestGenericTransactionAt(location.id, field) || FIRST_WEEK;
+        const dateTo = projectionToday();
+        const download = await toteatAutomation[method]({
+          restaurant: {
+            restaurantId: location.toteatRestaurantId,
+            localId: location.toteatLocalId,
+            name: location.toteatName,
+            simpleId: location.toteatSimpleId
+          },
+          dateFrom,
+          dateTo
+        });
+        const downloadedDateFrom = download.dateFrom || dateFrom;
+        const extension = path.extname(download.filename || '') || fallbackExtension;
+        download.filename = `${toteatDownloadPrefix(location.toteatLocalId)}_${route}-toteat-${location.id}-${downloadedDateFrom}-${dateTo}${extension}`;
+        res.setHeader('X-Brewit-Date-From', downloadedDateFrom);
+        res.setHeader('X-Brewit-Date-To', dateTo);
+        return sendToteatDownload(res, download, download.filename);
+      } catch (error) {
+        return toteatDownloadError(res, error, `No se pudo descargar ${field} desde TotEat.`);
+      }
+    });
+  }
+
+  for (const [kind, field, central] of [
+    ['local', 'kardex', false], ['waste', 'waste', false],
+    ['central', 'kardex', true], ['central-waste', 'waste', true]
+  ]) {
+    app.post(`/api/integrations/toteat/transactional-downloads/kardex-${kind}`, express.json(), async (req, res) => {
+      try {
+        const locations = readLocations().locations.filter(location => location.status === 'active');
+        const source = central
+          ? locations.find(location => location.id === 'main-warehouse')
+          : toteatStore(String(req.body?.location || ''));
+        if (!source || (central && req.body?.location !== source.id)) {
+          const error = new Error('Selecciona la Bodega principal para descargar el Kardex central.');
+          error.status = 400;
+          error.code = 'TOTEAT_CENTRAL_LOCATION_REQUIRED';
+          throw error;
+        }
+        const restaurant = central
+          ? locations.find(location => location.type === 'store' && Number(location.toteatLocalId) === 1)
+          : source;
+        if (!restaurant) {
+          const error = new Error('No está configurado el local 001 que administra la Bodega principal.');
+          error.status = 422;
+          error.code = 'TOTEAT_CENTRAL_OWNER_REQUIRED';
+          throw error;
+        }
+        const dateFrom = latestKardexAt(source.id, field) || FIRST_WEEK;
+        const dateTo = projectionToday();
+        const download = await toteatAutomation.downloadTransactionalKardex({
+          restaurant: {
+            restaurantId: restaurant.toteatRestaurantId,
+            localId: restaurant.toteatLocalId,
+            name: restaurant.toteatName,
+            simpleId: restaurant.toteatSimpleId
+          },
+          kind,
+          dateFrom,
+          dateTo
+        });
+        const downloadedDateFrom = download.dateFrom || dateFrom;
+        const extension = path.extname(download.filename || '') || '.xlsx';
+        download.filename = `${toteatDownloadPrefix(restaurant.toteatLocalId, central)}_kardex-${kind}-${source.id}-${downloadedDateFrom}-${dateTo}${extension}`;
+        res.setHeader('X-Brewit-Date-From', downloadedDateFrom);
+        res.setHeader('X-Brewit-Date-To', dateTo);
+        res.setHeader('X-Brewit-Warehouse', download.warehouseName || '');
+        return sendToteatDownload(res, download, download.filename);
+      } catch (error) {
+        return toteatDownloadError(res, error, `No se pudo descargar Kardex ${kind} desde TotEat.`);
+      }
+    });
+  }
+
+  app.post('/api/integrations/toteat/master-downloads/suppliers', async (req, res) => {
+    try {
+      const download = await toteatAutomation.downloadSuppliers();
+      stageToteatMasterDownload(req, 'master-suppliers', download);
+      return sendToteatDownload(res, download, 'proveedores-toteat.xlsx');
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudo descargar Proveedores desde Toteat.');
+    }
+  });
+
+  app.post('/api/integrations/toteat/master-downloads/products', async (req, res) => {
+    try {
+      const download = await toteatAutomation.downloadProductsMaster();
+      stageToteatMasterDownload(req, 'master-catalog', download);
+      return sendToteatDownload(
+        res,
+        download,
+        'productos-ingredientes-extras-toteat.xlsx'
+      );
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudo descargar el maestro de Productos desde Toteat.');
+    }
+  });
+
+  const remainingToteatMasterDownloads = [
+    ['product-hierarchy', 'downloadProductHierarchy', 'jerarquia-productos-toteat.csv', 'Jerarquía de Productos'],
+    ['ingredient-hierarchy', 'downloadIngredientHierarchy', 'jerarquia-ingredientes-toteat.csv', 'Jerarquía de Ingredientes'],
+    ['extras-hierarchy', 'downloadExtrasHierarchy', 'jerarquia-extras-toteat.csv', 'Jerarquía de Extras']
+  ];
+  remainingToteatMasterDownloads.forEach(([route, method, fallbackFilename, label]) => {
+    app.post(`/api/integrations/toteat/master-downloads/${route}`, async (req, res) => {
+      try {
+        const download = await toteatAutomation[method]();
+        stageToteatMasterDownload(req, route, download);
+        return sendToteatDownload(res, download, fallbackFilename);
+      } catch (error) {
+        return toteatDownloadError(res, error, `No se pudo descargar ${label} desde Toteat.`);
+      }
+    });
+  });
+
+  app.post('/api/integrations/toteat/master-downloads/recipes', async (req, res) => {
+    try {
+      const download = await toteatAutomation.downloadRecipes();
+      if (!Array.isArray(download?.files) || download.files.length !== 2) {
+        const error = new Error('TotEat no entregó los dos archivos esperados del Maestro de Recetas.');
+        error.code = 'TOTEAT_INCOMPLETE_DOWNLOAD';
+        error.status = 502;
+        throw error;
+      }
+      const recipeFiles = ['HEADERS_RECETAS.txt', 'DETALLE_RECETAS.txt'].map(filename =>
+        download.files.find(file => path.basename(file.filename || '').toUpperCase() === filename.toUpperCase())
+      );
+      if (recipeFiles.some(file => !file)) {
+        const error = new Error('TotEat no entregó HEADERS_RECETAS.txt y DETALLE_RECETAS.txt. Revisa la sesión y vuelve a intentar.');
+        error.code = 'TOTEAT_UNEXPECTED_RECIPE_FILES';
+        error.status = 502;
+        throw error;
+      }
+      stageToteatMasterDownload(req, 'recipe-headers', recipeFiles[0]);
+      stageToteatMasterDownload(req, 'master-recipes', recipeFiles[1]);
+      return sendToteatDownloadBundle(res, { files: recipeFiles.map((file, index) => ({
+        ...file,
+        filename: ['HEADERS_RECETAS.txt', 'DETALLE_RECETAS.txt'][index],
+        contentType: 'text/plain; charset=utf-8'
+      })) });
+    } catch (error) {
+      return toteatDownloadError(res, error, 'No se pudo descargar el Maestro de Recetas desde TotEat.');
+    }
+  });
+
+  app.post('/api/integrations/toteat/master-downloads/finalize', express.json(), (req, res) => {
+    if (typeof options.toteatMasterBatchFinalizer === 'function') {
+      try {
+        return res.json(options.toteatMasterBatchFinalizer(req.body?.batchId));
+      } catch (error) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+    }
+    const batchId = String(req.body?.batchId || '');
+    const batch = toteatMasterDownloadBatches.get(batchId);
+    const requiredFields = [
+      'master-suppliers', 'master-catalog', 'product-hierarchy', 'ingredient-hierarchy',
+      'extras-hierarchy', 'recipe-headers', 'master-recipes'
+    ];
+    if (!batch || Date.now() - batch.createdAt >= STAGING_MAX_AGE_MS) {
+      return res.status(409).json({ code: 'TOTEAT_MASTER_BATCH_EXPIRED', error: 'La descarga maestra venció. Inicia una nueva descarga desde TotEat.' });
+    }
+    const missing = requiredFields.filter(field => !batch.files.has(field));
+    if (missing.length) {
+      return res.status(422).json({
+        code: 'TOTEAT_MASTER_FILES_INCOMPLETE',
+        error: `No se guardó ningún maestro porque faltan ${missing.length} archivo(s) del lote.`,
+        missing
+      });
+    }
+    const batchRoot = path.join(stagingRoot, `toteat-masters-${batchId}`);
+    ensureDir(batchRoot);
+    const stagedFiles = [];
+    const createdMasterFiles = [];
+    try {
+      for (const field of requiredFields) {
+        const source = batch.files.get(field);
+        const originalname = source.filename;
+        const filePath = path.join(batchRoot, `${field}_${originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')}`);
+        fs.writeFileSync(filePath, source.buffer);
+        stagedFiles.push({ fieldname: field, originalname, path: filePath, size: source.buffer.length, mimetype: source.contentType });
+      }
+      const mainFiles = stagedFiles.filter(file => file.fieldname !== 'recipe-headers');
+      const validations = mainFiles.map(validateUploadStructure);
+      const mismatch = validations.find(validation => !validation.ok);
+      if (mismatch) {
+        return res.status(422).json({ code: 'FILE_STRUCTURE_MISMATCH', error: mismatch.error, mismatch });
+      }
+      const recipeHeader = stagedFiles.find(file => file.fieldname === 'recipe-headers');
+      const headerSheets = workbookStructure(recipeHeader.path);
+      if (!structureHasHeader(headerSheets, ['Id Producto', 'Nombre Producto*', 'Cantidad a Producir', 'Unidad de Medida'])) {
+        return res.status(422).json({
+          code: 'RECIPE_HEADER_STRUCTURE_MISMATCH',
+          error: 'HEADERS_RECETAS.txt no contiene la estructura vigente de cabeceras de recetas.'
+        });
+      }
+      const canonicalSchemaHeader = value => {
+        const normalized = normalizeHeader(value);
+        const aliases = {
+          'id jerarquia': 'hierarchy id',
+          'hierarchy id': 'hierarchy id',
+          'id nodo **': 'node id **',
+          'node id **': 'node id **',
+          'id nodo padre': 'parent node id',
+          'parent node id': 'parent node id',
+          'visible a clientes *': 'visible to customers *',
+          'visible to customers *': 'visible to customers *',
+          fotos: 'photos',
+          photos: 'photos',
+          orden: 'order',
+          order: 'order',
+          'sort order': 'order'
+        };
+        if (/^(?:nombre jerarquia|(?:product|ingredient|extras?) hierarchy name)\b/.test(normalized)) {
+          return 'hierarchy name *';
+        }
+        return aliases[normalized] || normalized;
+      };
+      const schemaFor = filePath => workbookStructure(filePath).map(sheet => {
+        const rows = sheet.rows.slice(0, 5);
+        const header = rows.reduce((best, row) => {
+          const normalized = row.map(canonicalSchemaHeader).filter(Boolean);
+          return normalized.length > best.length ? normalized : best;
+        }, []);
+        return { name: sheet.normalizedName, header };
+      }).filter(sheet => sheet.header.length);
+      const sameSchema = (currentPath, incomingPath) => {
+        const current = schemaFor(currentPath);
+        const incoming = schemaFor(incomingPath);
+        if (current.length !== incoming.length) return false;
+        return current.every((sheet, index) => {
+          const candidate = current.length === 1
+            ? incoming[0]
+            : incoming.find(item => item.name === sheet.name) || incoming[index];
+          return candidate && JSON.stringify(candidate.header) === JSON.stringify(sheet.header);
+        });
+      };
+      const schemaChecks = [];
+      for (const file of mainFiles) {
+        const current = latestMasterFile(file.fieldname, projectionToday());
+        const compatible = Boolean(current && sameSchema(current.filePath, file.path));
+        schemaChecks.push({
+          field: file.fieldname,
+          label: UPLOAD_STRUCTURE_LABELS[file.fieldname],
+          compatible,
+          comparedWith: current?.originalName || current?.name || null
+        });
+      }
+      const incompatible = schemaChecks.filter(check => !check.compatible);
+      if (incompatible.length) {
+        return res.status(422).json({
+          code: 'MASTER_SCHEMA_CHANGED',
+          error: `No se actualizó ningún maestro: ${incompatible.map(item => item.label).join(', ')} no coincide con la estructura vigente guardada.`,
+          checks: schemaChecks
+        });
+      }
+      const validFrom = projectionToday();
+      const savedAt = new Date().toISOString();
+      const saved = {};
+      for (const file of mainFiles) {
+        const storedName = safeFilename(file);
+        const destination = path.join(mastersRoot, storedName);
+        fs.copyFileSync(file.path, destination);
+        createdMasterFiles.push(destination);
+        saved[file.fieldname] = {
+          field: file.fieldname,
+          name: storedName,
+          originalName: file.originalname,
+          size: file.size,
+          url: `/uploads/masters/${encodeURIComponent(storedName)}`,
+          savedAt,
+          validFrom
+        };
+      }
+      const storedHeaderName = safeFilename(recipeHeader);
+      const storedHeaderPath = path.join(mastersRoot, storedHeaderName);
+      fs.copyFileSync(recipeHeader.path, storedHeaderPath);
+      createdMasterFiles.push(storedHeaderPath);
+      saved['master-recipes'].parts = [{
+        name: storedHeaderName,
+        originalName: recipeHeader.originalname,
+        size: recipeHeader.size,
+        url: `/uploads/masters/${encodeURIComponent(storedHeaderName)}`
+      }];
+      const indexPath = path.join(mastersRoot, 'masters.json');
+      const index = readJson(indexPath, {});
+      const replacedRecords = [];
+      for (const [version, group] of Object.entries(index)) {
+        for (const field of Object.keys(saved)) {
+          if (group[field]?.validFrom !== validFrom) continue;
+          replacedRecords.push(group[field]);
+          delete group[field];
+        }
+        if (!Object.keys(group).length) delete index[version];
+      }
+      index[savedAt] = saved;
+      writeJsonAtomic(indexPath, index);
+      replacedRecords.forEach(record => removeStoredRecords(mastersRoot, record));
+      toteatMasterDownloadBatches.delete(batchId);
+      fs.rmSync(batchRoot, { recursive: true, force: true });
+      return res.json({ ok: true, validFrom, saved, checks: schemaChecks, downloadedFiles: requiredFields.length });
+    } catch (error) {
+      createdMasterFiles.forEach(filePath => fs.rmSync(filePath, { force: true }));
+      return res.status(500).json({ error: error.message || 'No se pudieron validar y guardar los maestros descargados.' });
+    } finally {
+      fs.rmSync(batchRoot, { recursive: true, force: true });
     }
   });
 

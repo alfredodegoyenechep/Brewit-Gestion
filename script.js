@@ -1,5 +1,8 @@
 let locationRegistry = {};
 let exportDecimalSystem = 'comma';
+let toteatMasterDownloadBatchId = null;
+let toteatTransactionalLocations = [];
+let toteatTransactionalCentralWarehouse = null;
 const FIELD_LABELS = {
   kardex: 'Kardex / inventario',
   waste: 'Merma',
@@ -66,7 +69,34 @@ const expandedIngredients = new Set();
 const selectedSalesAnalysis = new Set();
 const collapsedSalesAnalysisGroups = new Set();
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'brewit.sidebarCollapsed';
+const FONT_SCALE_STORAGE_KEY = 'brewit.fontScale';
+const FONT_SCALE_MIN = 80;
+const FONT_SCALE_MAX = 140;
+const FONT_SCALE_STEP = 10;
 let sidebarCollapsedPreference = false;
+
+function applyFontScale(percent) {
+  const scale = Number(percent);
+  const normalized = Number.isFinite(scale) && scale >= FONT_SCALE_MIN && scale <= FONT_SCALE_MAX
+    && (scale - FONT_SCALE_MIN) % FONT_SCALE_STEP === 0 ? scale : 100;
+  document.documentElement.style.setProperty('--font-scale', String(normalized / 100));
+  document.getElementById('font-size-value').value = `${normalized}%`;
+  document.getElementById('font-size-decrease').disabled = normalized === FONT_SCALE_MIN;
+  document.getElementById('font-size-increase').disabled = normalized === FONT_SCALE_MAX;
+  return normalized;
+}
+
+function initializeFontScale() {
+  let saved = null;
+  try { saved = window.localStorage.getItem(FONT_SCALE_STORAGE_KEY); } catch {}
+  let current = applyFontScale(saved === null ? 100 : saved);
+  const change = direction => {
+    current = applyFontScale(current + direction * FONT_SCALE_STEP);
+    try { window.localStorage.setItem(FONT_SCALE_STORAGE_KEY, String(current)); } catch {}
+  };
+  document.getElementById('font-size-decrease').addEventListener('click', () => change(-1));
+  document.getElementById('font-size-increase').addEventListener('click', () => change(1));
+}
 
 function applySidebarPreference() {
   const collapsed = sidebarCollapsedPreference && window.matchMedia('(min-width: 901px)').matches;
@@ -646,10 +676,13 @@ function updateLocationFields() {
   });
   const kardexInput = document.getElementById('file-kardex');
   kardexInput.disabled = !hasLocation;
+  const wasteRow = document.querySelector('[data-weekly-field="waste"]');
+  wasteRow.hidden = !hasLocation;
+  wasteRow.querySelector('input').disabled = !hasLocation;
   document.getElementById('location-note').textContent = !hasLocation
     ? 'Crea o recupera una ubicación en Configuración para cargar archivos.'
     : isWarehouse
-      ? 'Esta bodega solo requiere su Kardex de inventario.'
+      ? 'Esta bodega recibe su Kardex de inventario y el Kardex de Merma Central.'
       : 'Esta cafetería recibe Kardex, merma, consumos de marketing y colaboradores, compras, ventas, Detalle Pagos y transacciones MercadoPago.';
   currentWeekFiles = {};
   clearWeeklySelections();
@@ -1529,6 +1562,333 @@ async function downloadReportSalesFromToteat() {
       ? `Se cerró la sesión vencida y se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`
       : `Se abrió Toteat para ${locationRegistry[location].name}. Inicia sesión allí y luego vuelve a presionar “Descargar Ventas desde web”.`,
     'muted');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveToteatMasterDownload(endpoint, fallbackFilename) {
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const batchEndpoint = toteatMasterDownloadBatchId
+    ? `${endpoint}${separator}batchId=${encodeURIComponent(toteatMasterDownloadBatchId)}`
+    : endpoint;
+  const response = await fetch(batchEndpoint, { method: 'POST' });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = new Error(payload.error || 'No se pudo descargar el archivo desde Toteat.');
+    error.code = payload.code;
+    error.state = payload.state;
+    throw error;
+  }
+  const triggerDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+    const payload = await response.json();
+    if (!Array.isArray(payload.files) || !payload.files.length) throw new Error('TotEat no entregó archivos para descargar.');
+    const filenames = [];
+    for (const [index, file] of payload.files.entries()) {
+      const binary = window.atob(file.data || '');
+      const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+      const filename = file.filename || `${index + 1}-${fallbackFilename}`;
+      triggerDownload(new Blob([bytes], { type: file.contentType || 'application/octet-stream' }), filename);
+      filenames.push(filename);
+      if (index < payload.files.length - 1) await new Promise(resolve => window.setTimeout(resolve, 150));
+    }
+    return filenames;
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
+  triggerDownload(blob, filename);
+  return [filename];
+}
+
+async function startToteatMasterDownloads() {
+  const button = document.getElementById('download-all-toteat-files');
+  const status = document.getElementById('toteat-master-download-status');
+  button.disabled = true;
+  setStatus(status, 'Abriendo Toteat para iniciar sesión…');
+  try {
+    const response = await fetch('/api/integrations/toteat/master-downloads/connect', { method: 'POST' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'No se pudo abrir Toteat.');
+    toteatMasterDownloadBatchId = payload.batchId || null;
+    const requiresAuthentication = payload.requiresAuthentication === true;
+    document.getElementById('toteat-master-download-title').textContent = requiresAuthentication
+      ? 'Inicia sesión en la ventana de Toteat'
+      : 'Sesión de Toteat actualizada';
+    document.getElementById('toteat-master-download-copy').textContent = requiresAuthentication
+      ? 'Tómate el tiempo necesario para ingresar. Cuando veas Toteat abierto y autenticado, vuelve aquí para descargar los siete archivos maestros.'
+      : 'Encontramos una sesión activa y refrescamos Toteat para actualizar sus opciones de fecha. Puedes comenzar las descargas.';
+    setStatus(document.getElementById('toteat-master-dialog-status'), '', 'muted');
+    document.getElementById('toteat-master-download-dialog').showModal();
+    setStatus(status, requiresAuthentication
+      ? 'Toteat solicita login. Completa el inicio de sesión y confirma para comenzar las descargas.'
+      : 'La sesión existente de Toteat fue refrescada y está lista para descargar.', 'muted');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function closeToteatMasterDownloadDialog() {
+  const dialog = document.getElementById('toteat-master-download-dialog');
+  if (dialog.open) dialog.close();
+}
+
+function closeToteatTransactionalDownloadDialog() {
+  const dialog = document.getElementById('toteat-transactional-download-dialog');
+  if (dialog.open) dialog.close();
+}
+
+const TOTEAT_TRANSACTION_REPORTS = [
+  { label: 'Ventas Totales', route: 'sales', emptyCode: 'TOTEAT_NO_SALES_AVAILABLE' },
+  { label: 'Detalle Pagos', route: 'payment-details', emptyCode: 'TOTEAT_NO_PAYMENT_DETAILS_AVAILABLE' },
+  { label: 'Compras', route: 'purchases', emptyCode: 'TOTEAT_NO_PURCHASES_AVAILABLE' }
+];
+const TOTEAT_LOCAL_KARDEX_REPORTS = [
+  { label: 'Kardex Bodega Local', route: 'kardex-local', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
+  { label: 'Kardex Bodega Merma', route: 'kardex-waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
+];
+const TOTEAT_CENTRAL_KARDEX_REPORTS = [
+  { label: 'Kardex Bodega Central', route: 'kardex-central', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
+  { label: 'Kardex Bodega Central Merma', route: 'kardex-central-waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
+];
+const toteatReportsForLocation = location => location.central
+  ? TOTEAT_CENTRAL_KARDEX_REPORTS
+  : [...TOTEAT_TRANSACTION_REPORTS, ...TOTEAT_LOCAL_KARDEX_REPORTS];
+
+function createToteatTransactionalProgress(locations) {
+  const panel = document.getElementById('toteat-transactional-progress');
+  const list = document.getElementById('toteat-transactional-progress-list');
+  const bar = document.getElementById('toteat-transactional-progress-bar');
+  const count = document.getElementById('toteat-transactional-progress-count');
+  const percent = document.getElementById('toteat-transactional-progress-percent');
+  const total = locations.reduce((sum, location) => sum + toteatReportsForLocation(location).length, 0);
+  const rows = new Map();
+  let processed = 0;
+  list.replaceChildren();
+  panel.hidden = false;
+  bar.max = Math.max(total, 1);
+  bar.value = 0;
+  count.textContent = `0 de ${total} reportes procesados`;
+  percent.textContent = '0%';
+  for (const location of locations) {
+    const group = document.createElement('div');
+    group.className = 'toteat-progress-location';
+    const heading = document.createElement('strong');
+    heading.textContent = `${location.name} · ID local ${location.toteatLocalId || location.id}`;
+    group.append(heading);
+    for (const report of toteatReportsForLocation(location)) {
+      const row = document.createElement('div');
+      row.className = 'toteat-progress-report';
+      row.dataset.state = 'waiting';
+      const label = document.createElement('span');
+      label.textContent = report.label;
+      const state = document.createElement('span');
+      state.textContent = 'En espera';
+      row.append(label, state);
+      group.append(row);
+      rows.set(`${location.id}:${report.route}`, { row, state });
+    }
+    list.append(group);
+  }
+  return {
+    update(location, report, status, message) {
+      const entry = rows.get(`${location.id}:${report.route}`);
+      entry.row.dataset.state = status;
+      entry.state.textContent = message;
+      if (status === 'active') entry.row.scrollIntoView({ block: 'nearest' });
+      if (status === 'done' || status === 'empty') {
+        processed += 1;
+        bar.value = processed;
+        count.textContent = `${processed} de ${total} reportes procesados`;
+        percent.textContent = `${Math.round(processed / Math.max(total, 1) * 100)}%`;
+      }
+    }
+  };
+}
+
+async function startToteatTransactionalDownloads() {
+  const button = document.getElementById('download-all-toteat-transactions');
+  const status = document.getElementById('toteat-master-download-status');
+  button.disabled = true;
+  setStatus(status, 'Preparando la descarga transaccional por cafetería…');
+  try {
+    const payload = await apiRequest('/api/integrations/toteat/transactional-downloads/connect', { method: 'POST' });
+    toteatTransactionalLocations = payload.locations || [];
+    toteatTransactionalCentralWarehouse = payload.centralWarehouse
+      ? { ...payload.centralWarehouse, central: true } : null;
+    document.getElementById('toteat-transactional-progress').hidden = true;
+    document.getElementById('confirm-toteat-transactional-download').textContent = 'Ya inicié sesión, descargar reportes';
+    const list = document.getElementById('toteat-transactional-locations');
+    list.replaceChildren();
+    toteatTransactionalLocations.forEach((location, index) => {
+      const number = document.createElement('span');
+      number.textContent = String(index + 1);
+      const details = document.createElement('div');
+      const name = document.createElement('strong');
+      name.textContent = `${location.name} · ${location.toteatName} · ID local ${location.toteatLocalId || location.id}`;
+      const range = document.createElement('small');
+      const latestDetail = location.latestTransactionAt
+        ? ` · último registro: ${new Date(location.latestTransactionAt).toLocaleString('es-CL')}` : ' · sin registros previos';
+      range.textContent = `Ventas: ${formatReportDate(location.dateFrom)} – ${formatReportDate(location.dateTo)}${latestDetail} · Detalle Pagos: ${formatReportDate(location.paymentDetailsDateFrom)} – ${formatReportDate(location.dateTo)} · Compras: ${formatReportDate(location.purchasesDateFrom)} – ${formatReportDate(location.dateTo)} · Kardex Local: ${formatReportDate(location.kardexDateFrom)} – ${formatReportDate(location.dateTo)} · Merma: ${formatReportDate(location.wasteDateFrom)} – ${formatReportDate(location.dateTo)}`;
+      details.append(name, range);
+      list.append(number, details);
+    });
+    if (toteatTransactionalCentralWarehouse) {
+      const central = toteatTransactionalCentralWarehouse;
+      const number = document.createElement('span');
+      number.textContent = String(toteatTransactionalLocations.length + 1);
+      const details = document.createElement('div');
+      const name = document.createElement('strong');
+      name.textContent = `${central.name} · administrada por ID local ${central.toteatLocalId}`;
+      const range = document.createElement('small');
+      range.textContent = `Kardex Central: ${formatReportDate(central.kardexDateFrom)} – ${formatReportDate(central.dateTo)} · Merma Central: ${formatReportDate(central.wasteDateFrom)} – ${formatReportDate(central.dateTo)}`;
+      details.append(name, range);
+      list.append(number, details);
+    }
+    document.getElementById('toteat-transactional-download-title').textContent = payload.requiresAuthentication
+      ? 'Inicia sesión en la ventana de TotEat'
+      : 'Sesión de TotEat actualizada';
+    document.getElementById('toteat-transactional-download-copy').textContent = payload.requiresAuthentication
+      ? 'Completa el login y vuelve aquí. Brewit descargará cinco reportes por cafetería y, al final, los dos Kardex de la Bodega principal.'
+      : 'Brewit descargará cinco reportes por cafetería y, al final, los dos Kardex de la Bodega principal; cada rango empieza en el último registro guardado.';
+    setStatus(document.getElementById('toteat-transactional-dialog-status'), '', 'muted');
+    document.getElementById('toteat-transactional-download-dialog').showModal();
+    setStatus(status, payload.requiresAuthentication
+      ? 'TotEat solicita login. Completa la sesión antes de continuar.'
+      : 'La sesión de TotEat está lista para descargar los reportes por cafetería y bodega.', 'muted');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function confirmToteatTransactionalDownloads() {
+  const button = document.getElementById('confirm-toteat-transactional-download');
+  const closeButton = document.getElementById('close-toteat-transactional-download');
+  const cancelButton = document.getElementById('cancel-toteat-transactional-download');
+  const dialogStatus = document.getElementById('toteat-transactional-dialog-status');
+  const status = document.getElementById('toteat-master-download-status');
+  button.disabled = true;
+  closeButton.disabled = true;
+  cancelButton.disabled = true;
+  const completed = [];
+  const withoutData = [];
+  const jobs = toteatTransactionalLocations.map(location => ({ location, selectionLocationId: location.id }));
+  if (toteatTransactionalCentralWarehouse) jobs.push({
+    location: toteatTransactionalCentralWarehouse,
+    selectionLocationId: toteatTransactionalCentralWarehouse.ownerLocationId
+  });
+  const progress = createToteatTransactionalProgress(jobs.map(job => job.location));
+  let activeLocation = null;
+  let activeReport = null;
+  try {
+    for (const [index, job] of jobs.entries()) {
+      const { location, selectionLocationId } = job;
+      activeLocation = location;
+      activeReport = null;
+      setStatus(dialogStatus, `Local ${location.toteatLocalId || location.id}: seleccionando ${location.name} (${index + 1} de ${jobs.length})…`);
+      const selection = await fetch('/api/integrations/toteat/transactional-downloads/select-location', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: selectionLocationId })
+      });
+      if (!selection.ok) {
+        const payload = await selection.json().catch(() => ({}));
+        throw new Error(payload.error || `No se pudo seleccionar ${location.name} en TotEat.`);
+      }
+      for (const report of toteatReportsForLocation(location)) {
+        activeReport = report;
+        progress.update(location, report, 'active', 'Descargando…');
+        setStatus(dialogStatus, `Local ${location.toteatLocalId || location.id} · ${location.name}: descargando ${report.label} (${index + 1} de ${jobs.length})…`);
+        const response = await fetch(`/api/integrations/toteat/transactional-downloads/${report.route}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: location.id })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          if (payload.code === report.emptyCode || payload.code === 'TOTEAT_NO_DATA_AVAILABLE') {
+            withoutData.push(`${report.label} de ${location.name}`);
+            progress.update(location, report, 'empty', 'Sin datos');
+            continue;
+          }
+          throw new Error(payload.error || `No se pudo descargar ${report.label} de ${location.name}.`);
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+          || `${location.toteatLocalId || location.id}_${report.route}-toteat-${location.id}.csv`;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        completed.push(`${report.label} de ${location.name}`);
+        progress.update(location, report, 'done', 'Descargado');
+      }
+    }
+    const skipped = withoutData.length ? ` Sin registros: ${withoutData.join(', ')}.` : '';
+    setStatus(status, `${completed.length} archivo(s) transaccionales descargados.${skipped}`, 'success');
+    setStatus(dialogStatus, `Descarga finalizada: ${completed.length} archivo(s) descargados y ${withoutData.length} reporte(s) sin datos.`, 'success');
+    button.textContent = 'Descargar nuevamente';
+  } catch (error) {
+    if (activeLocation && activeReport) progress.update(activeLocation, activeReport, 'error', 'Error');
+    setStatus(dialogStatus, `${completed.length} archivo(s) descargados antes del error. ${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+    closeButton.disabled = false;
+    cancelButton.disabled = false;
+  }
+}
+
+async function confirmToteatMasterDownloads() {
+  const button = document.getElementById('confirm-toteat-master-download');
+  const dialogStatus = document.getElementById('toteat-master-dialog-status');
+  const status = document.getElementById('toteat-master-download-status');
+  const downloads = [
+    ['Proveedores', '/api/integrations/toteat/master-downloads/suppliers', 'proveedores-toteat.xlsx', 1],
+    ['Productos / Ingredientes / Extras', '/api/integrations/toteat/master-downloads/products', 'productos-ingredientes-extras-toteat.xlsx', 1],
+    ['Jerarquía de Productos', '/api/integrations/toteat/master-downloads/product-hierarchy', 'jerarquia-productos-toteat.csv', 1],
+    ['Jerarquía de Ingredientes', '/api/integrations/toteat/master-downloads/ingredient-hierarchy', 'jerarquia-ingredientes-toteat.csv', 1],
+    ['Jerarquía de Extras', '/api/integrations/toteat/master-downloads/extras-hierarchy', 'jerarquia-extras-toteat.csv', 1],
+    ['Maestro de Recetas (Header y Detalle)', '/api/integrations/toteat/master-downloads/recipes', 'recetas-toteat.txt', 2]
+  ];
+  const expectedFileCount = downloads.reduce((sum, download) => sum + download[3], 0);
+  const completed = [];
+  button.disabled = true;
+  try {
+    for (const [index, [label, endpoint, fallbackFilename]] of downloads.entries()) {
+      setStatus(dialogStatus, `Descargando ${index + 1} de ${downloads.length}: ${label}…`);
+      completed.push(...await saveToteatMasterDownload(endpoint, fallbackFilename));
+    }
+    setStatus(dialogStatus, 'Los siete archivos llegaron correctamente. Validando sus estructuras contra los maestros vigentes…');
+    const update = await apiRequest('/api/integrations/toteat/master-downloads/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ batchId: toteatMasterDownloadBatchId })
+    });
+    closeToteatMasterDownloadDialog();
+    toteatMasterDownloadBatchId = null;
+    setStatus(status, `Los ${expectedFileCount} archivos fueron descargados y validados. Los seis maestros se actualizaron con vigencia ${formatReportDate(update.validFrom)}.`, 'success');
+    await renderMasterList();
+  } catch (error) {
+    const authenticationMessage = error.code === 'TOTEAT_AUTH_REQUIRED'
+      ? 'Toteat todavía solicita autenticación. Completa el inicio de sesión en su ventana y vuelve a intentar.'
+      : error.message;
+    const progress = completed.length ? `${completed.length} de ${expectedFileCount} archivo(s) ya fueron descargados. ` : '';
+    setStatus(dialogStatus, `${progress}${authenticationMessage}`, 'error');
   } finally {
     button.disabled = false;
   }
@@ -8154,6 +8514,23 @@ function renderLocationManagement(data) {
     addressInput.maxLength = 200;
     addressInput.placeholder = 'Dirección para órdenes de compra';
     addressInput.setAttribute('aria-label', `Dirección de ${location.name}`);
+    const toteatFields = document.createElement('div');
+    toteatFields.className = 'location-toteat-fields';
+    const toteatInputs = [
+      ['Restaurant ID', 'toteatRestaurantId'], ['ID Local', 'toteatLocalId'],
+      ['Nombre', 'toteatName'], ['Simple ID', 'toteatSimpleId']
+    ].map(([label, field]) => {
+      const wrapper = document.createElement('label');
+      const caption = document.createElement('span');
+      caption.textContent = `TotEat · ${label}`;
+      const input = document.createElement('input');
+      input.value = location[field] || '';
+      input.maxLength = field === 'toteatName' ? 100 : 40;
+      input.setAttribute('aria-label', `${label} TotEat para ${location.name}`);
+      wrapper.append(caption, input);
+      toteatFields.appendChild(wrapper);
+      return [field, input];
+    });
     const type = document.createElement('span');
     type.className = 'location-type-badge';
     type.textContent = location.type === 'warehouse' ? 'Bodega' : 'Cafetería';
@@ -8167,9 +8544,13 @@ function renderLocationManagement(data) {
         await apiRequest(`/api/config/locations/${encodeURIComponent(location.id)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: nameInput.value, address: addressInput.value })
+          body: JSON.stringify({
+            name: nameInput.value,
+            address: addressInput.value,
+            ...Object.fromEntries(toteatInputs.map(([field, input]) => [field, input.value]))
+          })
         });
-        setStatus(document.getElementById('location-status'), 'Nombre y dirección actualizados.', 'success');
+        setStatus(document.getElementById('location-status'), 'Ubicación e identificadores de TotEat actualizados.', 'success');
         await refreshLocationConfiguration();
       } catch (error) {
         setStatus(document.getElementById('location-status'), error.message, 'error');
@@ -8181,7 +8562,7 @@ function renderLocationManagement(data) {
     trashButton.className = 'delete-button small';
     trashButton.textContent = 'Enviar a papelera';
     trashButton.addEventListener('click', () => openLocationTrashDialog(location));
-    row.append(nameInput, addressInput, type, saveButton, trashButton);
+    row.append(nameInput, addressInput, type, toteatFields, saveButton, trashButton);
     activeList.appendChild(row);
   }
 
@@ -8599,6 +8980,7 @@ async function uploadMasterFiles(replace = false) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initializeFontScale();
   initializeSidebarToggle();
   syncHourlyDemandControls();
   const financialToday = browserIsoToday();
@@ -8666,6 +9048,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('report-upload-sales').addEventListener('click', startReportSalesUpload);
   document.getElementById('report-download-toteat-sales').addEventListener('click', downloadReportSalesFromToteat);
+  document.getElementById('download-all-toteat-files').addEventListener('click', startToteatMasterDownloads);
+  document.getElementById('download-all-toteat-transactions').addEventListener('click', startToteatTransactionalDownloads);
+  document.getElementById('confirm-toteat-master-download').addEventListener('click', confirmToteatMasterDownloads);
+  document.getElementById('close-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
+  document.getElementById('cancel-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
+  document.getElementById('confirm-toteat-transactional-download').addEventListener('click', confirmToteatTransactionalDownloads);
+  document.getElementById('close-toteat-transactional-download').addEventListener('click', closeToteatTransactionalDownloadDialog);
+  document.getElementById('cancel-toteat-transactional-download').addEventListener('click', closeToteatTransactionalDownloadDialog);
+  document.getElementById('toteat-transactional-download-dialog').addEventListener('cancel', event => {
+    if (document.getElementById('confirm-toteat-transactional-download').disabled) event.preventDefault();
+  });
   document.getElementById('confirm-report-sales-location').addEventListener('click', () => {
     const location = document.getElementById('report-sales-upload-location').value;
     closeReportSalesLocationDialog();
@@ -9151,7 +9544,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         body: JSON.stringify({
           name: document.getElementById('new-location-name').value,
           address: document.getElementById('new-location-address').value,
-          type: document.getElementById('new-location-type').value
+          type: document.getElementById('new-location-type').value,
+          toteatRestaurantId: document.getElementById('new-location-toteat-restaurant-id').value,
+          toteatLocalId: document.getElementById('new-location-toteat-local-id').value,
+          toteatName: document.getElementById('new-location-toteat-name').value,
+          toteatSimpleId: document.getElementById('new-location-toteat-simple-id').value
         })
       });
       form.reset();

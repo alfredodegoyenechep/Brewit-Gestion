@@ -125,6 +125,12 @@
           <div class="user-role">Admin Console</div>
         </div>
       </div>
+      <div class="font-size-controls" role="group" aria-label="Tamaño de letra de la aplicación">
+        <span class="font-size-controls-label">Tamaño de letra</span>
+        <button id="font-size-decrease" type="button" aria-label="Reducir tamaño de letra" title="Reducir tamaño de letra">A−</button>
+        <output id="font-size-value" aria-live="polite">100%</output>
+        <button id="font-size-increase" type="button" aria-label="Aumentar tamaño de letra" title="Aumentar tamaño de letra">A+</button>
+      </div>
     </div>
   </aside>
 
@@ -1754,13 +1760,67 @@
     </section>
 
     <section id="file-loader" class="panel" style="display:none;">
-      <div class="panel-head">
+      <div class="panel-head upload-workspace-head">
         <div>
           <div class="panel-eyebrow">Datos de Brewit</div>
           <h2>Cargar archivos</h2>
           <p class="panel-description">Incorpora transacciones por ubicación o actualiza archivos maestros compartidos.</p>
         </div>
+        <div class="panel-head-actions">
+          <button id="download-all-toteat-files" class="primary" type="button">Descargar Todos los Archivos Maestros</button>
+          <button id="download-all-toteat-transactions" class="primary" type="button">Descargar Todos los Archivos Transaccionales</button>
+        </div>
       </div>
+      <div id="toteat-master-download-status" class="form-status" aria-live="polite"></div>
+
+      <dialog id="toteat-master-download-dialog" class="inventory-criteria-dialog" aria-labelledby="toteat-master-download-title">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Descarga desde Toteat</div>
+            <h3 id="toteat-master-download-title">Inicia sesión en la ventana de Toteat</h3>
+            <p id="toteat-master-download-copy" class="panel-description">Tómate el tiempo necesario para ingresar. Cuando veas Toteat abierto y autenticado, vuelve aquí para descargar los siete archivos maestros.</p>
+          </div>
+          <button id="close-toteat-master-download" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="toteat-download-files" aria-label="Archivos que se descargarán">
+          <span>1</span><div><strong>Proveedores</strong><small>Exportación desde Proveedores</small></div>
+          <span>2</span><div><strong>Productos / Ingredientes / Extras</strong><small>Exportación XLS Adv. Total</small></div>
+          <span>3</span><div><strong>Jerarquía de Productos</strong><small>Exportación CSV</small></div>
+          <span>4</span><div><strong>Jerarquía de Ingredientes</strong><small>Exportación CSV</small></div>
+          <span>5</span><div><strong>Jerarquía de Extras</strong><small>Exportación CSV</small></div>
+          <span>6</span><div><strong>Maestro de Recetas</strong><small>Dos archivos: Header y Detalle. Tras validar los siete archivos, se actualizarán los seis maestros con vigencia de hoy.</small></div>
+        </div>
+        <div id="toteat-master-dialog-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-toteat-master-download" class="primary" type="button">Ya inicié sesión, descargar</button>
+          <button id="cancel-toteat-master-download" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+
+      <dialog id="toteat-transactional-download-dialog" class="inventory-criteria-dialog" aria-labelledby="toteat-transactional-download-title">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Descarga transaccional desde TotEat</div>
+            <h3 id="toteat-transactional-download-title">Reportes por cafetería</h3>
+            <p id="toteat-transactional-download-copy" class="panel-description"></p>
+          </div>
+          <button id="close-toteat-transactional-download" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div id="toteat-transactional-locations" class="toteat-download-files" aria-label="Cafeterías que se procesarán"></div>
+        <section id="toteat-transactional-progress" class="toteat-transactional-progress" aria-label="Progreso de descarga" hidden>
+          <div class="toteat-progress-heading">
+            <strong id="toteat-transactional-progress-count">0 de 0 reportes procesados</strong>
+            <span id="toteat-transactional-progress-percent">0%</span>
+          </div>
+          <progress id="toteat-transactional-progress-bar" value="0" max="1"></progress>
+          <div id="toteat-transactional-progress-list" class="toteat-progress-list"></div>
+        </section>
+        <div id="toteat-transactional-dialog-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-toteat-transactional-download" class="primary" type="button">Ya inicié sesión, descargar reportes</button>
+          <button id="cancel-toteat-transactional-download" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
 
       <div class="upload-mode-switch" role="tablist" aria-label="Tipo de carga">
         <button class="upload-mode active" type="button" data-upload-mode="weekly" role="tab" aria-selected="true">Transacciones</button>
@@ -1787,7 +1847,7 @@
             <label for="file-kardex">Kardex / tarjeta de inventario</label>
             <input type="file" id="file-kardex" name="kardex" accept=".csv,.xls,.xlsx,.txt" />
           </div>
-          <div class="file-row store-only" data-weekly-field="waste">
+          <div class="file-row" data-weekly-field="waste">
             <label for="file-waste">Merma</label>
             <input type="file" id="file-waste" name="waste" accept=".csv,.xls,.xlsx,.txt" />
           </div>
@@ -2005,6 +2065,10 @@
             <option value="warehouse">Bodega</option>
           </select>
         </label>
+        <label><span>TotEat · Restaurant ID</span><input id="new-location-toteat-restaurant-id" name="toteatRestaurantId" type="text" maxlength="40" /></label>
+        <label><span>TotEat · ID Local</span><input id="new-location-toteat-local-id" name="toteatLocalId" type="text" maxlength="40" /></label>
+        <label><span>TotEat · Nombre</span><input id="new-location-toteat-name" name="toteatName" type="text" maxlength="100" /></label>
+        <label><span>TotEat · Simple ID</span><input id="new-location-toteat-simple-id" name="toteatSimpleId" type="text" maxlength="40" /></label>
         <button class="primary" type="submit">Crear ubicación</button>
       </form>
       <div id="location-status" class="form-status" aria-live="polite"></div>

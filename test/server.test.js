@@ -83,7 +83,7 @@ test('serves the app and exposes the three upload locations', async t => {
   assert.deepEqual(locations['store-1'].fields, [
     'kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'
   ]);
-  assert.deepEqual(locations['main-warehouse'].fields, ['kardex']);
+  assert.deepEqual(locations['main-warehouse'].fields, ['kardex', 'waste']);
   assert.match(await (await fetch(`${baseUrl}/`)).text(), /Detalle Pagos/);
 });
 
@@ -481,9 +481,76 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
         contentType: 'text/csv; charset=utf-8',
         buffer: Buffer.from('payment-details-report')
       };
+    },
+    async connectMasterDownloads() {
+      calls.push(['connect-master-downloads']);
+      return { opened: true, requiresAuthentication: false, refreshed: true };
+    },
+    async connectTransactionalDownloads() {
+      calls.push(['connect-transactional-downloads']);
+      return { opened: true, requiresAuthentication: false, refreshed: true };
+    },
+    async downloadTransactionalSales(options) {
+      calls.push(['download-transactional-sales', options]);
+      return {
+        filename: 'ventas-transaccionales.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('transactional-sales')
+      };
+    },
+    async selectTransactionalRestaurant(restaurant) {
+      calls.push(['select-transactional-restaurant', restaurant]);
+      return { changed: true, localId: restaurant.localId };
+    },
+    async downloadTransactionalPaymentDetails(options) {
+      calls.push(['download-transactional-payment-details', options]);
+      return { filename: 'detalle-pagos.csv', contentType: 'text/csv; charset=utf-8', buffer: Buffer.from('transactional-payments') };
+    },
+    async downloadTransactionalPurchases(options) {
+      calls.push(['download-transactional-purchases', options]);
+      return { filename: 'listado_compras_detalle.xls', contentType: 'application/vnd.ms-excel', buffer: Buffer.from('transactional-purchases') };
+    },
+    async downloadTransactionalKardex(options) {
+      calls.push(['download-transactional-kardex', options]);
+      return { filename: 'kardex_report.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(`kardex-${options.kind}`), warehouseName: `Bodega ${options.kind}` };
+    },
+    async downloadSuppliers() {
+      calls.push(['download-suppliers']);
+      return {
+        filename: 'proveedores.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('suppliers-report')
+      };
+    },
+    async downloadProductsMaster() {
+      calls.push(['download-products-master']);
+      return {
+        filename: 'productos-adv-total.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: Buffer.from('products-report')
+      };
+    },
+    async downloadProductHierarchy() {
+      calls.push(['download-product-hierarchy']);
+      return { filename: 'jerarquia-productos.csv', contentType: 'text/csv', buffer: Buffer.from('product-hierarchy') };
+    },
+    async downloadIngredientHierarchy() {
+      calls.push(['download-ingredient-hierarchy']);
+      return { filename: 'jerarquia-ingredientes.csv', contentType: 'text/csv', buffer: Buffer.from('ingredient-hierarchy') };
+    },
+    async downloadExtrasHierarchy() {
+      calls.push(['download-extras-hierarchy']);
+      return { filename: 'jerarquia-extras.csv', contentType: 'text/csv', buffer: Buffer.from('extras-hierarchy') };
+    },
+    async downloadRecipes() {
+      calls.push(['download-recipes']);
+      return { files: [
+        { filename: 'HEADERS_RECETAS.txt', contentType: 'text/plain; charset=utf-8', buffer: Buffer.from('recipe-headers') },
+        { filename: 'DETALLE_RECETAS.txt', contentType: 'text/plain; charset=utf-8', buffer: Buffer.from('recipe-details') }
+      ] };
     }
   };
-  const baseUrl = await startTestServer(t, { toteatAutomation });
+  const baseUrl = await startTestServer(t, { toteatAutomation, reportToday: '2026-09-17' });
   const invalid = await fetch(`${baseUrl}/api/integrations/toteat/download-sales`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'all' })
   });
@@ -515,11 +582,142 @@ test('downloads Toteat sales for a specific cafeteria and keeps authentication e
   assert.equal(paymentDetails.status, 200);
   assert.match(paymentDetails.headers.get('content-disposition'), /detalle-pagos\.csv/);
   assert.equal(Buffer.from(await paymentDetails.arrayBuffer()).toString(), 'payment-details-report');
+  const masterConnection = await fetch(`${baseUrl}/api/integrations/toteat/master-downloads/connect`, { method: 'POST' });
+  assert.equal(masterConnection.status, 200);
+  const masterConnectionPayload = await masterConnection.json();
+  assert.match(masterConnectionPayload.loginUrl, /logintoteat/);
+  assert.equal(masterConnectionPayload.requiresAuthentication, false);
+  assert.equal(masterConnectionPayload.refreshed, true);
+  const suppliers = await fetch(`${baseUrl}/api/integrations/toteat/master-downloads/suppliers`, { method: 'POST' });
+  assert.equal(suppliers.status, 200);
+  assert.match(suppliers.headers.get('content-disposition'), /proveedores\.xlsx/);
+  assert.equal(Buffer.from(await suppliers.arrayBuffer()).toString(), 'suppliers-report');
+  const products = await fetch(`${baseUrl}/api/integrations/toteat/master-downloads/products`, { method: 'POST' });
+  assert.equal(products.status, 200);
+  assert.match(products.headers.get('content-disposition'), /productos-adv-total\.xlsx/);
+  assert.equal(Buffer.from(await products.arrayBuffer()).toString(), 'products-report');
+  const remainingMasterDownloads = [
+    ['product-hierarchy', 'jerarquia-productos.csv', 'product-hierarchy'],
+    ['ingredient-hierarchy', 'jerarquia-ingredientes.csv', 'ingredient-hierarchy'],
+    ['extras-hierarchy', 'jerarquia-extras.csv', 'extras-hierarchy']
+  ];
+  for (const [route, filename, contents] of remainingMasterDownloads) {
+    const response = await fetch(`${baseUrl}/api/integrations/toteat/master-downloads/${route}`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-disposition'), new RegExp(filename.replace('.', '\\.')));
+    assert.equal(Buffer.from(await response.arrayBuffer()).toString(), contents);
+  }
+  const recipes = await fetch(`${baseUrl}/api/integrations/toteat/master-downloads/recipes`, { method: 'POST' });
+  assert.equal(recipes.status, 200);
+  const recipesPayload = await recipes.json();
+  assert.deepEqual(recipesPayload.files.map(file => [file.filename, Buffer.from(file.data, 'base64').toString()]), [
+    ['HEADERS_RECETAS.txt', 'recipe-headers'],
+    ['DETALLE_RECETAS.txt', 'recipe-details']
+  ]);
+  for (const [id, localId, name, simpleId] of [
+    ['store-1', '1', 'Brewit', '23026'],
+    ['store-2', '2', 'Brewit 2', '24335']
+  ]) {
+    const current = await fetch(`${baseUrl}/api/config/locations`).then(response => response.json());
+    const location = current.active.find(item => item.id === id);
+    const configured = await fetch(`${baseUrl}/api/config/locations/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        name: location.name, address: location.address || '', toteatRestaurantId: '1774666275011576',
+        toteatLocalId: localId, toteatName: name, toteatSimpleId: simpleId
+      })
+    });
+    assert.equal(configured.status, 200);
+  }
+  const transactionalConnection = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/connect`, { method: 'POST' });
+  assert.equal(transactionalConnection.status, 200);
+  const transactionalConnectionPayload = await transactionalConnection.json();
+  assert.deepEqual(transactionalConnectionPayload.locations.map(location => [location.id, location.dateFrom, location.dateTo]), [
+    ['store-1', '2026-05-18', '2026-09-17'], ['store-2', '2026-05-18', '2026-09-17']
+  ]);
+  assert.deepEqual(transactionalConnectionPayload.locations.map(location => location.toteatLocalId), ['1', '2']);
+  assert.deepEqual([
+    transactionalConnectionPayload.centralWarehouse.id,
+    transactionalConnectionPayload.centralWarehouse.ownerLocationId,
+    transactionalConnectionPayload.centralWarehouse.kardexDateFrom,
+    transactionalConnectionPayload.centralWarehouse.wasteDateFrom
+  ], ['main-warehouse', 'store-1', '2026-05-18', '2026-05-18']);
+  const transactionalSales = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/sales`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-2' })
+  });
+  assert.equal(transactionalSales.status, 200);
+  assert.equal(transactionalSales.headers.get('x-brewit-date-from'), '2026-05-18');
+  assert.equal(transactionalSales.headers.get('x-brewit-date-to'), '2026-09-17');
+  assert.match(transactionalSales.headers.get('content-disposition'), /002_ventas-totales-store-2-2026-05-18-2026-09-17\.xlsx/);
+  assert.equal(Buffer.from(await transactionalSales.arrayBuffer()).toString(), 'transactional-sales');
+  const transactionalSelect = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/select-location`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
+  });
+  assert.equal(transactionalSelect.status, 200);
+  for (const [route, body] of [['payment-details', 'transactional-payments'], ['purchases', 'transactional-purchases']]) {
+    const response = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/${route}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-brewit-date-from'), '2026-05-18');
+    assert.equal(response.headers.get('x-brewit-date-to'), '2026-09-17');
+    assert.match(response.headers.get('content-disposition'), new RegExp(`001_${route}-toteat-store-1-2026-05-18-2026-09-17\\.(?:csv|xls)`));
+    assert.equal(Buffer.from(await response.arrayBuffer()).toString(), body);
+  }
+  for (const [kind, location] of [
+    ['local', 'store-1'], ['waste', 'store-2'],
+    ['central', 'main-warehouse'], ['central-waste', 'main-warehouse']
+  ]) {
+    const response = await fetch(`${baseUrl}/api/integrations/toteat/transactional-downloads/kardex-${kind}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location })
+    });
+    assert.equal(response.status, 200);
+    const prefix = kind === 'waste' ? '002' : kind === 'local' ? '001' : '000';
+    assert.match(response.headers.get('content-disposition'), new RegExp(`^[^\n]*${prefix}_kardex-${kind}-${location}-2026-05-18-2026-09-17\\.xlsx`));
+    assert.equal(response.headers.get('x-brewit-date-from'), '2026-05-18');
+    assert.equal(Buffer.from(await response.arrayBuffer()).toString(), `kardex-${kind}`);
+  }
   assert.deepEqual(calls, [
     ['download', 'store-1', 'Tienda 1'],
     ['connect', 'store-1', 'Tienda 1'],
     ['download', 'store-1', 'Tienda 1'],
-    ['download-payment-details', 'store-1', 'Tienda 1']
+    ['download-payment-details', 'store-1', 'Tienda 1'],
+    ['connect-master-downloads'],
+    ['download-suppliers'],
+    ['download-products-master'],
+    ['download-product-hierarchy'],
+    ['download-ingredient-hierarchy'],
+    ['download-extras-hierarchy'],
+    ['download-recipes'],
+    ['connect-transactional-downloads'],
+    ['download-transactional-sales', {
+      restaurant: { restaurantId: '1774666275011576', localId: '2', name: 'Brewit 2', simpleId: '24335' },
+      dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }],
+    ['select-transactional-restaurant', { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' }],
+    ['download-transactional-payment-details', {
+      restaurant: { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' },
+      dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }],
+    ['download-transactional-purchases', {
+      restaurant: { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' },
+      dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }],
+    ['download-transactional-kardex', {
+      restaurant: { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' },
+      kind: 'local', dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }],
+    ['download-transactional-kardex', {
+      restaurant: { restaurantId: '1774666275011576', localId: '2', name: 'Brewit 2', simpleId: '24335' },
+      kind: 'waste', dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }],
+    ['download-transactional-kardex', {
+      restaurant: { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' },
+      kind: 'central', dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }],
+    ['download-transactional-kardex', {
+      restaurant: { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' },
+      kind: 'central-waste', dateFrom: '2026-05-18', dateTo: '2026-09-17'
+    }]
   ]);
 });
 
@@ -550,12 +748,13 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
   skip: !fs.existsSync(CHROME_PATH)
 }, async t => {
   const fakeToteat = http.createServer((req, res) => {
-    if (req.url === '/sales.csv') {
+    if (req.url.startsWith('/sales.csv')) {
+      const selectedLocal = new URL(req.url, 'http://localhost').searchParams.get('local') || '1';
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': 'attachment; filename="ventas-totales.csv"'
       });
-      return res.end('ID de orden\tFecha de creacion\n1\t2026-08-27');
+      return res.end(`ID de orden\tFecha de creacion\tLocal\n1\t2026-08-27\t${selectedLocal}`);
     }
     if (req.url === '/details.csv') {
       res.writeHead(200, {
@@ -563,6 +762,26 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
         'Content-Disposition': 'attachment; filename="detalle-pagos.csv"'
       });
       return res.end('FechaCierre\tComanda\tComentario General\n27-08-26 10:00 a. m.\t1\tPara llevar');
+    }
+    if (req.url === '/suppliers.xlsx' || req.url === '/products.xlsx') {
+      const suppliers = req.url === '/suppliers.xlsx';
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${suppliers ? 'proveedores.xlsx' : 'productos-adv-total.xlsx'}"`
+      });
+      return res.end(suppliers ? 'suppliers' : 'products');
+    }
+    const masterFiles = {
+      '/product-hierarchy.csv': ['text/csv', 'jerarquia-productos.csv', 'AB'],
+      '/ingredient-hierarchy.csv': ['text/csv', 'jerarquia-ingredientes.csv', 'IC'],
+      '/extras-hierarchy.csv': ['text/csv', 'jerarquia-extras.csv', 'BA'],
+      '/recipe-headers.txt': ['text/plain', 'HEADERS_RECETAS.txt', 'recipe-headers'],
+      '/recipe-details.txt': ['text/plain', 'DETALLE_RECETAS.txt', 'recipe-details']
+    };
+    if (masterFiles[req.url]) {
+      const [contentType, filename, contents] = masterFiles[req.url];
+      res.writeHead(200, { 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${filename}"` });
+      return res.end(contents);
     }
     const url = new URL(req.url, 'http://localhost');
     const spanish = url.searchParams.get('lang') === 'es';
@@ -573,12 +792,89 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
       const mode = ${JSON.stringify(mode)};
       const app = document.getElementById('app');
       function renderHome() {
+        if (mode.startsWith('transactional') && location.hash.includes('/restaurant')) {
+          if (!localStorage.getItem('resto')) localStorage.setItem('resto', JSON.stringify({ ir: 1774666275011576, il: 1, nr: 'Brewit', si: 23026 }));
+          const active = JSON.parse(localStorage.getItem('resto'));
+          let selected = active.il;
+          const drawRestaurants = () => {
+            const confirm = selected === active.il ? '' : '<a id="confirm"><span>Confirm</span></a>';
+            app.innerHTML = '<button>Sign Out</button>' + confirm
+              + '<table><tr ng-click="selecciona($index)" id="local-2" class="clickeable ' + (selected === 2 ? 'seleccionado' : '') + '"><td>1774666275011576</td><td>2</td><td>Brewit 2</td><td>Nueva De Lyon 26</td><td>24335</td></tr>'
+              + '<tr ng-click="selecciona($index)" id="local-1" class="clickeable ' + (selected === 1 ? 'seleccionado' : '') + '"><td>1774666275011576</td><td>1</td><td>Brewit</td><td>La Concepcion</td><td>23026</td></tr></table>';
+            document.getElementById('local-1').onclick = () => { selected = 1; drawRestaurants(); };
+            document.getElementById('local-2').onclick = () => { selected = 2; drawRestaurants(); };
+            if (selected !== active.il) document.getElementById('confirm').onclick = () => {
+              localStorage.setItem('resto', JSON.stringify(selected === 2
+                ? { ir: 1774666275011576, il: 2, nr: 'Brewit 2', si: 24335 }
+                : { ir: 1774666275011576, il: 1, nr: 'Brewit', si: 23026 }));
+              location.hash = '/';
+            };
+          };
+          drawRestaurants();
+          return;
+        }
+        if (mode.startsWith('transactional') && location.hash.includes('/reportes/cierres')) {
+          const active = JSON.parse(localStorage.getItem('resto'));
+          if (mode === 'transactional-denied') console.error('Error: permission_denied at /R/PROD-1774666275011576-00002');
+          app.innerHTML = '<button>Sign Out</button><input id="tipoRango" type="radio"><label for="tipoRango">Range</label>'
+            + '<select ng-model="varios.seleccionFechas"><option value="custom">Custom</option></select>'
+            + '<input ng-model="varios.fechaDesde" type="date"><input ng-model="varios.fechaHasta" type="date">'
+            + '<button ng-click="generaReporte()">Refresh</button>'
+            + (mode === 'transactional-denied' ? '' : '<a ng-click="exportaTotalVentasExcel()" href="/sales.csv?local=' + active.il + '" download="ventas-totales.csv">Download Total Sales</a>');
+          return;
+        }
         if (mode === 'fail' || (mode === 'plural-only' && location.hash.endsWith('/cierre'))) {
           app.innerHTML = '<button>${spanish ? 'Cerrar sesión' : 'Sign Out'}</button><p>Inicio</p>'; return;
         }
         if (mode === 'expired') {
           app.innerHTML = '<button>Sign Out</button><button>Reports</button><div class="ds-modal-container" role="dialog"><p>Su sesión está caducada o es inválida.</p><p>¿Desea cerrar esta sesión y abrir una nueva sesión?</p><button>Cancelar</button><button id="expired-ok">OK</button></div>';
           document.getElementById('expired-ok').onclick = () => { document.title = 'expired-dismissed'; document.querySelector('[role="dialog"]').remove(); };
+          return;
+        }
+        if (location.hash.includes('/proveedores-new')) {
+          app.innerHTML = '<button>Sign Out</button><a href="/suppliers.xlsx" download="proveedores.xlsx">Exportar</a>';
+          return;
+        }
+        if (location.hash.includes('/productos')) {
+          app.innerHTML = '<button>Sign Out</button><div id="actions"><span>Actions</span></div><div id="actions-menu"></div>';
+          document.getElementById('actions').onclick = () => {
+            document.getElementById('actions-menu').innerHTML = '<div id="advanced-download"><span>↓ </span><span>XLS Adv.</span> <span>Total</span></div>';
+            document.getElementById('advanced-download').onclick = () => {
+              const link = document.createElement('a'); link.href = '/products.xlsx';
+              link.download = 'productos-adv-total.xlsx'; document.body.appendChild(link); link.click(); link.remove();
+            };
+          };
+          return;
+        }
+        const hierarchyRoutes = {
+          '/jerarquiaingredientes': '/ingredient-hierarchy.csv',
+          '/jerarquiaextras': '/extras-hierarchy.csv',
+          '/jerarquia': '/product-hierarchy.csv'
+        };
+        const hierarchyRoute = Object.keys(hierarchyRoutes).find(route => location.hash.includes(route));
+        if (hierarchyRoute) {
+          const hierarchyId = hierarchyRoute === '/jerarquiaingredientes' ? 'IC.' : hierarchyRoute === '/jerarquiaextras' ? 'BA.' : 'AB.';
+          app.innerHTML = '<button>Sign Out</button><button id="hierarchy">' + hierarchyId + '</button><div id="export-slot"></div>';
+          document.getElementById('hierarchy').onclick = () => {
+            document.getElementById('export-slot').innerHTML = '<button id="csv-download" ng-click="exportaCSV()">CSV ' + hierarchyId + '</button>';
+            document.getElementById('csv-download').onclick = () => {
+            const link = document.createElement('a'); link.href = hierarchyRoutes[hierarchyRoute];
+            link.download = hierarchyRoutes[hierarchyRoute].slice(1) + '.txt'; document.body.appendChild(link); link.click(); link.remove();
+            };
+          };
+          return;
+        }
+        if (location.hash.includes('/ingredientes')) {
+          app.innerHTML = '<button>Sign Out</button><a id="recipes-tab" ng-click="selectTab(2)">Recetas</a><div id="recipes-slot"></div>';
+          document.getElementById('recipes-tab').onclick = () => {
+            document.getElementById('recipes-slot').innerHTML = '<button id="recipes-export" ng-click="exportarRecetas()">Exportar Recetas</button>';
+            document.getElementById('recipes-export').onclick = () => {
+              for (const [href, filename] of [['/recipe-headers.txt', 'HEADERS_RECETAS.txt'], ['/recipe-details.txt', 'DETALLE_RECETAS.txt']]) {
+                const link = document.createElement('a'); link.href = href;
+                link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+              }
+            };
+          };
           return;
         }
         if (!localStorage.getItem('restaurant')) {
@@ -626,6 +922,35 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
     assert.match(download.buffer.toString(), /ID de orden.*2026-08-27/s);
   }
 
+  const transactionalAutomation = createToteatAutomation(profilesRoot, {
+    restaurantsUrl: `${origin}/?mode=transactional#/restaurant`,
+    reportUrl: `${origin}/?mode=transactional#/reportes/cierres`,
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  const firstStore = await transactionalAutomation.downloadTransactionalSales({
+    restaurant: { restaurantId: '1774666275011576', localId: '1', name: 'Brewit', simpleId: '23026' },
+    dateFrom: '2026-08-27', dateTo: '2026-08-28'
+  });
+  const secondStore = await transactionalAutomation.downloadTransactionalSales({
+    restaurant: { restaurantId: '1774666275011576', localId: '2', name: 'Brewit 2', simpleId: '24335' },
+    dateFrom: '2026-08-27', dateTo: '2026-08-28'
+  });
+  assert.match(firstStore.buffer.toString(), /2026-08-27\t1/);
+  assert.match(secondStore.buffer.toString(), /2026-08-27\t2/);
+  const deniedAutomation = createToteatAutomation(profilesRoot, {
+    restaurantsUrl: `${origin}/?mode=transactional-denied#/restaurant`,
+    reportUrl: `${origin}/?mode=transactional-denied#/reportes/cierres`,
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  await assert.rejects(deniedAutomation.downloadTransactionalSales({
+    restaurant: { restaurantId: '1774666275011576', localId: '2', name: 'Brewit 2', simpleId: '24335' },
+    dateFrom: '2026-08-27', dateTo: '2026-08-28'
+  }), error => error.code === 'TOTEAT_NO_SALES_AVAILABLE' && error.status === 422);
+
   const paymentDetailsAutomation = createToteatAutomation(profilesRoot, {
     reportUrl: `${origin}/?lang=es#/reportes/cierres`,
     paymentDetailsReportUrl: `${origin}/?lang=es#/reportes/detallepagos`,
@@ -638,6 +963,38 @@ test('Toteat automation selects the restaurant, uses translated menu fallbacks, 
   );
   assert.equal(paymentDetailsDownload.filename, 'detalle-pagos.csv');
   assert.match(paymentDetailsDownload.buffer.toString(), /FechaCierre.*Comentario General/s);
+
+  const masterAutomation = createToteatAutomation(profilesRoot, {
+    suppliersUrl: `${origin}/#/proveedores-new`,
+    productsUrl: `${origin}/#/productos`,
+    productHierarchyUrl: `${origin}/#/jerarquia`,
+    ingredientHierarchyUrl: `${origin}/#/jerarquiaingredientes`,
+    extrasHierarchyUrl: `${origin}/#/jerarquiaextras`,
+    recipesUrl: `${origin}/#/ingredientes`,
+    executablePath: CHROME_PATH,
+    readyTimeout: 100,
+    transitionDelay: 20
+  });
+  const suppliersDownload = await masterAutomation.downloadSuppliers();
+  assert.equal(suppliersDownload.filename, 'proveedores.xlsx');
+  assert.equal(suppliersDownload.buffer.toString(), 'suppliers');
+  const productsDownload = await masterAutomation.downloadProductsMaster();
+  assert.equal(productsDownload.filename, 'productos-adv-total.xlsx');
+  assert.equal(productsDownload.buffer.toString(), 'products');
+  const additionalMasterDownloads = [
+    [await masterAutomation.downloadProductHierarchy(), 'jerarquia-productos.csv', 'AB'],
+    [await masterAutomation.downloadIngredientHierarchy(), 'jerarquia-ingredientes.csv', 'IC'],
+    [await masterAutomation.downloadExtrasHierarchy(), 'jerarquia-extras.csv', 'BA']
+  ];
+  for (const [masterDownload, filename, contents] of additionalMasterDownloads) {
+    assert.equal(masterDownload.filename, filename);
+    assert.equal(masterDownload.buffer.toString(), contents);
+  }
+  const recipeDownloads = await masterAutomation.downloadRecipes();
+  assert.deepEqual(recipeDownloads.files.map(file => [file.filename, file.buffer.toString()]), [
+    ['HEADERS_RECETAS.txt', 'recipe-headers'],
+    ['DETALLE_RECETAS.txt', 'recipe-details']
+  ]);
 
   const routeFallbackAutomation = createToteatAutomation(profilesRoot, {
     reportUrls: [
@@ -1852,7 +2209,7 @@ test('selects the most recent inventory source files for an active location', as
   assert.equal(updatedWasteSummary.report.totalAdditions, 51);
 
   const warehouse = await fetch(`${baseUrl}/api/inventory/sources?location=main-warehouse`).then(response => response.json());
-  assert.equal(warehouse.sources.find(source => source.field === 'waste').applicable, false);
+  assert.equal(warehouse.sources.find(source => source.field === 'waste').applicable, true);
   assert.equal(warehouse.sources.find(source => source.field === 'marketing').applicable, false);
   assert.equal(warehouse.sources.find(source => source.field === 'employees').applicable, false);
   assert.equal((await fetch(`${baseUrl}/api/inventory/sources?location=unknown`)).status, 400);

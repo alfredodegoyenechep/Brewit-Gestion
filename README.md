@@ -173,3 +173,12 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Each historical amount includes a one-decimal variation against the preceding period, shown in blue for zero or positive and red for negative. Daily history compares each date with the same weekday one week earlier; the oldest visible record omits the variation.
 - Intraday cutoffs are 08:59:59, 10:59:59, 12:59:59, 14:59:59, 16:59:59, 18:59:59, and 23:59:59. The first row also includes sales before 07:00, and the final row includes every sale from 19:00 through the end of the day.
 - Repeated orders found in overlapping uploads are counted once per location using the order ID.
+
+## Display preferences
+
+- The Brewit Studio footer in the sidebar provides global A− / A+ font controls from 80% to 140% in 10-point steps. The preference applies to the complete application, persists in the browser, and remains available when the sidebar is collapsed.
+
+## Toteat master downloads
+
+- `Descargar Todos los Archivos` in the upper-right corner of Cargar Archivos checks the persistent Toteat session. An active session is refreshed before downloading so date-dependent options are current; if authentication is required after that check, Brewit waits for the user to finish login and confirm.
+- The supported batch downloads Proveedores, the Productos / Ingredientes / Extras master (`XLS Adv. Total`), the product (`AB.`), ingredient (`IC.`) and extras (`BA.`) hierarchies in CSV format, plus both recipe master files (Header and Detail). All seven files are delivered to the user's browser. Once every download succeeds, Brewit validates each structure against the current stored master and atomically saves the six master categories with today's effective date; Recipe Header is retained as the companion of Recipe Detail. If one file is missing or incompatible, none of the masters are updated.

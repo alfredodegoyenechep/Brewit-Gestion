@@ -9,11 +9,70 @@ const { createApp } = require('../server');
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+test('transactional downloads show each local and report progressing in order', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+  const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-transaction-progress-'));
+  const calls = [];
+  const file = (filename, contents) => ({ filename, contentType: 'application/octet-stream', buffer: Buffer.from(contents) });
+  const server = createApp({
+    uploadsRoot,
+    reportToday: '2026-09-17',
+    toteatAutomation: {
+      async connectTransactionalDownloads() { return { opened: true, requiresAuthentication: false, refreshed: true }; },
+      async selectTransactionalRestaurant(restaurant) { calls.push(`select:${restaurant.localId}`); return { changed: true }; },
+      async downloadTransactionalSales(options) { calls.push(`sales:${options.restaurant.localId}`); return file('ventas.xlsx', 'sales'); },
+      async downloadTransactionalPaymentDetails(options) {
+        calls.push(`payments:${options.restaurant.localId}`);
+        await new Promise(resolve => setTimeout(resolve, 250));
+        return file('pagos.csv', 'payments');
+      },
+      async downloadTransactionalPurchases(options) { calls.push(`purchases:${options.restaurant.localId}`); return file('compras.xls', 'purchases'); },
+      async downloadTransactionalKardex(options) { calls.push(`kardex-${options.kind}:${options.restaurant.localId}`); return file('kardex.xlsx', 'kardex'); }
+    }
+  }).listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+  const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
+  t.after(async () => {
+    await browser.close();
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(uploadsRoot, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  for (const [id, localId, name, simpleId] of [
+    ['store-1', '1', 'Brewit', '23026'], ['store-2', '2', 'Brewit 2', '24335']
+  ]) {
+    const location = (await fetch(`${baseUrl}/api/config/locations`).then(response => response.json())).active.find(item => item.id === id);
+    const response = await fetch(`${baseUrl}/api/config/locations/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        name: location.name, address: location.address || '', toteatRestaurantId: '1774666275011576',
+        toteatLocalId: localId, toteatName: name, toteatSimpleId: simpleId
+      })
+    });
+    assert.equal(response.status, 200);
+  }
+  const page = await browser.newPage({ acceptDownloads: true });
+  await page.goto(baseUrl);
+  await page.getByRole('link', { name: 'Cargar Archivos' }).click();
+  await page.locator('#download-all-toteat-transactions').click();
+  await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#toteat-transactional-locations').innerText(), /ID local 1/);
+  await page.locator('#confirm-toteat-transactional-download').click();
+  await page.waitForFunction(() => document.getElementById('toteat-transactional-progress-count')?.textContent.includes('12 de 12'), null, { timeout: 30000 });
+  assert.equal(await page.locator('#toteat-transactional-progress-percent').innerText(), '100%');
+  assert.equal(await page.locator('.toteat-progress-report[data-state="done"]').count(), 12);
+  assert.deepEqual(calls, [
+    'select:1', 'sales:1', 'payments:1', 'purchases:1', 'kardex-local:1', 'kardex-waste:1',
+    'select:2', 'sales:2', 'payments:2', 'purchases:2', 'kardex-local:2', 'kardex-waste:2',
+    'select:1', 'kardex-central:1', 'kardex-central-waste:1'
+  ]);
+  assert.match(await page.locator('#toteat-transactional-dialog-status').innerText(), /12 archivo\(s\) descargados/);
+});
+
 test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-ui-test-'));
   const server = createApp({
     uploadsRoot,
     reportToday: '2026-08-10',
+    toteatMasterBatchFinalizer: () => ({ ok: true, validFrom: '2026-08-10', saved: {} }),
     toteatAutomation: {
       async connect() { return { opened: true }; },
       async downloadSales() {
@@ -29,6 +88,36 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
           contentType: 'text/csv; charset=utf-8',
           buffer: Buffer.from('FechaCierre\tComanda\tComentario General\tA Pagar\n09-08-26 08:30 a. m.\torder-1\tServir en el local\t0.119')
         };
+      },
+      async connectMasterDownloads() { return { opened: true, requiresAuthentication: true, refreshed: false }; },
+      async downloadSuppliers() {
+        return {
+          filename: 'proveedores.xlsx',
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: Buffer.from('proveedores')
+        };
+      },
+      async downloadProductsMaster() {
+        return {
+          filename: 'productos-adv-total.xlsx',
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          buffer: Buffer.from('productos')
+        };
+      },
+      async downloadProductHierarchy() {
+        return { filename: 'jerarquia-productos.csv', contentType: 'text/csv', buffer: Buffer.from('AB') };
+      },
+      async downloadIngredientHierarchy() {
+        return { filename: 'jerarquia-ingredientes.csv', contentType: 'text/csv', buffer: Buffer.from('IC') };
+      },
+      async downloadExtrasHierarchy() {
+        return { filename: 'jerarquia-extras.csv', contentType: 'text/csv', buffer: Buffer.from('BA') };
+      },
+      async downloadRecipes() {
+        return { files: [
+          { filename: 'HEADERS_RECETAS.txt', contentType: 'text/plain; charset=utf-8', buffer: Buffer.from('headers') },
+          { filename: 'DETALLE_RECETAS.txt', contentType: 'text/plain; charset=utf-8', buffer: Buffer.from('detalles') }
+        ] };
       }
     }
   }).listen(0, '127.0.0.1');
@@ -165,6 +254,18 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   }));
   assert.equal(expandedLayout.sidebarWidth, 280);
   assert.equal(expandedLayout.sidebarPosition, 'fixed');
+  assert.equal(await page.locator('#font-size-value').textContent(), '100%');
+  const originalHeadingFont = await page.getByRole('heading', { name: 'Resumen de ventas' })
+    .evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  const originalNavigationFont = await page.getByRole('link', { name: 'Resumen General Ventas' })
+    .evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  await page.getByRole('button', { name: 'Aumentar tamaño de letra' }).click();
+  assert.equal(await page.locator('#font-size-value').textContent(), '110%');
+  assert.equal(await page.evaluate(() => localStorage.getItem('brewit.fontScale')), '110');
+  assert.ok(await page.getByRole('heading', { name: 'Resumen de ventas' })
+    .evaluate(element => parseFloat(getComputedStyle(element).fontSize)) > originalHeadingFont);
+  assert.ok(await page.getByRole('link', { name: 'Resumen General Ventas' })
+    .evaluate(element => parseFloat(getComputedStyle(element).fontSize)) > originalNavigationFont);
   await page.getByRole('button', { name: 'Contraer menú lateral' }).click();
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 76);
   const collapsedLayout = await page.evaluate(() => ({
@@ -175,13 +276,17 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.ok(collapsedLayout.mainWidth > expandedLayout.mainWidth + 190);
   assert.equal(collapsedLayout.navTextDisplay, 'none');
   assert.equal(collapsedLayout.saved, 'true');
+  assert.equal(await page.getByRole('button', { name: 'Reducir tamaño de letra' }).isVisible(), true);
   await page.reload();
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 76);
+  assert.equal(await page.locator('#font-size-value').textContent(), '110%');
   assert.equal(await page.getByRole('button', { name: 'Expandir menú lateral' }).getAttribute('aria-expanded'), 'false');
   await page.getByRole('button', { name: 'Expandir menú lateral' }).click();
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().width === 280);
   assert.equal(await page.evaluate(() => localStorage.getItem('brewit.sidebarCollapsed')), 'false');
+  await page.getByRole('button', { name: 'Reducir tamaño de letra' }).click();
+  assert.equal(await page.locator('#font-size-value').textContent(), '100%');
   assert.equal(await page.getByRole('link', { name: 'General', exact: true }).count(), 0);
   await page.getByRole('link', { name: 'Resumen General Ventas' }).evaluate(link => {
     if (!link.classList.contains('active')) throw new Error('Resumen General Ventas no quedó como vista inicial activa.');
@@ -393,6 +498,21 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('[data-weekly-field="sales"] .file-upload-state.uploaded').waitFor();
 
   assert.equal(await page.locator('#file-loader').isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: 'Descargar Todos los Archivos Transaccionales', exact: true }).count(), 1);
+  const masterDownloads = [];
+  const recordMasterDownload = download => masterDownloads.push(download.suggestedFilename());
+  page.on('download', recordMasterDownload);
+  await page.getByRole('button', { name: 'Descargar Todos los Archivos Maestros', exact: true }).click();
+  const masterDownloadDialog = page.getByRole('dialog', { name: 'Inicia sesión en la ventana de Toteat' });
+  await masterDownloadDialog.waitFor();
+  assert.match(await masterDownloadDialog.textContent(), /Proveedores.*XLS Adv\. Total.*Jerarquía de Productos.*Jerarquía de Ingredientes.*Jerarquía de Extras.*Maestro de Recetas/s);
+  await masterDownloadDialog.getByRole('button', { name: 'Ya inicié sesión, descargar' }).click();
+  await page.locator('#toteat-master-download-status').filter({ hasText: /7 archivos fueron descargados y validados.*seis maestros se actualizaron/i }).waitFor();
+  assert.deepEqual(masterDownloads, [
+    'proveedores.xlsx', 'productos-adv-total.xlsx', 'jerarquia-productos.csv',
+    'jerarquia-ingredientes.csv', 'jerarquia-extras.csv', 'HEADERS_RECETAS.txt', 'DETALLE_RECETAS.txt'
+  ]);
+  page.off('download', recordMasterDownload);
   assert.equal(await page.getByRole('button', { name: /New Order/i }).count(), 0);
   assert.deepEqual(await page.locator('#products-grouping option').allTextContents(), ['Por jerarquía', 'Todos juntos']);
   assert.equal(await page.locator('#week-select').count(), 0);
@@ -1391,14 +1511,22 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.getByRole('link', { name: 'Configuracion' }).click();
   await page.getByRole('heading', { name: 'Ubicaciones', exact: true }).waitFor({ state: 'visible' });
   await page.getByLabel('Nombre de la ubicación').fill('Brewit Test');
+  await page.getByLabel('TotEat · Restaurant ID').fill('1774666275011576');
+  await page.getByLabel('TotEat · ID Local').fill('3');
+  await page.getByLabel('TotEat · Nombre').fill('Brewit Test TotEat');
+  await page.getByLabel('TotEat · Simple ID').fill('30000');
   await page.getByRole('button', { name: 'Crear ubicación' }).click();
   await page.getByText('Ubicación creada.').waitFor();
   assert.equal(await page.locator('#location-select option', { hasText: 'Brewit Test' }).count(), 1);
 
   const nameInput = page.getByRole('textbox', { name: 'Nombre de Brewit Test' });
+  assert.equal(await page.getByRole('textbox', { name: 'Restaurant ID TotEat para Brewit Test' }).inputValue(), '1774666275011576');
+  assert.equal(await page.getByRole('textbox', { name: 'ID Local TotEat para Brewit Test' }).inputValue(), '3');
+  assert.equal(await page.getByRole('textbox', { name: 'Nombre TotEat para Brewit Test' }).inputValue(), 'Brewit Test TotEat');
+  assert.equal(await page.getByRole('textbox', { name: 'Simple ID TotEat para Brewit Test' }).inputValue(), '30000');
   await nameInput.fill('Brewit Renombrado');
   await nameInput.locator('xpath=..').getByRole('button', { name: 'Guardar nombre' }).click();
-  await page.getByText('Nombre y dirección actualizados.').waitFor();
+  await page.getByText('Ubicación e identificadores de TotEat actualizados.').waitFor();
   const renamedInput = page.getByRole('textbox', { name: 'Nombre de Brewit Renombrado' });
   await renamedInput.locator('xpath=..').getByRole('button', { name: 'Enviar a papelera' }).click();
 
