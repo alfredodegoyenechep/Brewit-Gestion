@@ -21,7 +21,7 @@ test('aggregates network monetary amounts before calculating ratios', () => {
   ]);
   assert.equal(total.sales, 1000);
   assert.equal(total.marginPercent, 44);
-  assert.equal(total.averageTicket, 100);
+  assert.equal(total.averageTicket, 119);
   assert.ok(Math.abs(total.discountPercent - 100 / 1100 * 100) < 1e-9);
   assert.equal(percentageChange(100, 0), null);
 });

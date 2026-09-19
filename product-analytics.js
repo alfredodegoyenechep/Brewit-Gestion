@@ -1,5 +1,7 @@
 'use strict';
 
+const { averageTicketWithVat, grossSalesWithVat } = require('./metric-policy');
+
 const WEEKDAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
 function round(value, decimals = 2) {
@@ -289,7 +291,7 @@ function buildProductAnalytics(snapshot, filters) {
     const netSales = sum(orders.map(order => order.netSales));
     return {
       key, label: key === 'takeaway' ? 'Para llevar' : key === 'dineIn' ? 'Servir en el local' : 'Sin información',
-      orders: orders.length, netSales: round(netSales), averageTicket: round(orders.length ? netSales / orders.length : 0),
+      orders: orders.length, netSales: round(netSales), averageTicket: round(averageTicketWithVat(netSales, orders.length) ?? 0),
       orderShare: currentScopedOrders.length ? round(orders.length / currentScopedOrders.length * 100, 1) : 0,
       salesShare: serviceModeTotalNetSales ? round(netSales / serviceModeTotalNetSales * 100, 1) : 0,
       coverage: round(snapshot.coverage.paymentMatchPercent || 0, 1)
@@ -414,6 +416,8 @@ function buildProductAnalytics(snapshot, filters) {
       mode: item.order.mode || 'unknown',
       clients: item.order.clients || 0,
       paymentDue: item.order.paymentDue ?? null,
+      paymentTotal: item.order.paymentTotal ?? null,
+      paymentDuePartial: Boolean(item.order.paymentDuePartial),
       paymentComment: item.order.paymentComment || '',
       quantity: 0,
       netSales: 0,
@@ -502,7 +506,7 @@ function buildProductAnalytics(snapshot, filters) {
       date,
       units: value.units,
       netSales: value.sales,
-      price: value.sales / value.units
+      price: grossSalesWithVat(value.sales) / value.units
     })).sort((left, right) => left.date.localeCompare(right.date));
     const pricePoints = new Set(points.map(point => Math.round(point.price / 10) * 10));
     const priceRange = points.length ? (Math.max(...points.map(point => point.price)) / Math.max(1, Math.min(...points.map(point => point.price))) - 1) * 100 : 0;
@@ -514,17 +518,16 @@ function buildProductAnalytics(snapshot, filters) {
       priceRangePercent: round(priceRange, 1), observedElasticity: round(regression.slope, 2),
       correlation: correlation === null ? null : round(correlation, 2), rSquared: round(regression.rSquared, 2),
       confidence: points.length >= 25 && regression.rSquared >= 0.25 ? 'media' : 'baja',
-      note: 'Asociación observada; no demuestra causalidad del precio.',
+      note: 'Asociación entre unidades y precio efectivo con IVA pagado por el cliente; no demuestra causalidad.',
       observationDetails: points.map(point => {
-        const netListPrice = product.listPrice > 0 ? product.listPrice / 1.19 : null;
         return {
           date: point.date,
           units: round(point.units, 1),
           netSales: round(point.netSales),
-          averageNetPrice: round(point.price),
-          averageGrossPrice: round(point.price * 1.19),
-          implicitDiscountPercent: netListPrice
-            ? round((1 - point.price / netListPrice) * 100, 1)
+          averageNetPrice: round(point.price / 1.19),
+          averageGrossPrice: round(point.price),
+          implicitDiscountPercent: product.listPrice > 0
+            ? round((1 - point.price / product.listPrice) * 100, 1)
             : null,
           transactions: [...(productTransactions.get(product.code)?.values() || [])]
             .filter(transaction => transaction.date === point.date)
@@ -580,8 +583,8 @@ function buildProductAnalytics(snapshot, filters) {
 
   const priceDefinitions = [
     { term: 'Observaciones', detail: 'Cantidad de días con venta y precio efectivo utilizable para ese producto.' },
-    { term: 'Niveles de precio', detail: 'Cantidad de precios diarios distintos observados, agrupados al múltiplo de $10 más cercano para evitar diferencias de redondeo.' },
-    { term: 'Rango', detail: 'Diferencia porcentual entre el menor y el mayor precio efectivo observado. Rangos muy altos suelen reflejar descuentos, promociones, cortesías o datos atípicos.' },
+    { term: 'Niveles de precio', detail: 'Cantidad de precios diarios con IVA distintos observados, agrupados al múltiplo de $10 más cercano para evitar diferencias de redondeo.' },
+    { term: 'Rango', detail: 'Diferencia porcentual entre el menor y el mayor precio efectivo con IVA observado. Rangos muy altos suelen reflejar descuentos, promociones, cortesías o datos atípicos.' },
     { term: 'Coef. observado', detail: 'Asociación log-log: aproxima cuánto cambia porcentualmente la cantidad vendida cuando el precio cambia 1%. Un valor negativo indica que precio y unidades se movieron en sentidos opuestos; no prueba causalidad.' },
     { term: 'R²', detail: 'Proporción del comportamiento de unidades explicada por la relación lineal con el precio, entre 0 y 1. Cerca de 0 indica que el precio por sí solo explica muy poco.' },
     { term: 'Confianza', detail: 'Calificación basada en cantidad de observaciones, variedad de precios y R². Incluso una confianza media representa evidencia observacional, no experimental.' }
@@ -698,7 +701,7 @@ function buildProductAnalytics(snapshot, filters) {
       productUnits: round(totalUnits, 1),
       extraUnits: round(extraUnits, 1),
       orders: currentScopedOrders.length,
-      averageTicket: round(currentScopedOrders.length ? orderNetSales / currentScopedOrders.length : 0),
+      averageTicket: round(averageTicketWithVat(orderNetSales, currentScopedOrders.length) ?? 0),
       cost: productRows.every(product => product.costSource !== 'missing') ? round(totalCost) : null,
       grossMarginPercent: totalNetSales && productRows.every(product => product.costSource !== 'missing')
         ? round((totalNetSales - totalCost) / totalNetSales * 100, 1)

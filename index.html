@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es-CL">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -62,6 +62,12 @@
         </svg>
         <span class="nav-text">Ingredientes</span>
       </a>
+      <a href="#" class="nav-link" data-view="cost-review">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3 2 21h20L12 3Z" /><path d="M12 9v5M12 18h.01" />
+        </svg>
+        <span class="nav-text">Costos por Revisar</span>
+      </a>
       <a href="#" class="nav-link" data-view="inventory">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M3 21h18" />
@@ -99,6 +105,10 @@
           <path d="m15 7 2-2 2 2M17 5v5" />
         </svg>
         <span class="nav-text">Resultados Financieros</span>
+      </a>
+      <a href="#" class="nav-link" data-view="demand-analysis">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
+        <span class="nav-text">Análisis de la demanda</span>
       </a>
       <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -231,6 +241,19 @@
 
       <div id="transaction-audit-status" class="form-status" aria-live="polite"></div>
       <div id="transaction-audit-summary" class="transaction-audit-summary"></div>
+      <p id="transaction-audit-reconciliation-note" class="panel-description" hidden>La conciliación compara la venta con IVA después de descuentos con «Total» de Detalle Pagos, sin propina. Si el archivo no trae «Total», usa «A Pagar» como respaldo. «A Pagar» puede ser parcial. Importes negativos o etiquetas explícitas de anulación/devolución se señalan para revisión, sin corregir la venta automáticamente. Estos archivos no permiten confirmar si hubo devolución física o consumo del producto.</p>
+      <details id="transaction-audit-sources" class="panel transaction-audit-sources" hidden>
+        <summary>Diagnóstico de fuentes por local y fecha</summary>
+        <p id="transaction-audit-sources-note" class="panel-description"></p>
+        <div id="transaction-audit-sources-files" class="transaction-audit-sources-files"></div>
+        <div class="transaction-audit-sources-scroll">
+          <table class="transaction-audit-sources-table">
+            <thead><tr><th>Local</th><th>Fecha</th><th>Pedidos</th><th>Detalle vinculado</th><th>Coincide</th><th>Diferencia</th><th>Sin cotejo</th><th>A Pagar parcial</th><th>Señal de reversión</th><th>Mov. MP</th><th>Importe MP</th><th>Comisiones MP con IVA</th></tr></thead>
+            <tbody id="transaction-audit-sources-body"></tbody>
+          </table>
+        </div>
+        <p id="transaction-audit-sources-warnings" class="panel-description" hidden></p>
+      </details>
       <section class="panel transaction-audit-results">
         <div class="transaction-audit-table-wrap">
           <table class="transaction-audit-table">
@@ -243,6 +266,7 @@
                 <th><button type="button" data-audit-sort="discountPercent">Descuento</button></th>
                 <th><button type="button" data-audit-sort="saleWithDiscount">Venta con descuentos</button></th>
                 <th><button type="button" data-audit-sort="netSale">Venta neta</button></th>
+                <th>Detalle Pagos</th>
                 <th><button type="button" data-audit-sort="units">Unidades</button></th>
                 <th><button type="button" data-audit-sort="orderReference">Pedido</button></th>
               </tr>
@@ -258,7 +282,7 @@
         <div>
           <div class="panel-eyebrow">Ventas</div>
           <h2>Panel de indicadores comerciales</h2>
-          <p id="sales-dashboard-description" class="panel-description">Venta neta sin IVA y comportamiento de clientes MercadoPago.</p>
+          <p id="sales-dashboard-description" class="panel-description">Venta neta sin IVA; ticket promedio con IVA y comportamiento de clientes MercadoPago.</p>
         </div>
         <div class="sales-dashboard-controls">
           <label for="sales-dashboard-location">Cafetería
@@ -600,7 +624,7 @@
         <div>
           <div class="panel-eyebrow">Resumen General Ventas</div>
           <h2>Resumen de ventas</h2>
-          <p id="report-scope-description" class="panel-description">Venta neta sin IVA, consolidada para todas las cafeterías.</p>
+          <p id="report-scope-description" class="panel-description">Venta neta sin IVA y ticket promedio con IVA, consolidados para todas las cafeterías.</p>
         </div>
         <div class="report-actions">
           <label for="report-location-filter">Cafetería</label>
@@ -621,7 +645,15 @@
       <section id="network-sales-dashboard" class="network-sales-dashboard" hidden aria-label="Vista comparativa de todos los locales">
         <div class="network-sales-intro">
           <div><div class="panel-eyebrow">PERFORMANCE DE LA RED</div><h3>Comparativo por local</h3></div>
-          <span id="network-sales-cutoff"></span>
+          <div class="network-sales-controls">
+            <label for="network-cost-valuation">Valorización del costo
+              <select id="network-cost-valuation">
+                <option value="period-end">Al corte del reporte · respaldo</option>
+                <option value="historical">En la fecha de venta · en prueba</option>
+              </select>
+            </label>
+            <span id="network-sales-cutoff"></span>
+          </div>
         </div>
         <p id="network-sales-coverage" class="panel-description"></p>
         <div class="network-sales-scroll" role="region" tabindex="0" aria-label="Tabla comparativa de ventas, desplazable horizontal y verticalmente">
@@ -856,6 +888,44 @@
         </article>
       </section>
 
+      <dialog id="report-chart-dialog" class="report-chart-dialog" aria-labelledby="report-chart-title">
+        <div class="report-chart-dialog-card">
+          <div class="report-chart-dialog-head">
+            <div>
+              <div class="panel-eyebrow">Visualización gráfica</div>
+              <h3 id="report-chart-title">Gráfico</h3>
+              <p id="report-chart-subtitle" class="panel-description"></p>
+            </div>
+            <div class="report-chart-dialog-actions">
+              <label id="report-chart-metric-field" for="report-chart-metric" hidden>Métrica
+                <select id="report-chart-metric"></select>
+              </label>
+              <div id="report-chart-type-options" class="report-chart-type-options" role="group" aria-label="Tipo de gráfico">
+                <button type="button" data-chart-type="bar" aria-label="Gráfico de barras" title="Barras"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7M3 20h18"/></svg></button>
+                <button type="button" data-chart-type="line" aria-label="Gráfico de líneas" title="Líneas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M6 15l4-5 4 3 5-7"/></svg></button>
+                <button type="button" data-chart-type="pie" aria-label="Gráfico circular" title="Circular"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3a8 8 0 1 0 8 8h-8zM14 3.5V9h5.5A8 8 0 0 0 14 3.5z"/></svg></button>
+              </div>
+              <button id="report-chart-close" class="icon-button" type="button">Cerrar</button>
+            </div>
+          </div>
+          <div id="report-chart-legend" class="report-chart-legend" aria-label="Series del gráfico"></div>
+          <div id="report-chart-empty" class="report-chart-empty" hidden>No hay datos suficientes para construir este gráfico.</div>
+          <div id="report-chart-scroll" class="report-chart-scroll">
+            <svg id="report-chart-svg" role="img" aria-labelledby="report-chart-title report-chart-subtitle"></svg>
+          </div>
+          <details class="report-chart-data">
+            <summary>Ver datos utilizados</summary>
+            <div class="report-chart-data-scroll">
+              <table class="sales-statistics-table">
+                <thead id="report-chart-data-head"></thead>
+                <tbody id="report-chart-data-body"></tbody>
+              </table>
+            </div>
+          </details>
+          <p class="report-chart-resize-hint">Puedes ajustar el tamaño de esta ventana arrastrando su esquina inferior derecha.</p>
+        </div>
+      </dialog>
+
       <dialog id="report-sales-download-scope-dialog" class="inventory-criteria-dialog report-sales-location-dialog">
         <div class="preview-dialog-head">
           <div>
@@ -1069,6 +1139,45 @@
           </table>
         </div>
       </section>
+    </section>
+
+    <section id="cost-review-workspace" class="panel cost-review-workspace" style="display:none;">
+      <div class="ingredients-workspace-head">
+        <div>
+          <div class="panel-eyebrow">Control de costos</div>
+          <h2>Costos por revisar</h2>
+          <p class="panel-description">Se prioriza la última compra con unidad comparable. Sin compra, se usa receta o maestro como respaldo; esos costos requieren revisión. Las fuentes sin cotejo de base neta se consideran estimadas.</p>
+        </div>
+        <div class="ingredients-controls">
+          <label for="cost-review-location">Cafetería
+            <select id="cost-review-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="cost-review-date">Fecha de corte
+            <input id="cost-review-date" type="date" />
+          </label>
+          <button id="refresh-cost-review" class="icon-button" type="button">Revisar costos</button>
+        </div>
+      </div>
+      <div id="cost-review-status" class="form-status" aria-live="polite"></div>
+      <div id="cost-review-summary" class="products-summary"></div>
+      <div class="cost-review-filters">
+        <label for="cost-review-type">Tipo
+          <select id="cost-review-type"><option value="all">Todos</option><option value="product">Productos</option><option value="ingredient">Ingredientes</option><option value="extra">Extras</option></select>
+        </label>
+        <label for="cost-review-state">Estado
+          <select id="cost-review-state"><option value="attention">Requieren atención</option><option value="missing">Sin costo calculable</option><option value="master-fallback">Solo costo maestro</option><option value="recipe-fallback">Costo por receta</option><option value="no-purchase">Sin compra directa</option><option value="other-location">Compra de otro local</option><option value="covered">Con compra</option><option value="all">Todos</option></select>
+        </label>
+        <label for="cost-review-search">Buscar
+          <input id="cost-review-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+        </label>
+      </div>
+      <div class="cost-review-table-wrap">
+        <table class="financial-table">
+          <thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Estado</th><th>Unidad</th><th>Costo aplicado</th><th>Origen</th><th>Cotejo neto</th><th>Costo última compra</th><th>Fecha compra</th><th>Local compra</th><th>Costo maestro</th></tr></thead>
+          <tbody id="cost-review-body"></tbody>
+        </table>
+      </div>
+      <p id="cost-review-count" class="panel-description"></p>
     </section>
 
     <section id="ingredients-workspace" class="panel ingredients-workspace" style="display:none;">
@@ -1395,7 +1504,7 @@
         <div>
           <div class="panel-eyebrow">Estado de resultados</div>
           <h2>Resultados Financieros</h2>
-          <p class="panel-description">Ingresos, margen de contribución y gastos operacionales conocidos para el período seleccionado. La venta se presenta neta de IVA.</p>
+          <p class="panel-description">Ingresos, costos, margen de contribución y gastos operacionales conocidos para el período seleccionado, expresados netos de IVA.</p>
         </div>
         <form id="financial-results-filters" class="financial-results-filters">
           <label for="financial-results-location">Ubicación
@@ -1407,17 +1516,55 @@
           <label for="financial-results-to">Hasta
             <input id="financial-results-to" type="date" required />
           </label>
+          <label for="financial-cost-valuation">Valorización del costo
+            <select id="financial-cost-valuation">
+              <option value="period-end">Al corte · respaldo</option>
+              <option value="historical">Fecha de venta · en prueba</option>
+            </select>
+          </label>
           <button class="primary" type="submit">Generar resultados</button>
         </form>
       </div>
       <div id="financial-results-status" class="form-status" aria-live="polite"></div>
       <div id="financial-results-summary" class="financial-results-summary"></div>
 
+      <section class="panel financial-general-expenses-panel">
+        <div class="panel-head financial-panel-head">
+          <div>
+            <div class="panel-eyebrow">Base mensual por unidad</div>
+            <h3>Gastos Generales de la Unidad</h3>
+            <p class="panel-description">Ingresa montos netos mensuales por cafetería o para Casa Matriz. En el estado de resultados se prorratean según los días del período incluidos en cada mes.</p>
+          </div>
+          <form id="financial-general-expenses-selector" class="financial-general-expenses-selector">
+            <label for="financial-general-expenses-location">Cafetería / unidad
+              <select id="financial-general-expenses-location" required></select>
+            </label>
+            <label for="financial-general-expenses-year">Año
+              <input id="financial-general-expenses-year" type="number" min="2020" max="2100" step="1" required />
+            </label>
+          </form>
+        </div>
+        <form id="financial-general-expenses-form">
+          <div class="financial-general-expenses-table-wrap">
+            <table class="financial-general-expenses-table">
+              <thead id="financial-general-expenses-head"></thead>
+              <tbody id="financial-general-expenses-grid"></tbody>
+              <tfoot id="financial-general-expenses-foot"></tfoot>
+            </table>
+          </div>
+          <div class="financial-general-expenses-actions">
+            <span id="financial-general-expenses-total">Total anual: $0</span>
+            <button class="primary" type="submit">Guardar meses modificados</button>
+          </div>
+          <div id="financial-general-expenses-status" class="form-status" aria-live="polite"></div>
+        </form>
+      </section>
+
       <section class="panel financial-statement-panel">
         <div class="panel-head financial-panel-head">
           <div>
             <div class="panel-eyebrow">Vista consolidada</div>
-            <h3>Estado de resultados parcial</h3>
+            <h3>Estado de resultados operacional 4Wall</h3>
             <p id="financial-statement-context" class="panel-description"></p>
           </div>
           <span id="financial-statement-badge" class="chip neutral">Resultado parcial</span>
@@ -1428,7 +1575,7 @@
             <tbody id="financial-statement-body"></tbody>
           </table>
         </div>
-        <p class="financial-future-note">Este estado se irá completando cuando se incorporen los demás gastos operacionales al sistema.</p>
+        <p class="financial-future-note">El resultado 4Wall incorpora los gastos generales mensuales configurados para cada cafetería y los prorratea al período seleccionado.</p>
       </section>
 
       <div class="financial-breakdowns-grid">
@@ -1455,6 +1602,21 @@
           </div>
         </div>
         <div id="financial-hierarchy-list" class="financial-hierarchy-list"></div>
+      </section>
+      <section id="financial-missing-costs" class="panel financial-missing-costs" hidden>
+        <div class="panel-head">
+          <div>
+            <div class="panel-eyebrow">Calidad del margen</div>
+            <h3>Productos sin costo calculable</h3>
+            <p id="financial-missing-costs-summary" class="panel-description"></p>
+          </div>
+        </div>
+        <div class="financial-table-wrap">
+          <table class="financial-table">
+            <thead><tr><th>Código</th><th>Producto</th><th>Motivo</th><th>Líneas</th><th>Venta neta afectada</th><th>Primera venta</th><th>Última venta</th></tr></thead>
+            <tbody id="financial-missing-costs-body"></tbody>
+          </table>
+        </div>
       </section>
       <section id="financial-warnings" class="financial-warnings" hidden>
         <h3>Datos que requieren revisión</h3>
@@ -2037,6 +2199,39 @@
       </dialog>
     </section>
 
+    <section id="demand-analysis-workspace" class="demand-workspace" style="display:none;">
+      <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Análisis de la demanda</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
+      <div id="demand-status" class="form-status demand-status" role="status" aria-live="polite">Preparando filtros de demanda…</div>
+      <form id="demand-filters" class="demand-filters">
+        <fieldset class="demand-locations"><legend>Cafeterías</legend><div id="demand-location-options"></div></fieldset>
+        <label>Período<select id="demand-period"><option value="month">Mes</option><option value="week">Semana</option><option value="day">Día</option><option value="ytd">Acumulado anual</option><option value="custom">Personalizado</option><option value="all">Todo el historial</option></select></label>
+        <label id="demand-anchor-label">Fecha de referencia<input id="demand-anchor" type="date" /></label>
+        <label class="demand-custom-date" hidden>Desde<input id="demand-from" type="date" /></label>
+        <label class="demand-custom-date" hidden>Hasta<input id="demand-to" type="date" /></label>
+        <label>Categoría<select id="demand-category"><option value="">Todas</option></select></label>
+        <label>Producto<select id="demand-product"><option value="">Todos</option></select></label>
+        <label>Modalidad<select id="demand-mode"><option value="all">Todas</option><option value="takeaway">Para llevar</option><option value="dineIn">En local</option><option value="unknown">Sin clasificar</option></select></label>
+        <label>Canal<select id="demand-channel" disabled><option value="">Sin datos disponibles</option></select></label>
+        <label>Tamaño<select id="demand-size" disabled><option value="">Sin clasificación validada</option></select></label>
+        <label>Género estimado por nombre<select id="demand-name-gender"><option value="all">Todos</option><option value="feminine-associated">Asociación femenina</option><option value="masculine-associated">Asociación masculina</option><option value="indeterminate">Indeterminado</option><option value="unavailable">Sin nombre utilizable</option></select></label>
+        <label>Recurrencia observable<select id="demand-recurrence"><option value="all">Todos</option><option value="returning-instrument">Instrumento recurrente</option><option value="single-observed-date">Una fecha observada</option><option value="unlinked">Sin vínculo confiable</option></select></label>
+        <label>Intervalo de precios (CLP)<input id="demand-price-band" type="number" value="500" min="100" max="10000" step="100" /></label>
+        <label>Fin mañana (hora)<input id="demand-morning-end" type="number" value="12" min="1" max="20" /></label>
+        <label>Fin mediodía (hora)<input id="demand-midday-end" type="number" value="16" min="2" max="22" /></label>
+        <label>Fin tarde (hora)<input id="demand-afternoon-end" type="number" value="20" min="3" max="23" /></label>
+        <button class="primary" type="submit">Analizar</button>
+      </form>
+      <div id="demand-report" hidden>
+        <section class="demand-section"><div class="demand-section-head"><div><div class="panel-eyebrow">01 · Hechos</div><h3>Resumen del período</h3></div><button type="button" class="icon-button demand-detail" data-kind="all">Ver pedidos</button></div><div id="demand-context" class="demand-meta"></div><div id="demand-summary" class="demand-kpis"></div><div id="demand-comparison" class="demand-note"></div><div id="demand-coverage" class="demand-note"></div><h4>Calidad y capacidad actual</h4><div id="demand-quality" class="demand-kpis"></div><div class="demand-scroll"><table class="demand-table"><thead><tr><th>Local</th><th>Pedidos</th><th>Venta neta</th><th>Ticket mediano con IVA</th><th>Descuento</th><th>Margen neto</th><th>vs período equivalente</th><th></th></tr></thead><tbody id="demand-locations-body"></tbody></table></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">02 · Exploración</div><h3>Cómo se compone la demanda</h3><p class="panel-description">Venta y margen netos; tickets y precios pagados con IVA. Una compra observada no equivale a una persona única.</p><div class="demand-tabs"><button type="button" data-demand-tab="products" class="active">Productos</button><button type="button" data-demand-tab="categories">Categorías</button><button type="button" data-demand-tab="baskets">Combinaciones</button><button type="button" data-demand-tab="occasions">Ocasiones</button><button type="button" data-demand-tab="segments">Género estimado por nombre</button><button type="button" data-demand-tab="recurrence">Recurrencia observable</button><button type="button" data-demand-tab="spending">Gasto y precios</button><button type="button" data-demand-tab="time">Horarios y evolución</button></div><div id="demand-exploration"></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">03 · Interpretación</div><h3>Hipótesis por validar</h3><p class="panel-description">Estas explicaciones son posibles, no relaciones causales comprobadas.</p><div id="demand-hypotheses" class="demand-card-grid"></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">04 · Decisiones</div><h3>Acciones y próximas investigaciones</h3><div id="demand-actions" class="demand-card-grid"></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">Módulos que evolucionan con los datos</div><h3>Disponibilidad del análisis avanzado</h3><div id="demand-advanced" class="demand-card-grid"></div><div id="demand-methodology" class="demand-note"></div></section>
+      </div>
+      <dialog id="demand-detail-dialog" class="demand-dialog"><div class="demand-dialog-head"><h3 id="demand-detail-title">Pedidos que sustentan el resultado</h3><button type="button" id="demand-detail-close" class="icon-button">Cerrar</button></div><div id="demand-detail-status" class="demand-meta"></div><div id="demand-detail-content" class="demand-scroll"></div><div class="demand-dialog-pages"><button type="button" id="demand-detail-prev" class="icon-button">Anterior</button><span id="demand-detail-page"></span><button type="button" id="demand-detail-next" class="icon-button">Siguiente</button></div></dialog>
+      <dialog id="demand-advanced-dialog" class="demand-dialog demand-advanced-dialog"><div class="demand-dialog-head"><div><div class="panel-eyebrow">Análisis avanzado</div><h3 id="demand-advanced-title">Detalle del módulo</h3></div><button type="button" id="demand-advanced-close" class="icon-button">Cerrar</button></div><div id="demand-advanced-content" class="demand-advanced-content"></div></dialog>
+    </section>
+
     <section id="location-settings" class="panel" style="display:none;">
       <div class="panel-head">
         <div>
@@ -2128,6 +2323,7 @@
   </main>
 
   <script src="/vendor/xlsx.full.min.js"></script>
+  <script src="demand-view.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

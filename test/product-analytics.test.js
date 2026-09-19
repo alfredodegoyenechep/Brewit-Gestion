@@ -39,6 +39,8 @@ test('builds product analytics from base products and keeps extras as modifiers'
   assert.equal(report.summary.productUnits, 4);
   assert.equal(report.summary.extraUnits, 1);
   assert.equal(report.summary.netSales, 11500);
+  assert.equal(report.summary.averageTicket, 6842.5);
+  assert.equal(report.serviceModes.find(mode => mode.key === 'dineIn').averageTicket, 6545);
   assert.equal(report.summary.productNetSales, 11000);
   assert.equal(report.summary.extraNetSales, 500);
   assert.equal(report.summary.otherNetSales, 0);
@@ -120,6 +122,7 @@ test('retains the daily observations used by price sensitivity', () => {
   assert.equal(sensitivity.observationDetails[0].netSales, 1000);
   assert.equal(sensitivity.observationDetails[0].averageNetPrice, 1000);
   assert.equal(sensitivity.observationDetails[0].averageGrossPrice, 1190);
+  assert.match(sensitivity.note, /con IVA/);
   assert.equal(sensitivity.observationDetails[0].implicitDiscountPercent, 16.7);
   assert.equal(sensitivity.observationDetails[0].transactions.length, 1);
   assert.equal(sensitivity.observationDetails[0].transactions[0].orderKey, 'price-0');

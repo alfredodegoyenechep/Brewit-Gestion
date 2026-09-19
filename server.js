@@ -6,7 +6,14 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
+const { reconcilePaymentDetail } = require('./payment-reconciliation');
+const { reversalSignals } = require('./transaction-signals');
+const { buildSourceDiagnostics } = require('./source-diagnostics');
 const { businessClock, buildNetworkSalesDashboard } = require('./network-sales');
+const { averageTicketWithVat } = require('./metric-policy');
+const { buildDemandAnalysis, resolveDemandPeriod, orderMatches } = require('./demand-analysis');
+const { linkOrdersToSettlements } = require('./transaction-linkage');
+const { classifyRecordedName, NAME_CLASSIFIER_VERSION } = require('./name-segmentation');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -20,6 +27,7 @@ const DEFAULT_LOCATIONS = [
   { id: 'store-2', name: 'Tienda 2', type: 'store' },
   { id: 'main-warehouse', name: 'Bodega principal', type: 'warehouse' }
 ];
+const HEAD_OFFICE_UNIT = { id: 'head-office', name: 'Casa Matriz', label: 'Casa Matriz', type: 'head-office', status: 'active' };
 const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago']
   .map(name => ({ name, maxCount: 1 }));
 const MASTER_FIELDS = [
@@ -29,6 +37,21 @@ const MASTER_FIELDS = [
   { name: 'extras-hierarchy', maxCount: 1 },
   { name: 'master-recipes', maxCount: 1 },
   { name: 'master-suppliers', maxCount: 1 }
+];
+const GENERAL_EXPENSE_CATEGORIES = [
+  ['rent', 'Arriendo'],
+  ['commonExpenses', 'Gastos Comunes'],
+  ['salaries', 'Sueldos'],
+  ['salaryProvision', 'Provisión Sueldos'],
+  ['basicServices', 'Cuentas Servicios Básicos'],
+  ['toteat', 'TotEat'],
+  ['enMedio', 'enMedio'],
+  ['spotify', 'Spotify'],
+  ['gntAccountingHr', 'GNT Contab y RRHH'],
+  ['insurance', 'Seguros'],
+  ['mediaMarketing', 'Marketing Medios'],
+  ['marketingAgencySocial', 'Agencia Marketing y RRSS'],
+  ['otherExpenses', 'Otros gastos']
 ];
 
 function ensureDir(directory) {
@@ -828,8 +851,7 @@ function findHeaderColumn(headers, names) {
   return headers.findIndex(header => wanted.has(normalizeHeader(header)));
 }
 
-function parseConsumptionProducts(filePath, dateFrom, dateTo) {
-  const workbook = XLSX.readFile(filePath, { cellDates: true });
+function consumptionProductSheets(workbook) {
   const candidates = [];
   for (const sheetName of workbook.SheetNames) {
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true, blankrows: false });
@@ -840,12 +862,18 @@ function parseConsumptionProducts(filePath, dateFrom, dateTo) {
     const costColumn = findHeaderColumn(headers, ['Costo']);
     if (codeColumn < 0 || nameColumn < 0) continue;
     const dateColumns = (rows[0] || []).map((value, column) => ({ date: cellDate(value), column }))
-      .filter(item => item.date && item.date >= dateFrom && item.date <= dateTo);
-    const score = dateColumns.length * 100 + (/prod|producto/i.test(sheetName) ? 10 : 0);
-    candidates.push({ sheetName, rows, codeColumn, nameColumn, costColumn, dateColumns, score });
+      .filter(item => item.date);
+    candidates.push({ sheetName, rows, codeColumn, nameColumn, costColumn, dateColumns });
   }
-  const selected = candidates.sort((left, right) => right.score - left.score)[0];
-  if (!selected || !selected.dateColumns.length) {
+  return candidates;
+}
+
+function parseConsumptionProductsFromSheets(candidates, dateFrom, dateTo) {
+  const selected = candidates.map(candidate => {
+    const dateColumns = candidate.dateColumns.filter(item => item.date >= dateFrom && item.date <= dateTo);
+    return { ...candidate, dateColumns, score: dateColumns.length * 100 + (/prod|producto/i.test(candidate.sheetName) ? 10 : 0) };
+  }).sort((left, right) => right.score - left.score)[0];
+  if (!selected?.dateColumns.length) {
     throw new Error(`No product sheet contains dates between ${dateFrom} and ${dateTo}.`);
   }
   const products = selected.rows.slice(2).flatMap(row => {
@@ -864,6 +892,12 @@ function parseConsumptionProducts(filePath, dateFrom, dateTo) {
     totalQuantity: products.reduce((sum, product) => sum + product.quantity, 0),
     totalCost: products.reduce((sum, product) => sum + product.totalCost, 0)
   };
+}
+
+function parseConsumptionProducts(filePath, dateFrom, dateTo) {
+  return parseConsumptionProductsFromSheets(
+    consumptionProductSheets(XLSX.readFile(filePath, { cellDates: true })), dateFrom, dateTo
+  );
 }
 
 function parseRecipes(filePath) {
@@ -902,6 +936,8 @@ function parseIngredientCatalog(filePath) {
   const sheetNames = workbook.SheetNames.filter(name => /^prod|producto|^ingr|ingred|^extr/i.test(name));
   if (!sheetNames.length) throw new Error('The master catalog does not contain product, ingredient, or extras sheets.');
   for (const sheetName of sheetNames) {
+    const type = /^prod|producto/i.test(sheetName) ? 'product'
+      : /^ingr|ingred/i.test(sheetName) ? 'ingredient' : 'extra';
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true, blankrows: false });
     const headerIndex = rows.slice(0, 5).findIndex(row => findHeaderColumn(row, ['ID Producto **', 'ID Producto']) >= 0);
     if (headerIndex < 0) continue;
@@ -910,6 +946,7 @@ function parseIngredientCatalog(filePath) {
     const nameColumn = findHeaderColumn(headers, ['Nombre Producto *', 'Nombre Producto']);
     const costColumn = findHeaderColumn(headers, ['Costo']);
     const unitColumn = findHeaderColumn(headers, ['Medida Base', 'Unidad Base', 'Unidad de Reportes']);
+    const activeColumn = findHeaderColumn(headers, ['Activo']);
     for (const row of rows.slice(headerIndex + 1)) {
       const code = String(row[codeColumn] ?? '').trim();
       if (!code) continue;
@@ -917,7 +954,9 @@ function parseIngredientCatalog(filePath) {
         code,
         name: String(row[nameColumn] ?? '').trim(),
         unit: String(row[unitColumn] ?? '').trim(),
-        unitCost: numericValue(row[costColumn]) || 0
+        unitCost: numericValue(row[costColumn]) || 0,
+        type,
+        active: activeColumn < 0 || numericValue(row[activeColumn]) !== 0
       });
     }
   }
@@ -1008,7 +1047,7 @@ function normalizedUnit(value) {
 }
 
 function unitCostForRecipeUnit(catalogItem, recipeUnit) {
-  if (!catalogItem?.unitCost) return null;
+  if (!(Number(catalogItem?.unitCost) > 0)) return null;
   const source = normalizedUnit(catalogItem.unit);
   const target = normalizedUnit(recipeUnit || catalogItem.unit);
   if (!source || !target || source === target) return catalogItem.unitCost;
@@ -1604,8 +1643,15 @@ function purchaseRecord(row, location, supplierNames) {
   const negotiatedUnitPrice = numericValue(rowValue(row, ['Costo negociado', 'Negotiated cost'])) || 0;
   const netAmount = numericValue(rowValue(row, ['Monto neto', 'Net amount'])) || 0;
   const discount = numericValue(rowValue(row, ['Descuento', 'Discount'])) || 0;
-  const totalAmount = numericValue(rowValue(row, ['Monto total', 'Total amount'])) ?? netAmount - discount;
+  const reportedTotalAmount = numericValue(rowValue(row, ['Monto total', 'Total amount']));
+  const totalAmount = reportedTotalAmount ?? netAmount - discount;
   const effectiveUnitPrice = quantity ? totalAmount / quantity : listedUnitPrice;
+  // This establishes consistency with TotEat's net field, not independent tax verification.
+  const matchesNet = (actual, expected) => Math.abs(actual - expected) <= Math.max(1, Math.abs(expected) * 0.005);
+  const costBasisEvidence = quantity > 0 && listedUnitPrice > 0 && netAmount > 0 && reportedTotalAmount !== null
+    && matchesNet(listedUnitPrice * quantity, netAmount)
+    && matchesNet(totalAmount, netAmount - discount)
+    ? 'net-field-consistent' : 'unverified';
   const document = String(rowValue(row, ['Documento', 'Número documento', 'Document']) || '').trim();
   const line = String(rowValue(row, ['Lin', 'Línea', 'Line']) || '').trim();
   const code = String(rowValue(row, ['Cod', 'Código', 'Código producto', 'Code']) || '').trim();
@@ -1628,6 +1674,7 @@ function purchaseRecord(row, location, supplierNames) {
     listedUnitPrice,
     negotiatedUnitPrice,
     effectiveUnitPrice,
+    costBasisEvidence,
     netAmount,
     discount,
     totalAmount
@@ -2062,7 +2109,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuLabel: salesReportLabel,
       menuPath: 'sales-report-link',
       routePattern: /reportes\/cierres?\b|reports\/closures?\b/i,
-      defaultFilename: () => `ventas-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+      defaultFilename: () => `ventas-toteat-${businessClock().today}.xlsx`
     },
     paymentDetails: {
       key: 'payment-details',
@@ -2076,7 +2123,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuLabel: paymentDetailsReportLabel,
       menuPath: 'payment-details-report-link',
       routePattern: /reportes\/detalle-?pagos\b|reports\/payment-details\b/i,
-      defaultFilename: () => `detalle-pagos-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+      defaultFilename: () => `detalle-pagos-toteat-${businessClock().today}.csv`
     },
     purchases: {
       key: 'purchases',
@@ -2088,14 +2135,14 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuLabel: /^(?:Compras|Purchases|Shopping)$/i,
       menuPath: 'purchases-link',
       routePattern: /\/compras\b|\/purchases\b/i,
-      defaultFilename: () => `compras-toteat-${new Date().toISOString().slice(0, 10)}.xls`
+      defaultFilename: () => `compras-toteat-${businessClock().today}.xls`
     },
     kardex: {
       key: 'kardex-summary',
       label: 'Kardex resumen diario',
       urls: [kardexUrl],
       downloadLabel: /^(?:Export|Exportar)$/i,
-      defaultFilename: () => `kardex-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+      defaultFilename: () => `kardex-toteat-${businessClock().today}.xlsx`
     },
     suppliers: {
       key: 'suppliers',
@@ -2108,7 +2155,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuPath: 'suppliers-link',
       routePattern: /proveedores-new\b/i,
       skipRestaurantSelection: true,
-      defaultFilename: () => `proveedores-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+      defaultFilename: () => `proveedores-toteat-${businessClock().today}.xlsx`
     },
     products: {
       key: 'products-master',
@@ -2124,7 +2171,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       routePattern: /\/productos\b/i,
       skipRestaurantSelection: true,
       revealControlLabel: /^(?:Actions|Acciones)$/i,
-      defaultFilename: () => `productos-ingredientes-extras-toteat-${new Date().toISOString().slice(0, 10)}.xlsx`
+      defaultFilename: () => `productos-ingredientes-extras-toteat-${businessClock().today}.xlsx`
     },
     productHierarchy: {
       key: 'product-hierarchy', label: 'Jerarquía de Productos', urls: productHierarchyUrls,
@@ -2135,7 +2182,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuLabel: /Jerarqu[ií]a/i, menuPath: 'product-hierarchy-link', routePattern: /\/jerarquia\b/i,
       skipRestaurantSelection: true,
       revealControlLabel: /^AB\.?$/i,
-      defaultFilename: () => `jerarquia-productos-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+      defaultFilename: () => `jerarquia-productos-toteat-${businessClock().today}.csv`
     },
     ingredientHierarchy: {
       key: 'ingredient-hierarchy', label: 'Jerarquía de Ingredientes', urls: ingredientHierarchyUrls,
@@ -2146,7 +2193,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuLabel: /Jerarqu[ií]a.*Ingredientes/i, menuPath: 'ingredient-hierarchy-link',
       routePattern: /\/jerarquiaingredientes\b/i, skipRestaurantSelection: true,
       revealControlLabel: /^IC\.?$/i,
-      defaultFilename: () => `jerarquia-ingredientes-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+      defaultFilename: () => `jerarquia-ingredientes-toteat-${businessClock().today}.csv`
     },
     extrasHierarchy: {
       key: 'extras-hierarchy', label: 'Jerarquía de Extras', urls: extrasHierarchyUrls,
@@ -2157,7 +2204,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
       menuLabel: /Jerarqu[ií]a.*Extras/i, menuPath: 'extras-hierarchy-link',
       routePattern: /\/jerarquiaextras\b/i, skipRestaurantSelection: true,
       revealControlLabel: /^BA\.?$/i,
-      defaultFilename: () => `jerarquia-extras-toteat-${new Date().toISOString().slice(0, 10)}.csv`
+      defaultFilename: () => `jerarquia-extras-toteat-${businessClock().today}.csv`
     },
     recipes: {
       key: 'recipes-master', label: 'Maestro de Recetas', urls: recipesUrls,
@@ -3093,7 +3140,9 @@ function createApp(options = {}) {
   const purchaseOrderCounterPath = path.join(configRoot, 'purchase-order-counter.json');
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
   const findingsRegistryPath = path.join(configRoot, 'findings.json');
+  const generalExpensesPath = path.join(configRoot, 'general-expenses.json');
   const productAnalyticsSourceCache = new Map();
+  const demandEnrichmentCache = new Map();
   const toteatMasterDownloadBatches = new Map();
   ensureDir(weeksRoot);
   ensureDir(mastersRoot);
@@ -3120,9 +3169,17 @@ function createApp(options = {}) {
       exportDecimalSystem: 'comma'
     });
   }
+  if (!fs.existsSync(generalExpensesPath)) {
+    writeJsonAtomic(generalExpensesPath, { version: 1, records: [] });
+  }
 
   function readLocations() {
     return readJson(locationsPath, { locations: [] });
+  }
+
+  function readGeneralExpenses() {
+    const stored = readJson(generalExpensesPath, { version: 1, records: [] });
+    return { version: 1, records: Array.isArray(stored.records) ? stored.records : [] };
   }
 
   function activeLocation(id) {
@@ -3160,8 +3217,7 @@ function createApp(options = {}) {
 
   function projectionToday() {
     const configured = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
-    const now = configured ? new Date(`${configured}T12:00:00.000Z`) : new Date();
-    return configured || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    return configured || businessClock().today;
   }
 
   function transactionLocationRoot(locationId) {
@@ -3617,10 +3673,16 @@ function createApp(options = {}) {
     const datesProcessed = new Set();
     let sheetName = null;
     for (const source of sources) {
+      let sheets;
+      try {
+        sheets = consumptionProductSheets(XLSX.readFile(source.filePath, { cellDates: true }));
+      } catch {
+        continue;
+      }
       for (let date = dateFrom; date <= dateTo; date = addDays(date, 1)) {
         if (dateIsExcluded(date, source.excludedRanges)) continue;
         try {
-          const parsed = parseConsumptionProducts(source.filePath, date, date);
+          const parsed = parseConsumptionProductsFromSheets(sheets, date, date);
           sheetName ||= parsed.sheetName;
           datesProcessed.add(date);
           parsed.products.forEach(product => {
@@ -3988,6 +4050,7 @@ function createApp(options = {}) {
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
+  app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
   app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
   app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -4006,6 +4069,45 @@ function createApp(options = {}) {
 
   app.get('/api/config/company', (req, res) => {
     res.json(readCompanyProfile());
+  });
+
+  app.get('/api/financial-results/general-expenses', (req, res) => {
+    const locationId = String(req.query.location || '');
+    const month = String(req.query.month || '');
+    const location = locationId === HEAD_OFFICE_UNIT.id ? HEAD_OFFICE_UNIT : activeLocation(locationId);
+    if (!location || !['store', 'head-office'].includes(location.type)) return res.status(400).json({ error: 'Selecciona una cafetería o unidad válida.' });
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Selecciona un mes válido.' });
+    const record = readGeneralExpenses().records.find(item => item.locationId === locationId && item.month === month) || null;
+    return res.json({
+      location: publicLocation(location), month,
+      categories: GENERAL_EXPENSE_CATEGORIES.map(([key, label]) => ({ key, label })),
+      values: Object.fromEntries(GENERAL_EXPENSE_CATEGORIES.map(([key]) => [key, Number(record?.values?.[key]) || 0])),
+      configured: Boolean(record), updatedAt: record?.updatedAt || null
+    });
+  });
+
+  app.put('/api/financial-results/general-expenses', (req, res) => {
+    const locationId = String(req.body?.location || '');
+    const month = String(req.body?.month || '');
+    const location = locationId === HEAD_OFFICE_UNIT.id ? HEAD_OFFICE_UNIT : activeLocation(locationId);
+    if (!location || !['store', 'head-office'].includes(location.type)) return res.status(400).json({ error: 'Selecciona una cafetería o unidad válida.' });
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Selecciona un mes válido.' });
+    const values = {};
+    for (const [key] of GENERAL_EXPENSE_CATEGORIES) {
+      const value = Number(req.body?.values?.[key]);
+      if (!Number.isFinite(value) || value < 0 || value > 1_000_000_000) {
+        return res.status(400).json({ error: 'Cada gasto debe ser un monto mensual válido y no negativo.' });
+      }
+      values[key] = Math.round(value);
+    }
+    const stored = readGeneralExpenses();
+    const updatedAt = new Date().toISOString();
+    const index = stored.records.findIndex(item => item.locationId === locationId && item.month === month);
+    const record = { locationId, month, values, updatedAt };
+    if (index >= 0) stored.records[index] = record;
+    else stored.records.push(record);
+    writeJsonAtomic(generalExpensesPath, stored);
+    return res.json({ location: publicLocation(location), month, values, configured: true, updatedAt });
   });
 
   app.patch('/api/config/company', (req, res) => {
@@ -4067,10 +4169,22 @@ function createApp(options = {}) {
       || req.body.operatingWeekdays.some(day => !Number.isInteger(day) || day < 0 || day > 6))) {
       return res.status(400).json({ error: 'Selecciona días de operación válidos.' });
     }
+    if (req.body?.operatingHours !== undefined && (!req.body.operatingHours || typeof req.body.operatingHours !== 'object'
+      || Array.isArray(req.body.operatingHours) || Object.entries(req.body.operatingHours).some(([day, hours]) =>
+        !/^[0-6]$/.test(day) || !hours || !/^([01]\d|2[0-3]):[0-5]\d$/.test(hours.open)
+        || !/^([01]\d|2[0-3]):[0-5]\d$/.test(hours.close) || hours.open >= hours.close))) {
+      return res.status(400).json({ error: 'Indica horarios de apertura y cierre válidos para cada día.' });
+    }
+    if (req.body?.closedDates !== undefined && (!Array.isArray(req.body.closedDates)
+      || req.body.closedDates.some(date => !isValidDate(date)))) {
+      return res.status(400).json({ error: 'Indica fechas de cierre válidas.' });
+    }
     location.name = name;
     location.address = address;
     if (req.body?.openingDate !== undefined) location.openingDate = String(req.body.openingDate || '');
     if (req.body?.operatingWeekdays !== undefined) location.operatingWeekdays = [...new Set(req.body.operatingWeekdays)];
+    if (req.body?.operatingHours !== undefined) location.operatingHours = req.body.operatingHours;
+    if (req.body?.closedDates !== undefined) location.closedDates = [...new Set(req.body.closedDates)].sort();
     for (const field of ['toteatRestaurantId', 'toteatLocalId', 'toteatName', 'toteatSimpleId']) {
       if (req.body?.[field] !== undefined) location[field] = String(req.body[field] || '').trim();
     }
@@ -4357,7 +4471,7 @@ function createApp(options = {}) {
     };
   }
 
-  function buildDirectCostResolver(dateTo, locationIds = []) {
+  function buildDirectCostResolver(dateTo, locationIds = [], options = {}) {
     const cutoffDate = isValidDate(dateTo) ? dateTo : projectionToday();
     const activeLocations = readLocations().locations.filter(location => location.status === 'active');
     const activeStores = activeLocations.filter(location => location.type === 'store');
@@ -4377,16 +4491,18 @@ function createApp(options = {}) {
     };
 
     for (const locationId of locationsToRead) {
-      let rows = [];
-      try {
-        rows = buildPurchasesPayload({
-          location: locationId,
-          supplier: 'all',
-          product: '',
-          dateFrom: '1900-01-01',
-          dateTo: cutoffDate
-        }).rows;
-      } catch {}
+      let rows = options.purchaseRowsByLocation?.get(locationId) || [];
+      if (!options.purchaseRowsByLocation) {
+        try {
+          rows = buildPurchasesPayload({
+            location: locationId,
+            supplier: 'all',
+            product: '',
+            dateFrom: '1900-01-01',
+            dateTo: cutoffDate
+          }).rows;
+        } catch {}
+      }
       for (const row of rows) {
         const code = String(row.code || '').trim().toUpperCase();
         if (!code || row.date > cutoffDate) continue;
@@ -4434,6 +4550,7 @@ function createApp(options = {}) {
             sourceLocationName: purchase.locationName,
             supplier: purchase.supplier,
             purchaseUnit: purchase.purchaseUnit || purchase.unit,
+            costBasisEvidence: purchase.costBasisEvidence || 'unverified',
             fallback: false
           };
         }
@@ -4442,7 +4559,8 @@ function createApp(options = {}) {
           return {
             unitCost: masterCost,
             source: 'master',
-            sourceDate: null,
+            costBasisEvidence: 'unverified',
+            sourceDate: options.masterEffectiveDate || null,
             sourceLocationId: null,
             sourceLocationName: null,
             supplier: null,
@@ -4453,6 +4571,7 @@ function createApp(options = {}) {
         return {
           unitCost: 0,
           source: 'missing',
+          costBasisEvidence: 'unverified',
           sourceDate: null,
           sourceLocationId: null,
           sourceLocationName: null,
@@ -4465,7 +4584,7 @@ function createApp(options = {}) {
   }
 
   function buildCostResolver(dateTo, locationIds = [], options = {}) {
-    const directResolver = buildDirectCostResolver(dateTo, locationIds);
+    const directResolver = buildDirectCostResolver(dateTo, locationIds, options);
     const cutoffDate = directResolver.dateTo;
     let catalog = options.catalog || null;
     let recipes = options.recipes || null;
@@ -4497,9 +4616,13 @@ function createApp(options = {}) {
       const cacheKey = `${key}|${normalizedUnit(requestedUnit)}`;
       if (cache.has(cacheKey)) return cache.get(cacheKey);
 
+      const direct = directResolver.resolve(key, requestedUnit, catalogItem);
+      if (direct.source === 'purchase') {
+        cache.set(cacheKey, direct);
+        return direct;
+      }
       const recipe = recipesByCode.get(key);
       if (!recipe?.length) {
-        const direct = directResolver.resolve(key, requestedUnit, catalogItem);
         cache.set(cacheKey, direct);
         return direct;
       }
@@ -4547,27 +4670,30 @@ function createApp(options = {}) {
           unitCost: component.unitCost,
           totalCost: lineCost,
           costSource: component.source,
+          costBasisEvidence: component.costBasisEvidence || 'unverified',
           costSourceDate: component.sourceDate
         });
       }
 
       const baseUnit = catalogItem?.unit || requestedUnit;
       const convertedCost = unitCostForRecipeUnit({ unitCost: recipeCost, unit: baseUnit }, requestedUnit);
-      if (convertedCost === null) {
+      if (!(convertedCost > 0)) {
         const missing = {
           unitCost: 0,
           source: 'missing',
           sourceDate: null,
           fallback: false,
-          reason: 'recipe-unit-conversion'
+          reason: convertedCost === null ? 'recipe-unit-conversion' : 'recipe-zero-cost'
         };
         cache.set(cacheKey, missing);
         return missing;
       }
-      const sourceDates = components.map(component => component.costSourceDate).filter(Boolean).sort();
+      const sourceDates = [options.recipeEffectiveDate, ...components.map(component => component.costSourceDate)].filter(Boolean).sort();
       const calculated = {
         unitCost: convertedCost,
         source: 'recipe',
+        costBasisEvidence: components.every(component => component.costBasisEvidence === 'net-field-consistent')
+          ? 'net-field-consistent' : 'unverified',
         sourceDate: sourceDates.at(-1) || null,
         fallback: false,
         recipeCode: key,
@@ -4582,6 +4708,93 @@ function createApp(options = {}) {
       locationIds: directResolver.locationIds,
       resolve,
       resolveDirect: directResolver.resolve
+    };
+  }
+
+  // A historical margin must use only purchases and masters already effective
+  // on the sale date. Reuse a resolver until one of those sources changes.
+  function buildHistoricalCostResolver(dateTo, locationIds = []) {
+    const cutoffDate = isValidDate(dateTo) ? dateTo : projectionToday();
+    const activeLocations = readLocations().locations.filter(location => location.status === 'active');
+    const activeStores = activeLocations.filter(location => location.type === 'store');
+    const requestedIds = [...new Set(locationIds.filter(id => activeLocations.some(location => location.id === id)))];
+    const locationsToRead = [...new Set([...requestedIds, ...activeStores.map(location => location.id)])];
+    const purchaseRowsByLocation = new Map();
+    const changeDates = new Set();
+    for (const locationId of locationsToRead) {
+      let rows = [];
+      try {
+        rows = buildPurchasesPayload({
+          location: locationId, supplier: 'all', product: '', dateFrom: '1900-01-01', dateTo: cutoffDate
+        }).rows;
+      } catch {}
+      purchaseRowsByLocation.set(locationId, rows);
+      for (const row of rows) if (isValidDate(row.date)) changeDates.add(row.date);
+    }
+    const catalogMasters = masterFiles('master-catalog');
+    const recipeMasters = masterFiles('master-recipes');
+    for (const master of [...catalogMasters, ...recipeMasters]) changeDates.add(master.validFrom);
+    const epochs = [...changeDates].filter(date => date <= cutoffDate).sort();
+    const catalogs = new Map();
+    const recipes = new Map();
+    const resolvers = new Map();
+    const epochFor = date => {
+      let left = 0;
+      let right = epochs.length;
+      while (left < right) {
+        const middle = (left + right) >> 1;
+        if (epochs[middle] <= date) left = middle + 1;
+        else right = middle;
+      }
+      return epochs[left - 1] || '1900-01-01';
+    };
+    const resolverFor = date => {
+      const epoch = epochFor(date);
+      if (resolvers.has(epoch)) return resolvers.get(epoch);
+      const catalogMaster = catalogMasters.find(master => master.validFrom <= epoch) || null;
+      const catalogKey = catalogMaster?.filePath || '';
+      if (!catalogs.has(catalogKey)) {
+        let catalog = new Map();
+        try { if (catalogMaster) catalog = parseIngredientCatalog(catalogMaster.filePath); } catch {}
+        catalogs.set(catalogKey, catalog);
+      }
+      const applicableRecipes = recipeMasters.filter(master => master.validFrom <= epoch);
+      const recipeKey = applicableRecipes.map(master => master.filePath).join('|');
+      if (!recipes.has(recipeKey)) {
+        const resolved = new Map();
+        for (const master of applicableRecipes) {
+          try {
+            for (const [code, lines] of parseRecipes(master.filePath)) {
+              if (!resolved.has(code)) resolved.set(code, lines);
+            }
+          } catch {}
+        }
+        recipes.set(recipeKey, resolved);
+      }
+      const resolver = buildCostResolver(epoch, requestedIds, {
+        purchaseRowsByLocation,
+        catalog: catalogs.get(catalogKey),
+        recipes: recipes.get(recipeKey),
+        masterEffectiveDate: catalogMaster?.validFrom || null,
+        recipeEffectiveDate: applicableRecipes[0]?.validFrom || null
+      });
+      const result = { resolver, catalog: catalogs.get(catalogKey), catalogMaster };
+      resolvers.set(epoch, result);
+      return result;
+    };
+    return {
+      resolve(date, code, targetUnit = null) {
+        const { resolver, catalog, catalogMaster } = resolverFor(date);
+        const item = catalog.get(String(code || '').trim().toUpperCase()) || null;
+        const reference = resolver.resolve(code, targetUnit || item?.unit, item);
+        if (reference.source !== 'missing' || reference.reason) return reference;
+        return {
+          ...reference,
+          reason: !catalogMaster ? 'no-effective-catalog'
+            : !item ? 'not-in-effective-catalog' : 'no-positive-convertible-cost'
+        };
+      },
+      valuationDate: 'sale-date'
     };
   }
 
@@ -4679,6 +4892,63 @@ function createApp(options = {}) {
       return res.json(buildPurchasesPayload(req.query));
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudieron procesar las compras.' });
+    }
+  });
+
+  app.get('/api/cost-review', (req, res) => {
+    try {
+      const dateTo = String(req.query.dateTo || projectionToday());
+      if (!isValidDate(dateTo) || dateTo > projectionToday()) {
+        return res.status(400).json({ error: 'Selecciona una fecha de corte válida, no futura.' });
+      }
+      const requestedLocation = String(req.query.location || 'all');
+      const stores = readLocations().locations.filter(item => item.status === 'active' && item.type === 'store');
+      const selected = requestedLocation === 'all' ? stores : stores.filter(item => item.id === requestedLocation);
+      if (!selected.length) return res.status(400).json({ error: 'Selecciona una cafetería activa válida.' });
+      const master = latestMasterFile('master-catalog', dateTo);
+      if (!master) return res.status(404).json({ error: 'No hay un maestro de productos, ingredientes y extras vigente.' });
+      const catalog = parseIngredientCatalog(master.filePath);
+      const resolver = buildCostResolver(dateTo, selected.map(item => item.id), { catalog, masterEffectiveDate: master.validFrom });
+      const selectedIds = new Set(selected.map(item => item.id));
+      const items = [...catalog.values()].filter(item => item.active).map(item => {
+        const direct = resolver.resolveDirect(item.code, item.unit, item);
+        const effective = resolver.resolve(item.code, item.unit, item);
+        const hasPurchase = direct.source === 'purchase';
+        const otherLocation = hasPurchase && requestedLocation !== 'all' && !selectedIds.has(direct.sourceLocationId);
+        const status = !hasPurchase && effective.source === 'missing' ? 'missing'
+          : !hasPurchase ? 'no-purchase' : otherLocation ? 'other-location' : 'covered';
+        return {
+          code: item.code, name: item.name, type: item.type, unit: item.unit,
+          status, effectiveCost: effective.source === 'missing' ? null : effective.unitCost,
+          effectiveSource: effective.source, reason: effective.reason || null,
+          missingComponent: effective.missingComponent || null,
+          purchaseCost: hasPurchase ? direct.unitCost : null,
+          purchaseDate: hasPurchase ? direct.sourceDate : null,
+          purchaseLocation: hasPurchase ? direct.sourceLocationName : null,
+          catalogCost: item.unitCost > 0 ? item.unitCost : null,
+          costBasisEvidence: effective.costBasisEvidence || 'unverified'
+        };
+      });
+      const priority = { missing: 0, 'no-purchase': 1, 'other-location': 2, covered: 3 };
+      items.sort((left, right) => priority[left.status] - priority[right.status]
+        || left.type.localeCompare(right.type) || left.name.localeCompare(right.name, 'es'));
+      return res.json({
+        dateTo,
+        scope: { location: requestedLocation, label: requestedLocation === 'all' ? 'Todas las cafeterías' : selected[0].name },
+        master: { validFrom: master.validFrom },
+        summary: {
+          activeItems: items.length,
+          missing: items.filter(item => item.status === 'missing').length,
+          noPurchase: items.filter(item => item.status === 'no-purchase').length,
+          masterFallback: items.filter(item => item.status === 'no-purchase' && item.effectiveSource === 'master').length,
+          recipeFallback: items.filter(item => item.status === 'no-purchase' && item.effectiveSource === 'recipe').length,
+          otherLocation: items.filter(item => item.status === 'other-location').length,
+          covered: items.filter(item => item.status === 'covered').length
+        },
+        items
+      });
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo revisar la cobertura de costos.' });
     }
   });
 
@@ -5347,9 +5617,7 @@ function createApp(options = {}) {
   });
 
   function buildProductsPayload(requestedLocation = 'all') {
-      const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
-      const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
-      const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+      const todayKey = projectionToday();
       const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
       const selectedStore = requestedLocation === 'all' ? null : activeStores.find(location => location.id === requestedLocation);
       if (requestedLocation !== 'all' && !selectedStore) {
@@ -5604,19 +5872,32 @@ function createApp(options = {}) {
               dateTime,
               time: dateTime.slice(11, 16),
               hour: Number(dateTime.slice(11, 13)) + Number(dateTime.slice(14, 16)) / 60,
+              channel: String(rowValue(row, ['Origen', 'Canal', 'Channel']) || '').trim(),
               clients: Math.max(0, numericValue(rowValue(row, ['Numero de clientes', 'Número de clientes'])) || 0),
               grossSales: gross,
               orderDiscount,
               netSales: gross !== null ? (gross + orderDiscount) / 1.19 : 0,
+              reversalSignals: new Set(),
               lines: []
             };
+            if (!existing.channel) existing.channel = String(rowValue(row, ['Origen', 'Canal', 'Channel']) || '').trim();
+            for (const signal of reversalSignals({
+              orderAmount: gross,
+              quantity: numericValue(rowValue(row, ['Cantidad'])),
+              lineAmount: lineGrossSales,
+              status: rowValue(row, ['Estado', 'Estado de orden', 'Status', 'Order Status']),
+              documentType: rowValue(row, ['Tipo de documento', 'Tipo documento', 'Document Type'])
+            })) existing.reversalSignals.add(signal);
             existing.lines.push({
               code,
               name,
               quantity,
               listGross: list,
+              baseGross: numericValue(rowValue(row, ['Precio Base', 'Base Price'])),
               paidGross: paid,
               discountGross: discount,
+              promotionLabel: String(rowValue(row, ['Promoción', 'Promocion', 'Promotion']) || '').trim(),
+              size: String(rowValue(row, ['Tamaño', 'Tamano', 'Size']) || '').trim(),
               netSales: lineGrossSales / 1.19,
               hierarchyId: String(rowValue(row, ['AB.']) ?? '').trim() || null,
               hierarchyName: repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos'])) || '',
@@ -5634,6 +5915,7 @@ function createApp(options = {}) {
     const orderFacts = [...orders.values()];
     for (const order of orderFacts) {
       if (!(order.netSales > 0)) order.netSales = order.lines.reduce((total, line) => total + line.netSales, 0);
+      order.reversalSignals = [...order.reversalSignals];
     }
     const payment = paymentDetailModes(stores, warnings, orderFacts.map(order => ({ orderKey: order.orderKey, net: order.netSales })), sourcePeriod);
     for (const order of orderFacts) {
@@ -5641,6 +5923,14 @@ function createApp(options = {}) {
       order.mode = detail?.key || 'unknown';
       order.modeAmbiguous = Boolean(detail?.ambiguous);
       order.paymentDue = detail?.dueAmount ?? null;
+      order.paymentTotal = detail?.orderTotal ?? null;
+      order.paymentPaid = detail?.paidTotal ?? null;
+      order.paymentTip = detail?.gratuity ?? null;
+      order.paymentTotalAmbiguous = Boolean(detail?.totalAmbiguous);
+      order.paymentDuePartial = Boolean(detail?.hasPartialDue);
+      order.paymentMatched = Boolean(detail);
+      order.paymentAmountAmbiguous = Boolean(detail?.amountAmbiguous);
+      order.paymentFilesRead = payment.filesReadByLocation.get(order.locationId) || 0;
       order.paymentComment = detail?.comment || '';
     }
     const result = {
@@ -5806,6 +6096,409 @@ function createApp(options = {}) {
     }
   });
 
+  function demandStores(query = {}) {
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const raw = String(query.locations || 'all').trim();
+    if (raw === 'all') return stores;
+    const ids = [...new Set(raw.split(',').map(id => id.trim()).filter(Boolean))];
+    if (!ids.length || ids.some(id => !stores.some(store => store.id === id))) {
+      const error = new Error('Selecciona una o más cafeterías activas válidas.');
+      error.status = 400;
+      throw error;
+    }
+    return stores.filter(store => ids.includes(store.id));
+  }
+
+  function demandFilters(query = {}, today = projectionToday()) {
+    const mode = String(query.mode || 'month');
+    if (!['custom', 'day', 'week', 'month', 'ytd', 'all'].includes(mode)) {
+      const error = new Error('Selecciona un período válido para el análisis de la demanda.');
+      error.status = 400;
+      throw error;
+    }
+    const anchor = String(query.anchor || today);
+    const dateFrom = String(query.dateFrom || '');
+    const dateTo = String(query.dateTo || '');
+    if (!isValidDate(anchor) || anchor > today
+      || (mode === 'custom' && (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo || dateTo > today))) {
+      const error = new Error('Selecciona fechas válidas, no futuras y en orden.');
+      error.status = 400;
+      throw error;
+    }
+    const modeOfService = String(query.modeOfService || 'all');
+    if (!['all', 'takeaway', 'dineIn', 'unknown'].includes(modeOfService)) {
+      const error = new Error('Selecciona una modalidad válida.');
+      error.status = 400;
+      throw error;
+    }
+    const priceBand = Math.min(10000, Math.max(100, Math.round(Number(query.priceBand) || 500)));
+    const morningEnd = Math.round(Number(query.morningEnd) || 12);
+    const middayEnd = Math.round(Number(query.middayEnd) || 16);
+    const afternoonEnd = Math.round(Number(query.afternoonEnd) || 20);
+    if (!(morningEnd >= 1 && morningEnd < middayEnd && middayEnd < afternoonEnd && afternoonEnd <= 23)) {
+      const error = new Error('Las franjas horarias deben estar en orden y dentro de 1–23 horas.');
+      error.status = 400;
+      throw error;
+    }
+    const nameGender = String(query.nameGender || 'all');
+    if (!['all', 'feminine-associated', 'masculine-associated', 'indeterminate', 'unavailable'].includes(nameGender)) {
+      const error = new Error('Selecciona un segmento de nombre válido.'); error.status = 400; throw error;
+    }
+    const recurrence = String(query.recurrence || 'all');
+    if (!['all', 'returning-instrument', 'single-observed-date', 'unlinked'].includes(recurrence)) {
+      const error = new Error('Selecciona un segmento de recurrencia válido.'); error.status = 400; throw error;
+    }
+    return { mode, anchor, dateFrom, dateTo, modeOfService, priceBand, morningEnd, middayEnd, afternoonEnd,
+      nameGender, recurrence,
+      category: String(query.category || '').trim(), product: String(query.product || '').trim().toUpperCase(),
+      channel: String(query.channel || '').trim(), size: String(query.size || '').trim() };
+  }
+
+  function demandSalesRanges(store, today) {
+    return storedSalesFiles(store.id).flatMap(stored => {
+      const range = stored.record.confirmedRange || stored.record.detectedRange;
+      if (!isValidDate(range?.from) || !isValidDate(range?.to) || range.from > range.to
+        || range.to > today || (Date.parse(range.to) - Date.parse(range.from)) / 86400000 > 366) return [];
+      return [{ from: range.from, to: range.to, excludedRanges: stored.excludedRanges || [] }];
+    });
+  }
+
+  function demandMercadoPagoSettlements(stores) {
+    const settlements = [];
+    const seen = new Set();
+    const warnings = [];
+    let filesRead = 0;
+    let reversalsIgnored = 0;
+    let duplicatesIgnored = 0;
+    let rowsRead = 0;
+    const pseudonymKey = process.env.BREWIT_PSEUDONYM_SECRET || `brewit-local:${path.resolve(uploadsRoot)}`;
+    for (const location of stores) {
+      for (const stored of storedTransactionFiles(location.id, 'mercadopago')) {
+        try {
+          for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+            const header = sheet.rows[0] || [];
+            const normalizedHeaders = new Set(header.map(normalizeHeader));
+            if (!normalizedHeaders.has('transaction_date') || !normalizedHeaders.has('transaction_amount')
+              || !normalizedHeaders.has('source_id')) {
+              warnings.push(`Se omitió una hoja no compatible almacenada como MercadoPago: ${stored.record.originalName || stored.record.name}.`);
+              continue;
+            }
+            for (const values of sheet.rows.slice(1)) {
+              rowsRead += 1;
+              const row = Object.fromEntries(header.map((name, index) => [String(name || `column-${index}`), values[index]]));
+              const type = String(rowValue(row, ['TRANSACTION_TYPE']) || '').trim().toUpperCase();
+              if (type && type !== 'SETTLEMENT') { reversalsIgnored += 1; continue; }
+              const dateTime = mercadoPagoDateTime(row);
+              const date = dateTime?.slice(0, 10);
+              if (!date || dateIsExcluded(date, stored.excludedRanges)) continue;
+              const sourceId = String(rowValue(row, ['SOURCE_ID']) ?? '').trim();
+              const key = `${location.id}:${sourceId || genericTransactionRowKey(values)}`;
+              if (seen.has(key)) { duplicatesIgnored += 1; continue; }
+              seen.add(key);
+              const rawInstrument = mercadoPagoCardKey(row);
+              settlements.push({ key, sourceId: sourceId || null, locationId: location.id, date, dateTime,
+                amount: Math.abs(numericValue(rowValue(row, ['TRANSACTION_AMOUNT'])) || 0),
+                instrumentKey: rawInstrument ? crypto.createHmac('sha256', pseudonymKey).update(rawInstrument).digest('hex').slice(0, 24) : null,
+                paymentMethod: String(rowValue(row, ['PAYMENT_METHOD', 'PAYMENT_METHOD_TYPE']) || '').trim() || null });
+            }
+          }
+          filesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer MercadoPago: ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    settlements.sort((left, right) => left.dateTime.localeCompare(right.dateTime));
+    return { settlements, coverage: { filesRead, rowsRead, settlements: settlements.length,
+      identifiableSettlements: settlements.filter(item => item.instrumentKey).length, reversalsIgnored, duplicatesIgnored, warnings } };
+  }
+
+  function addDemandIdentity(payload, orders) {
+    const paymentSource = demandMercadoPagoSettlements(payload.stores);
+    const linkage = linkOrdersToSettlements(orders, paymentSource.settlements, { maximumMinutes: 2, amountTolerance: 2 });
+    const instrumentDates = new Map();
+    for (const settlement of paymentSource.settlements) {
+      if (!settlement.instrumentKey) continue;
+      const dates = instrumentDates.get(settlement.instrumentKey) || new Set();
+      dates.add(settlement.date);
+      instrumentDates.set(settlement.instrumentKey, dates);
+    }
+    const enriched = orders.map(order => {
+      const link = linkage.links.get(order.orderKey) || { status: 'unlinked' };
+      const name = classifyRecordedName(order.paymentComment);
+      const instrumentDatesUntilToday = link.instrumentKey
+        ? [...(instrumentDates.get(link.instrumentKey) || [])].filter(date => date <= payload.today) : [];
+      return { ...order, nameGenderSegment: name.segment, nameClassificationBasis: name.basis,
+        paymentLinkStatus: link.status, paymentLinkConfidence: link.confidence || null,
+        instrumentKey: link.status === 'estimated-high' ? link.instrumentKey : null,
+        recurrenceGroup: link.status === 'estimated-high'
+          ? (new Set(instrumentDatesUntilToday).size >= 2 ? 'returning-instrument' : 'single-observed-date') : 'unlinked' };
+    });
+    return { orders: enriched, linkageCoverage: { ...linkage.coverage,
+      potentialSplitOrders: orders.filter(order => order.paymentDuePartial).length,
+      paymentSource: paymentSource.coverage,
+      classifierVersion: NAME_CLASSIFIER_VERSION } };
+  }
+
+  function demandEnrichmentFingerprint(payload) {
+    const signatures = [payload.source.fingerprint, payload.today, ...payload.stores.map(store => store.id).sort()];
+    const visit = directory => {
+      if (!fs.existsSync(directory)) return;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory()) visit(entryPath);
+        else {
+          const stat = fs.statSync(entryPath);
+          signatures.push(`${entryPath}:${stat.size}:${stat.mtimeMs}`);
+        }
+      }
+    };
+    visit(mastersRoot);
+    payload.stores.forEach(store => visit(transactionLocationRoot(store.id)));
+    return crypto.createHash('sha256').update(signatures.sort().join('|')).digest('hex');
+  }
+
+  function demandOrdersWithIdentity(payload) {
+    const key = demandEnrichmentFingerprint(payload);
+    const cached = demandEnrichmentCache.get(key);
+    if (cached) return cached;
+    const result = addDemandIdentity(payload, enrichedDemandOrders(payload));
+    if (demandEnrichmentCache.size >= 4) demandEnrichmentCache.delete(demandEnrichmentCache.keys().next().value);
+    demandEnrichmentCache.set(key, result);
+    return result;
+  }
+
+  function buildDemandSource(query = {}) {
+    const today = projectionToday();
+    const stores = demandStores(query);
+    const filters = demandFilters(query, today);
+    const source = buildProductAnalyticsSource('all');
+    const selectedIds = new Set(stores.map(store => store.id));
+    const sourceOrders = source.orders.filter(order => selectedIds.has(order.locationId) && order.date <= today);
+    const selectedStores = stores.map(store => ({ ...store, salesRanges: demandSalesRanges(store, today) }));
+    const availableDates = sourceOrders.map(order => order.date).sort();
+    return { today, stores: selectedStores, filters, source, sourceOrders,
+      availablePeriod: availableDates.length ? { from: availableDates[0], to: availableDates.at(-1) } : null };
+  }
+
+  function demandOptions(payload) {
+    const products = new Map();
+    const categories = new Map();
+    const channels = new Set();
+    const sizes = new Set();
+    for (const order of payload.sourceOrders) {
+      if (order.channel) channels.add(order.channel);
+      for (const line of order.lines) {
+        if (line.size) sizes.add(line.size);
+        if (line.extraHierarchyId) continue;
+        if (line.code) products.set(line.code, { code: line.code, name: line.name || line.code });
+        if (line.hierarchyId) categories.set(line.hierarchyId,
+          { id: line.hierarchyId, name: line.hierarchyName || line.hierarchyId });
+      }
+    }
+    return {
+      today: payload.today,
+      locations: readLocations().locations.filter(item => item.status === 'active' && item.type === 'store').map(publicLocation),
+      selectedLocations: payload.stores.map(store => store.id),
+      availablePeriod: payload.availablePeriod,
+      products: [...products.values()].sort((left, right) => left.name.localeCompare(right.name, 'es')),
+      categories: [...categories.values()].sort((left, right) => left.name.localeCompare(right.name, 'es')),
+      channels: [...channels].sort(), sizes: [...sizes].sort(),
+      capabilities: { channel: channels.size > 0, size: sizes.size > 0 },
+      sourceUpdatedAt: payload.stores.flatMap(store => storedSalesFiles(store.id).map(file => file.record.savedAt).filter(Boolean)).sort().at(-1) || null
+    };
+  }
+
+  function enrichedDemandOrders(payload) {
+    const effectiveCatalog = latestMasterFile('master-catalog', payload.today);
+    const productMap = new Map();
+    let extras = new Map();
+    if (effectiveCatalog) {
+      try {
+        for (const product of parseProductCatalog(effectiveCatalog.filePath)) {
+          productMap.set(product.code.toUpperCase(), { listPrice: product.price });
+        }
+        extras = parseSalesAnalysisCatalog(effectiveCatalog.filePath).recipeExtras;
+      } catch {}
+    }
+    const hierarchyByFile = new Map();
+    const historicalCostByStore = new Map();
+    const hierarchyFor = date => {
+      const master = latestMasterFile('product-hierarchy', date);
+      if (!master) return null;
+      if (!hierarchyByFile.has(master.filePath)) {
+        try { hierarchyByFile.set(master.filePath, parseProductHierarchies(master.filePath)); }
+        catch { hierarchyByFile.set(master.filePath, null); }
+      }
+      return hierarchyByFile.get(master.filePath);
+    };
+    return payload.sourceOrders.map(rawOrder => {
+      const order = reconcileOrderLineSales(rawOrder, productMap);
+      const hierarchy = hierarchyFor(order.date);
+      if (!historicalCostByStore.has(order.locationId)) {
+        historicalCostByStore.set(order.locationId, buildHistoricalCostResolver(payload.today, [order.locationId]));
+      }
+      const costResolver = historicalCostByStore.get(order.locationId);
+      let cost = 0;
+      let costAvailable = true;
+      const lines = order.lines.map(line => {
+        const hierarchyNode = hierarchy?.hierarchyMap.get(line.hierarchyId);
+        const categoryPath = hierarchyNode ? hierarchy.pathFor(hierarchyNode.id) :
+          line.hierarchyName ? [line.hierarchyName] : [];
+        const isExtra = Boolean(line.extraHierarchyId || extras.has(line.code));
+        const reference = costResolver.resolve(order.date, line.code);
+        const available = line.quantity <= 0 || reference.source !== 'missing';
+        const lineCost = available ? line.quantity * (Number(reference.unitCost) || 0) : 0;
+        cost += lineCost;
+        if (!available) costAvailable = false;
+        return { ...line, isExtra, categoryId: line.hierarchyId || '', categoryName: categoryPath.at(-1) || line.hierarchyName || 'Sin categoría',
+          categoryPath, cost: lineCost, costAvailable: available, costSource: reference.source,
+          costBasisEvidence: reference.costBasisEvidence || 'unverified' };
+      });
+      return { ...order, lines, cost, costAvailable };
+    });
+  }
+
+  app.get('/api/demand-analysis/options', (req, res) => {
+    try { return res.json(demandOptions(buildDemandSource(req.query))); }
+    catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las opciones de demanda.' }); }
+  });
+
+  app.get('/api/demand-analysis', (req, res) => {
+    try {
+      const payload = buildDemandSource(req.query);
+      const identity = demandOrdersWithIdentity(payload);
+      const orders = identity.orders;
+      const options = demandOptions(payload);
+      const report = buildDemandAnalysis({ orders, stores: payload.stores, filters: payload.filters,
+        today: payload.today, cutoff: businessClock().cutoff, capabilities: options.capabilities,
+        linkageCoverage: identity.linkageCoverage });
+      report.options = options;
+      report.coverage.sourceFiles = payload.source.salesFilesRead;
+      report.coverage.paymentFiles = payload.source.paymentFilesRead;
+      report.coverage.warnings = payload.source.warnings;
+      return res.json(report);
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis de la demanda.' });
+    }
+  });
+
+  app.get('/api/demand-analysis/orders', (req, res) => {
+    try {
+      const payload = buildDemandSource(req.query);
+      const detailedOrders = demandOrdersWithIdentity(payload).orders;
+      const firstDate = payload.availablePeriod?.from || payload.today;
+      const period = resolveDemandPeriod(payload.filters, payload.today, firstDate);
+      const kind = String(req.query.kind || 'all');
+      const key = String(req.query.key || '');
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+      const page = Math.max(1, Math.trunc(Number(req.query.page) || 1));
+      const matchesEvidence = order => {
+        if (kind === 'product') return order.lines.some(line => line.code === key);
+        if (kind === 'category') return order.lines.some(line => line.hierarchyId?.startsWith(key));
+        if (kind === 'pair') {
+          const codes = key.split('|');
+          return codes.length === 2 && codes.every(code => order.lines.some(line => line.code === code));
+        }
+        if (kind === 'heatmap') {
+          const [day, hour] = key.split('-').map(Number);
+          return new Date(`${order.date}T12:00:00Z`).getUTCDay() === day && Number(order.time.slice(0, 2)) === hour;
+        }
+        if (kind === 'ticket') {
+          const from = Number(key);
+          return Number.isFinite(from) && order.netSales * 1.19 >= from && order.netSales * 1.19 < from + payload.filters.priceBand;
+        }
+        if (kind === 'product-price') {
+          const from = Number(key);
+          return Number.isFinite(from) && order.lines.some(line => line.quantity > 0 &&
+            !line.isExtra && Number(line.netSales) * 1.19 / line.quantity >= from &&
+            Number(line.netSales) * 1.19 / line.quantity < from + payload.filters.priceBand);
+        }
+        if (kind === 'name-segment') return order.nameGenderSegment === key;
+        if (kind === 'recurrence') return order.recurrenceGroup === key;
+        if (kind === 'occasion') {
+          const [from, to] = key.split('-').map(Number);
+          return Number.isFinite(from) && Number.isFinite(to) && order.hour >= from && order.hour < to;
+        }
+        if (kind === 'day') return order.date === key;
+        if (kind === 'week') return order.date >= key && order.date <= addDays(key, 6);
+        if (kind === 'month') return order.date.slice(0, 7) === key;
+        if (kind === 'location') return order.locationId === key;
+        return kind === 'all';
+      };
+      const filtered = detailedOrders.filter(order => order.date >= period.from && order.date <= period.to
+        && !order.reversalSignals.length && orderMatches(order, payload.filters) && matchesEvidence(order))
+        .sort((left, right) => right.dateTime.localeCompare(left.dateTime) || right.orderKey.localeCompare(left.orderKey));
+      return res.json({ period, kind, key, total: filtered.length, page, limit,
+        orders: filtered.slice((page - 1) * limit, page * limit).map(order => ({
+          orderKey: order.orderKey, orderReference: order.orderReference,
+          locationId: order.locationId, locationName: order.locationName,
+          date: order.date, time: order.time, ticketGross: order.netSales * 1.19,
+          netSales: order.netSales, discountGross: order.orderDiscount, cost: order.costAvailable ? order.cost : null,
+          costAvailable: order.costAvailable, mode: order.mode, channel: order.channel || null,
+          nameGenderSegment: order.nameGenderSegment, recurrenceGroup: order.recurrenceGroup,
+          paymentLinkStatus: order.paymentLinkStatus,
+          lines: order.lines.map(line => ({ code: line.code, name: line.name, quantity: line.quantity,
+            paidGross: line.paidGross, netSales: line.netSales, cost: line.costAvailable ? line.cost : null,
+            costSource: line.costSource, costBasisEvidence: line.costBasisEvidence,
+            salesAllocation: line.salesAllocation || 'reported' }))
+        })) });
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo abrir el detalle de los pedidos.' });
+    }
+  });
+
+  function buildAuditSourceDiagnostics(stores, transactions, dateFrom, dateTo) {
+    const settlements = [];
+    const warnings = [];
+    const seen = new Set();
+    const fileCoverage = {};
+    for (const store of stores) {
+      const coverage = {
+        sales: storedSalesFiles(store.id).filter(file => storedFileIntersectsPeriod(file, { from: dateFrom, to: dateTo })).length,
+        paymentDetails: storedTransactionFiles(store.id, 'payment-details')
+          .filter(file => storedFileIntersectsPeriod(file, { from: dateFrom, to: dateTo })).length,
+        mercadoPago: 0
+      };
+      fileCoverage[store.id] = coverage;
+      for (const stored of storedTransactionFiles(store.id, 'mercadopago')
+        .filter(file => storedFileIntersectsPeriod(file, { from: dateFrom, to: dateTo }))) {
+        try {
+          let validFile = false;
+          for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+            const header = sheet.rows[0] || [];
+            if (!header.some(name => normalizeHeader(name) === 'transaction_date')
+              || !header.some(name => normalizeHeader(name) === 'transaction_amount')) continue;
+            validFile = true;
+            for (const values of sheet.rows.slice(1)) {
+              const row = Object.fromEntries(header.map((name, index) => [String(name || `column-${index}`), values[index]]));
+              if (String(rowValue(row, ['TRANSACTION_TYPE']) || '').trim().toUpperCase() !== 'SETTLEMENT') continue;
+              const date = mercadoPagoDateTime(row)?.slice(0, 10);
+              if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
+              const sourceId = String(rowValue(row, ['SOURCE_ID']) ?? '').trim();
+              const identity = `${store.id}:${sourceId || genericTransactionRowKey(values)}`;
+              if (seen.has(identity)) continue;
+              seen.add(identity);
+              const feeField = ['FEE_AMOUNT', 'MP_FEE', 'COMMISSION_AMOUNT', 'COMISION', 'COMISIÓN', 'FEE']
+                .find(name => rowValue(row, [name]) !== null);
+              settlements.push({
+                locationId: store.id,
+                date,
+                amount: numericValue(rowValue(row, ['TRANSACTION_AMOUNT'])),
+                fee: feeField ? numericValue(rowValue(row, [feeField])) : null
+              });
+            }
+          }
+          if (validFile) coverage.mercadoPago += 1;
+          else warnings.push(`MercadoPago sin columnas de liquidación reconocidas: ${stored.record.originalName || stored.record.name} (${store.name}).`);
+        } catch {
+          warnings.push(`No se pudo leer MercadoPago: ${stored.record.originalName || stored.record.name} (${store.name}).`);
+        }
+      }
+    }
+    return { ...buildSourceDiagnostics({ stores, transactions, settlements, fileCoverage }), warnings };
+  }
+
   app.get('/api/transactions/audit', (req, res) => {
     try {
       const requestedLocation = String(req.query.location || 'all');
@@ -5841,7 +6534,7 @@ function createApp(options = {}) {
         ...catalog.products.values(),
         ...catalog.recipeExtras.values()
       ].map(item => [String(item.code).toUpperCase(), Number(item.listPrice) || 0]) : []);
-      const transactions = source.orders.flatMap(order => {
+      const allTransactions = source.orders.flatMap(order => {
         if (order.date < dateFrom || order.date > dateTo) return [];
         const reportedGross = Number(order.grossSales);
         const hasReportedGross = order.grossSales !== null && order.grossSales !== undefined && Number.isFinite(reportedGross);
@@ -5857,11 +6550,6 @@ function createApp(options = {}) {
         const discountPercent = saleBeforeDiscount > 0 ? discountAmount / saleBeforeDiscount * 100 : 0;
         const netSale = saleWithDiscount / 1.19;
         const units = order.lines.reduce((total, line) => total + Math.max(0, Number(line.quantity) || 0), 0);
-        if ((minAmount !== null && saleWithDiscount < minAmount)
-          || (maxAmount !== null && saleWithDiscount > maxAmount)
-          || (minDiscount !== null && discountPercent < minDiscount)
-          || (maxDiscount !== null && discountPercent > maxDiscount)) return [];
-
         const reconciled = reconcileOrderLineSales({ ...order, netSales: netSale }, new Map());
         return [{
           id: order.orderKey,
@@ -5880,7 +6568,14 @@ function createApp(options = {}) {
           mode: order.mode,
           modeLabel: order.mode === 'takeaway' ? 'Para llevar' : order.mode === 'dineIn' ? 'Servir en el local' : 'Sin información',
           paymentDue: order.paymentDue,
+          paymentTotal: order.paymentTotal,
+          paymentTotalAmbiguous: order.paymentTotalAmbiguous,
+          paymentDuePartial: order.paymentDuePartial,
+          paymentMatched: order.paymentMatched,
+          paymentAmountAmbiguous: order.paymentAmountAmbiguous,
+          paymentFilesRead: order.paymentFilesRead,
           paymentComment: order.paymentComment,
+          reversalSignals: order.reversalSignals,
           lines: reconciled.lines.map(line => ({
             code: line.code,
             name: line.name,
@@ -5898,6 +6593,26 @@ function createApp(options = {}) {
           }))
         }];
       });
+      const transactions = allTransactions.filter(transaction => (
+        (minAmount === null || transaction.saleWithDiscount >= minAmount)
+        && (maxAmount === null || transaction.saleWithDiscount <= maxAmount)
+        && (minDiscount === null || transaction.discountPercent >= minDiscount)
+        && (maxDiscount === null || transaction.discountPercent <= maxDiscount)
+      ));
+      const reconciliationCounts = { matched: 0, difference: 0, 'not-linked': 0, 'no-source': 0, ambiguous: 0, 'no-amount': 0, 'no-sale-amount': 0, 'review-reversal': 0 };
+      for (const transaction of allTransactions) {
+        transaction.paymentReconciliation = reconcilePaymentDetail({
+          reversalReviewRequired: transaction.reversalSignals.length > 0,
+          saleWithDiscount: transaction.saleWithDiscount,
+          paymentTotal: transaction.paymentTotal,
+          paymentTotalAmbiguous: transaction.paymentTotalAmbiguous,
+          paymentDue: transaction.paymentDue,
+          paymentMatched: transaction.paymentMatched,
+          paymentAmountAmbiguous: transaction.paymentAmountAmbiguous,
+          paymentFilesRead: transaction.paymentFilesRead
+        });
+      }
+      for (const transaction of transactions) reconciliationCounts[transaction.paymentReconciliation.status] += 1;
       const summary = transactions.reduce((result, transaction) => {
         result.transactions += 1;
         result.saleBeforeDiscount += transaction.saleBeforeDiscount;
@@ -5911,6 +6626,9 @@ function createApp(options = {}) {
         ? Math.round(summary.discountAmount / summary.saleBeforeDiscount * 1000) / 10
         : 0;
       summary.units = Math.round(summary.units * 10) / 10;
+      summary.paymentReconciliation = reconciliationCounts;
+      summary.paymentDuePartial = transactions.filter(transaction => transaction.paymentDuePartial).length;
+      summary.reversalReviewRequired = transactions.filter(transaction => transaction.reversalSignals.length > 0).length;
       transactions.sort((left, right) => right.date.localeCompare(left.date) || right.time.localeCompare(left.time));
       return res.json({
         filters: { location: requestedLocation, dateFrom, dateTo, minAmount, maxAmount, minDiscount, maxDiscount },
@@ -5920,6 +6638,7 @@ function createApp(options = {}) {
           : null,
         summary,
         transactions,
+        sourceDiagnostics: buildAuditSourceDiagnostics(source.stores, allTransactions, dateFrom, dateTo),
         warnings: source.warnings,
         coverage: source.coverage
       });
@@ -6429,8 +7148,9 @@ function createApp(options = {}) {
     for (const [field, label] of [['marketing', 'Marketing'], ['employees', 'Colaboradores']]) {
       try {
         if (!chronologicalSources(location.id, field).length) throw new Error('no hay archivo cargado');
+        const mergedProducts = mergedConsumptionProducts(location.id, field, dateFrom, dateTo);
         const products = applyCatalogProductCosts(
-          mergedConsumptionProducts(location.id, field, dateFrom, dateTo),
+          mergedProducts,
           inventoryCatalog,
           costResolver
         );
@@ -6598,6 +7318,52 @@ function createApp(options = {}) {
     };
   }
 
+  function generalExpensesForPeriod(locations, dateFrom, dateTo) {
+    const records = readGeneralExpenses().records;
+    const recordMap = new Map(records.map(record => [`${record.locationId}:${record.month}`, record]));
+    const months = [];
+    let cursor = `${dateFrom.slice(0, 7)}-01`;
+    while (cursor <= dateTo) {
+      const month = cursor.slice(0, 7);
+      const daysInMonth = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+      const monthEnd = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+      const overlapFrom = dateFrom > cursor ? dateFrom : cursor;
+      const overlapTo = dateTo < monthEnd ? dateTo : monthEnd;
+      const coveredDays = Math.round((new Date(`${overlapTo}T00:00:00Z`) - new Date(`${overlapFrom}T00:00:00Z`)) / 86400000) + 1;
+      months.push({ month, daysInMonth, coveredDays, factor: coveredDays / daysInMonth });
+      const next = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1));
+      cursor = next.toISOString().slice(0, 10);
+    }
+    const expectedRecords = locations.length * months.length;
+    return GENERAL_EXPENSE_CATEGORIES.map(([key, label]) => {
+      let amount = 0;
+      let configuredRecords = 0;
+      const detail = [];
+      for (const location of locations) {
+        for (const month of months) {
+          const record = recordMap.get(`${location.id}:${month.month}`);
+          if (record) configuredRecords += 1;
+          const monthlyAmount = Number(record?.values?.[key]) || 0;
+          const proratedAmount = monthlyAmount * month.factor;
+          amount += proratedAmount;
+          detail.push({
+            locationId: location.id, locationName: location.name, month: month.month,
+            monthlyAmount, coveredDays: month.coveredDays, daysInMonth: month.daysInMonth,
+            amount: proratedAmount, configured: Boolean(record)
+          });
+        }
+      }
+      return {
+        key: `general:${key}`, categoryKey: key, label, amount,
+        available: configuredRecords > 0,
+        complete: expectedRecords > 0 && configuredRecords === expectedRecords,
+        coveredLocations: new Set(detail.filter(item => item.configured).map(item => item.locationId)).size,
+        totalLocations: locations.length,
+        configuredRecords, expectedRecords, basis: 'monthly-prorated', detail
+      };
+    });
+  }
+
   function buildFinancialResultsPayload(query = {}) {
     const today = projectionToday();
     const dateTo = String(query.dateTo || today);
@@ -6617,6 +7383,7 @@ function createApp(options = {}) {
       throw error;
     }
     const selectedStores = selectedStore ? [selectedStore] : stores;
+    const costValuation = query.costValuation === 'historical' ? 'historical' : 'period-end';
     const warnings = [];
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
     const productHierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
@@ -6647,7 +7414,10 @@ function createApp(options = {}) {
 
     const hotIds = extrasLookup?.descendantIds('BA.001') || new Set(['BA.001']);
     const coldIds = extrasLookup?.descendantIds('BA.002') || new Set(['BA.002']);
-    const costResolver = buildCostResolver(dateTo, selectedStores.map(location => location.id));
+    const periodEndCostResolver = costValuation === 'period-end'
+      ? buildCostResolver(dateTo, selectedStores.map(location => location.id)) : null;
+    const historicalCostResolvers = costValuation === 'historical'
+      ? new Map(selectedStores.map(location => [location.id, buildHistoricalCostResolver(dateTo, [location.id])])) : null;
     const facts = [];
     const seenRows = new Set();
     let salesFilesRead = 0;
@@ -6681,10 +7451,15 @@ function createApp(options = {}) {
               }
             }
             const catalogItem = costCatalog.get(code);
-            const costReference = costResolver.resolve(code, catalogItem?.unit, catalogItem);
+            const costReference = costValuation === 'historical'
+              ? historicalCostResolvers.get(location.id).resolve(date, code)
+              : periodEndCostResolver.resolve(code, catalogItem?.unit, catalogItem);
             const reportedCost = numericValue(rowValue(row, ['Costo']));
             const usesResolvedCost = costReference.source !== 'missing';
-            const totalCost = usesResolvedCost ? quantity * costReference.unitCost : reportedCost;
+            const usesSalesExportCost = !usesResolvedCost && reportedCost !== null
+              && (costValuation === 'period-end' || reportedCost > 0);
+            const totalCost = usesResolvedCost ? quantity * costReference.unitCost
+              : usesSalesExportCost ? reportedCost : null;
             const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim();
             const hierarchyPath = hierarchyLookup?.pathFor(hierarchyId) || [];
             const fallbackHierarchy = repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos'])) || 'Sin jerarquía';
@@ -6697,6 +7472,7 @@ function createApp(options = {}) {
             facts.push({
               locationId: location.id,
               locationName: location.name,
+              date,
               orderKey,
               code,
               name,
@@ -6705,6 +7481,11 @@ function createApp(options = {}) {
               listGross: listLine,
               totalCost: totalCost ?? 0,
               costAvailable: totalCost !== null,
+              costBasisEvidence: usesResolvedCost ? costReference.costBasisEvidence || 'unverified' : 'unverified',
+              costSource: usesResolvedCost ? costReference.source : usesSalesExportCost ? 'sales-export' : 'missing',
+              costSourceDate: usesResolvedCost ? costReference.sourceDate : usesSalesExportCost ? date : null,
+              costMissingReason: totalCost === null ? costReference.reason || 'no-positive-convertible-cost' : null,
+              missingComponent: totalCost === null ? costReference.missingComponent || null : null,
               hierarchy: hierarchyPath.length ? hierarchyPath.join(' / ') : fallbackHierarchy,
               hierarchyPath: hierarchyPath.length ? hierarchyPath : [fallbackHierarchy],
               barType: isCold ? 'cold' : isHot ? 'hot' : 'none',
@@ -6756,8 +7537,26 @@ function createApp(options = {}) {
       }
     }
     const missingCostCodes = [...new Set(facts.filter(fact => !fact.costAvailable).map(fact => fact.code || fact.name))];
+    const missingCostProducts = new Map();
+    for (const fact of facts.filter(item => !item.costAvailable)) {
+      const key = [fact.code, fact.costMissingReason, fact.missingComponent].join('|');
+      const item = missingCostProducts.get(key) || {
+        code: fact.code, name: fact.name, reason: fact.costMissingReason,
+        missingComponent: fact.missingComponent, lines: 0, netSales: 0,
+        firstDate: fact.date, lastDate: fact.date
+      };
+      item.lines += 1;
+      item.netSales += fact.netSales;
+      if (fact.date < item.firstDate) item.firstDate = fact.date;
+      if (fact.date > item.lastDate) item.lastDate = fact.date;
+      missingCostProducts.set(key, item);
+    }
     if (missingCostCodes.length) {
       warnings.push(`${missingCostCodes.length} producto(s) vendido(s) no tienen costo disponible: ${missingCostCodes.slice(0, 12).join(', ')}${missingCostCodes.length > 12 ? ', …' : ''}.`);
+    }
+    const unverifiedCostLines = facts.filter(fact => fact.costAvailable && fact.costBasisEvidence !== 'net-field-consistent').length;
+    if (unverifiedCostLines) {
+      warnings.push(`${unverifiedCostLines} línea(s) con costo disponible usan maestro o una fuente sin cotejo con «Monto neto» de Compras. Sus márgenes son estimados; no se aplicó ninguna conversión de IVA automática.`);
     }
 
     const barLabels = { hot: 'Barra Caliente', cold: 'Barra Fría', none: 'Sin Barra' };
@@ -6800,6 +7599,10 @@ function createApp(options = {}) {
     };
     const mercadoPago = mercadoPagoFeesForPeriod(selectedStores, dateFrom, dateTo);
     warnings.push(...mercadoPago.warnings);
+    const generalExpenses = generalExpensesForPeriod(selectedStores, dateFrom, dateTo);
+    const headOfficeExpenses = requestedLocation === 'all'
+      ? generalExpensesForPeriod([HEAD_OFFICE_UNIT], dateFrom, dateTo)
+      : [];
     const expenses = [
       expenseFromInventory('marketing', 'Consumo de Marketing'),
       expenseFromInventory('employees', 'Consumo de Colaboradores'),
@@ -6811,11 +7614,18 @@ function createApp(options = {}) {
         coveredLocations: mercadoPago.locationsWithFee,
         totalLocations: selectedStores.length,
         detail: mercadoPago
-      }
+      },
+      ...generalExpenses
     ];
     const knownExpenses = expenses.filter(item => item.available).reduce((sum, item) => sum + item.amount, 0);
     const contributionMargin = revenueMetric.contributionMargin;
     const dataCoverageComplete = salesFilesRead > 0 && revenueMetric.costAvailable && expenses.every(item => item.complete);
+    const operationalResult4Wall = contributionMargin === null ? null : contributionMargin - knownExpenses;
+    const headOfficeAvailable = requestedLocation === 'all' && headOfficeExpenses.some(item => item.available);
+    const headOfficeComplete = requestedLocation === 'all' && headOfficeExpenses.length > 0
+      && headOfficeExpenses.every(item => item.complete);
+    const headOfficeAmount = headOfficeExpenses.filter(item => item.available)
+      .reduce((sum, item) => sum + item.amount, 0);
     return {
       date: today,
       period: { from: dateFrom, to: dateTo },
@@ -6829,7 +7639,16 @@ function createApp(options = {}) {
         ingredients: financialGroupedMetrics(facts, 'ingredientType', ingredientLabels),
         hierarchies,
         filesRead: salesFilesRead,
-        lineCount: facts.length
+        lineCount: facts.length,
+        linesWithCost: facts.filter(fact => fact.costAvailable).length,
+        linesWithNetFieldConsistentCost: facts.filter(fact => fact.costAvailable && fact.costBasisEvidence === 'net-field-consistent').length,
+        linesWithUnverifiedCost: unverifiedCostLines,
+        costValuationDate: costValuation === 'historical' ? 'sale-date' : 'period-end',
+        costSources: Object.fromEntries(['recipe', 'purchase', 'master', 'sales-export', 'missing']
+          .map(source => [source, facts.filter(fact => fact.costSource === source).length])),
+        missingCostProducts: [...missingCostProducts.values()].sort((left, right) =>
+          right.netSales - left.netSales || left.code.localeCompare(right.code, 'es')),
+        latestSaleDate: facts.map(fact => fact.date).sort().at(-1) || null
       },
       statement: {
         netSales: revenueMetric.netSales,
@@ -6838,10 +7657,26 @@ function createApp(options = {}) {
         contributionMarginPercent: revenueMetric.marginPercent,
         expenses,
         knownOperatingExpenses: knownExpenses,
-        partialResult: contributionMargin === null ? null : contributionMargin - knownExpenses,
-        partial: true,
+        partialResult: operationalResult4Wall,
+        operationalResult4Wall,
+        headOffice: requestedLocation === 'all' ? {
+          label: 'Casa Matriz', amount: headOfficeAmount,
+          available: headOfficeAvailable, complete: headOfficeComplete,
+          configuredRecords: headOfficeExpenses[0]?.configuredRecords || 0,
+          expectedRecords: headOfficeExpenses[0]?.expectedRecords || 0,
+          expenses: headOfficeExpenses
+        } : null,
+        operationalResultWithHeadOffice: requestedLocation === 'all' && operationalResult4Wall !== null && headOfficeAvailable
+          ? operationalResult4Wall - headOfficeAmount
+          : null,
+        partial: !dataCoverageComplete,
         dataCoverageComplete,
-        pendingExpenseCategories: ['Otros gastos operacionales', 'Remuneraciones y arriendos', 'Impuestos y gastos financieros']
+        generalExpenses: {
+          configured: generalExpenses.every(item => item.complete),
+          configuredRecords: generalExpenses[0]?.configuredRecords || 0,
+          expectedRecords: generalExpenses[0]?.expectedRecords || 0
+        },
+        pendingExpenseCategories: dataCoverageComplete ? [] : ['Fuentes operacionales o gastos generales sin cobertura completa']
       },
       inventoryByLocation,
       warnings: [...new Set(warnings)]
@@ -7377,6 +8212,7 @@ function createApp(options = {}) {
   function paymentDetailModes(stores, warnings, orderFacts = [], sourcePeriod = null) {
     const detailsByOrder = new Map();
     const amountFields = new Set();
+    const filesReadByLocation = new Map();
     const grossSalesByOrder = new Map(orderFacts.map(fact => [fact.orderKey, fact.net * 1.19]));
     let filesRead = 0;
     for (const location of stores) {
@@ -7385,13 +8221,15 @@ function createApp(options = {}) {
         try {
           const rows = readSalesRows(stored.filePath);
           const amountSamples = rows.flatMap(row => {
-            const amount = numericValue(rowValue(row, ['A Pagar', 'Due']));
+            const amount = numericValue(rowValue(row, ['Total', 'Order Total']))
+              ?? numericValue(rowValue(row, ['A Pagar', 'Due']));
             const gratuity = numericValue(rowValue(row, ['Propina', 'Gratuity']));
             return amount && gratuity ? [{ amount: Math.abs(amount), gratuity: Math.abs(gratuity) }] : [];
           });
           const salesRatios = rows.flatMap(row => {
             const orderId = normalizedTransactionId(rowValue(row, ['Comanda', 'Ticket', 'ID de orden', 'Id de orden']));
-            const amount = Math.abs(numericValue(rowValue(row, ['A Pagar', 'Due'])) || 0);
+            const amount = Math.abs(numericValue(rowValue(row, ['Total', 'Order Total']))
+              ?? numericValue(rowValue(row, ['A Pagar', 'Due'])) ?? 0);
             const grossSales = grossSalesByOrder.get(`${location.id}:order:${orderId}`);
             return amount && grossSales ? [grossSales / amount] : [];
           }).sort((left, right) => left - right);
@@ -7400,7 +8238,8 @@ function createApp(options = {}) {
             ? medianSalesRatio >= 100
             : amountSamples.some(sample => sample.gratuity / sample.amount >= 20)
               || rows.some(row => {
-              const amount = Math.abs(numericValue(rowValue(row, ['A Pagar', 'Due'])) || 0);
+              const amount = Math.abs(numericValue(rowValue(row, ['Total', 'Order Total']))
+                ?? numericValue(rowValue(row, ['A Pagar', 'Due'])) ?? 0);
               return amount > 0 && amount < 200;
             });
           const amountScale = usesThousands ? 1000 : 1;
@@ -7412,20 +8251,27 @@ function createApp(options = {}) {
             if (date && (dateIsExcluded(date, stored.excludedRanges)
               || (sourcePeriod && (date < sourcePeriod.from || date > sourcePeriod.to)))) continue;
             const orderKey = `${location.id}:order:${orderId}`;
-            const detail = detailsByOrder.get(orderKey) || { comments: new Set(), dueAmount: null, amountField: null };
+            const detail = detailsByOrder.get(orderKey) || { comments: new Set(), amountField: null, amounts: new Set(), totals: new Set(), paidTotals: new Set(), gratuities: new Set() };
             const comment = String(rowValue(row, ['Comentario General', 'Comentario general', 'General Comment']) || '').trim();
             if (comment) detail.comments.add(comment);
             const englishAmount = rowValue(row, ['Due']);
             const spanishAmount = rowValue(row, ['A Pagar']);
             const amount = numericValue(englishAmount ?? spanishAmount);
             if (amount !== null) {
-              detail.dueAmount = amount * amountScale;
+              detail.amounts.add(Math.round(amount * amountScale * 100) / 100);
               detail.amountField = englishAmount !== null && englishAmount !== undefined ? 'Due' : 'A Pagar';
               amountFields.add(detail.amountField);
             }
+            const orderTotal = numericValue(rowValue(row, ['Total', 'Order Total']));
+            if (orderTotal !== null) detail.totals.add(Math.round(orderTotal * amountScale * 100) / 100);
+            const paidTotal = numericValue(rowValue(row, ['Pagos', 'Payments', 'Paid']));
+            if (paidTotal !== null) detail.paidTotals.add(Math.round(paidTotal * amountScale * 100) / 100);
+            const gratuity = numericValue(rowValue(row, ['Propina', 'Gratuity', 'Tip']));
+            if (gratuity !== null) detail.gratuities.add(Math.round(gratuity * amountScale * 100) / 100);
             detailsByOrder.set(orderKey, detail);
           }
           filesRead += 1;
+          filesReadByLocation.set(location.id, (filesReadByLocation.get(location.id) || 0) + 1);
         } catch {
           warnings.push(`No se pudo leer Detalle Pagos (${location.name}).`);
         }
@@ -7434,14 +8280,22 @@ function createApp(options = {}) {
     const modes = new Map();
     for (const [orderKey, detail] of detailsByOrder) {
       const comment = [...detail.comments].join(' / ');
+      const orderTotal = detail.totals.size === 1 ? [...detail.totals][0] : null;
       modes.set(orderKey, {
         ...serviceModeFromComment(comment),
         comment,
-        dueAmount: detail.dueAmount,
+        dueAmount: detail.amounts.size === 1 ? [...detail.amounts][0] : null,
+        orderTotal,
+        paidTotal: detail.paidTotals.size === 1 ? [...detail.paidTotals][0] : null,
+        gratuity: detail.gratuities.size === 1 ? [...detail.gratuities][0] : null,
+        totalAmbiguous: detail.totals.size > 1,
+        hasPartialDue: orderTotal !== null && [...detail.amounts].some(amount =>
+          amount < orderTotal - Math.max(2, Math.abs(orderTotal) * 0.005)),
+        amountAmbiguous: detail.amounts.size > 1 || detail.paidTotals.size > 1,
         amountField: detail.amountField
       });
     }
-    return { modes, filesRead, amountFields: [...amountFields] };
+    return { modes, filesRead, filesReadByLocation, amountFields: [...amountFields] };
   }
 
   function avoidedPackagingForProducts(products, modeFor, recipes, catalog, costResolver = null) {
@@ -7558,7 +8412,7 @@ function createApp(options = {}) {
           label,
           orders: orders.length,
           netSales,
-          averageTicket: orders.length ? netSales / orders.length : 0,
+          averageTicket: averageTicketWithVat(netSales, orders.length) ?? 0,
           orderPercent: selectedOrders.length ? orders.length / selectedOrders.length * 100 : 0,
           salesPercent: totalNetSales ? netSales / totalNetSales * 100 : 0
         };
@@ -7621,9 +8475,7 @@ function createApp(options = {}) {
   }
 
   function buildSalesDashboard(requestedLocation = 'all', query = {}) {
-    const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
-    const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
-    const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const todayKey = projectionToday();
     const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
     const selectedStore = requestedLocation === 'all' ? null : activeStores.find(location => location.id === requestedLocation);
     if (requestedLocation !== 'all' && !selectedStore) {
@@ -8622,9 +9474,7 @@ function createApp(options = {}) {
   });
 
   function buildHourlySalesDemand(requestedLocation = 'all', query = {}) {
-    const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
-    const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
-    const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const todayKey = projectionToday();
     const automaticModes = new Set([
       'current-week', 'previous-week', 'current-month', 'previous-month',
       'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days'
@@ -9823,8 +10673,11 @@ function createApp(options = {}) {
         return res.status(400).json({ error: 'Select a valid cafeteria for the report.' });
       }
       const stores = selectedStore ? [selectedStore] : activeStores;
+      const storesWithoutSalesFiles = [];
       for (const location of stores) {
-        for (const stored of storedSalesFiles(location.id)) {
+        const storedFiles = storedSalesFiles(location.id);
+        if (!storedFiles.length) storesWithoutSalesFiles.push(location.name);
+        for (const stored of storedFiles) {
           try {
             const rows = readSalesRows(stored.filePath);
             rows.forEach((row, rowIndex) => {
@@ -9854,9 +10707,7 @@ function createApp(options = {}) {
         }
       }
 
-      const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
-      const now = configuredToday ? new Date(`${configuredToday}T12:00:00.000Z`) : new Date();
-      const todayKey = configuredToday || toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+      const todayKey = projectionToday();
       const includeToday = String(req.query.includeToday || '').toLowerCase() === 'true';
       const report = buildSalesReport(dailySales, todayKey, includeToday);
       return res.json({
@@ -9866,6 +10717,11 @@ function createApp(options = {}) {
           ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
           : { type: 'all', location: null, label: 'Todas las cafeterías' },
         filesRead,
+        sourceCoverage: {
+          latestSaleDate: Object.keys(dailySales).filter(date => date <= todayKey).sort().at(-1) || null,
+          storesWithoutSalesFiles,
+          futureSaleDates: Object.keys(dailySales).filter(date => date > todayKey).length
+        },
         warnings
       });
     } catch (error) {
@@ -9878,17 +10734,23 @@ function createApp(options = {}) {
       const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
       const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
       const clock = configuredToday ? { today: configuredToday, cutoff: '23:59:59' } : businessClock();
+      const costValuation = req.query.costValuation === 'historical' ? 'historical' : 'period-end';
       const catalogMaster = latestMasterFile('master-catalog', clock.today);
       let costCatalog = new Map();
       if (catalogMaster) costCatalog = parseIngredientCatalog(catalogMaster.filePath);
       const facts = [];
       const warnings = [];
       let filesRead = 0;
+      const sourceStores = [];
       for (const location of stores) {
-        const resolver = buildCostResolver(clock.today, [location.id], { catalog: costCatalog });
+        const resolver = costValuation === 'historical'
+          ? buildHistoricalCostResolver(clock.today, [location.id])
+          : buildCostResolver(clock.today, [location.id], { catalog: costCatalog });
         const orders = new Map();
         const seenRows = new Set();
-        for (const stored of storedSalesFiles(location.id)) {
+        const storedFiles = storedSalesFiles(location.id);
+        let locationFilesRead = 0;
+        for (const stored of storedFiles) {
           try {
             for (const row of readSalesRows(stored.filePath)) {
               const dateTime = salesTransactionDateTime(row);
@@ -9904,7 +10766,7 @@ function createApp(options = {}) {
               if (!order) {
                 order = { locationId: location.id, date: dateTime.slice(0, 10), time: dateTime.slice(11),
                   sales: 0, cost: 0, discounts: 0, grossBeforeDiscount: 0, transactions: 1,
-                  costAvailable: true, target: null, hasLine: false };
+                  costAvailable: true, costBasisEvidence: 'net-field-consistent', target: null, hasLine: false };
                 orders.set(orderKey, order);
               }
               const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
@@ -9917,15 +10779,22 @@ function createApp(options = {}) {
               const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
               if (!code) {
                 order.costAvailable = false;
+                order.costBasisEvidence = 'unverified';
                 continue;
               }
               const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
               const catalogItem = costCatalog.get(code);
-              const costReference = resolver.resolve(code, catalogItem?.unit, catalogItem);
+              const costReference = costValuation === 'historical'
+                ? resolver.resolve(dateTime.slice(0, 10), code)
+                : resolver.resolve(code, catalogItem?.unit, catalogItem);
               const reportedCost = numericValue(rowValue(row, ['Costo']));
-              const totalCost = costReference.source !== 'missing' ? quantity * costReference.unitCost : reportedCost;
+              const totalCost = costReference.source !== 'missing' ? quantity * costReference.unitCost
+                : reportedCost !== null && (costValuation === 'period-end' || reportedCost > 0) ? reportedCost : null;
               if (totalCost === null) order.costAvailable = false;
               else order.cost += totalCost;
+              if (costReference.source === 'missing' || costReference.costBasisEvidence !== 'net-field-consistent') {
+                order.costBasisEvidence = 'unverified';
+              }
               const paidLine = numericValue(rowValue(row, ['Precio a Pagar', 'Precio a pagar']));
               const listLine = numericValue(rowValue(row, ['Precio Lista'])) || 0;
               const lineDiscount = numericValue(rowValue(row, ['Descuento'])) || 0;
@@ -9933,6 +10802,7 @@ function createApp(options = {}) {
               order.hasLine = true;
             }
             filesRead += 1;
+            locationFilesRead += 1;
           } catch (error) {
             warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
           }
@@ -9942,8 +10812,18 @@ function createApp(options = {}) {
           if (!order.hasLine) order.costAvailable = false;
           facts.push(order);
         }
+        sourceStores.push({ id: location.id, name: location.name, filesRead: locationFilesRead,
+          latestSaleDate: [...orders.values()].map(order => order.date).sort().at(-1) || null });
       }
       return res.json({ ...buildNetworkSalesDashboard({ stores, facts, ...clock }), filesRead, warnings,
+        sourceCoverage: {
+          latestSaleDate: facts.map(fact => fact.date).sort().at(-1) || null,
+          ordersWithCost: facts.filter(fact => fact.costAvailable).length,
+          ordersWithNetFieldConsistentCost: facts.filter(fact => fact.costAvailable && fact.costBasisEvidence === 'net-field-consistent').length,
+          ordersTotal: facts.length,
+          costValuationDate: costValuation === 'historical' ? 'sale-date' : 'period-end',
+          stores: sourceStores
+        },
         coverageNote: stores.some(store => !store.operatingWeekdays?.length)
           ? 'Algunos locales no tienen calendario de apertura: sus promedios diarios consideran solo fechas con ventas registradas. Configura los días de operación en Configuración para incluir días abiertos con venta cero.'
           : 'Los días abiertos con venta cero se incluyen según el calendario configurado. Comprueba que los archivos de ventas estén completos; una fecha sin archivo no puede distinguirse automáticamente de una venta cero.' });

@@ -35,6 +35,7 @@ let productsViewState = null;
 let productAnalysisState = null;
 let productAnalysisOptions = null;
 let ingredientsViewState = null;
+let costReviewState = null;
 let purchasesViewState = null;
 let purchaseCostVariationState = null;
 let purchaseProjectionState = null;
@@ -49,6 +50,7 @@ let hourlyAnalysisState = null;
 let findingsViewState = null;
 let salesIngredientsState = null;
 let financialResultsState = null;
+let financialGeneralExpensesGridState = null;
 let salesHierarchyPath = [];
 let hourlySalesHierarchyPath = [];
 let hourlySalesProductKey = null;
@@ -61,6 +63,9 @@ let currentInventoryTableState = null;
 let transactionUploadContext = null;
 let reportClassicLocation = 'all';
 let reportLoadSequence = 0;
+const reportChartRegistry = new Map();
+let activeReportChart = null;
+let activeReportChartType = 'bar';
 const expandedUploadHistories = new Set();
 let productsSort = { key: 'unitsLast7Days', direction: 'desc' };
 let ingredientsSort = { key: 'usageCost', direction: 'desc' };
@@ -74,7 +79,7 @@ const collapsedSalesAnalysisGroups = new Set();
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'brewit.sidebarCollapsed';
 const FONT_SCALE_STORAGE_KEY = 'brewit.fontScale';
 const FONT_SCALE_MIN = 80;
-const FONT_SCALE_MAX = 140;
+const FONT_SCALE_MAX = 200;
 const FONT_SCALE_STEP = 10;
 let sidebarCollapsedPreference = false;
 
@@ -188,6 +193,15 @@ function setView(view) {
     loadFinancialResults();
     return;
   }
+  if (view === 'demand-analysis') {
+    const demand = document.getElementById('demand-analysis-workspace');
+    demand.hidden = false;
+    demand.style.display = '';
+    if (typeof loadDemandAnalysis === 'function') loadDemandAnalysis();
+    else setStatus(document.getElementById('demand-status'),
+      'No se cargó el módulo de demanda. Reinicia el servidor de Brewit y recarga esta página.', 'error');
+    return;
+  }
   if (view === 'inventory') {
     const inventory = document.getElementById('inventory-workspace');
     inventory.hidden = false;
@@ -207,6 +221,13 @@ function setView(view) {
     ingredients.hidden = false;
     ingredients.style.display = '';
     loadIngredientsView();
+    return;
+  }
+  if (view === 'cost-review') {
+    const review = document.getElementById('cost-review-workspace');
+    review.hidden = false;
+    review.style.display = '';
+    loadCostReview();
     return;
   }
   if (view === 'purchases') {
@@ -752,9 +773,11 @@ function offsetIsoDate(value, amount) {
   return date.toISOString().slice(0, 10);
 }
 
-function browserIsoToday() {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+function browserIsoToday(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function refreshFinancialResultsLocationFilter() {
@@ -768,6 +791,196 @@ function refreshFinancialResultsLocationFilter() {
     .forEach(location => options.push(new Option(location.name, location.id)));
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function refreshFinancialGeneralExpensesLocationFilter() {
+  const select = document.getElementById('financial-general-expenses-location');
+  if (!select) return;
+  const previous = select.value;
+  const stores = Object.values(locationRegistry)
+    .filter(location => location.type === 'store')
+    .sort((left, right) => left.name.localeCompare(right.name, 'es'));
+  const units = [...stores, { id: 'head-office', name: 'Casa Matriz' }];
+  select.replaceChildren(...units.map(location => new Option(location.name, location.id)));
+  if (units.some(location => location.id === previous)) select.value = previous;
+}
+
+function financialGeneralExpenseInputValue(input) {
+  const digits = String(input?.value || '').replace(/[^\d]/g, '');
+  return digits ? Number(digits) : 0;
+}
+
+function formatFinancialGeneralExpenseInput(input) {
+  input.value = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 })
+    .format(financialGeneralExpenseInputValue(input));
+}
+
+function copyPreviousFinancialExpenseMonth(monthNumber, monthLabels) {
+  if (monthNumber <= 1 || !financialGeneralExpensesGridState) return;
+  const sourceMonth = String(monthNumber - 1).padStart(2, '0');
+  const targetMonth = String(monthNumber).padStart(2, '0');
+  const sourceLabel = monthLabels[monthNumber - 2];
+  const targetLabel = monthLabels[monthNumber - 1];
+  if (!window.confirm(`¿Copiar todos los gastos de ${sourceLabel} a ${targetLabel}? Los valores actuales de ${targetLabel} serán reemplazados.`)) return;
+  for (const category of financialGeneralExpensesGridState.categories) {
+    const source = document.querySelector(`#financial-general-expenses-grid input[data-category="${category.key}"][data-month="${sourceMonth}"]`);
+    const target = document.querySelector(`#financial-general-expenses-grid input[data-category="${category.key}"][data-month="${targetMonth}"]`);
+    target.value = String(financialGeneralExpenseInputValue(source));
+    formatFinancialGeneralExpenseInput(target);
+    target.classList.add('modified');
+  }
+  financialGeneralExpensesGridState.dirtyMonths.add(targetMonth);
+  updateFinancialGeneralExpensesTotal();
+  setStatus(document.getElementById('financial-general-expenses-status'),
+    `Valores de ${sourceLabel} copiados a ${targetLabel}. Guarda los meses modificados para confirmar el cambio.`, 'muted');
+}
+
+function updateFinancialGeneralExpensesTotal() {
+  const inputs = [...document.querySelectorAll('#financial-general-expenses-grid input')];
+  let annualTotal = 0;
+  for (const category of financialGeneralExpensesGridState?.categories || []) {
+    const total = inputs.filter(input => input.dataset.category === category.key)
+      .reduce((sum, input) => sum + financialGeneralExpenseInputValue(input), 0);
+    annualTotal += total;
+    const cell = document.querySelector(`[data-expense-row-total="${category.key}"]`);
+    if (cell) cell.textContent = formatClp(total);
+  }
+  for (let monthNumber = 1; monthNumber <= 12; monthNumber += 1) {
+    const month = String(monthNumber).padStart(2, '0');
+    const total = inputs.filter(input => input.dataset.month === month)
+      .reduce((sum, input) => sum + financialGeneralExpenseInputValue(input), 0);
+    const cell = document.querySelector(`[data-expense-month-total="${month}"]`);
+    if (cell) cell.textContent = formatClp(total);
+  }
+  document.getElementById('financial-general-expenses-total').textContent = `Total anual: ${formatClp(annualTotal)}`;
+  const annualCell = document.querySelector('[data-expense-annual-total]');
+  if (annualCell) annualCell.textContent = formatClp(annualTotal);
+}
+
+async function loadFinancialGeneralExpenses() {
+  const location = document.getElementById('financial-general-expenses-location').value;
+  const year = document.getElementById('financial-general-expenses-year').value;
+  const grid = document.getElementById('financial-general-expenses-grid');
+  const status = document.getElementById('financial-general-expenses-status');
+  if (!location || !/^\d{4}$/.test(year)) {
+    grid.replaceChildren();
+    setStatus(status, 'Selecciona una cafetería y un año.', 'muted');
+    return;
+  }
+  setStatus(status, 'Cargando matriz anual de gastos…');
+  try {
+    const months = await Promise.all(Array.from({ length: 12 }, (_, index) => {
+      const month = `${year}-${String(index + 1).padStart(2, '0')}`;
+      return apiRequest(`/api/financial-results/general-expenses?${new URLSearchParams({ location, month })}`);
+    }));
+    if (location !== document.getElementById('financial-general-expenses-location').value
+      || year !== document.getElementById('financial-general-expenses-year').value) return;
+    const categories = months[0].categories;
+    financialGeneralExpensesGridState = { location, year, categories, months, dirtyMonths: new Set() };
+    const monthLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sept', 'Oct', 'Nov', 'Dic'];
+    const headRow = document.createElement('tr');
+    ['Concepto', ...monthLabels, 'Total anual'].forEach((label, index) => {
+      const cell = document.createElement('th');
+      cell.scope = 'col';
+      cell.textContent = label;
+      if (index >= 2 && index <= 12) {
+        const monthNumber = index;
+        cell.className = 'financial-general-expenses-copy-month';
+        cell.title = `Doble clic para copiar ${monthLabels[monthNumber - 2]} en ${monthLabels[monthNumber - 1]}`;
+        cell.addEventListener('dblclick', () => copyPreviousFinancialExpenseMonth(monthNumber, monthLabels));
+      } else if (index === 1) cell.title = 'Enero no tiene una columna anterior visible en este año.';
+      headRow.appendChild(cell);
+    });
+    document.getElementById('financial-general-expenses-head').replaceChildren(headRow);
+    grid.replaceChildren(...categories.map(category => {
+      const row = document.createElement('tr');
+      const heading = document.createElement('th');
+      heading.scope = 'row';
+      heading.textContent = category.label;
+      row.appendChild(heading);
+      months.forEach((data, index) => {
+        const month = String(index + 1).padStart(2, '0');
+        const cell = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text'; input.inputMode = 'numeric'; input.autocomplete = 'off';
+        input.name = category.key; input.dataset.category = category.key; input.dataset.month = month;
+        input.value = String(Number(data.values[category.key]) || 0);
+        formatFinancialGeneralExpenseInput(input);
+        input.classList.toggle('unconfigured', !data.configured);
+        input.setAttribute('aria-label', `${category.label}, ${monthLabels[index]} ${year}`);
+        input.addEventListener('focus', () => { input.value = String(financialGeneralExpenseInputValue(input)); input.select(); });
+        input.addEventListener('blur', () => formatFinancialGeneralExpenseInput(input));
+        input.addEventListener('input', () => {
+          input.value = input.value.replace(/[^\d]/g, '').slice(0, 10);
+          financialGeneralExpensesGridState.dirtyMonths.add(month);
+          document.querySelectorAll(`#financial-general-expenses-grid input[data-month="${month}"]`)
+            .forEach(monthInput => monthInput.classList.add('modified'));
+          updateFinancialGeneralExpensesTotal();
+        });
+        cell.appendChild(input);
+        row.appendChild(cell);
+      });
+      const total = document.createElement('td');
+      total.className = 'financial-general-expenses-row-total';
+      total.dataset.expenseRowTotal = category.key;
+      row.appendChild(total);
+      return row;
+    }));
+    const footRow = document.createElement('tr');
+    const totalHeading = document.createElement('th');
+    totalHeading.scope = 'row'; totalHeading.textContent = 'Total mensual';
+    footRow.appendChild(totalHeading);
+    for (let monthNumber = 1; monthNumber <= 12; monthNumber += 1) {
+      const cell = document.createElement('td');
+      cell.className = 'financial-general-expenses-month-total';
+      cell.dataset.expenseMonthTotal = String(monthNumber).padStart(2, '0');
+      footRow.appendChild(cell);
+    }
+    const annualCell = document.createElement('td');
+    annualCell.dataset.expenseAnnualTotal = 'true';
+    footRow.appendChild(annualCell);
+    document.getElementById('financial-general-expenses-foot').replaceChildren(footRow);
+    updateFinancialGeneralExpensesTotal();
+    const configuredMonths = months.filter(data => data.configured).length;
+    setStatus(status, `${months[0].location.name} · ${year}: ${configuredMonths} de 12 meses configurados. Los meses sin configurar se muestran en cero, pero no se consideran confirmados.`,
+      configuredMonths === 12 ? 'success' : 'muted');
+  } catch (error) {
+    financialGeneralExpensesGridState = null;
+    grid.replaceChildren();
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function saveFinancialGeneralExpenses() {
+  const form = document.getElementById('financial-general-expenses-form');
+  const button = form.querySelector('button[type="submit"]');
+  const status = document.getElementById('financial-general-expenses-status');
+  const location = document.getElementById('financial-general-expenses-location').value;
+  const year = document.getElementById('financial-general-expenses-year').value;
+  const dirtyMonths = [...(financialGeneralExpensesGridState?.dirtyMonths || [])].sort();
+  if (!dirtyMonths.length) {
+    setStatus(status, 'No hay meses modificados para guardar.', 'muted');
+    return;
+  }
+  button.disabled = true;
+  setStatus(status, `Guardando ${dirtyMonths.length} mes(es) modificado(s)…`);
+  try {
+    await Promise.all(dirtyMonths.map(month => {
+      const values = Object.fromEntries([...document.querySelectorAll(`#financial-general-expenses-grid input[data-month="${month}"]`)]
+        .map(input => [input.name, financialGeneralExpenseInputValue(input)]));
+      return apiRequest('/api/financial-results/general-expenses', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location, month: `${year}-${month}`, values })
+      });
+    }));
+    await loadFinancialGeneralExpenses();
+    setStatus(status, `${dirtyMonths.length} mes(es) guardado(s). El estado de resultados fue actualizado.`, 'success');
+    await loadFinancialResults();
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function financialPercent(value) {
@@ -832,19 +1045,19 @@ function renderFinancialStatement(data) {
   append({
     label: 'Ventas netas sin IVA', amount: statement.netSales,
     percentage: 100,
-    context: `${data.revenue.filesRead} archivo(s) de ventas procesado(s).`, className: 'financial-primary-row'
+    context: `${data.revenue.filesRead} archivo(s) de ventas procesado(s). Última venta registrada: ${formatReportDate(data.revenue.latestSaleDate)}.`, className: 'financial-primary-row'
   });
   const productCostAmount = statement.productCost === null ? null : -statement.productCost;
   append({
     label: 'Costo directo de productos',
     amount: productCostAmount,
     percentage: percentOfSales(productCostAmount),
-    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'}.`, className: 'financial-cost-row'
+    context: `${data.revenue.costValuationDate === 'sale-date' ? 'Fuentes vigentes en la fecha de cada venta' : 'Fuentes vigentes al corte del reporte (método anterior)'}. Costo disponible en ${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas; ${data.revenue.costSources?.['sales-export'] || 0} usan Costo del archivo de ventas como respaldo. Confirmar base sin IVA de cada fuente.`, className: 'financial-cost-row'
   });
   append({
     label: 'Margen de contribución comercial', amount: statement.contributionMargin,
     percentage: percentOfSales(statement.contributionMargin),
-    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'}.`, className: 'financial-subtotal-row'
+    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'} (${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas).`, className: 'financial-subtotal-row'
   });
   statement.expenses.forEach(expense => {
     const coverage = financialCoverageLabel(expense);
@@ -861,6 +1074,8 @@ function renderFinancialStatement(data) {
     } else if (expense.key === 'mercadoPago' && expense.available) {
       const detail = expense.detail || {};
       context = `Comisión con IVA ${formatClp(detail.grossAmount)} ÷ ${detail.vatFactor || 1.18} = neto ${formatClp(expense.amount)}. Cobertura: ${coverage}.`;
+    } else if (expense.basis === 'monthly-prorated') {
+      context = `Base mensual prorrateada por días del período. ${expense.configuredRecords} de ${expense.expectedRecords} combinación(es) cafetería/mes configuradas. Cobertura: ${coverage}.`;
     }
     const amount = expense.available ? -expense.amount : null;
     append({
@@ -873,17 +1088,36 @@ function renderFinancialStatement(data) {
   });
   const knownExpenseAmount = -statement.knownOperatingExpenses;
   append({
-    label: 'Total gastos operacionales conocidos', amount: knownExpenseAmount,
+    label: 'Total gastos operacionales 4Wall', amount: knownExpenseAmount,
     percentage: percentOfSales(knownExpenseAmount),
     context: statement.dataCoverageComplete ? 'Fuentes conocidas completas.' : 'Existen fuentes conocidas incompletas.',
     className: 'financial-subtotal-row'
   });
   append({
-    label: 'Resultado operacional parcial', amount: statement.partialResult,
+    label: 'Resultado Operacional 4Wall', amount: statement.operationalResult4Wall ?? statement.partialResult,
     percentage: percentOfSales(statement.partialResult),
-    context: statement.partial ? 'Pendiente de incorporar las demás categorías de gastos.' : 'Cobertura completa.',
+    context: statement.partial ? 'Resultado provisional: existen fuentes o meses sin cobertura completa.' : 'Cobertura operacional completa para el período.',
     className: `financial-result-row ${(statement.partialResult || 0) < 0 ? 'negative' : 'positive'}`
   });
+  if (data.scope.location === 'all' && statement.headOffice) {
+    const headOfficeAmount = statement.headOffice.available ? -statement.headOffice.amount : null;
+    append({
+      label: 'Casa Matriz', amount: headOfficeAmount,
+      percentage: percentOfSales(headOfficeAmount),
+      context: statement.headOffice.available
+        ? `Gastos mensuales de oficina central prorrateados al período. ${statement.headOffice.configuredRecords} de ${statement.headOffice.expectedRecords} mes(es) configurados.`
+        : 'Sin gastos configurados para Casa Matriz en el período.',
+      className: statement.headOffice.available ? 'financial-expense-row' : 'financial-incomplete-row'
+    });
+    append({
+      label: 'Resultado Operacional con Casa Matriz', amount: statement.operationalResultWithHeadOffice,
+      percentage: percentOfSales(statement.operationalResultWithHeadOffice),
+      context: statement.headOffice.complete
+        ? 'Resultado consolidado después de gastos de Casa Matriz.'
+        : 'Resultado pendiente: faltan meses de Casa Matriz por configurar.',
+      className: `financial-result-row ${(statement.operationalResultWithHeadOffice || 0) < 0 ? 'negative' : 'positive'}`
+    });
+  }
   body.replaceChildren(...rows);
 }
 
@@ -960,8 +1194,8 @@ function renderFinancialResults(data) {
     ['Ventas netas', formatClp(statement.netSales), ''],
     ['Margen contribución', statement.contributionMargin === null ? '—' : formatClp(statement.contributionMargin), ''],
     ['Margen %', financialPercent(statement.contributionMarginPercent), ''],
-    ['Gastos conocidos', formatClp(statement.knownOperatingExpenses), 'expense'],
-    ['Resultado parcial', statement.partialResult === null ? '—' : formatClp(statement.partialResult), (statement.partialResult || 0) < 0 ? 'negative' : 'positive']
+    ['Gastos operacionales', formatClp(statement.knownOperatingExpenses), 'expense'],
+    ['Resultado 4Wall', statement.operationalResult4Wall === null ? '—' : formatClp(statement.operationalResult4Wall), (statement.operationalResult4Wall || 0) < 0 ? 'negative' : 'positive']
   ];
   document.getElementById('financial-results-summary').replaceChildren(...cards.map(([label, value, tone]) => {
     const card = document.createElement('article');
@@ -974,14 +1208,41 @@ function renderFinancialResults(data) {
     return card;
   }));
   document.getElementById('financial-statement-context').textContent =
-    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}.`;
+    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo ${data.revenue.costValuationDate === 'sale-date' ? 'en la fecha de venta (en prueba)' : 'al corte (respaldo)'}.`;
   const badge = document.getElementById('financial-statement-badge');
-  badge.textContent = statement.dataCoverageComplete ? 'Parcial · fuentes completas' : 'Parcial · revisar fuentes';
+  badge.textContent = statement.dataCoverageComplete ? '4Wall · cobertura completa' : '4Wall · revisar cobertura';
   badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
   renderFinancialStatement(data);
   renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
   renderFinancialMetricRows('financial-ingredients-body', data.revenue.ingredients);
   renderFinancialHierarchies(data.revenue.hierarchies);
+  const missingCosts = data.revenue.missingCostProducts || [];
+  const missingPanel = document.getElementById('financial-missing-costs');
+  missingPanel.hidden = !missingCosts.length;
+  if (missingCosts.length) {
+    const affectedLines = missingCosts.reduce((sum, item) => sum + item.lines, 0);
+    const affectedSales = missingCosts.reduce((sum, item) => sum + item.netSales, 0);
+    document.getElementById('financial-missing-costs-summary').textContent =
+      `${affectedLines} línea(s) y ${formatClp(affectedSales)} de venta neta afectada. No se supone costo cero; completa recetas, conversiones o fuentes de costo antes de interpretar el margen.`;
+    const reasonLabel = item => ({
+      'no-effective-catalog': 'Sin maestro vigente en esa fecha',
+      'not-in-effective-catalog': 'Producto ausente del maestro vigente',
+      'no-positive-convertible-cost': 'Sin costo positivo o convertible',
+      'recipe-component-missing': `Ingrediente sin costo: ${item.missingComponent || 'sin identificar'}`,
+      'recipe-unit-conversion': 'Unidad de receta no convertible',
+      'recipe-cycle': 'Ciclo en la receta'
+    })[item.reason] || 'Costo no calculable';
+    document.getElementById('financial-missing-costs-body').replaceChildren(...missingCosts.map(item => {
+      const row = document.createElement('tr');
+      row.append(
+        financialCell(item.code || '—'), financialCell(item.name || '—'), financialCell(reasonLabel(item)),
+        financialCell(Number(item.lines || 0).toLocaleString('es-CL'), 'numeric-cell'),
+        financialCell(formatClp(item.netSales), 'numeric-cell'),
+        financialCell(formatReportDate(item.firstDate)), financialCell(formatReportDate(item.lastDate))
+      );
+      return row;
+    }));
+  } else document.getElementById('financial-missing-costs-body').replaceChildren();
   const warnings = document.getElementById('financial-warnings');
   const warningList = document.getElementById('financial-warnings-list');
   warningList.replaceChildren(...data.warnings.map(message => {
@@ -999,6 +1260,7 @@ async function loadFinancialResults() {
   const location = document.getElementById('financial-results-location').value || 'all';
   const dateFrom = document.getElementById('financial-results-from').value;
   const dateTo = document.getElementById('financial-results-to').value;
+  const costValuation = document.getElementById('financial-cost-valuation').value;
   if (!dateFrom || !dateTo || dateFrom > dateTo) {
     setStatus(status, 'Selecciona un período válido.', 'error');
     return;
@@ -1006,7 +1268,7 @@ async function loadFinancialResults() {
   button.disabled = true;
   setStatus(status, 'Calculando ventas, márgenes, inventario y cobros de MercadoPago…');
   try {
-    const params = new URLSearchParams({ location, dateFrom, dateTo });
+    const params = new URLSearchParams({ location, dateFrom, dateTo, costValuation });
     const data = await apiRequest(`/api/financial-results?${params}`);
     if (location !== document.getElementById('financial-results-location').value) return;
     financialResultsState = data;
@@ -1075,14 +1337,22 @@ function renderTransactionAuditSummary() {
   const container = document.getElementById('transaction-audit-summary');
   const summary = transactionAuditState?.summary;
   container.replaceChildren();
+  document.getElementById('transaction-audit-reconciliation-note').hidden = !summary;
   if (!summary) return;
+  const reconciliation = summary.paymentReconciliation || {};
+  const withoutComparison = Number(summary.transactions || 0) - Number(reconciliation.matched || 0) - Number(reconciliation.difference || 0);
   const cards = [
     ['Transacciones', Number(summary.transactions || 0).toLocaleString('es-CL')],
     ['Venta antes de descuentos', formatClp(summary.saleBeforeDiscount)],
     ['Descuentos', `${formatClp(summary.discountAmount)} · ${Number(summary.discountPercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`],
     ['Venta con descuentos', formatClp(summary.saleWithDiscount)],
     ['Venta neta sin IVA', formatClp(summary.netSale)],
-    ['Unidades', Number(summary.units || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })]
+    ['Unidades', Number(summary.units || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })],
+    ['Coinciden con Detalle Pagos', Number(reconciliation.matched || 0).toLocaleString('es-CL')],
+    ['Diferencia por revisar', Number(reconciliation.difference || 0).toLocaleString('es-CL')],
+    ['Sin comparación confiable', withoutComparison.toLocaleString('es-CL')],
+    ['A Pagar parcial', Number(summary.paymentDuePartial || 0).toLocaleString('es-CL')],
+    ['Señales de reversión', Number(summary.reversalReviewRequired || 0).toLocaleString('es-CL')]
   ];
   cards.forEach(([label, value]) => {
     const article = document.createElement('article');
@@ -1118,11 +1388,64 @@ function transactionAuditCell(value, className = '') {
   return cell;
 }
 
+function transactionAuditReconciliationLabel(reconciliation) {
+  const labels = {
+    matched: 'Coincide', difference: 'Revisar diferencia',
+    'not-linked': 'Sin pedido vinculado', 'no-source': 'Sin archivo de pagos',
+    ambiguous: 'Importes múltiples', 'no-amount': 'Sin importe',
+    'no-sale-amount': 'Sin venta comparable', 'review-reversal': 'Revisar reversión'
+  };
+  return labels[reconciliation?.status] || 'Sin comparación';
+}
+
+function renderAuditSourceDiagnostics() {
+  const panel = document.getElementById('transaction-audit-sources');
+  const diagnostics = transactionAuditState?.sourceDiagnostics;
+  panel.hidden = !diagnostics;
+  if (!diagnostics) return;
+  document.getElementById('transaction-audit-sources-note').textContent =
+    `${diagnostics.note} Esta tabla muestra todas las actividades del período, independientemente de los filtros de monto y descuento de arriba. Las fechas sin registros observados no se interpretan como venta cero.`;
+  document.getElementById('transaction-audit-sources-files').replaceChildren(...diagnostics.filesByStore.map(store => {
+    const item = document.createElement('span');
+    item.textContent = `${store.locationName}: ${store.sales} archivo(s) de ventas, ${store.paymentDetails} de Detalle Pagos, ${store.mercadoPago} de MercadoPago`;
+    return item;
+  }));
+  const sourceBody = document.getElementById('transaction-audit-sources-body');
+  sourceBody.replaceChildren(...diagnostics.rows.map(item => {
+    const row = document.createElement('tr');
+    row.append(
+      transactionAuditCell(item.locationName),
+      transactionAuditCell(formatReportDate(item.date)),
+      transactionAuditCell(String(item.salesOrders), 'numeric-cell'),
+      transactionAuditCell(String(item.paymentLinked), 'numeric-cell'),
+      transactionAuditCell(String(item.paymentMatched), 'numeric-cell'),
+      transactionAuditCell(String(item.paymentDifference), 'numeric-cell'),
+      transactionAuditCell(String(item.paymentUncertain), 'numeric-cell'),
+      transactionAuditCell(String(item.paymentPartialDue), 'numeric-cell'),
+      transactionAuditCell(String(item.reversalReviewRequired || 0), 'numeric-cell'),
+      transactionAuditCell(String(item.mpSettlements), 'numeric-cell'),
+      transactionAuditCell(item.mpWithoutAmount ? `${formatClp(item.mpAmount)} · ${item.mpWithoutAmount} sin importe` : formatClp(item.mpAmount), 'numeric-cell'),
+      transactionAuditCell(item.mpWithoutFee ? `${formatClp(item.mpFeesGross)} · ${item.mpWithoutFee} sin comisión` : formatClp(item.mpFeesGross), 'numeric-cell')
+    );
+    return row;
+  }));
+  if (!diagnostics.rows.length) {
+    const row = document.createElement('tr');
+    const cell = transactionAuditCell('Sin actividad observada en las fuentes para este período; no equivale a venta cero.');
+    cell.colSpan = 12;
+    row.appendChild(cell);
+    sourceBody.appendChild(row);
+  }
+  const warning = document.getElementById('transaction-audit-sources-warnings');
+  warning.hidden = !diagnostics.warnings?.length;
+  warning.textContent = (diagnostics.warnings || []).join(' ');
+}
+
 function buildTransactionAuditDetail(transaction) {
   const row = document.createElement('tr');
   row.className = 'transaction-audit-detail-row';
   const cell = document.createElement('td');
-  cell.colSpan = 9;
+  cell.colSpan = 10;
   const detail = document.createElement('div');
   detail.className = 'transaction-audit-detail';
   const title = document.createElement('h4');
@@ -1138,7 +1461,19 @@ function buildTransactionAuditDetail(transaction) {
     ['Descuento', `${formatClp(transaction.discountAmount)} (${Number(transaction.discountPercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%)`],
     ['Venta con descuentos', formatClp(transaction.saleWithDiscount)],
     ['Venta neta sin IVA', formatClp(transaction.netSale)],
-    ['Detalle Pagos', transaction.paymentDue === null ? 'Sin información' : formatClp(transaction.paymentDue)],
+    ['Total Detalle Pagos', transaction.paymentTotal === null ? 'Sin información' : formatClp(transaction.paymentTotal)],
+    ['A Pagar / Due', transaction.paymentDue === null ? 'Sin información' : formatClp(transaction.paymentDue)],
+    ['A Pagar parcial', transaction.paymentDuePartial ? 'Sí; revisar composición de pagos' : 'No detectado'],
+    ['Señales de reversión', transaction.reversalSignals?.length
+      ? transaction.reversalSignals.map(signal => ({
+        'negative-order-amount': 'Total del pedido negativo',
+        'negative-quantity': 'Cantidad negativa',
+        'negative-line-amount': 'Importe de línea negativo',
+        'explicit-reversal-label': 'Etiqueta explícita de anulación/devolución'
+      })[signal] || signal).join(' · ')
+      : 'No detectadas en estos campos'],
+    ['Base del cotejo', transaction.paymentReconciliation?.basis === 'total' ? 'Total del pedido' : transaction.paymentReconciliation?.basis === 'due' ? 'A Pagar (respaldo)' : 'Sin comparación'],
+    ['Conciliación', `${transactionAuditReconciliationLabel(transaction.paymentReconciliation)}${transaction.paymentReconciliation?.difference !== null && transaction.paymentReconciliation?.difference !== undefined ? ` · diferencia venta − Detalle Pagos: ${formatClp(transaction.paymentReconciliation.difference)}` : ''}`],
     ['Comentario general', transaction.paymentComment || 'Sin información']
   ].forEach(([term, value]) => {
     const dt = document.createElement('dt');
@@ -1196,7 +1531,7 @@ function renderTransactionAuditTable() {
   if (!transactions.length) {
     const row = document.createElement('tr');
     const cell = transactionAuditCell('No hay transacciones que coincidan con los filtros seleccionados.', 'transaction-audit-empty');
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     row.appendChild(cell);
     body.appendChild(row);
     return;
@@ -1218,6 +1553,7 @@ function renderTransactionAuditTable() {
       discount,
       transactionAuditCell(formatClp(transaction.saleWithDiscount), 'numeric-cell'),
       transactionAuditCell(formatClp(transaction.netSale), 'numeric-cell'),
+      transactionAuditCell(transactionAuditReconciliationLabel(transaction.paymentReconciliation), `transaction-audit-reconciliation ${transaction.paymentReconciliation?.status || ''}`),
       transactionAuditCell(Number(transaction.units || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }), 'numeric-cell'),
       transactionAuditCell(transaction.orderReference, 'transaction-audit-order')
     );
@@ -1265,6 +1601,7 @@ async function loadTransactionAudit() {
     transactionAuditState = await apiRequest(`/api/transactions/audit?${parameters}`);
     expandedAuditTransactions.clear();
     renderTransactionAuditSummary();
+    renderAuditSourceDiagnostics();
     renderTransactionAuditTable();
     const warning = transactionAuditState.warnings?.length ? ` ${transactionAuditState.warnings.length} archivo(s) no pudieron leerse.` : '';
     setStatus(status,
@@ -1273,6 +1610,7 @@ async function loadTransactionAudit() {
   } catch (error) {
     transactionAuditState = null;
     renderTransactionAuditSummary();
+    renderAuditSourceDiagnostics();
     renderTransactionAuditTable();
     setStatus(status, error.message, 'error');
   }
@@ -1280,6 +1618,588 @@ async function loadTransactionAudit() {
 
 function rankText(label, ranking) {
   return ranking?.position ? `${label}: #${ranking.position} de ${ranking.total}` : `${label}: —`;
+}
+
+const REPORT_CHART_COLORS = ['#b96f42', '#557a66', '#5875a4', '#b08a43', '#865d8d'];
+
+function reportChartIconButton(key, label) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'report-chart-button';
+  button.dataset.reportChart = key;
+  button.disabled = true;
+  button.title = `Ver gráfico: ${label}`;
+  button.setAttribute('aria-label', `Ver gráfico: ${label}`);
+  button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M7 15l4-4 3 2 5-6"/></svg>';
+  return button;
+}
+
+function installReportChartButtons() {
+  const summary = [
+    ['report-summary-day', 'Venta del día'],
+    ['report-summary-week', 'Venta de la semana'],
+    ['report-summary-month', 'Venta del mes'],
+    ['report-summary-equivalent', 'Promedio del mismo día']
+  ];
+  document.querySelectorAll('#weekly-report .report-summary-grid .summary-card').forEach((card, index) => {
+    const target = card.querySelector('.summary-head');
+    if (target && summary[index]) target.appendChild(reportChartIconButton(...summary[index]));
+  });
+  const statisticBodies = [...document.querySelectorAll('#weekly-report .sales-statistics-card tbody[id]')];
+  for (const body of statisticBodies) {
+    const card = body.closest('.sales-statistics-card');
+    const heading = card?.querySelector('h3');
+    if (!heading || heading.parentElement?.classList.contains('report-chart-title-row')) continue;
+    const row = document.createElement('div');
+    row.className = 'report-chart-title-row';
+    heading.before(row);
+    row.append(heading, reportChartIconButton(body.id, heading.textContent));
+  }
+  const intradayHeading = document.querySelector('#weekly-report .intraday-heading > div:first-child');
+  const intradayTitle = intradayHeading?.querySelector('h3');
+  if (intradayTitle && !intradayTitle.parentElement.classList.contains('report-chart-title-row')) {
+    const row = document.createElement('div');
+    row.className = 'report-chart-title-row';
+    intradayTitle.before(row);
+    row.append(intradayTitle, reportChartIconButton('report-intraday', 'Seguimiento intradía'));
+  }
+  const networkHeading = document.querySelector('#network-sales-dashboard .network-sales-intro h3');
+  if (networkHeading && !networkHeading.parentElement.classList.contains('report-chart-title-row')) {
+    const row = document.createElement('div');
+    row.className = 'report-chart-title-row';
+    networkHeading.before(row);
+    row.append(networkHeading, reportChartIconButton('report-network', 'Comparativo por local'));
+  }
+}
+
+const ANALYTICAL_TABLE_CHART_RULES = [
+  { selector: '#transaction-audit-workspace .transaction-audit-sources-table', types: ['line', 'bar'], chronological: true, categoryIndex: 1, title: 'Evolución de la cobertura de fuentes' },
+  { selector: '#transaction-audit-workspace .transaction-audit-table', types: ['line', 'bar'], chronological: true, categoryIndex: 1, title: 'Análisis de descuentos' },
+  { selector: '#sales-workspace #sales-location-body', types: ['bar', 'pie'], pieHeaders: /./, title: 'Comparación de ventas por cafetería' },
+  { selector: '#sales-workspace #sales-service-mode-hierarchies', types: ['bar', 'pie'], pieHeaders: /./, title: 'Composición de ventas por modalidad' },
+  { selector: '#sales-workspace #hourly-analysis-daily-body', types: ['line', 'bar'], chronological: true, title: 'Evolución diaria del análisis horario' },
+  { selector: '#sales-workspace #hourly-analysis-bucket-body', types: ['bar'], title: 'Comparación por tramo horario' },
+  { selector: '#sales-workspace #hourly-analysis-weekday-body', types: ['bar'], title: 'Comparación por día de la semana' },
+  { selector: '#sales-workspace #mercadopago-month-history', types: ['line', 'bar'], chronological: true, title: 'Evolución mensual de recurrencia observable' },
+  { selector: '#sales-workspace #mercadopago-week-history', types: ['line', 'bar'], chronological: true, title: 'Evolución semanal de recurrencia observable' },
+  { selector: '#products-comparison .products-comparison-table', types: ['bar'], categoryIndex: 1, title: 'Comparación de precios, costos y márgenes' },
+  { selector: '#products-hierarchy-list .products-table', types: ['bar'], categoryIndex: 1, title: 'Desempeño comparado de productos' },
+  { selector: '#product-analysis-content .product-analysis-table', types: ['bar'], title: 'Análisis gráfico de productos' },
+  { selector: '#cost-review-workspace .financial-table', types: ['bar'], title: 'Comparación de costos que requieren revisión' },
+  { selector: '#ingredients-workspace .ingredients-table', types: ['bar', 'pie'], pieHeaders: /Consumo período|Costo consumido/i, title: 'Uso y costo de ingredientes' },
+  { selector: '#purchases-groups .purchases-table', types: ['line', 'bar'], chronological: true, title: 'Evolución de compras del proveedor' },
+  { selector: '#purchase-cost-variation-groups .purchase-cost-variation-table', types: ['bar'], title: 'Variaciones de costos de compra' },
+  { selector: '#purchase-projection-workspace .purchase-projection-table', types: ['bar'], title: 'Proyección de compra por insumo' },
+  { selector: '#financial-results-workspace .financial-statement-table', types: ['bar'], title: 'Composición de resultados financieros' },
+  { selector: '#financial-results-workspace #financial-bars-body', types: ['bar', 'pie'], pieHeaders: /Venta|Participación|Margen contribución/i, title: 'Ventas y margen por línea' },
+  { selector: '#financial-results-workspace #financial-ingredients-body', types: ['bar', 'pie'], pieHeaders: /Venta|Participación|Margen contribución/i, title: 'Ventas y margen por ingrediente principal' },
+  { selector: '#inventory-executive-summary-table', types: ['bar', 'pie'], pieHeaders: /cantidad|unidades|costo|valor|monto/i, title: 'Resumen ejecutivo de inventario' },
+  { selector: '#inventory-waste-table', types: ['bar', 'pie'], pieHeaders: /cantidad|unidades|costo|valor|monto/i, title: 'Merma por producto' },
+  { selector: '#inventory-results-table', types: ['line', 'bar'], chronological: true, title: 'Movimientos y valorización de inventario' },
+  { selector: '#inventory-lac001-substitution-table', types: ['bar'], title: 'Sustituciones de leche' },
+  { selector: '#inventory-syrup-substitution-table', types: ['bar'], title: 'Sustituciones de jarabes' },
+  { selector: '#inventory-avoided-packaging-table', types: ['bar', 'pie'], pieHeaders: /cantidad|unidades|costo|valor|monto/i, title: 'Packaging desechable evitado' },
+  { selector: '#current-inventory-table', types: ['bar', 'pie'], pieHeaders: /stock|cantidad|unidades|costo|valor|monto/i, title: 'Inventario actual por producto' },
+  { selector: '#demand-locations-body', types: ['bar', 'pie'], pieHeaders: /Pedidos|Venta neta/i, title: 'Demanda comparada por local' },
+  { selector: '#sales-ingredients-report table', types: ['bar'], title: 'Ventas asociadas a ingredientes y extras' }
+];
+
+let analyticalChartSequence = 0;
+
+function analyticalRuleElements(rule) {
+  return [...document.querySelectorAll(rule.selector)]
+    .map(element => element.tagName === 'TABLE' ? element : element.closest('table'))
+    .filter((table, index, tables) => table && tables.indexOf(table) === index);
+}
+
+function tableChartText(cell) {
+  const control = cell.querySelector('input:not([type="checkbox"]), select');
+  const primaryValue = cell.querySelector('strong');
+  return control?.value || primaryValue?.textContent.trim() || cell.textContent.trim();
+}
+
+function tableChartNumber(textValue) {
+  const value = String(textValue || '').trim();
+  if (!value || value === '—' || /sin datos|no disponible/i.test(value)) return null;
+  const parsed = parseLocalizedNumber(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function tableChartMetricFormat(header) {
+  if (/margen contribución|venta|costo|precio|monto|importe|ticket|comisión/i.test(header) && !/%/.test(header)) {
+    return {
+      formatValue: formatClp,
+      formatAxis: value => `$${new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`
+    };
+  }
+  if (/%|porcentaje|participación|margen|descuento|cambio|variación/i.test(header)) {
+    return {
+      formatValue: value => `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`,
+      formatAxis: value => `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`
+    };
+  }
+  return {
+    formatValue: value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(value),
+    formatAxis: value => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+  };
+}
+
+function tableChartDateValue(label) {
+  const textValue = String(label || '').toLowerCase().replace(/\./g, ' ');
+  const iso = textValue.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  if (iso) return Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  const numeric = textValue.match(/\b(\d{1,2})[-/](\d{1,2})[-/](20\d{2})\b/);
+  if (numeric) return Date.UTC(Number(numeric[3]), Number(numeric[2]) - 1, Number(numeric[1]));
+  const monthNumbers = { ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5, jul: 6, ago: 7, sep: 8, sept: 8, oct: 9, nov: 10, dic: 11 };
+  const named = textValue.match(/\b(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|sept|oct|nov|dic)\s+(20\d{2})\b/);
+  if (named) return Date.UTC(Number(named[3]), monthNumbers[named[2]], Number(named[1]));
+  const monthOnly = textValue.match(/\b(ene|feb|mar|abr|may|jun|jul|ago|sep|sept|oct|nov|dic)\s+(20\d{2})\b/);
+  return monthOnly ? Date.UTC(Number(monthOnly[2]), monthNumbers[monthOnly[1]], 1) : null;
+}
+
+function salesServiceModeChartConfiguration(rule) {
+  const periodKey = document.getElementById('sales-service-mode-period').value;
+  const period = salesDashboardState?.sales?.serviceModes?.periods?.[periodKey];
+  if (!period?.hierarchies?.length) return null;
+  const definitions = [
+    ['Para llevar', 'takeaway'],
+    ['Servir en el local', 'dineIn'],
+    ['Sin información', 'unknown']
+  ];
+  const metrics = definitions.map(([name, key]) => ({
+    name,
+    values: period.hierarchies.map(item => Number(item.groups?.[key]?.netSales) || 0),
+    allowedTypes: rule.types,
+    formatValue: formatClp,
+    formatAxis: value => `$${new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`
+  }));
+  metrics.push({
+    name: 'Total',
+    values: period.hierarchies.map(item => Number(item.totalNetSales) || 0),
+    allowedTypes: rule.types,
+    formatValue: formatClp,
+    formatAxis: value => `$${new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`
+  });
+  return {
+    type: rule.types[0], allowedTypes: rule.types,
+    title: rule.title,
+    subtitle: `${formatReportDate(period.period.from)} – ${formatReportDate(period.period.to)} · venta neta sin IVA obtenida directamente del reporte de modalidad.`,
+    labels: period.hierarchies.map(item => item.name),
+    metrics,
+    series: [{ name: metrics[0].name, values: metrics[0].values }],
+    formatValue: formatClp,
+    formatAxis: metrics[0].formatAxis
+  };
+}
+
+function transactionAuditDiscountChartConfiguration(rule) {
+  const transactions = transactionAuditState?.transactions || [];
+  if (!transactions.length) return null;
+  const byDate = new Map();
+  for (const transaction of transactions) {
+    if (!byDate.has(transaction.date)) {
+      byDate.set(transaction.date, { date: transaction.date, transactions: 0, discountedTransactions: 0, saleBeforeDiscount: 0, discountAmount: 0 });
+    }
+    const day = byDate.get(transaction.date);
+    day.transactions += 1;
+    day.saleBeforeDiscount += Number(transaction.saleBeforeDiscount) || 0;
+    day.discountAmount += Math.max(0, Number(transaction.discountAmount) || 0);
+    if ((Number(transaction.discountAmount) || 0) > 0) day.discountedTransactions += 1;
+  }
+  const days = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+  const totalTransactions = transactions.length;
+  const discountedTransactions = transactions.filter(transaction => (Number(transaction.discountAmount) || 0) > 0).length;
+  const totalSaleBeforeDiscount = transactions.reduce((sum, transaction) => sum + (Number(transaction.saleBeforeDiscount) || 0), 0);
+  const totalDiscount = transactions.reduce((sum, transaction) => sum + Math.max(0, Number(transaction.discountAmount) || 0), 0);
+  const totalDiscountPercent = totalSaleBeforeDiscount ? totalDiscount / totalSaleBeforeDiscount * 100 : 0;
+  const discountedTransactionPercent = totalTransactions ? discountedTransactions / totalTransactions * 100 : 0;
+  const percentFormat = value => `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`;
+  const countFormat = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
+  const metrics = [
+    {
+      name: 'Descuento total / venta antes de descuentos',
+      values: days.map(day => day.saleBeforeDiscount ? day.discountAmount / day.saleBeforeDiscount * 100 : 0),
+      allowedTypes: rule.types, formatValue: percentFormat, formatAxis: percentFormat
+    },
+    {
+      name: 'Transacciones con descuento', values: days.map(day => day.discountedTransactions),
+      allowedTypes: rule.types, formatValue: countFormat, formatAxis: countFormat
+    },
+    {
+      name: 'Transacciones con descuento / total',
+      values: days.map(day => day.transactions ? day.discountedTransactions / day.transactions * 100 : 0),
+      allowedTypes: rule.types, formatValue: percentFormat, formatAxis: percentFormat
+    }
+  ];
+  return {
+    type: 'line', allowedTypes: rule.types, title: rule.title,
+    subtitle: `${formatReportDate(transactionAuditState.filters?.dateFrom)} – ${formatReportDate(transactionAuditState.filters?.dateTo)} · total del período: ${formatClp(totalDiscount)} en descuentos (${percentFormat(totalDiscountPercent)} de la venta antes de descuentos); ${countFormat(discountedTransactions)} de ${countFormat(totalTransactions)} transacciones con descuento (${percentFormat(discountedTransactionPercent)}).`,
+    labels: days.map(day => formatReportDate(day.date)),
+    metrics,
+    series: [{ name: metrics[0].name, values: metrics[0].values }],
+    formatValue: percentFormat,
+    formatAxis: percentFormat
+  };
+}
+
+function tableChartConfiguration(table, rule) {
+  if (table.querySelector('#sales-service-mode-hierarchies')) return salesServiceModeChartConfiguration(rule);
+  if (table.querySelector('#transaction-audit-body')) return transactionAuditDiscountChartConfiguration(rule);
+  const headers = [...table.querySelectorAll('thead tr:last-child th')].map(cell => cell.textContent.trim().replace(/\s+/g, ' '));
+  const rawRows = [...table.querySelectorAll('tbody > tr')]
+    .filter(row => !row.hidden && getComputedStyle(row).display !== 'none')
+    .map(row => [...row.children].map(tableChartText));
+  if (headers.length < 2 || !rawRows.length) return null;
+  const excluded = /^(fecha|hora|local|cafetería|código|producto|insumo|proveedor|documento|pedido|estado|tipo|unidad|origen|detalle|comentario|línea)$/i;
+  const metricIndexes = headers.map((header, index) => ({ header, index })).filter(({ header, index }) => {
+    if (index === 0 || excluded.test(header)) return false;
+    const numeric = rawRows.reduce((count, row) => count + (tableChartNumber(row[index]) !== null ? 1 : 0), 0);
+    return numeric > 0 && numeric / rawRows.length >= 0.45;
+  });
+  if (!metricIndexes.length) return null;
+  const categoryIndex = Number.isInteger(rule.categoryIndex)
+    ? rule.categoryIndex
+    : headers.findIndex((header, index) => index < metricIndexes[0].index && !excluded.test(header));
+  const labelIndex = categoryIndex >= 0 ? categoryIndex : 0;
+  const grouped = new Map();
+  rawRows.forEach((row, rowIndex) => {
+    const label = row[labelIndex] || `Fila ${rowIndex + 1}`;
+    if (!grouped.has(label)) grouped.set(label, metricIndexes.map(() => 0));
+    const totals = grouped.get(label);
+    metricIndexes.forEach(({ index }, metricIndex) => {
+      const value = tableChartNumber(row[index]);
+      if (value !== null) totals[metricIndex] += value;
+    });
+  });
+  let entries = [...grouped.entries()];
+  if (rule.chronological) {
+    const dated = entries.map(entry => ({ entry, date: tableChartDateValue(entry[0]) }));
+    entries = dated.every(item => item.date !== null)
+      ? dated.sort((left, right) => left.date - right.date).map(item => item.entry)
+      : entries.reverse();
+  }
+  const labels = entries.map(([label]) => label);
+  const metrics = metricIndexes.map(({ header }, metricIndex) => ({
+    name: header,
+    values: entries.map(([, values]) => values[metricIndex]),
+    allowedTypes: rule.pieHeaders && !rule.pieHeaders.test(header) ? rule.types.filter(type => type !== 'pie') : rule.types,
+    ...tableChartMetricFormat(header)
+  }));
+  return {
+    type: rule.types[0],
+    allowedTypes: rule.types,
+    title: rule.title,
+    subtitle: `Datos visibles en la vista actual · ${labels.length} categoría(s). Selecciona la métrica y el tipo de gráfico disponible.`,
+    labels,
+    metrics,
+    series: [{ name: metrics[0].name, values: metrics[0].values }],
+    formatValue: metrics[0].formatValue,
+    formatAxis: metrics[0].formatAxis
+  };
+}
+
+function installAnalyticalTableChart(table, rule) {
+  if (!table || table.dataset.chartInstalled || table.closest('#report-chart-dialog')) return;
+  table.dataset.chartInstalled = 'true';
+  const key = `analytical-table-${++analyticalChartSequence}`;
+  const button = reportChartIconButton(key, rule.title);
+  button.disabled = false;
+  button.classList.add('analytical-table-chart-button');
+  button.addEventListener('click', () => {
+    const config = tableChartConfiguration(table, rule) || {
+      type: rule.types[0], allowedTypes: rule.types, title: rule.title,
+      subtitle: 'No hay datos numéricos visibles para los filtros actuales.', labels: [], series: [],
+      formatValue: formatClp, formatAxis: value => String(value)
+    };
+    reportChartRegistry.set(key, config);
+    openReportChart(key);
+  });
+  const toolbar = document.createElement('div');
+  toolbar.className = 'data-chart-toolbar';
+  toolbar.append(button);
+  const wrap = table.parentElement;
+  wrap.before(toolbar);
+}
+
+function refreshAnalyticalTableCharts() {
+  ANALYTICAL_TABLE_CHART_RULES.forEach(rule => analyticalRuleElements(rule)
+    .forEach(table => installAnalyticalTableChart(table, rule)));
+}
+
+function initializeAnalyticalTableCharts() {
+  const findingsHeading = document.querySelector('#findings-workspace .findings-heading h2');
+  if (findingsHeading && !findingsHeading.parentElement.classList.contains('report-chart-title-row')) {
+    const row = document.createElement('div');
+    row.className = 'report-chart-title-row';
+    const button = reportChartIconButton('findings-summary-chart', 'Distribución de hallazgos');
+    button.addEventListener('click', () => openReportChart('findings-summary-chart'));
+    findingsHeading.before(row);
+    row.append(findingsHeading, button);
+  }
+  const productHead = document.querySelector('#sales-top-products')?.closest('.panel')?.querySelector('.panel-head');
+  if (productHead && !productHead.querySelector('[data-report-chart="sales-top-products-chart"]')) {
+    const button = reportChartIconButton('sales-top-products-chart', 'Productos más vendidos');
+    button.addEventListener('click', () => openReportChart('sales-top-products-chart'));
+    productHead.appendChild(button);
+  }
+  const hierarchyHead = document.querySelector('#sales-hierarchy-share')?.closest('.panel')?.querySelector('.hierarchy-panel-head');
+  if (hierarchyHead && !hierarchyHead.querySelector('[data-report-chart="sales-hierarchy-chart"]')) {
+    const button = reportChartIconButton('sales-hierarchy-chart', 'Venta por jerarquía');
+    button.addEventListener('click', () => openReportChart('sales-hierarchy-chart'));
+    const back = hierarchyHead.querySelector('#sales-hierarchy-back');
+    hierarchyHead.insertBefore(button, back || null);
+  }
+  refreshAnalyticalTableCharts();
+  let scheduled = false;
+  const observer = new MutationObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      refreshAnalyticalTableCharts();
+    });
+  });
+  observer.observe(document.querySelector('.main-content'), { childList: true, subtree: true });
+}
+
+function setReportChart(key, config) {
+  reportChartRegistry.set(key, {
+    type: 'line',
+    allowedTypes: config.type === 'bar' ? ['bar'] : ['line', 'bar'],
+    formatValue: formatClp,
+    formatAxis: value => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value),
+    ...config
+  });
+  document.querySelectorAll(`[data-report-chart="${key}"]`).forEach(button => { button.disabled = false; });
+}
+
+function reportChartSvgElement(name, attributes = {}, textValue = '') {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+  if (textValue !== '') element.textContent = textValue;
+  return element;
+}
+
+function renderReportChart(config) {
+  const svg = document.getElementById('report-chart-svg');
+  const scroll = document.getElementById('report-chart-scroll');
+  const empty = document.getElementById('report-chart-empty');
+  let labels = config.labels || [];
+  let series = (config.series || []).map((item, index) => ({
+    ...item,
+    color: item.color || REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length],
+    values: (item.values || []).map(value => Number.isFinite(Number(value)) ? Number(value) : null)
+  }));
+  const values = series.flatMap(item => item.values).filter(Number.isFinite);
+  const hasData = labels.length && values.length;
+  empty.hidden = hasData;
+  scroll.hidden = !hasData;
+  svg.replaceChildren();
+  if (!hasData) return;
+
+  if (config.type !== 'line' && labels.length > 20) {
+    const selectedIndexes = labels.map((label, index) => ({ label, index, value: Math.abs(series[0]?.values[index] || 0) }))
+      .sort((left, right) => right.value - left.value).slice(0, 20).map(item => item.index);
+    labels = selectedIndexes.map(index => labels[index]);
+    series = series.map(item => ({ ...item, values: selectedIndexes.map(index => item.values[index]) }));
+  }
+
+  if (config.type === 'pie') {
+    const positive = labels.map((label, index) => ({ label, value: series[0]?.values[index] }))
+      .filter(item => Number.isFinite(item.value) && item.value > 0)
+      .sort((left, right) => right.value - left.value);
+    if (!positive.length) {
+      empty.hidden = false;
+      scroll.hidden = true;
+      return;
+    }
+    const width = 900;
+    const height = Math.max(430, positive.length * 25 + 80);
+    const centerX = 250;
+    const centerY = height / 2;
+    const radius = Math.min(150, height / 2 - 45);
+    const total = positive.reduce((sum, item) => sum + item.value, 0);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+    if (positive.length === 1) {
+      const item = positive[0];
+      const circle = reportChartSvgElement('circle', { cx: centerX, cy: centerY, r: radius, fill: REPORT_CHART_COLORS[0], class: 'report-chart-mark' });
+      circle.appendChild(reportChartSvgElement('title', {}, `${item.label}: ${config.formatValue(item.value)} · 100%`));
+      svg.append(circle,
+        reportChartSvgElement('rect', { x: 470, y: 38, width: 12, height: 12, rx: 3, fill: REPORT_CHART_COLORS[0] }),
+        reportChartSvgElement('text', { x: 490, y: 48, class: 'report-chart-pie-label' }, `${item.label} · 100% · ${config.formatValue(item.value)}`));
+      return;
+    }
+    let startAngle = -Math.PI / 2;
+    positive.forEach((item, index) => {
+      const angle = item.value / total * Math.PI * 2;
+      const endAngle = startAngle + angle;
+      const x1 = centerX + radius * Math.cos(startAngle);
+      const y1 = centerY + radius * Math.sin(startAngle);
+      const x2 = centerX + radius * Math.cos(endAngle);
+      const y2 = centerY + radius * Math.sin(endAngle);
+      const path = reportChartSvgElement('path', {
+        d: `M ${centerX} ${centerY} L ${x1} ${y1} A ${radius} ${radius} 0 ${angle > Math.PI ? 1 : 0} 1 ${x2} ${y2} Z`,
+        fill: REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length], class: 'report-chart-mark'
+      });
+      path.appendChild(reportChartSvgElement('title', {}, `${item.label}: ${config.formatValue(item.value)} · ${(item.value / total * 100).toFixed(1)}%`));
+      svg.appendChild(path);
+      const legendY = 48 + index * 25;
+      svg.append(
+        reportChartSvgElement('rect', { x: 470, y: legendY - 10, width: 12, height: 12, rx: 3, fill: REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length] }),
+        reportChartSvgElement('text', { x: 490, y: legendY, class: 'report-chart-pie-label' }, `${item.label} · ${(item.value / total * 100).toFixed(1)}% · ${config.formatValue(item.value)}`)
+      );
+      startAngle = endAngle;
+    });
+    return;
+  }
+
+  const width = Math.max(760, labels.length * (config.type === 'bar' ? 105 : 72));
+  const height = 430;
+  const margin = { top: 30, right: 28, bottom: 92, left: 84 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const maxValue = Math.max(...values, 0);
+  const minValue = Math.min(...values, 0);
+  const range = maxValue - minValue || 1;
+  const y = value => margin.top + (maxValue - value) / range * plotHeight;
+  const x = index => margin.left + (labels.length === 1 ? plotWidth / 2 : index * plotWidth / (labels.length - 1));
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  for (let index = 0; index <= 5; index += 1) {
+    const value = maxValue - (range * index / 5);
+    const gridY = y(value);
+    svg.append(
+      reportChartSvgElement('line', { x1: margin.left, x2: width - margin.right, y1: gridY, y2: gridY, class: 'report-chart-grid' }),
+      reportChartSvgElement('text', { x: margin.left - 12, y: gridY + 4, 'text-anchor': 'end', class: 'report-chart-axis' }, config.formatAxis(value))
+    );
+  }
+
+  if (config.type === 'bar') {
+    const groupWidth = plotWidth / labels.length;
+    const barWidth = Math.min(52, groupWidth * 0.72 / Math.max(series.length, 1));
+    series.forEach((item, seriesIndex) => item.values.forEach((value, labelIndex) => {
+      if (!Number.isFinite(value)) return;
+      const zeroY = y(0);
+      const valueY = y(value);
+      const rect = reportChartSvgElement('rect', {
+        x: margin.left + labelIndex * groupWidth + (groupWidth - barWidth * series.length) / 2 + seriesIndex * barWidth,
+        y: Math.min(zeroY, valueY), width: Math.max(barWidth - 3, 2), height: Math.max(Math.abs(zeroY - valueY), 1),
+        rx: 4, fill: item.color, class: 'report-chart-mark'
+      });
+      rect.appendChild(reportChartSvgElement('title', {}, `${labels[labelIndex]} · ${item.name}: ${config.formatValue(value)}`));
+      svg.appendChild(rect);
+    }));
+  } else {
+    series.forEach(item => {
+      const validPoints = item.values.map((value, index) => Number.isFinite(value) ? `${x(index)},${y(value)}` : null).filter(Boolean);
+      if (validPoints.length > 1) svg.appendChild(reportChartSvgElement('polyline', {
+        points: validPoints.join(' '), fill: 'none', stroke: item.color, 'stroke-width': 3, 'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+      }));
+      item.values.forEach((value, index) => {
+        if (!Number.isFinite(value)) return;
+        const circle = reportChartSvgElement('circle', { cx: x(index), cy: y(value), r: 5, fill: item.color, class: 'report-chart-mark' });
+        circle.appendChild(reportChartSvgElement('title', {}, `${labels[index]} · ${item.name}: ${config.formatValue(value)}`));
+        svg.appendChild(circle);
+      });
+    });
+  }
+  labels.forEach((label, index) => {
+    const labelX = config.type === 'bar'
+      ? margin.left + (index + 0.5) * plotWidth / labels.length
+      : x(index);
+    svg.appendChild(reportChartSvgElement('text', {
+      x: labelX, y: height - margin.bottom + 22, class: 'report-chart-label',
+      'text-anchor': 'end', transform: `rotate(-38 ${labelX} ${height - margin.bottom + 22})`
+    }, label));
+  });
+}
+
+function renderReportChartData(config) {
+  const head = document.getElementById('report-chart-data-head');
+  const body = document.getElementById('report-chart-data-body');
+  const headingRow = document.createElement('tr');
+  ['Período', ...(config.series || []).map(item => item.name)].forEach(label => {
+    const cell = document.createElement('th');
+    cell.textContent = label;
+    headingRow.appendChild(cell);
+  });
+  head.replaceChildren(headingRow);
+  body.replaceChildren(...(config.labels || []).map((label, index) => {
+    const row = document.createElement('tr');
+    const labelCell = document.createElement('td');
+    labelCell.textContent = label;
+    row.appendChild(labelCell);
+    for (const item of config.series || []) {
+      const cell = document.createElement('td');
+      const value = item.values?.[index];
+      cell.textContent = Number.isFinite(Number(value)) ? config.formatValue(Number(value)) : '—';
+      row.appendChild(cell);
+    }
+    return row;
+  }));
+}
+
+function openReportChart(key) {
+  const config = reportChartRegistry.get(key);
+  if (!config) return;
+  activeReportChart = config;
+  activeReportChartType = config.type;
+  document.getElementById('report-chart-title').textContent = config.title;
+  document.getElementById('report-chart-subtitle').textContent = config.subtitle || '';
+  const metricField = document.getElementById('report-chart-metric-field');
+  const metricSelect = document.getElementById('report-chart-metric');
+  metricField.hidden = !config.metrics?.length;
+  metricSelect.replaceChildren(...(config.metrics || []).map((metric, index) => new Option(metric.name, String(index))));
+  metricSelect.value = '0';
+  updateReportChartDialog();
+  document.getElementById('report-chart-dialog').showModal();
+}
+
+function currentReportChartConfig() {
+  if (!activeReportChart) return null;
+  const metricIndex = Number(document.getElementById('report-chart-metric').value || 0);
+  const metric = activeReportChart.metrics?.[metricIndex];
+  return {
+    ...activeReportChart,
+    type: activeReportChartType,
+    ...(metric ? {
+      series: [{ name: metric.name, values: metric.values, color: metric.color }],
+      allowedTypes: metric.allowedTypes || activeReportChart.allowedTypes,
+      formatValue: metric.formatValue || activeReportChart.formatValue,
+      formatAxis: metric.formatAxis || activeReportChart.formatAxis
+    } : {})
+  };
+}
+
+function updateReportChartDialog() {
+  let config = currentReportChartConfig();
+  if (!config) return;
+  const allowed = config.allowedTypes || [config.type];
+  if (!allowed.includes(activeReportChartType)) {
+    activeReportChartType = allowed[0];
+    config = currentReportChartConfig();
+  }
+  document.querySelectorAll('#report-chart-type-options [data-chart-type]').forEach(button => {
+    const available = allowed.includes(button.dataset.chartType);
+    button.hidden = !available;
+    button.classList.toggle('active', button.dataset.chartType === activeReportChartType);
+    button.setAttribute('aria-pressed', String(button.dataset.chartType === activeReportChartType));
+  });
+  const legend = document.getElementById('report-chart-legend');
+  legend.hidden = config.type === 'pie';
+  legend.replaceChildren(...(config.series || []).map((item, index) => {
+    const entry = document.createElement('span');
+    const marker = document.createElement('i');
+    marker.style.background = item.color || REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length];
+    entry.append(marker, document.createTextNode(item.name));
+    return entry;
+  }));
+  renderReportChart(config);
+  renderReportChartData(config);
 }
 
 function renderIntradayReport(intraday, includeToday = true) {
@@ -1327,6 +2247,22 @@ function renderIntradayReport(intraday, includeToday = true) {
     }
     return row;
   }));
+  const references = [
+    ['Referencia', 'today'],
+    [`Mejor ${weekday}`, 'sameWeekday'],
+    ['Mejor día del mes', 'month'],
+    ['Mejor día histórico', 'historical']
+  ];
+  setReportChart('report-intraday', {
+    title: intradayTitle,
+    subtitle: `Venta neta acumulada por tramo horario · corte ${intraday.today.cutoffTime?.slice(0, 5) || 'sin hora disponible'}.`,
+    labels: intraday.blocks.map(block => block.label),
+    series: references.map(([name, key], index) => ({
+      name,
+      color: REPORT_CHART_COLORS[index],
+      values: intraday.blocks.map(block => block[key])
+    }))
+  });
 }
 
 function renderSalesStatistics(statistics, averageTicketStatistics, discountStatistics) {
@@ -1393,6 +2329,31 @@ function renderSalesStatistics(statistics, averageTicketStatistics, discountStat
   renderRows('discount-statistics-weeks', discountStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, discountOptions);
   renderRows('discount-statistics-days', discountStatistics.days, item => shortDate(item.date, true), discountOptions);
   renderRows('discount-statistics-equivalent-days', discountStatistics.equivalentDays, item => shortDate(item.date, true), discountOptions);
+
+  const register = (key, title, rows, labelFor, valueKey, unit, formatValue = formatClp) => {
+    const chronologicalRows = [...rows].reverse();
+    setReportChart(key, {
+      title,
+      subtitle: `${unit} por período, desde el más antiguo al más reciente. Pasa el cursor sobre cada punto para ver el valor exacto.`,
+      labels: chronologicalRows.map(labelFor),
+      series: [{ name: unit, values: chronologicalRows.map(item => item[valueKey]) }],
+      formatValue,
+      ...(unit === 'Descuento sobre venta' ? { formatAxis: value => `${value.toFixed(0)}%` } : {})
+    });
+  };
+  register('sales-statistics-months', 'Venta de los últimos 14 meses', statistics.months, item => monthLabel(item.key), 'netSales', 'Venta neta');
+  register('sales-statistics-weeks', 'Venta de las últimas 14 semanas', statistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, 'netSales', 'Venta neta');
+  register('sales-statistics-days', 'Venta de los últimos 14 días', statistics.days, item => shortDate(item.date, true), 'netSales', 'Venta neta');
+  register('sales-statistics-equivalent-days', 'Venta de los últimos 14 días equivalentes', statistics.equivalentDays, item => shortDate(item.date, true), 'netSales', 'Venta neta');
+  register('average-ticket-statistics-months', 'Ticket promedio de los últimos 14 meses', averageTicketStatistics.months, item => monthLabel(item.key), 'averageTicketWithVat', 'Ticket promedio con IVA');
+  register('average-ticket-statistics-weeks', 'Ticket promedio de las últimas 14 semanas', averageTicketStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, 'averageTicketWithVat', 'Ticket promedio con IVA');
+  register('average-ticket-statistics-days', 'Ticket promedio de los últimos 14 días', averageTicketStatistics.days, item => shortDate(item.date, true), 'averageTicketWithVat', 'Ticket promedio con IVA');
+  register('average-ticket-statistics-equivalent-days', 'Ticket promedio de los últimos 14 días equivalentes', averageTicketStatistics.equivalentDays, item => shortDate(item.date, true), 'averageTicketWithVat', 'Ticket promedio con IVA');
+  const percent = value => `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`;
+  register('discount-statistics-months', 'Descuento de los últimos 14 meses', discountStatistics.months, item => monthLabel(item.key), 'discountPercent', 'Descuento sobre venta', percent);
+  register('discount-statistics-weeks', 'Descuento de las últimas 14 semanas', discountStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, 'discountPercent', 'Descuento sobre venta', percent);
+  register('discount-statistics-days', 'Descuento de los últimos 14 días', discountStatistics.days, item => shortDate(item.date, true), 'discountPercent', 'Descuento sobre venta', percent);
+  register('discount-statistics-equivalent-days', 'Descuento de los últimos 14 días equivalentes', discountStatistics.equivalentDays, item => shortDate(item.date, true), 'discountPercent', 'Descuento sobre venta', percent);
 }
 
 async function loadWeeklySalesReport() {
@@ -1407,19 +2368,21 @@ async function loadWeeklySalesReport() {
   setStatus(status, 'Calculando ventas netas…');
   try {
     if (networkMode) {
-      const report = await apiRequest('/api/reports/network-sales');
+      const costValuation = document.getElementById('network-cost-valuation').value;
+      const report = await apiRequest(`/api/reports/network-sales?costValuation=${encodeURIComponent(costValuation)}`);
       if (sequence !== reportLoadSequence) return;
       renderNetworkSalesDashboard(report);
-      document.getElementById('report-scope-description').textContent = 'Venta neta sin IVA y métricas comparativas de cada local y de toda la red.';
-      setStatus(status, report.warnings.length ? report.warnings.join(' ') : `${report.filesRead} archivo(s) de ventas procesado(s).`,
+      document.getElementById('report-scope-description').textContent = 'Venta neta sin IVA y ticket promedio con IVA, comparados por local y para toda la red.';
+      const latest = `Última venta registrada: ${formatReportDate(report.sourceCoverage?.latestSaleDate)}.`;
+      setStatus(status, report.warnings.length ? `${latest} ${report.warnings.join(' ')}` : `${report.filesRead} archivo(s) de ventas procesado(s). ${latest}`,
         report.warnings.length ? 'error' : 'success');
       return;
     }
     const report = await apiRequest(`/api/reports/weekly-sales?location=${encodeURIComponent(selectedLocation)}&includeToday=${includeToday}`);
     if (sequence !== reportLoadSequence) return;
     document.getElementById('report-scope-description').textContent = report.scope.type === 'all'
-      ? 'Venta neta sin IVA, consolidada para todas las cafeterías.'
-      : `Venta neta sin IVA para ${report.scope.label}.`;
+      ? 'Venta neta sin IVA y ticket promedio con IVA, consolidados para todas las cafeterías.'
+      : `Venta neta sin IVA y ticket promedio con IVA para ${report.scope.label}.`;
     document.getElementById('report-yesterday-date').textContent = formatReportDate(report.previousDay.date);
     document.getElementById('report-reference-label').textContent = report.includeToday ? 'Venta de hoy' : 'Venta del día anterior';
     document.getElementById('report-cutoff-label').textContent = report.includeToday ? 'Venta hoy' : 'Venta día anterior';
@@ -1443,12 +2406,35 @@ async function loadWeeklySalesReport() {
     document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
     renderIntradayReport(report.intraday, report.includeToday);
     renderSalesStatistics(report.statistics, report.averageTicketStatistics, report.discountStatistics);
+    setReportChart('report-summary-day', {
+      type: 'bar',
+      title: report.includeToday ? 'Venta de hoy frente a su referencia' : 'Venta del día anterior frente a su referencia',
+      subtitle: `Venta neta sin IVA · ${report.scope.label || 'todas las cafeterías'} · comparación con el promedio de los últimos ${report.previousDay.averageSampleSize || 0} días equivalentes.`,
+      labels: ['Promedio días equivalentes', report.includeToday ? 'Hoy' : 'Día anterior'],
+      series: [{ name: 'Venta neta', values: [report.previousDay.sameWeekdayAverage, report.previousDay.netSales] }]
+    });
+    const weekChart = reportChartRegistry.get('sales-statistics-weeks');
+    const monthChart = reportChartRegistry.get('sales-statistics-months');
+    const equivalentChart = reportChartRegistry.get('sales-statistics-equivalent-days');
+    if (weekChart) setReportChart('report-summary-week', { ...weekChart, title: 'Evolución de la venta semanal' });
+    if (monthChart) setReportChart('report-summary-month', { ...monthChart, title: 'Evolución de la venta mensual' });
+    if (equivalentChart) setReportChart('report-summary-equivalent', {
+      ...equivalentChart,
+      title: `Venta de los últimos ${report.previousDay.averageSampleSize || 0} ${weekday}s comparables`
+    });
+    const coverage = report.sourceCoverage || {};
+    const sourceSummary = `Última venta registrada: ${formatReportDate(coverage.latestSaleDate)}.`;
+    const missingStores = coverage.storesWithoutSalesFiles?.length
+      ? ` Sin archivos de ventas: ${coverage.storesWithoutSalesFiles.join(', ')}.` : '';
+    const futureDates = coverage.futureSaleDates
+      ? ` ${coverage.futureSaleDates} fecha(s) de venta futura excluida(s) del reporte.` : '';
     if (!report.filesRead) {
       setStatus(status, 'No hay archivos de ventas cargados para las ubicaciones activas.', 'muted');
     } else if (report.warnings.length) {
-      setStatus(status, report.warnings.join(' '), 'error');
+      setStatus(status, `${sourceSummary}${missingStores}${futureDates} ${report.warnings.join(' ')}`, 'error');
     } else {
-      setStatus(status, `${report.filesRead} archivo(s) de ventas procesado(s).`, 'success');
+      setStatus(status, `${report.filesRead} archivo(s) de ventas procesado(s). ${sourceSummary}${missingStores}${futureDates}`,
+        missingStores || futureDates ? 'muted' : 'success');
     }
   } catch (error) {
     if (sequence === reportLoadSequence) setStatus(status, error.message, 'error');
@@ -1459,34 +2445,34 @@ const NETWORK_SALES_COLUMNS = [
   ['today', 'sales', 'Venta', 'Venta neta sin IVA de hoy hasta la hora indicada.'],
   ['today', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['today', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
-  ['today', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['today', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['today', 'vsYesterday', 'vs ayer', 'Hoy hasta la hora actual frente a ayer hasta la misma hora.'],
   ['today', 'vsEquivalentDays', 'vs 8 días equiv.', 'Hoy hasta la hora actual frente al promedio de los ocho mismos días de la semana anteriores, con igual hora de corte.'],
   ['yesterday', 'sales', 'Venta', 'Venta neta sin IVA de ayer.'],
   ['yesterday', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['yesterday', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
-  ['yesterday', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['yesterday', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['yesterday', 'vsEquivalentDays', 'vs 8 días equiv.', 'Ayer frente al promedio de los ocho mismos días de la semana anteriores a ayer.'],
   ['yesterday', 'vsFourWeeks', 'vs prom. 4 sem.', 'Ayer frente al promedio diario de las fechas con operación registrada durante las cuatro semanas anteriores.'],
   ['currentWeek', 'sales', 'Venta', 'Venta neta acumulada desde el lunes hasta hoy a la hora indicada.'],
   ['currentWeek', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['currentWeek', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
-  ['currentWeek', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['currentWeek', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['currentWeek', 'vsPreviousWeek', 'vs sem. ant.', 'Semana actual hasta hoy y hora actual frente al mismo tramo de la semana anterior.'],
   ['previousWeek', 'sales', 'Venta', 'Venta neta de la semana anterior completa, lunes a domingo.'],
   ['previousWeek', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['previousWeek', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
-  ['previousWeek', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['previousWeek', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['previousWeek', 'vsEightWeeks', 'vs 8 sem.', 'Semana anterior completa frente al promedio de las ocho semanas completas anteriores a ella.'],
   ['currentMonth', 'sales', 'Venta', 'Venta neta acumulada desde el día 1 hasta hoy a la hora indicada.'],
   ['currentMonth', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['currentMonth', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
-  ['currentMonth', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.'],
+  ['currentMonth', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['currentMonth', 'vsPreviousMonth', 'vs mes ant.', 'Mes actual hasta hoy y hora actual frente a un tramo equivalente del mes anterior.'],
   ['previousMonth', 'sales', 'Venta', 'Venta neta del mes anterior completo.'],
   ['previousMonth', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['previousMonth', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
-  ['previousMonth', 'averageTicket', 'Ticket', 'Venta neta dividida por número de transacciones.']
+  ['previousMonth', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.']
 ];
 
 function networkMetricCell(period, metric) {
@@ -1526,7 +2512,27 @@ function renderNetworkSalesDashboard(report) {
   document.getElementById('network-sales-rows').replaceChildren(...report.rows.map(item => renderRow(item)));
   document.getElementById('network-sales-total').replaceChildren(renderRow(report.total, true));
   document.getElementById('network-sales-cutoff').textContent = `${formatReportDate(report.today)} · corte ${report.cutoff} · America/Santiago`;
-  document.getElementById('network-sales-coverage').textContent = report.coverageNote || '';
+  const coverage = report.sourceCoverage || {};
+  const missingStores = (coverage.stores || []).filter(store => !store.filesRead).map(store => store.name);
+  const costCoverage = coverage.ordersTotal
+    ? `Costo disponible en ${coverage.ordersWithCost} de ${coverage.ordersTotal} pedidos.`
+    : 'No hay pedidos para evaluar cobertura de costos.';
+  const costBasisCoverage = coverage.ordersWithCost
+    ? `En ${coverage.ordersWithNetFieldConsistentCost || 0} pedido(s), todos los costos concuerdan con el campo «Monto neto» de Compras; los demás usan fuentes no cotejadas. Esto no sustituye la revisión tributaria de las facturas.`
+    : '';
+  const missingSources = missingStores.length ? ` Sin archivos legibles: ${missingStores.join(', ')}.` : '';
+  const valuationNote = coverage.costValuationDate === 'sale-date'
+    ? 'Costo según fuentes vigentes en la fecha de cada venta; un costo positivo del archivo de ventas se usa solo como respaldo sin cotejo.'
+    : 'Costo según fuentes vigentes al corte del reporte (método anterior de respaldo); puede cambiar el margen histórico al ingresar nuevas compras.';
+  document.getElementById('network-sales-coverage').textContent = `${costCoverage} ${valuationNote} ${costBasisCoverage}${missingSources} ${report.coverageNote || ''}`.trim();
+  setReportChart('report-network', {
+    type: 'bar',
+    allowedTypes: ['bar', 'pie'],
+    title: 'Venta neta de hoy por local',
+    subtitle: `Comparación hasta el corte ${report.cutoff} · America/Santiago. TOTAL RED se recalcula desde los datos agregados y no se incluye como un local adicional.`,
+    labels: report.rows.map(item => item.name),
+    series: [{ name: 'Venta neta de hoy', values: report.rows.map(item => item.today?.sales) }]
+  });
 }
 
 function refreshReportLocationFilter() {
@@ -1717,9 +2723,14 @@ function renderToteatTransactionalRanges() {
         input.type = 'date';
         input.name = field;
         input.value = value;
+        input.dataset.suggestedValue = value;
         input.max = location.dateTo;
         input.required = true;
         input.setAttribute('aria-label', `${label} de ${report.label} para ${location.name}`);
+        const markChanged = () => input.classList.toggle('changed-from-suggested',
+          Boolean(input.value) && input.value !== input.dataset.suggestedValue);
+        input.addEventListener('input', markChanged);
+        input.addEventListener('change', markChanged);
         wrapper.append(input);
         card.append(wrapper);
       }
@@ -2084,6 +3095,35 @@ function renderFindingsView() {
     findingsSummaryCard('Prioridad media', openFindings.filter(finding => finding.severity === 'medium').length, 'medium'),
     findingsSummaryCard('Atención', openFindings.filter(finding => finding.severity === 'low').length, 'low')
   );
+  const findingSectionMetrics = data.sections.map(section => {
+    const open = section.findings.filter(finding => !finding.closed);
+    return {
+      label: section.label,
+      open: open.length,
+      closed: section.findings.length - open.length,
+      high: open.filter(finding => finding.severity === 'high').length,
+      medium: open.filter(finding => finding.severity === 'medium').length,
+      low: open.filter(finding => finding.severity === 'low').length
+    };
+  });
+  const integerFormat = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
+  setReportChart('findings-summary-chart', {
+    type: 'bar',
+    allowedTypes: ['bar', 'pie'],
+    title: 'Distribución de hallazgos por área',
+    subtitle: `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. Selecciona estado o prioridad para comparar las áreas revisadas.`,
+    labels: findingSectionMetrics.map(item => item.label),
+    metrics: [
+      ['Abiertos', 'open'], ['Cerrados', 'closed'], ['Prioridad alta', 'high'],
+      ['Prioridad media', 'medium'], ['Atención', 'low']
+    ].map(([name, key]) => ({
+      name, values: findingSectionMetrics.map(item => item[key]), allowedTypes: ['bar', 'pie'],
+      formatValue: integerFormat, formatAxis: integerFormat
+    })),
+    series: [{ name: 'Abiertos', values: findingSectionMetrics.map(item => item.open) }],
+    formatValue: integerFormat,
+    formatAxis: integerFormat
+  });
   const sourceText = data.sources.length
     ? `Fuentes maestras: ${data.sources.map(source => `${source.type} “${source.name}” (vigente desde ${formatReportDate(source.validFrom)})`).join(' · ')}.`
     : 'No se encontraron fuentes maestras vigentes.';
@@ -2372,7 +3412,7 @@ function renderSalesServiceModes() {
     sales.textContent = `${formatClp(group.netSales)} venta neta · ${group.orderPercent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de pedidos · ${group.salesPercent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% de ventas`;
     const ticket = document.createElement('p');
     ticket.className = 'sales-service-mode-ticket';
-    ticket.textContent = `Ticket promedio ${formatClp(group.averageTicket ?? (group.orders ? group.netSales / group.orders : 0))}`;
+    ticket.textContent = `Ticket promedio con IVA ${group.averageTicket === null || group.averageTicket === undefined ? '—' : formatClp(group.averageTicket)}`;
     card.append(title, value, sales, ticket);
     return card;
   }));
@@ -2594,6 +3634,74 @@ function renderSalesInsights() {
       return row;
     }));
   }
+  const quantityFormat = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(value);
+  setReportChart('sales-top-products-chart', {
+    type: 'bar',
+    allowedTypes: ['bar'],
+    title: 'Productos más vendidos',
+    subtitle: `${formatReportDate(insight.period.from)} – ${formatReportDate(insight.period.to)} · ranking de hasta 10 productos del período seleccionado.`,
+    labels: insight.topProducts.map(product => product.name),
+    metrics: [
+      {
+        name: 'Unidades vendidas', values: insight.topProducts.map(product => product.quantity),
+        allowedTypes: ['bar'], formatValue: quantityFormat,
+        formatAxis: value => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+      },
+      {
+        name: 'Venta neta sin IVA', values: insight.topProducts.map(product => product.netSales),
+        allowedTypes: ['bar'], formatValue: formatClp,
+        formatAxis: value => `$${new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`
+      }
+    ],
+    series: [{ name: 'Unidades vendidas', values: insight.topProducts.map(product => product.quantity) }],
+    formatValue: quantityFormat,
+    formatAxis: value => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+  });
+
+  const hierarchyItems = currentNode
+    ? currentNode.children.length ? currentNode.children : currentNode.products
+    : [];
+  const hierarchySales = hierarchyItems.map(item => Number(item.netSales) || 0);
+  const hierarchyTotal = hierarchySales.reduce((sum, value) => sum + value, 0);
+  const percentFormat = value => `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`;
+  const hierarchyMetrics = [
+    {
+      name: 'Venta neta sin IVA', values: hierarchySales, allowedTypes: ['bar', 'pie'],
+      formatValue: formatClp,
+      formatAxis: value => `$${new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`
+    },
+    {
+      name: 'Participación', values: hierarchySales.map(value => hierarchyTotal ? value / hierarchyTotal * 100 : 0),
+      allowedTypes: ['bar', 'pie'], formatValue: percentFormat, formatAxis: percentFormat
+    },
+    {
+      name: 'Margen %', values: hierarchyItems.map(item => item.contributionMarginPercent),
+      allowedTypes: ['bar'], formatValue: percentFormat, formatAxis: percentFormat
+    },
+    {
+      name: 'Margen de contribución',
+      values: hierarchyItems.map(item => item.contributionMarginPercent === null
+        ? null : item.netSales - item.totalCost),
+      allowedTypes: ['bar'], formatValue: formatClp,
+      formatAxis: value => `$${new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`
+    }
+  ];
+  if (currentNode && !currentNode.children.length) hierarchyMetrics.push({
+    name: 'Unidades vendidas', values: hierarchyItems.map(item => item.quantity), allowedTypes: ['bar'],
+    formatValue: quantityFormat,
+    formatAxis: value => new Intl.NumberFormat('es-CL', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+  });
+  setReportChart('sales-hierarchy-chart', {
+    type: 'bar',
+    allowedTypes: ['bar', 'pie'],
+    title: document.getElementById('sales-hierarchy-title').textContent,
+    subtitle: `${formatReportDate(insight.period.from)} – ${formatReportDate(insight.period.to)} · ${['Todas las jerarquías', ...salesHierarchyPath].join(' › ')}.`,
+    labels: hierarchyItems.map(item => item.name),
+    metrics: hierarchyMetrics,
+    series: [{ name: hierarchyMetrics[0].name, values: hierarchyMetrics[0].values }],
+    formatValue: formatClp,
+    formatAxis: hierarchyMetrics[0].formatAxis
+  });
 }
 
 function hourlyProductIdentity(product) {
@@ -3415,7 +4523,7 @@ async function loadSalesDashboard() {
     if (!customTo.value) customTo.value = report.date;
     if (!customFrom.value) customFrom.value = offsetIsoDate(report.date, -29);
     syncSalesServiceModeControls();
-    document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
+    document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA y ticket promedio con IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
     renderSalesDashboardMetrics(report.sales.metrics);
     renderSalesLocations(report);
     renderSalesServiceModes();
@@ -3691,6 +4799,114 @@ function refreshIngredientsLocationFilter() {
   }
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function refreshCostReviewLocationFilter() {
+  const select = document.getElementById('cost-review-location');
+  const previous = select.value || 'all';
+  const options = [new Option('Todas las cafeterías', 'all')];
+  for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
+    options.push(new Option(location.name, location.id));
+  }
+  select.replaceChildren(...options);
+  select.value = options.some(option => option.value === previous) ? previous : 'all';
+}
+
+function renderCostReview() {
+  const summary = document.getElementById('cost-review-summary');
+  const body = document.getElementById('cost-review-body');
+  const count = document.getElementById('cost-review-count');
+  if (!costReviewState) {
+    summary.replaceChildren();
+    body.replaceChildren();
+    count.textContent = '';
+    return;
+  }
+  const { items, summary: totals } = costReviewState;
+  summary.replaceChildren(...[
+    ['Sin costo calculable', totals.missing],
+    ['Solo costo maestro', totals.masterFallback],
+    ['Costo por receta', totals.recipeFallback],
+    ['Compra de otro local', totals.otherLocation],
+    ['Con compra', totals.covered]
+  ].map(([label, value]) => {
+    const card = document.createElement('div');
+    card.className = 'cost-review-summary-card';
+    const title = document.createElement('span');
+    title.textContent = label;
+    const amount = document.createElement('strong');
+    amount.textContent = value.toLocaleString('es-CL');
+    card.append(title, amount);
+    return card;
+  }));
+  const type = document.getElementById('cost-review-type').value;
+  const state = document.getElementById('cost-review-state').value;
+  const search = document.getElementById('cost-review-search').value.trim().toLocaleLowerCase('es-CL');
+  const visible = items.filter(item => (type === 'all' || item.type === type)
+    && (state === 'all' || (state === 'attention'
+      ? item.status === 'missing' || item.status === 'other-location' || (item.status === 'no-purchase' && item.effectiveSource === 'master')
+      : state === 'master-fallback' ? item.status === 'no-purchase' && item.effectiveSource === 'master'
+        : state === 'recipe-fallback' ? item.status === 'no-purchase' && item.effectiveSource === 'recipe'
+          : item.status === state))
+    && (!search || `${item.code} ${item.name}`.toLocaleLowerCase('es-CL').includes(search)));
+  const typeLabels = { product: 'Producto', ingredient: 'Ingrediente', extra: 'Extra' };
+  const stateLabels = {
+    missing: 'Sin costo', 'no-purchase': 'Sin compra directa',
+    'other-location': 'Compra de otro local', covered: 'Con compra'
+  };
+  const sourceLabels = { purchase: 'Última compra', recipe: 'Receta', master: 'Maestro', missing: 'No calculable' };
+  const money = value => value === null || value === undefined ? '—'
+    : new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 2 }).format(value);
+  const rows = visible.map(item => {
+    const row = document.createElement('tr');
+    row.className = `cost-review-${item.status}`;
+    const values = [item.code, item.name, typeLabels[item.type] || item.type,
+      stateLabels[item.status], item.unit || '—', money(item.effectiveCost),
+      sourceLabels[item.effectiveSource] || item.effectiveSource,
+      item.effectiveSource === 'missing' ? '—' : item.costBasisEvidence === 'net-field-consistent' ? 'Cotejado' : 'Sin cotejo',
+      money(item.purchaseCost),
+      item.purchaseDate ? formatReportDate(item.purchaseDate) : '—',
+      item.purchaseLocation || '—', money(item.catalogCost)];
+    for (const value of values) {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+    if (item.reason || item.missingComponent) row.title = [item.reason, item.missingComponent].filter(Boolean).join(' · ');
+    return row;
+  });
+  if (!rows.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 12;
+    cell.textContent = 'No hay artículos para los filtros seleccionados.';
+    row.appendChild(cell);
+    rows.push(row);
+  }
+  body.replaceChildren(...rows);
+  count.textContent = `${visible.length.toLocaleString('es-CL')} de ${items.length.toLocaleString('es-CL')} artículos activos del maestro vigente. Las recetas calculables sin compra directa están disponibles en su filtro; una compra de otro local se muestra como referencia, no como costo propio verificado.`;
+}
+
+async function loadCostReview() {
+  const status = document.getElementById('cost-review-status');
+  const button = document.getElementById('refresh-cost-review');
+  const params = new URLSearchParams({ location: document.getElementById('cost-review-location').value || 'all' });
+  const dateTo = document.getElementById('cost-review-date').value;
+  if (dateTo) params.set('dateTo', dateTo);
+  button.disabled = true;
+  setStatus(status, 'Revisando compras, recetas y costos del maestro…');
+  try {
+    costReviewState = await apiRequest(`/api/cost-review?${params}`);
+    document.getElementById('cost-review-date').value = costReviewState.dateTo;
+    renderCostReview();
+    setStatus(status, `Costos al ${formatReportDate(costReviewState.dateTo)} · ${costReviewState.scope.label}.`, 'success');
+  } catch (error) {
+    costReviewState = null;
+    renderCostReview();
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function refreshPurchasesLocationFilter() {
@@ -4043,10 +5259,8 @@ function exportRelevantProductsReport() {
 
 function productAnalysisPresetRange(mode, referenceDate) {
   const monday = value => {
-    const date = dateFromKey(value);
-    const weekday = (date.getDay() + 6) % 7;
-    date.setDate(date.getDate() - weekday);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const weekday = (new Date(`${value}T12:00:00Z`).getUTCDay() + 6) % 7;
+    return offsetIsoDate(value, -weekday);
   };
   const monthStart = `${referenceDate.slice(0, 7)}-01`;
   if (mode === 'current-week') return { from: monday(referenceDate), to: referenceDate };
@@ -4177,7 +5391,9 @@ function productAnalysisOrderFacts(transaction) {
   append('Modalidad', productAnalysisModeLabel(transaction.mode));
   append('Clientes informados', Number(transaction.clients || 0).toLocaleString('es-CL'));
   append('Venta neta del pedido', formatClp(transaction.orderNetSales));
-  append('Total Detalle Pagos', transaction.paymentDue === null ? 'Sin información' : formatClp(transaction.paymentDue));
+  append('Total Detalle Pagos', transaction.paymentTotal === null && transaction.paymentDue === null
+    ? 'Sin información' : formatClp(transaction.paymentTotal ?? transaction.paymentDue));
+  if (transaction.paymentDuePartial) append('A Pagar parcial', transaction.paymentDue === null ? 'Importes múltiples' : formatClp(transaction.paymentDue));
   append('Comentario general', transaction.paymentComment || 'Sin comentario');
   return facts;
 }
@@ -4613,7 +5829,7 @@ function renderProductAnalysis() {
     ['Unidades de extras', formatProductAnalysisUnits(report.summary.extraUnits || 0)],
     ['Venta neta de extras', formatClp(report.summary.extraNetSales || 0)],
     ['Pedidos', Number(report.summary.orders).toLocaleString('es-CL')],
-    ['Ticket promedio', formatClp(report.summary.averageTicket)],
+    ['Ticket promedio con IVA', formatClp(report.summary.averageTicket)],
     ['Margen productos', report.summary.grossMarginPercent === null ? 'Sin costo suficiente' : formatProductAnalysisPercent(report.summary.grossMarginPercent)],
     ['Hallazgos de alto impacto', String(report.summary.highImpactCount)]
   ].forEach(([label, value]) => {
@@ -4695,7 +5911,7 @@ function renderProductAnalysis() {
   temporal.append(productAnalysisTable(['Día', 'Días observados', 'Unidades promedio', 'Venta neta promedio'], report.temporal.weekdays.map(item => [item.label, item.days, formatProductAnalysisUnits(item.averageUnits), formatClp(item.averageNetSales)])), productAnalysisTable(['Hora', 'Unidades', 'Venta neta'], report.temporal.hours.map(item => [item.label, formatProductAnalysisUnits(item.units), formatClp(item.netSales)])));
 
   const service = register('service', 'Modalidad', productAnalysisSection('service', 'Para llevar, local y sin información', 'Modalidad y ticket promedio', 'La clasificación proviene del Comentario General de Detalle Pagos.'));
-  service.appendChild(productAnalysisTable(['Modalidad', 'Pedidos', 'Part. pedidos', 'Venta neta', 'Part. venta neta', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders.toLocaleString('es-CL'), formatProductAnalysisPercent(item.orderShare), formatClp(item.netSales), formatProductAnalysisPercent(item.salesShare), formatClp(item.averageTicket)])));
+  service.appendChild(productAnalysisTable(['Modalidad', 'Pedidos', 'Part. pedidos', 'Venta neta', 'Part. venta neta', 'Ticket con IVA'], report.serviceModes.map(item => [item.label, item.orders.toLocaleString('es-CL'), formatProductAnalysisPercent(item.orderShare), formatClp(item.netSales), formatProductAnalysisPercent(item.salesShare), formatClp(item.averageTicket)])));
 
   const baskets = register('baskets', 'Canastas', productAnalysisSection('baskets', 'Productos que se venden juntos', 'Afinidad de canasta y extras', `Se muestran pares con al menos ${report.baskets.minimumPairOrders} pedidos. Un lift superior a 1 indica una coincidencia mayor a la esperada bajo independencia.`));
   baskets.append(productAnalysisElement('h5', '', 'Pares de productos'), productAnalysisTable(['Producto A', 'Producto B', 'Pedidos', 'Soporte', 'Confianza A→B', 'Confianza B→A', 'Lift'], report.baskets.pairs.slice(0, 40).map(item => [item.leftName, item.rightName, item.orders, formatProductAnalysisPercent(item.supportPercent), formatProductAnalysisPercent(item.confidenceLeftToRightPercent), formatProductAnalysisPercent(item.confidenceRightToLeftPercent), item.lift])));
@@ -4838,7 +6054,7 @@ function exportProductAnalysis() {
     ['Venta neta total', report.summary.netSales], ['Venta neta productos base', report.summary.productNetSales ?? report.summary.netSales],
     ['Venta neta extras', report.summary.extraNetSales || 0], ['Otras líneas fuera del alcance', report.summary.otherNetSales || 0],
     ['Unidades de productos', report.summary.productUnits ?? report.summary.units], ['Unidades de extras', report.summary.extraUnits || 0],
-    ['Pedidos', report.summary.orders], ['Ticket promedio', report.summary.averageTicket],
+    ['Pedidos', report.summary.orders], ['Ticket promedio con IVA', report.summary.averageTicket],
     ['Cobertura Detalle Pagos %', report.coverage.paymentMatchPercent], ['Cobertura recetas %', report.coverage.recipeCoveragePercent],
     ['Exportado', new Date().toLocaleString('es-CL')]
   ]);
@@ -4856,11 +6072,11 @@ function exportProductAnalysis() {
     ...report.baskets.definitions.map(item => ['Definición', item.term, item.detail]),
     ...report.baskets.interpretation.map(item => ['Conclusión', item.title, item.detail])
   ]);
-  append('Modalidad', ['Modalidad', 'Pedidos', 'Participación pedidos %', 'Venta neta', 'Participación venta neta %', 'Ticket promedio'], report.serviceModes.map(item => [item.label, item.orders, item.orderShare, item.netSales, item.salesShare, item.averageTicket]));
+  append('Modalidad', ['Modalidad', 'Pedidos', 'Participación pedidos %', 'Venta neta', 'Participación venta neta %', 'Ticket promedio con IVA'], report.serviceModes.map(item => [item.label, item.orders, item.orderShare, item.netSales, item.salesShare, item.averageTicket]));
   append('Días y horas', ['Tipo', 'Valor', 'Observaciones', 'Unidades', 'Venta neta'], [...report.temporal.weekdays.map(item => ['Día semana', item.label, item.days, item.averageUnits, item.averageNetSales]), ...report.temporal.hours.map(item => ['Hora', item.label, '', item.units, item.netSales])]);
   append('Formatos', ['Familia', 'Jerarquía', 'Confianza', 'Código', 'Producto', 'Formato', 'Precio lista', 'Precio neto', 'Unidades', 'Participación unidades familia %', 'Venta neta', 'Participación venta familia %', 'Descuento implícito %', 'Precio promedio'], report.formats.families.flatMap(family => family.formats.map(item => [family.family, family.hierarchy, family.confidence, item.code, item.name, item.format, item.listPrice, item.netListPrice, item.units, item.familyUnitSharePercent, item.netSales, item.familySalesSharePercent, item.implicitDiscountPercent, item.averagePrice])));
   append('Transacciones formatos', ['Familia', 'Código', 'Producto', 'Fecha', 'Hora', 'Pedido', 'Ubicación', 'Modalidad', 'Unidades', 'Venta neta producto', 'Precio neto unitario', 'Precio con IVA', 'Descuento implícito %', 'Venta neta pedido'], report.formats.families.flatMap(family => family.formats.flatMap(item => item.transactions.map(transaction => [family.family, item.code, item.name, transaction.date, productAnalysisTimeLabel(transaction.hour), transaction.orderReference || transaction.orderKey, transaction.locationName, productAnalysisModeLabel(transaction.mode), transaction.quantity, transaction.netSales, transaction.averageNetPrice, transaction.averageGrossPrice, transaction.implicitDiscountPercent, transaction.orderNetSales]))));
-  append('Detalle pedidos', ['Pedido', 'Fecha', 'Hora', 'Ubicación', 'Modalidad', 'Clientes', 'Comentario general', 'Total Detalle Pagos', 'Venta neta pedido', 'Código línea', 'Producto / extra', 'Tipo', 'Jerarquía', 'Cantidad', 'Venta neta línea', 'Origen valor', 'Precio neto unitario', 'Precio con IVA', 'Descuento implícito %'], report.formats.families.flatMap(family => family.formats.flatMap(item => item.transactions.flatMap(transaction => (transaction.orderLines || []).map(line => [transaction.orderReference || transaction.orderKey, transaction.date, productAnalysisTimeLabel(transaction.hour), transaction.locationName, productAnalysisModeLabel(transaction.mode), transaction.clients, transaction.paymentComment, transaction.paymentDue, transaction.orderNetSales, line.code, line.name, line.type, line.hierarchy, line.quantity, line.netSales, productAnalysisSalesAllocationLabel(line.salesAllocation), line.averageNetPrice, line.averageGrossPrice, line.implicitDiscountPercent])))));
+  append('Detalle pedidos', ['Pedido', 'Fecha', 'Hora', 'Ubicación', 'Modalidad', 'Clientes', 'Comentario general', 'Total Detalle Pagos', 'A Pagar', 'Venta neta pedido', 'Código línea', 'Producto / extra', 'Tipo', 'Jerarquía', 'Cantidad', 'Venta neta línea', 'Origen valor', 'Precio neto unitario', 'Precio con IVA', 'Descuento implícito %'], report.formats.families.flatMap(family => family.formats.flatMap(item => item.transactions.flatMap(transaction => (transaction.orderLines || []).map(line => [transaction.orderReference || transaction.orderKey, transaction.date, productAnalysisTimeLabel(transaction.hour), transaction.locationName, productAnalysisModeLabel(transaction.mode), transaction.clients, transaction.paymentComment, transaction.paymentTotal ?? transaction.paymentDue, transaction.paymentDue, transaction.orderNetSales, line.code, line.name, line.type, line.hierarchy, line.quantity, line.netSales, productAnalysisSalesAllocationLabel(line.salesAllocation), line.averageNetPrice, line.averageGrossPrice, line.implicitDiscountPercent])))));
   append('Tramos de precio', ['Tramo precio efectivo con IVA', 'Desde exclusivo', 'Hasta inclusivo', 'Unidades', 'Participación unidades %', 'Venta neta', 'Participación venta %', 'Venta con IVA'], report.priceDistribution.bands.map(item => [item.label, item.fromExclusive, item.toInclusive, item.units, item.unitSharePercent, item.netSales, item.salesSharePercent, item.grossSales]));
   append('Precio', ['Código', 'Producto', 'Observaciones', 'Niveles precio', 'Rango %', 'Coeficiente observado', 'Correlación', 'R²', 'Confianza'], report.priceSensitivity.items.map(item => [item.code, item.name, item.observations, item.pricePoints, item.priceRangePercent, item.observedElasticity, item.correlation, item.rSquared, item.confidence]));
   append('Detalle precio', ['Código', 'Producto', 'Fecha', 'Unidades', 'Venta neta', 'Precio neto promedio', 'Precio con IVA', 'Descuento vs. lista neta %'], report.priceSensitivity.items.flatMap(item => (item.observationDetails || []).map(observation => [item.code, item.name, observation.date, observation.units, observation.netSales, observation.averageNetPrice, observation.averageGrossPrice, observation.implicitDiscountPercent])));
@@ -7304,21 +8520,17 @@ function closeInventoryResultDialogs() {
 }
 
 function isoLocalDate(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return browserIsoToday(date);
 }
 
 function inventoryDefaultPeriod() {
-  const today = new Date();
-  const currentMonday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  currentMonday.setDate(currentMonday.getDate() - ((currentMonday.getDay() + 6) % 7));
-  const previousMonday = new Date(currentMonday);
-  previousMonday.setDate(previousMonday.getDate() - 7);
-  const previousSunday = new Date(currentMonday);
-  previousSunday.setDate(previousSunday.getDate() - 1);
+  const today = browserIsoToday();
+  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+  const currentMonday = offsetIsoDate(today, -((weekday + 6) % 7));
   return {
-    previousMonday: isoLocalDate(previousMonday),
-    previousSunday: isoLocalDate(previousSunday),
-    currentMonday: isoLocalDate(currentMonday)
+    previousMonday: offsetIsoDate(currentMonday, -7),
+    previousSunday: offsetIsoDate(currentMonday, -1),
+    currentMonday
   };
 }
 
@@ -8601,9 +9813,11 @@ async function refreshLocationConfiguration() {
     refreshTransactionAuditLocationFilter();
     refreshFindingsLocationFilter();
     refreshFinancialResultsLocationFilter();
+    refreshFinancialGeneralExpensesLocationFilter();
     refreshSalesIngredientsLocationFilter();
     refreshProductsLocationFilter();
     refreshIngredientsLocationFilter();
+    refreshCostReviewLocationFilter();
     refreshPurchasesLocationFilter();
     refreshProjectionLocationFilter();
     refreshInventoryLocationFilter();
@@ -8665,6 +9879,8 @@ function renderLocationManagement(data) {
     });
     let openingInput = null;
     let weekdayInputs = [];
+    let weekdayHoursInputs = [];
+    let closedDatesInput = null;
     const operationFields = document.createElement('div');
     operationFields.className = 'location-operation-fields';
     if (location.type === 'store') {
@@ -8691,6 +9907,63 @@ function renderLocationManagement(data) {
         return input;
       });
       operationFields.append(days);
+      const schedule = document.createElement('fieldset');
+      schedule.className = 'location-weekly-hours';
+      const scheduleLegend = document.createElement('legend');
+      scheduleLegend.textContent = 'Horario habitual por día · para comparaciones equivalentes';
+      schedule.append(scheduleLegend);
+      const scheduleGroups = [
+        { label: 'Lunes a viernes', shortLabel: 'Lun–Vie', days: [1, 2, 3, 4, 5], className: 'weekday-hours' },
+        { label: 'Sábado', shortLabel: 'Sáb', days: [6] },
+        { label: 'Domingo', shortLabel: 'Dom', days: [0] }
+      ];
+      weekdayHoursInputs = scheduleGroups.map(group => {
+        const row = document.createElement('label');
+        row.className = `location-hours-row ${group.className || ''}`.trim();
+        const caption = document.createElement('span');
+        caption.textContent = `${group.label} · abre / cierra`;
+        const controls = document.createElement('span');
+        controls.className = 'location-hours-inputs';
+        const open = document.createElement('input');
+        const close = document.createElement('input');
+        open.type = close.type = 'time';
+        const originalHours = Object.fromEntries(group.days.flatMap(day => location.operatingHours?.[day]
+          ? [[day, { ...location.operatingHours[day] }]] : []));
+        const values = group.days.map(day => location.operatingHours?.[day] || null);
+        const signatures = new Set(values.map(value => value ? `${value.open}|${value.close}` : ''));
+        const mixed = signatures.size > 1;
+        if (!mixed) {
+          open.value = values[0]?.open || '';
+          close.value = values[0]?.close || '';
+        } else {
+          open.title = close.title = 'Actualmente existen horarios distintos. Ingresa un horario para unificarlos.';
+          open.setAttribute('aria-description', open.title);
+          close.setAttribute('aria-description', close.title);
+        }
+        open.setAttribute('aria-label', `Apertura ${group.shortLabel} de ${location.name}`);
+        close.setAttribute('aria-label', `Cierre ${group.shortLabel} de ${location.name}`);
+        let changed = false;
+        open.addEventListener('input', () => { changed = true; });
+        close.addEventListener('input', () => { changed = true; });
+        controls.append(open, close);
+        row.append(caption, controls);
+        if (mixed) {
+          const note = document.createElement('small');
+          note.textContent = 'Hay horarios distintos guardados. Al ingresar uno nuevo se unificarán.';
+          row.append(note);
+        }
+        schedule.append(row);
+        return { ...group, open, close, originalHours, mixed, wasChanged: () => changed };
+      });
+      operationFields.append(schedule);
+      const closuresLabel = document.createElement('label');
+      closuresLabel.textContent = 'Cierres excepcionales (fechas AAAA-MM-DD separadas por coma)';
+      closedDatesInput = document.createElement('input');
+      closedDatesInput.type = 'text';
+      closedDatesInput.value = (location.closedDates || []).join(', ');
+      closedDatesInput.placeholder = '2026-09-18, 2026-12-25';
+      closuresLabel.append(closedDatesInput);
+      operationFields.append(closuresLabel);
     }
     const type = document.createElement('span');
     type.className = 'location-type-badge';
@@ -8698,10 +9971,21 @@ function renderLocationManagement(data) {
     const saveButton = document.createElement('button');
     saveButton.type = 'button';
     saveButton.className = 'icon-button small';
-    saveButton.textContent = 'Guardar nombre';
+    saveButton.textContent = 'Guardar';
+    saveButton.setAttribute('aria-label', `Guardar cambios de ${location.name}`);
     saveButton.addEventListener('click', async () => {
       saveButton.disabled = true;
       try {
+        if (weekdayHoursInputs.some(({ open, close }) => Boolean(open.value) !== Boolean(close.value))) {
+          throw new Error('Completa apertura y cierre del mismo bloque, o deja ambos horarios vacíos.');
+        }
+        const operatingHours = Object.fromEntries(weekdayHoursInputs.flatMap(group => {
+          if (group.open.value && group.close.value) {
+            return group.days.map(day => [day, { open: group.open.value, close: group.close.value }]);
+          }
+          if (group.mixed && !group.wasChanged()) return Object.entries(group.originalHours);
+          return [];
+        }));
         await apiRequest(`/api/config/locations/${encodeURIComponent(location.id)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -8709,7 +9993,9 @@ function renderLocationManagement(data) {
             name: nameInput.value,
             address: addressInput.value,
             ...(openingInput ? { openingDate: openingInput.value,
-              operatingWeekdays: weekdayInputs.flatMap((input, index) => input.checked ? [index] : []) } : {}),
+              operatingWeekdays: weekdayInputs.flatMap((input, index) => input.checked ? [index] : []),
+              operatingHours,
+              closedDates: closedDatesInput.value.split(',').map(value => value.trim()).filter(Boolean) } : {}),
             ...Object.fromEntries(toteatInputs.map(([field, input]) => [field, input.value]))
           })
         });
@@ -8725,7 +10011,10 @@ function renderLocationManagement(data) {
     trashButton.className = 'delete-button small';
     trashButton.textContent = 'Enviar a papelera';
     trashButton.addEventListener('click', () => openLocationTrashDialog(location));
-    row.append(nameInput, addressInput, type, toteatFields, operationFields, saveButton, trashButton);
+    const actionStack = document.createElement('div');
+    actionStack.className = 'location-row-actions';
+    actionStack.append(saveButton, trashButton);
+    row.append(nameInput, addressInput, type, toteatFields, operationFields, actionStack);
     activeList.appendChild(row);
   }
 
@@ -9145,10 +10434,31 @@ async function uploadMasterFiles(replace = false) {
 document.addEventListener('DOMContentLoaded', async () => {
   initializeFontScale();
   initializeSidebarToggle();
+  document.body.appendChild(document.getElementById('report-chart-dialog'));
+  installReportChartButtons();
+  initializeAnalyticalTableCharts();
+  document.getElementById('weekly-report').addEventListener('click', event => {
+    const button = event.target.closest('[data-report-chart]');
+    if (button && !button.disabled) openReportChart(button.dataset.reportChart);
+  });
+  document.getElementById('report-chart-close').addEventListener('click', () => {
+    document.getElementById('report-chart-dialog').close();
+  });
+  document.getElementById('report-chart-dialog').addEventListener('click', event => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
+  document.getElementById('report-chart-metric').addEventListener('change', updateReportChartDialog);
+  document.getElementById('report-chart-type-options').addEventListener('click', event => {
+    const button = event.target.closest('[data-chart-type]');
+    if (!button || button.hidden) return;
+    activeReportChartType = button.dataset.chartType;
+    updateReportChartDialog();
+  });
   syncHourlyDemandControls();
   const financialToday = browserIsoToday();
   document.getElementById('financial-results-to').value = financialToday;
   document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
+  document.getElementById('financial-general-expenses-year').value = financialToday.slice(0, 4);
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
     const linkLabel = link.querySelector('.nav-text')?.textContent.trim() || '';
@@ -9173,6 +10483,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeFileUploadControls();
   renderMasterList();
   await refreshLocationConfiguration().catch(() => {});
+  await loadFinancialGeneralExpenses().catch(() => {});
+  if (typeof initializeDemandView === 'function') {
+    await initializeDemandView(Object.values(locationRegistry).filter(location => location.type === 'store'));
+  }
   syncTransactionAuditPeriod();
   setView(document.querySelector('.nav-link.active')?.dataset.view || 'report');
 
@@ -9283,12 +10597,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-view-filter').addEventListener('change', changeReportView);
+  document.getElementById('network-cost-valuation').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
   document.getElementById('financial-results-filters').addEventListener('submit', event => {
     event.preventDefault();
     loadFinancialResults();
+  });
+  document.getElementById('financial-results-location').addEventListener('change', event => {
+    if (event.target.value !== 'all' && locationRegistry[event.target.value]?.type === 'store') {
+      document.getElementById('financial-general-expenses-location').value = event.target.value;
+      loadFinancialGeneralExpenses();
+    }
+  });
+  document.getElementById('financial-general-expenses-location').addEventListener('change', loadFinancialGeneralExpenses);
+  document.getElementById('financial-general-expenses-year').addEventListener('change', loadFinancialGeneralExpenses);
+  document.getElementById('financial-general-expenses-form').addEventListener('submit', event => {
+    event.preventDefault();
+    saveFinancialGeneralExpenses();
   });
   document.getElementById('run-findings').addEventListener('click', loadFindingsView);
   document.getElementById('findings-status-filter').addEventListener('change', renderFindingsView);
@@ -9364,6 +10691,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('relevant-products-dialog').close();
     loadProductsView();
   });
+  document.getElementById('cost-review-location').addEventListener('change', loadCostReview);
+  document.getElementById('cost-review-date').addEventListener('change', loadCostReview);
+  document.getElementById('refresh-cost-review').addEventListener('click', loadCostReview);
+  document.getElementById('cost-review-type').addEventListener('change', renderCostReview);
+  document.getElementById('cost-review-state').addEventListener('change', renderCostReview);
+  document.getElementById('cost-review-search').addEventListener('input', renderCostReview);
   document.getElementById('products-search').addEventListener('input', renderProductsView);
   document.getElementById('products-grouping').addEventListener('change', renderProductsView);
   document.getElementById('refresh-products').addEventListener('click', loadProductsView);

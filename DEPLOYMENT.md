@@ -1,5 +1,7 @@
 # Deploying Brewit (step-by-step)
 
+**Do not publish the current application on the public Internet.** It has no user authentication or authorization, and uploaded files are served by the application. Complete the controls in [SEGURIDAD_Y_RESPALDOS.md](SEGURIDAD_Y_RESPALDOS.md) before using a public deployment guide. The steps below are historical deployment notes, not a production-ready checklist.
+
 This file shows quick steps to run locally with Docker and deploy to a small, low-cost cloud provider (Fly.io recommended for small Docker-backed apps).
 
 1) Quick local test with Docker

@@ -442,6 +442,8 @@ test('filters the sales report by cafeteria and defaults to all cafeterias', asy
   const first = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1`).then(response => response.json());
   const second = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-2`).then(response => response.json());
   assert.equal(Math.round(all.previousDay.netSales), 300);
+  assert.equal(all.sourceCoverage.latestSaleDate, '2026-08-13');
+  assert.deepEqual(all.sourceCoverage.storesWithoutSalesFiles, []);
   assert.equal(all.scope.type, 'all');
   assert.equal(Math.round(first.previousDay.netSales), 100);
   assert.equal(first.scope.label, 'Tienda 1');
@@ -453,7 +455,9 @@ test('filters the sales report by cafeteria and defaults to all cafeterias', asy
   assert.equal(Math.round(network.rows[1].yesterday.sales), 200);
   assert.equal(Math.round(network.total.yesterday.sales), 300);
   assert.equal(network.total.yesterday.transactions, 2);
-  assert.equal(Math.round(network.total.yesterday.averageTicket), 150);
+  assert.equal(Math.round(network.total.yesterday.averageTicket), 179);
+  assert.equal(network.sourceCoverage.ordersWithCost, 0);
+  assert.equal(network.sourceCoverage.latestSaleDate, '2026-08-13');
 });
 
 test('downloads Toteat sales for a specific cafeteria and keeps authentication external', async t => {
@@ -1633,6 +1637,11 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   assert.equal(response.status, 200);
   const report = await response.json();
   assert.equal(Math.round(report.statement.netSales), 3000, JSON.stringify(report));
+  assert.equal(report.revenue.linesWithCost, 3);
+  assert.equal(report.revenue.linesWithNetFieldConsistentCost, 0);
+  assert.equal(report.revenue.linesWithUnverifiedCost, 3);
+  assert.ok(report.warnings.some(warning => warning.includes('sin cotejo con «Monto neto»')));
+  assert.equal(report.revenue.latestSaleDate, '2026-08-10');
   assert.equal(report.revenue.hierarchies.length, 2);
   assert.equal(Math.round(report.revenue.bars.reduce((sum, item) => sum + item.netSales, 0)), 3000);
   assert.deepEqual(report.revenue.bars.map(item => [item.key, Math.round(item.netSales)]), [
@@ -1648,6 +1657,44 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   assert.equal(mpExpense.detail.vatFactor, 1.18);
   assert.deepEqual(mpExpense.detail.detectedFields, ['FEE_AMOUNT']);
   assert.equal(report.statement.partial, true);
+
+  const generalExpenseValues = {
+    rent: 310000, commonExpenses: 0, salaries: 0, salaryProvision: 0,
+    basicServices: 0, toteat: 0, enMedio: 0, spotify: 0,
+    gntAccountingHr: 0, insurance: 0, mediaMarketing: 0, marketingAgencySocial: 0, otherExpenses: 0
+  };
+  const savedExpenses = await fetch(`${baseUrl}/api/financial-results/general-expenses`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-1', month: '2026-08', values: generalExpenseValues })
+  });
+  assert.equal(savedExpenses.status, 200, await savedExpenses.text());
+  const storedExpenses = await fetch(`${baseUrl}/api/financial-results/general-expenses?location=store-1&month=2026-08`)
+    .then(result => result.json());
+  assert.equal(storedExpenses.configured, true);
+  assert.equal(storedExpenses.values.rent, 310000);
+  assert.equal(storedExpenses.categories.length, 13);
+  const reportWithGeneralExpenses = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`)
+    .then(result => result.json());
+  const rentExpense = reportWithGeneralExpenses.statement.expenses.find(item => item.key === 'general:rent');
+  assert.equal(rentExpense.complete, true);
+  assert.equal(Math.round(rentExpense.amount), 150000);
+  assert.equal(reportWithGeneralExpenses.statement.generalExpenses.configured, true);
+  assert.equal(reportWithGeneralExpenses.statement.expenses.findIndex(item => item.key === 'general:rent'),
+    reportWithGeneralExpenses.statement.expenses.findIndex(item => item.key === 'mercadoPago') + 1);
+  assert.equal(reportWithGeneralExpenses.statement.headOffice, null);
+
+  const headOfficeSaved = await fetch(`${baseUrl}/api/financial-results/general-expenses`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'head-office', month: '2026-08', values: generalExpenseValues })
+  });
+  assert.equal(headOfficeSaved.status, 200, await headOfficeSaved.text());
+  const consolidated = await fetch(`${baseUrl}/api/financial-results?location=all&dateFrom=2026-08-01&dateTo=2026-08-15`)
+    .then(result => result.json());
+  assert.equal(consolidated.statement.headOffice.label, 'Casa Matriz');
+  assert.equal(consolidated.statement.headOffice.complete, true);
+  assert.equal(Math.round(consolidated.statement.headOffice.amount), 150000);
+  assert.equal(Math.round(consolidated.statement.operationalResultWithHeadOffice),
+    Math.round(consolidated.statement.operationalResult4Wall - 150000));
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
@@ -1708,11 +1755,13 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(changed.unitsPerPurchaseUnit, 12);
   assert.equal(changed.baseUnit, 'UN');
   assert.equal(changed.baseUnitCost, 10);
+  assert.equal(changed.costBasisEvidence, 'net-field-consistent');
   const kilograms = all.rows.find(row => row.document === '12');
   assert.equal(kilograms.purchaseUnit, 'KG');
   assert.equal(kilograms.unitsPerPurchaseUnit, 1);
   assert.equal(kilograms.baseUnit, 'kg');
   assert.equal(kilograms.baseUnitCost, 500);
+  assert.equal(kilograms.costBasisEvidence, 'net-field-consistent');
 
   const costVariations = await fetch(`${baseUrl}/api/purchase-cost-variations?location=all`).then(response => response.json());
   assert.deepEqual(costVariations.period, { from: '2026-07-17', to: '2026-08-15' });
@@ -1903,8 +1952,12 @@ test('accepts TotEat purchases with English headers and includes them in purchas
     '2026-09-17', 'Normal Invoice', '02921438', 'QUILLAYES SURLAT', '969542102',
     '1', 'LAC001', 'Leche Semidescr Sin Lactosa', '60', 'L', '1007', '60420', '60420'
   ];
+  const inconsistentRow = [
+    '2026-09-17', 'Normal Invoice', '02921439', 'QUILLAYES SURLAT', '969542102',
+    '1', 'LAC002', 'Otra leche', '1', 'L', '100', '119', '119'
+  ];
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, row]), 'listado_compras_detalle');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, row, inconsistentRow]), 'listado_compras_detalle');
   const inspection = await inspectTransactions(baseUrl, 'store-1', [{
     field: 'purchases', filename: '001_purchases-toteat-store-1.xls',
     contents: XLSX.write(workbook, { type: 'buffer', bookType: 'biff8' })
@@ -1913,10 +1966,12 @@ test('accepts TotEat purchases with English headers and includes them in purchas
   assert.deepEqual(inspection.files[0].recordDates, ['2026-09-17']);
   assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
   const report = await fetch(`${baseUrl}/api/purchases?location=store-1&supplier=all`).then(response => response.json());
-  assert.equal(report.rows.length, 1);
+  assert.equal(report.rows.length, 2);
   assert.equal(report.rows[0].supplier, 'QUILLAYES SURLAT');
   assert.equal(report.rows[0].document, '02921438');
   assert.equal(report.rows[0].totalAmount, 60420);
+  assert.equal(report.rows[0].costBasisEvidence, 'net-field-consistent');
+  assert.equal(report.rows[1].costBasisEvidence, 'unverified');
 });
 
 test('limits purchase projections to ingredients plus the SUB005 extra', async t => {
@@ -3186,7 +3241,10 @@ test('audits transactions with date, amount and discount filters and complete or
     ['ID de orden', 'Fecha de creacion', 'Hora de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio Lista', 'Precio a Pagar', 'Descuento', 'Categorías de Productos/Platos', 'BA.', 'Jerarquía de Extras'],
     ['audit-1', '2026-08-30', '10:15:00', 10000, -1000, 'P1', 'Café', 2, 6000, 5500, -500, 'Bebidas', '', ''],
     ['audit-1', '2026-08-30', '10:15:00', 10000, -1000, 'E1', 'Extra shot', 1, 4000, 3500, -500, '', 'BA.1', 'Extras'],
-    ['audit-2', '2026-08-29', '09:00:00', 5000, 0, 'P2', 'Sándwich', 1, 5000, 5000, 0, 'Comida', '', '']
+    ['audit-2', '2026-08-29', '09:00:00', 5000, 0, 'P2', 'Sándwich', 1, 5000, 5000, 0, 'Comida', '', ''],
+    ['audit-3', '2026-08-29', '10:00:00', 3000, 0, 'P2', 'Sándwich', 1, 3000, 3000, 0, 'Comida', '', ''],
+    ['audit-4', '2026-08-29', '11:00:00', 4000, 0, 'P2', 'Sándwich', 1, 4000, 4000, 0, 'Comida', '', ''],
+    ['audit-5', '2026-08-29', '12:00:00', -1000, 0, 'P2', 'Sándwich', -1, -1000, -1000, 0, 'Comida', '', '']
   ];
   const inspection = await inspectTransactions(baseUrl, 'store-1', [{
     field: 'sales', contents: rows.map(row => row.join('\t')).join('\n'), filename: 'ventas-auditoria.csv'
@@ -3194,7 +3252,7 @@ test('audits transactions with date, amount and discount filters and complete or
   assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
   const paymentInspection = await inspectTransactions(baseUrl, 'store-1', [{
     field: 'payment-details',
-    contents: 'FechaCierre\tComanda\tComentario General\tA Pagar\n30-08-26 10:15 a. m.\taudit-1\tservir en el local\t9',
+    contents: 'FechaCierre\tComanda\tComentario General\tTotal\tA Pagar\n30-08-26 10:15 a. m.\taudit-1\tservir en el local\t9\t9\n29-08-26 09:00 a. m.\taudit-2\tpara llevar\t5\t4\n29-08-26 10:00 a. m.\taudit-3\tpara llevar\t2\t2',
     filename: 'detalle-pagos-auditoria.csv'
   }]).then(response => response.json());
   assert.equal((await confirmTransactions(baseUrl, paymentInspection)).status, 200);
@@ -3210,6 +3268,9 @@ test('audits transactions with date, amount and discount filters and complete or
   assert.equal(audit.summary.discountPercent, 10);
   assert.equal(audit.summary.units, 3);
   assert.equal(audit.transactions[0].orderReference, 'audit-1');
+  assert.deepEqual(audit.transactions[0].paymentReconciliation,
+    { status: 'matched', difference: 0, basis: 'total', comparedAmount: 9000 });
+  assert.equal(audit.summary.paymentReconciliation.matched, 1);
   assert.equal(audit.transactions[0].time, '10:15');
   assert.equal(audit.transactions[0].modeLabel, 'Servir en el local');
   assert.equal(audit.transactions[0].lines.length, 2);
@@ -3221,8 +3282,184 @@ test('audits transactions with date, amount and discount filters and complete or
   assert.deepEqual(audit.transactions[0].lines.map(line => line.allocation), ['reported', 'reported']);
   assert.equal(audit.transactions[0].lines.reduce((sum, line) => sum + line.netSale, 0), audit.transactions[0].netSale);
 
+  const all = await fetch(`${baseUrl}/api/transactions/audit?location=store-1&dateFrom=2026-08-29&dateTo=2026-08-30`)
+    .then(result => result.json());
+  assert.equal(all.summary.paymentReconciliation.matched, 2);
+  assert.equal(all.summary.paymentReconciliation.difference, 1);
+  assert.equal(all.summary.paymentReconciliation['not-linked'], 1);
+  assert.equal(all.summary.paymentReconciliation['review-reversal'], 1);
+  assert.equal(all.summary.reversalReviewRequired, 1);
+  assert.equal(all.summary.paymentDuePartial, 1);
+  assert.deepEqual(all.transactions.find(item => item.orderReference === 'audit-5').reversalSignals,
+    ['negative-order-amount', 'negative-quantity', 'negative-line-amount']);
+  assert.deepEqual(all.transactions.find(item => item.orderReference === 'audit-2').paymentReconciliation,
+    { status: 'matched', difference: 0, basis: 'total', comparedAmount: 5000 });
+  assert.deepEqual(all.transactions.find(item => item.orderReference === 'audit-3').paymentReconciliation,
+    { status: 'difference', difference: 1000, basis: 'total', comparedAmount: 2000 });
+
+  const otherStore = await inspectTransactions(baseUrl, 'store-2', [{
+    field: 'sales',
+    contents: [rows[0], ['audit-other', '2026-08-29', '11:00:00', 2000, 0, 'P2', 'Sándwich', 1, 2000, 2000, 0, 'Comida', '', '']]
+      .map(row => row.join('\t')).join('\n'),
+    filename: 'ventas-otro-local.csv'
+  }]).then(result => result.json());
+  assert.equal((await confirmTransactions(baseUrl, otherStore)).status, 200);
+  const networkAudit = await fetch(`${baseUrl}/api/transactions/audit?location=all&dateFrom=2026-08-29&dateTo=2026-08-30`)
+    .then(result => result.json());
+  assert.equal(networkAudit.transactions.find(item => item.orderReference === 'audit-other').paymentReconciliation.status, 'no-source');
+
+  const conflictingPayment = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'payment-details',
+    contents: 'FechaCierre\tComanda\tComentario General\tTotal\tA Pagar\n29-08-26 09:00 a. m.\taudit-2\tpara llevar\t4\t3',
+    filename: 'detalle-pagos-corregido.csv'
+  }]).then(result => result.json());
+  assert.equal((await confirmTransactions(baseUrl, conflictingPayment)).status, 200);
+  const ambiguousAudit = await fetch(`${baseUrl}/api/transactions/audit?location=store-1&dateFrom=2026-08-29&dateTo=2026-08-30`)
+    .then(result => result.json());
+  assert.equal(ambiguousAudit.transactions.find(item => item.orderReference === 'audit-2').paymentReconciliation.status, 'ambiguous');
+
+  const mercadoPago = await inspectTransactions(baseUrl, 'store-1', [{
+    field: 'mercadopago',
+    contents: 'TRANSACTION_DATE,SOURCE_ID,TRANSACTION_TYPE,TRANSACTION_AMOUNT,FEE_AMOUNT\n2026-08-30T11:00:00.000-04:00,mp-1,SETTLEMENT,9000,-100',
+    filename: 'mercadopago-auditoria.csv'
+  }]).then(result => result.json());
+  assert.equal((await confirmTransactions(baseUrl, mercadoPago)).status, 200);
+  const withMercadoPago = await fetch(`${baseUrl}/api/transactions/audit?location=all&dateFrom=2026-08-29&dateTo=2026-08-30&minDiscount=5`)
+    .then(result => result.json());
+  assert.equal(withMercadoPago.summary.transactions, 1);
+  const diagnostic = withMercadoPago.sourceDiagnostics;
+  const day = diagnostic.rows.find(item => item.locationId === 'store-1' && item.date === '2026-08-30');
+  assert.equal(day.mpSettlements, 1);
+  assert.equal(day.mpAmount, 9000);
+  assert.equal(day.mpFeesGross, 100);
+  assert.equal(day.salesOrders, 1);
+  assert.equal(diagnostic.rows.find(item => item.locationId === 'store-1' && item.date === '2026-08-29').reversalReviewRequired, 1);
+  assert.equal(diagnostic.filesByStore.find(item => item.locationId === 'store-1').mercadoPago, 1);
+  assert.equal(diagnostic.filesByStore.find(item => item.locationId === 'store-2').mercadoPago, 0);
+  assert.match(diagnostic.note, /no se vinculan/);
+
   const invalid = await fetch(`${baseUrl}/api/transactions/audit?location=store-1&dateFrom=2026-08-30&dateTo=2026-08-29`);
   assert.equal(invalid.status, 400);
+});
+
+test('values historical sales with only costs effective on each sale date', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-20' });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
+    ['P1', 'Producto', 10, 'UN']
+  ]), 'Prod');
+  const masterResponse = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([{ field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo-historico.xlsx' }], {
+      'master-catalog-from': '2026-08-01'
+    })
+  });
+  assert.equal(masterResponse.status, 200, await masterResponse.text());
+
+  const sales = [
+    ['ID de orden', 'Fecha de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Costo'],
+    ['before-master', '2026-07-30', 119, 0, 'P1', 'Producto', 1, 119, 0],
+    ['before-purchase', '2026-08-10', 119, 0, 'P1', 'Producto', 1, 119, 0],
+    ['after-purchase', '2026-08-20', 119, 0, 'P1', 'Producto', 1, 119, 0]
+  ].map(row => row.join('\t')).join('\n');
+  const salesInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'sales', contents: sales, filename: 'ventas-historicas.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, salesInspection)).status, 200);
+
+  const purchases = [
+    ['Fecha emisión', 'Documento', 'Proveedor/Para', 'Cod', 'PRODUCTO', 'Q.Rec', 'Q.Fac', 'Um.Rec', 'Um.Fac', 'Costo', 'Monto neto', 'Descuento', 'Monto total'],
+    ['2026-08-15', 'F-1', 'Proveedor', 'P1', 'Producto', 1, 1, 'UN', 'UN', 30, 30, 0, 30]
+  ].map(row => row.join('\t')).join('\n');
+  const purchaseInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'purchases', contents: purchases, filename: 'compras-historicas.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, purchaseInspection)).status, 200);
+
+  const legacyNetwork = await fetch(`${baseUrl}/api/reports/network-sales`).then(response => response.json());
+  assert.equal(legacyNetwork.rows[0].currentMonth.cost, 60);
+  assert.equal(legacyNetwork.sourceCoverage.costValuationDate, 'period-end');
+  const networkResponse = await fetch(`${baseUrl}/api/reports/network-sales?costValuation=historical`);
+  assert.equal(networkResponse.status, 200);
+  const network = await networkResponse.json();
+  assert.equal(network.rows[0].currentMonth.sales, 200);
+  assert.equal(network.rows[0].currentMonth.cost, 40, JSON.stringify({ row: network.rows[0], coverage: network.sourceCoverage }));
+  assert.equal(network.rows[0].currentMonth.marginPercent, 80);
+  assert.equal(network.rows[0].previousMonth.marginPercent, null);
+  assert.equal(network.sourceCoverage.ordersWithCost, 2);
+  assert.equal(network.sourceCoverage.costValuationDate, 'sale-date');
+
+  const legacyFinancial = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20`).then(response => response.json());
+  assert.equal(legacyFinancial.statement.productCost, 60);
+  assert.equal(legacyFinancial.revenue.costValuationDate, 'period-end');
+  const financialResponse = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20&costValuation=historical`);
+  assert.equal(financialResponse.status, 200);
+  const financial = await financialResponse.json();
+  assert.equal(financial.statement.productCost, 40, JSON.stringify({ revenue: financial.revenue, warnings: financial.warnings }));
+  assert.equal(financial.revenue.costValuationDate, 'sale-date');
+  assert.deepEqual(financial.revenue.costSources, { recipe: 0, purchase: 1, master: 1, 'sales-export': 0, missing: 0 });
+
+  const beforeCatalog = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-07-30&dateTo=2026-07-30&costValuation=historical`)
+    .then(response => response.json());
+  assert.equal(beforeCatalog.statement.productCost, null);
+  assert.deepEqual(beforeCatalog.revenue.missingCostProducts.map(item => [item.code, item.reason, item.lines, item.netSales]), [
+    ['P1', 'no-effective-catalog', 1, 100]
+  ]);
+});
+
+test('prioritizes comparable last purchase cost and lists catalog items needing cost review', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-20' });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base'],
+    ['P1', 'Comprado con receta', 1, 50, 'UN'],
+    ['P2', 'Preparado', 1, 40, 'UN'],
+    ['P3', 'Solo maestro', 1, 7, 'UN']
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base'],
+    ['I1', 'Ingrediente', 1, 10, 'UN']
+  ]), 'Ingr');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base'],
+    ['E1', 'Extra sin costo', 1, 0, 'UN']
+  ]), 'Extr');
+  const masterResponse = await fetch(`${baseUrl}/upload/master`, {
+    method: 'POST',
+    body: fileForm([
+      { field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'cost-review.xlsx' },
+      { field: 'master-recipes', contents: [
+        'Id Producto\tNombre Producto*\tId Ingrediente\tNombre Ingrediente*\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento',
+        'P1\tComprado con receta\tI1\tIngrediente\t1\tUN\t100',
+        'P2\tPreparado\tI1\tIngrediente\t1\tUN\t100'
+      ].join('\n'), filename: 'cost-review-recipes.txt' }
+    ], { 'master-catalog-from': '2026-08-01', 'master-recipes-from': '2026-08-01' })
+  });
+  assert.equal(masterResponse.status, 200, await masterResponse.text());
+  const purchases = [
+    ['Fecha emisión', 'Documento', 'Proveedor/Para', 'Cod', 'PRODUCTO', 'Q.Rec', 'Q.Fac', 'Um.Rec', 'Um.Fac', 'Costo', 'Monto neto', 'Descuento', 'Monto total'],
+    ['2026-08-10', 'F-1', 'Proveedor', 'P1', 'Comprado con receta', 1, 1, 'UN', 'UN', 30, 30, 0, 30],
+    ['2026-08-15', 'F-2', 'Proveedor', 'I1', 'Ingrediente', 1, 1, 'UN', 'UN', 12, 12, 0, 12]
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'purchases', contents: purchases, filename: 'cost-review-purchases.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+
+  const response = await fetch(`${baseUrl}/api/cost-review?location=store-1&dateTo=2026-08-20`);
+  assert.equal(response.status, 200, await response.clone().text());
+  const report = await response.json();
+  const byCode = Object.fromEntries(report.items.map(item => [item.code, item]));
+  assert.deepEqual([byCode.P1.effectiveSource, byCode.P1.effectiveCost, byCode.P1.status], ['purchase', 30, 'covered']);
+  assert.deepEqual([byCode.P2.effectiveSource, byCode.P2.effectiveCost, byCode.P2.status], ['recipe', 12, 'no-purchase']);
+  assert.deepEqual([byCode.P3.effectiveSource, byCode.P3.effectiveCost, byCode.P3.status], ['master', 7, 'no-purchase']);
+  assert.deepEqual([byCode.E1.type, byCode.E1.effectiveSource, byCode.E1.status], ['extra', 'missing', 'missing']);
+  assert.deepEqual([byCode.I1.type, byCode.I1.effectiveSource], ['ingredient', 'purchase']);
+  assert.equal(report.summary.masterFallback, 1);
+  assert.equal(report.summary.recipeFallback, 1);
+  const otherStore = await fetch(`${baseUrl}/api/cost-review?location=store-2&dateTo=2026-08-20`).then(result => result.json());
+  assert.equal(otherStore.items.find(item => item.code === 'P1').status, 'other-location');
 });
 
 test('builds the sales dashboard and identifies recurring MercadoPago customers by card key', async t => {
@@ -3314,7 +3551,7 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
     ['takeaway', 1, 100], ['dineIn', 1, 200], ['unknown', 1, 200]
   ]);
   assert.deepEqual(dashboard.sales.serviceModes.periods.month.groups.map(group => [group.key, group.averageTicket]), [
-    ['takeaway', 100], ['dineIn', 200], ['unknown', 200]
+    ['takeaway', 119], ['dineIn', 238], ['unknown', 238]
   ]);
   assert.equal(dashboard.sales.serviceModes.periods.month.matchedOrders, 2);
   assert.equal(dashboard.sales.serviceModes.periods.month.totalOrders, 3);

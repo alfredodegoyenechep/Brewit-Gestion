@@ -1,4 +1,5 @@
 const DAY = 86400000;
+const { averageTicketWithVat } = require('./metric-policy');
 
 function addDays(key, count) {
   return new Date(Date.parse(`${key}T12:00:00Z`) + count * DAY).toISOString().slice(0, 10);
@@ -46,7 +47,7 @@ function aggregateNetworkMetrics(facts) {
     ...totals,
     marginPercent: totals.sales > 0 && totals.costAvailable ? (totals.sales - totals.cost) / totals.sales * 100 : null,
     discountPercent: totals.grossBeforeDiscount > 0 ? totals.discounts / totals.grossBeforeDiscount * 100 : null,
-    averageTicket: totals.transactions > 0 ? totals.sales / totals.transactions : null
+    averageTicket: averageTicketWithVat(totals.sales, totals.transactions)
   };
 }
 

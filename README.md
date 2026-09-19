@@ -65,6 +65,8 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 ## Sales dashboard
 
 - Ventas is backed by the cumulative sales records and can show all cafeterias together or one active cafeteria.
+- Vista Grilla lets the user compare the existing period-end cost valuation with an experimental sale-date valuation. The latter only uses purchases, catalog and recipes effective by each sale date; a positive cost in the sales export is an unverified fallback, while an unsupported zero leaves margin unavailable. The period-end method remains the default backup until historical coverage is validated.
+- Auditoría Transacciones marks negative amounts/quantities and explicit cancellation, refund, or credit-note labels for manual review. It does not infer physical returns or modify sales automatically, and those flagged orders are not treated as ordinary payment mismatches.
 - The headline indicators show net sales excluding VAT for today, yesterday, the current Monday-to-date week, and the current month-to-date period. Day comparisons use the equivalent weekday from the prior week; week and month comparisons use the same elapsed portion of the preceding period.
 - A location table separates current day, prior day, week, and month sales. Product rankings and sales participation by product hierarchy can be switched between day, week, and month. Hierarchy participation is interactive: selecting a row drills into its child hierarchy and ultimately lists every sold product ordered by net sales in a scrollable panel, with units, code, share, contribution margin, and a back/breadcrumb control. Contribution margin uses `(net sales excluding VAT - line cost) / net sales excluding VAT`; the sales export's `Costo` is already a line total and is not multiplied by quantity again.
 - MercadoPago analytics read `SETTLEMENT` records and de-duplicate them by `SOURCE_ID`. A customer is identified only when both `CARD_INITIAL_NUMBER` and zero-padded `LAST_FOUR_DIGITS` are available; the combined value is used internally and is never displayed.
@@ -99,6 +101,8 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 ## Financial results workspace
 
 - Resultados Financieros builds a partial income statement for an inclusive date range and one or all active cafeterias.
+- Its direct product cost has the same selectable period-end backup and experimental sale-date valuation as Vista Grilla. The selected basis is displayed with the statement, and cost coverage remains explicit; operating expenses retain their existing period calculations.
+- When historical cost is unavailable, a separate table lists the affected product, reason, first/last sale dates, line count, and net sales to resolve. Consumption workbooks are parsed once per source while preserving the existing per-day sheet choice and duplicate precedence.
 - Revenue is net of VAT and reconciled to order totals. Every product-hierarchy line shows sales, sales share, contribution-margin percentage, and contribution-margin amount.
 - Each hierarchy expands into two mutually reconciling views: Barra Caliente / Barra Fría / Sin Barra from the product catalog's BA.001 and BA.002 assignments, and Café / Matcha / Otros from recipe components SUB005 and CAF008. Sold extras inherit the base product classification in their order.
 - Known operating expenses reuse the inventory calculations for marketing consumption, employee consumption, waste, and valued inventory difference. The inventory difference uses the same executive-summary adjustment for LAC001 milk substitutions, syrup/sauce substitutions, and unused dine-in cups/lids. Inventory shortages become positive expenses and surpluses reduce expense.
@@ -156,7 +160,20 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Product views can be saved as dated snapshots for the selected cafeteria scope. One snapshot is retained per date and scope, with explicit confirmation before replacement.
 - A saved snapshot can be compared with the current catalog to report added or removed products and changes in gross/net selling price, cost, and net margin.
 
+## Análisis de la demanda
+
+- La vista se encuentra debajo de Resultados Financieros. Permite seleccionar una, varias o todas las cafeterías; día, semana, mes, acumulado, período personalizado o todo el historial; producto, categoría, modalidad, segmento orientativo de nombre y recurrencia observable. Canal y tamaño solo se habilitan si las exportaciones contienen campos explícitos. Las franjas horarias y los intervalos de precio son editables; los precios parten con cortes de CLP 500.
+- La capa de hechos reúne pedidos, venta neta, ticket promedio/mediano con IVA, descuento ponderado, margen con costo completo, comparación por local y red, productos, categorías, combinaciones con soporte/confianza/lift, distribuciones de gasto y precio pagado, mapa día-hora y evolución. Cada gráfico o tabla abre los pedidos que lo sustentan.
+- Los filtros de producto y categoría seleccionan **pedidos que contienen** esas líneas; el ticket, la venta y el margen del resumen corresponden a la canasta completa de esos pedidos. Los cuadros de productos/categorías muestran las líneas base contenidas en el conjunto filtrado.
+- La capa de interpretación etiqueta las hipótesis, alternativas, información faltante y prueba sugerida. La capa de acciones prioriza mediante una regla ordinal transparente; no estima ingresos adicionales sin experimento.
+- Para comparar períodos se exige fecha de apertura, días y horarios habituales de operación, cierres excepcionales y rangos de ventas cargados. Estos datos se administran en Configuración. Un archivo con rango declarado no prueba por sí solo integridad de todas sus fechas, y el horario actual no reconstruye cambios históricos. Si no existe base comparable, se muestra «—» en lugar de cero.
+- Ocasiones de consumo cruzan franjas configurables, modalidad, día, categoría y producto. La segmentación denominada **género estimado por nombre** es agregada, conservadora y mantiene categorías indeterminada/sin nombre; no confirma identidad ni género y no genera recomendaciones por sí sola.
+- La recurrencia se calcula solo sobre instrumentos de pago pseudonimizados cuyo pedido coincide de forma unívoca por local, fecha, monto y hora con MercadoPago. No se presenta como clientes únicos: coincidencias ambiguas, pagos potencialmente divididos y pedidos sin vínculo permanecen visibles. Las cohortes usan «primera compra observada» y corrigen el tiempo disponible para retornar.
+- La exploración de precios separa precio pagado y precio base cuando existe, muestra distribuciones configurables y señales antes/después con ventanas declaradas. No publica elasticidad causal ni barreras de precio sin promociones, stock, surtido y exposición verificables. Estacionalidad anual y demanda perdida continúan bloqueadas hasta contar con cobertura suficiente. Las vistas anteriores permanecen disponibles.
+
 ## Weekly sales report
+
+Las definiciones oficiales de venta, costo, margen, descuento y ticket promedio se documentan en [METRICAS.md](METRICAS.md). Como regla general, los importes de gestión son netos de IVA; el ticket promedio y los precios observados por el cliente incluyen IVA.
 
 - Resumen General Ventas consolidates the sales files from all active cafeterias; warehouses are excluded.
 - Its monthly, weekly, daily, and equivalent-day histories also show average ticket including VAT. Each value uses gross sales after signed discounts divided by the number of unique orders in that period; variations follow the same comparisons as the net-sales histories.
@@ -166,7 +183,7 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Net sales exclude VAT and are calculated per transaction as `(gross sale + signed discounts) / 1.19`. The sales export already represents discounts as negative values.
 - By default, the reference card uses the previous day and shows its rank against every available sales day, its rank against the same weekday, and its difference from the average of the previous eight occurrences of that weekday. The “Incluir venta de hoy” toggle changes this reference and all three comparisons to today.
 - The cutoff toggle is placed inside the lower-right corner of the main reference card and identifies the active mode as “Venta hoy” or “Venta día anterior”.
-- Sales files can be uploaded directly from Resumen General Ventas. A specific cafeteria filter goes straight to file selection; the all-cafeterias scope first asks which cafeteria owns the file. Structure validation, date detection, overlap handling, replacement choices, and deduplication reuse the same transaction-upload workflow as Cargar Archivos, and the report refreshes after confirmation.
+- Sales files are managed through Cargar Archivos. Resumen General Ventas can download sales from TotEat and refreshes after the new data is stored.
 - Weekly sales accumulate from Monday through the selected cutoff, and monthly sales accumulate from the first day of the month through that cutoff. The default cutoff is yesterday; the toggle extends both totals through today.
 - The intraday section compares today's cumulative sales against the best prior equivalent weekday, the best prior day in the current month, and the best prior historical day. Reference dates are shown in each column.
 - Four compact two-column blocks below the intraday section show the latest 14 calendar months, 14 Monday–Sunday weeks, 14 individual days, and 14 equivalent weekdays. Every series ends at the selected report cutoff and follows the cafeteria filter.
@@ -176,7 +193,7 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 
 ## Display preferences
 
-- The Brewit Studio footer in the sidebar provides global A− / A+ font controls from 80% to 140% in 10-point steps. The preference applies to the complete application, persists in the browser, and remains available when the sidebar is collapsed.
+- The Brewit Studio footer in the sidebar provides global A− / A+ font controls from 80% to 200% in 10-point steps. The preference applies to the complete application, persists in the browser, and remains available when the sidebar is collapsed.
 
 ## Toteat master downloads
 
