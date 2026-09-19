@@ -1510,10 +1510,19 @@
           <label for="financial-results-location">Ubicación
             <select id="financial-results-location"><option value="all">Todas las cafeterías</option></select>
           </label>
-          <label for="financial-results-from">Desde
+          <label for="financial-results-period">Período
+            <select id="financial-results-period">
+              <option value="current-month">Mes actual</option>
+              <option value="previous-month">Mes anterior</option>
+              <option value="last-30-days" selected>Últimos 30 días</option>
+              <option value="current-year">Año en curso</option>
+              <option value="custom">Rango de fechas</option>
+            </select>
+          </label>
+          <label id="financial-results-from-field" for="financial-results-from">Desde
             <input id="financial-results-from" type="date" required />
           </label>
-          <label for="financial-results-to">Hasta
+          <label id="financial-results-to-field" for="financial-results-to">Hasta
             <input id="financial-results-to" type="date" required />
           </label>
           <label for="financial-cost-valuation">Valorización del costo
@@ -1532,17 +1541,20 @@
         <div class="panel-head financial-panel-head">
           <div>
             <div class="panel-eyebrow">Base mensual por unidad</div>
-            <h3>Gastos Generales de la Unidad</h3>
+            <h3>Gastos Generales Unidades y Casa Matriz</h3>
             <p class="panel-description">Ingresa montos netos mensuales por cafetería o para Casa Matriz. En el estado de resultados se prorratean según los días del período incluidos en cada mes.</p>
           </div>
-          <form id="financial-general-expenses-selector" class="financial-general-expenses-selector">
-            <label for="financial-general-expenses-location">Cafetería / unidad
-              <select id="financial-general-expenses-location" required></select>
-            </label>
-            <label for="financial-general-expenses-year">Año
-              <input id="financial-general-expenses-year" type="number" min="2020" max="2100" step="1" required />
-            </label>
-          </form>
+          <div class="financial-general-expenses-controls">
+            <button id="financial-general-expenses-toggle" class="secondary small" type="button" aria-expanded="true" aria-controls="financial-general-expenses-selector financial-general-expenses-form">Colapsar</button>
+            <form id="financial-general-expenses-selector" class="financial-general-expenses-selector">
+              <label for="financial-general-expenses-location">Cafetería / unidad
+                <select id="financial-general-expenses-location" required></select>
+              </label>
+              <label for="financial-general-expenses-year">Año
+                <input id="financial-general-expenses-year" type="number" min="2020" max="2100" step="1" required />
+              </label>
+            </form>
+          </div>
         </div>
         <form id="financial-general-expenses-form">
           <div class="financial-general-expenses-table-wrap">
@@ -1564,7 +1576,7 @@
         <div class="panel-head financial-panel-head">
           <div>
             <div class="panel-eyebrow">Vista consolidada</div>
-            <h3>Estado de resultados operacional 4Wall</h3>
+            <h3>P&amp;L Brewit</h3>
             <p id="financial-statement-context" class="panel-description"></p>
           </div>
           <span id="financial-statement-badge" class="chip neutral">Resultado parcial</span>
@@ -1575,7 +1587,7 @@
             <tbody id="financial-statement-body"></tbody>
           </table>
         </div>
-        <p class="financial-future-note">El resultado 4Wall incorpora los gastos generales mensuales configurados para cada cafetería y los prorratea al período seleccionado.</p>
+        <p class="financial-future-note">El EBITDA (4 Wall) incorpora los gastos generales mensuales configurados para cada cafetería y los prorratea al período seleccionado.</p>
       </section>
 
       <div class="financial-breakdowns-grid">

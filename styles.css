@@ -264,6 +264,8 @@
 }
 
 .financial-results-filters select { min-width: 180px; }
+.financial-results-filters label.is-disabled { opacity: .62; }
+.financial-results-filters input:disabled { cursor: not-allowed; }
 
 .financial-results-summary {
   display: grid;
@@ -303,6 +305,15 @@
   flex-wrap: wrap;
   gap: 10px;
 }
+.financial-general-expenses-controls {
+  display: grid;
+  justify-items: end;
+  gap: 13px;
+  min-width: 270px;
+}
+.financial-general-expenses-controls > button { min-width: 112px; }
+.financial-general-expenses-panel.is-collapsed .financial-general-expenses-selector,
+.financial-general-expenses-panel.is-collapsed #financial-general-expenses-form { display: none; }
 .financial-general-expenses-selector label,
 .financial-general-expense-field {
   display: grid;
@@ -313,7 +324,7 @@
 }
 .financial-general-expenses-table-wrap {
   margin-top: 18px;
-  max-height: 560px;
+  max-height: 760px;
   overflow: auto;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
@@ -429,6 +440,15 @@
 
 .financial-result-row.positive td:nth-child(n+2) { color: var(--green); }
 .financial-result-row.negative td:nth-child(n+2) { color: var(--red); }
+.financial-statement-table .financial-highlight-row td {
+  border-top: 1px solid rgba(196, 151, 102, .58);
+  border-bottom: 1px solid rgba(196, 151, 102, .58);
+  background: color-mix(in srgb, var(--coffee-soft-2) 72%, transparent);
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 900;
+}
+.financial-statement-table .financial-highlight-row td:first-child { border-left: 1px solid rgba(196, 151, 102, .58); }
+.financial-statement-table .financial-highlight-row td:last-child { border-right: 1px solid rgba(196, 151, 102, .58); }
 .financial-incomplete-row { color: var(--text-muted); }
 
 .financial-future-note {
@@ -529,6 +549,8 @@
   .financial-hierarchy-metrics { grid-template-columns: repeat(2, 1fr); }
   .financial-hierarchy-metrics > span { text-align: left; }
   .financial-general-expenses-actions { align-items: stretch; flex-direction: column; }
+  .financial-general-expenses-controls { width: 100%; justify-items: stretch; }
+  .financial-general-expenses-controls > button { justify-self: end; }
 }
 
 .transaction-audit-workspace {

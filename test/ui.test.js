@@ -62,9 +62,9 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.deepEqual(await page.locator('.navigation .nav-group-label').allTextContents(),
     ['Visión ejecutiva', 'Inteligencia comercial', 'Operación y costos', 'Administración']);
   assert.deepEqual(await page.locator('.navigation .nav-link').evaluateAll(links => links.map(link => link.dataset.view)), [
-    'report', 'financial-results', 'findings',
+    'report', 'financial-results',
     'sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients',
-    'products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection',
+    'products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings',
     'uploads', 'config'
   ]);
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-summary-day"]')?.disabled);
@@ -621,13 +621,24 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   });
   await page.getByRole('link', { name: 'Resultados Financieros' }).click();
   await page.getByRole('heading', { name: 'Resultados Financieros' }).waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#financial-results-period').inputValue(), 'last-30-days');
+  assert.equal(await page.locator('#financial-results-from').isDisabled(), true);
+  assert.equal(await page.locator('#financial-results-to').isDisabled(), true);
+  await page.locator('#financial-results-period').selectOption('previous-month');
+  assert.match(await page.locator('#financial-results-from').inputValue(), /^\d{4}-\d{2}-01$/);
+  await page.locator('#financial-results-period').selectOption('custom');
+  assert.equal(await page.locator('#financial-results-from').isEnabled(), true);
+  assert.equal(await page.locator('#financial-results-to').isEnabled(), true);
   await page.locator('#financial-results-from').fill('2026-08-01');
   await page.locator('#financial-results-to').fill('2026-08-10');
   await page.getByRole('button', { name: 'Generar resultados' }).click();
   await page.waitForFunction(() => document.getElementById('financial-results-status').classList.contains('success'));
   assert.deepEqual(await page.locator('.financial-statement-table th').allTextContents(), ['Concepto', 'Importe', '% de ventas netas']);
-  assert.match(await page.locator('#financial-statement-body').textContent(), /Ventas netas sin IVA.*Costo directo de productos.*Resultado Operacional 4Wall/s);
-  assert.match(await page.locator('#financial-statement-body').textContent(), /Resultado Operacional 4Wall.*Casa Matriz.*Resultado Operacional con Casa Matriz/s);
+  assert.equal(await page.getByRole('heading', { name: 'P&L Brewit' }).isVisible(), true);
+  assert.match(await page.locator('#financial-statement-body').textContent(), /Ventas Netas \(sin IVA\).*Costo directo de productos.*EBITDA \(4 Wall\)/s);
+  assert.match(await page.locator('#financial-statement-body').textContent(), /EBITDA \(4 Wall\).*Casa Matriz.*EBITDA Brewit \(con Casa Matriz\)/s);
+  assert.equal(await page.locator('#financial-statement-body .financial-highlight-row').count(), 4);
+  assert.equal(await page.locator('#financial-statement-body .financial-highlight-row').first().evaluate(row => getComputedStyle(row.cells[0]).fontSize), '14px');
   assert.equal(await page.locator('#financial-general-expenses-location option').last().textContent(), 'Casa Matriz');
   assert.equal(await page.locator('#financial-general-expenses-grid tr').count(), 13);
   assert.equal(await page.locator('#financial-general-expenses-grid input').count(), 156);
@@ -640,6 +651,14 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const septemberRent = page.getByRole('textbox', { name: 'Arriendo, Sept 2026' });
   assert.equal(await septemberRent.inputValue(), '1.234.567');
   assert.equal(await septemberRent.evaluate(input => input.classList.contains('modified')), true);
+  assert.equal(await page.getByRole('heading', { name: 'Gastos Generales Unidades y Casa Matriz' }).isVisible(), true);
+  const generalExpensesToggle = page.getByRole('button', { name: 'Colapsar' });
+  await generalExpensesToggle.click();
+  assert.equal(await page.locator('#financial-general-expenses-form').isVisible(), false);
+  assert.equal(await page.locator('#financial-general-expenses-selector').isVisible(), false);
+  assert.equal(await page.evaluate(() => localStorage.getItem('brewit.financialGeneralExpensesCollapsed')), 'true');
+  await page.getByRole('button', { name: 'Expandir' }).click();
+  assert.equal(await page.locator('#financial-general-expenses-form').isVisible(), true);
   assert.match(await page.locator('#financial-statement-body tr').first().locator('td').nth(2).textContent(), /100,0%/);
   assert.notEqual(await page.locator('#financial-statement-body tr').nth(1).locator('td').nth(2).textContent(), '—');
   assert.match(await page.locator('#financial-bars-body').textContent(), /Barra Caliente.*Barra Fría.*Sin Barra/s);

@@ -77,6 +77,7 @@ const expandedIngredients = new Set();
 const selectedSalesAnalysis = new Set();
 const collapsedSalesAnalysisGroups = new Set();
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'brewit.sidebarCollapsed';
+const GENERAL_EXPENSES_COLLAPSED_STORAGE_KEY = 'brewit.financialGeneralExpensesCollapsed';
 const FONT_SCALE_STORAGE_KEY = 'brewit.fontScale';
 const FONT_SCALE_MIN = 80;
 const FONT_SCALE_MAX = 200;
@@ -89,9 +90,9 @@ function organizeWorkspaceNavigation() {
   const links = new Map([...document.querySelectorAll('.nav-link[data-view]')]
     .map(link => [link.dataset.view, link]));
   const groups = [
-    { label: 'Visión ejecutiva', views: ['report', 'financial-results', 'findings'] },
+    { label: 'Visión ejecutiva', views: ['report', 'financial-results'] },
     { label: 'Inteligencia comercial', views: ['sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients'] },
-    { label: 'Operación y costos', views: ['products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection'] },
+    { label: 'Operación y costos', views: ['products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings'] },
     { label: 'Administración', views: ['uploads', 'config'] }
   ];
   navigation.replaceChildren(...groups.map(group => {
@@ -127,6 +128,26 @@ function initializeFontScale() {
   };
   document.getElementById('font-size-decrease').addEventListener('click', () => change(-1));
   document.getElementById('font-size-increase').addEventListener('click', () => change(1));
+}
+
+function initializeFinancialGeneralExpensesPanel() {
+  const panel = document.querySelector('.financial-general-expenses-panel');
+  const button = document.getElementById('financial-general-expenses-toggle');
+  if (!panel || !button) return;
+  let collapsed = false;
+  try { collapsed = window.localStorage.getItem(GENERAL_EXPENSES_COLLAPSED_STORAGE_KEY) === 'true'; } catch {}
+  const render = () => {
+    panel.classList.toggle('is-collapsed', collapsed);
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.textContent = collapsed ? 'Expandir' : 'Colapsar';
+    button.title = collapsed ? 'Expandir gastos generales' : 'Colapsar gastos generales';
+  };
+  button.addEventListener('click', () => {
+    collapsed = !collapsed;
+    try { window.localStorage.setItem(GENERAL_EXPENSES_COLLAPSED_STORAGE_KEY, String(collapsed)); } catch {}
+    render();
+  });
+  render();
 }
 
 function applySidebarPreference() {
@@ -816,6 +837,30 @@ function refreshFinancialResultsLocationFilter() {
   select.value = options.some(option => option.value === previous) ? previous : 'all';
 }
 
+function syncFinancialResultsPeriod() {
+  const period = document.getElementById('financial-results-period').value;
+  const fromInput = document.getElementById('financial-results-from');
+  const toInput = document.getElementById('financial-results-to');
+  const custom = period === 'custom';
+  fromInput.disabled = !custom;
+  toInput.disabled = !custom;
+  document.getElementById('financial-results-from-field').classList.toggle('is-disabled', !custom);
+  document.getElementById('financial-results-to-field').classList.toggle('is-disabled', !custom);
+  if (custom) return;
+  const today = browserIsoToday();
+  const currentMonthStart = `${today.slice(0, 7)}-01`;
+  const previousMonthEnd = offsetIsoDate(currentMonthStart, -1);
+  const ranges = {
+    'current-month': { from: currentMonthStart, to: today },
+    'previous-month': { from: `${previousMonthEnd.slice(0, 7)}-01`, to: previousMonthEnd },
+    'last-30-days': { from: offsetIsoDate(today, -29), to: today },
+    'current-year': { from: `${today.slice(0, 4)}-01-01`, to: today }
+  };
+  const range = ranges[period] || ranges['last-30-days'];
+  fromInput.value = range.from;
+  toInput.value = range.to;
+}
+
 function refreshFinancialGeneralExpensesLocationFilter() {
   const select = document.getElementById('financial-general-expenses-location');
   if (!select) return;
@@ -1066,9 +1111,9 @@ function renderFinancialStatement(data) {
     rows.push(row);
   };
   append({
-    label: 'Ventas netas sin IVA', amount: statement.netSales,
+    label: 'Ventas Netas (sin IVA)', amount: statement.netSales,
     percentage: 100,
-    context: `${data.revenue.filesRead} archivo(s) de ventas procesado(s). Última venta registrada: ${formatReportDate(data.revenue.latestSaleDate)}.`, className: 'financial-primary-row'
+    context: `${data.revenue.filesRead} archivo(s) de ventas procesado(s). Última venta registrada: ${formatReportDate(data.revenue.latestSaleDate)}.`, className: 'financial-primary-row financial-highlight-row'
   });
   const productCostAmount = statement.productCost === null ? null : -statement.productCost;
   append({
@@ -1078,9 +1123,9 @@ function renderFinancialStatement(data) {
     context: `${data.revenue.costValuationDate === 'sale-date' ? 'Fuentes vigentes en la fecha de cada venta' : 'Fuentes vigentes al corte del reporte (método anterior)'}. Costo disponible en ${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas; ${data.revenue.costSources?.['sales-export'] || 0} usan Costo del archivo de ventas como respaldo. Confirmar base sin IVA de cada fuente.`, className: 'financial-cost-row'
   });
   append({
-    label: 'Margen de contribución comercial', amount: statement.contributionMargin,
+    label: 'Margen de Contribución', amount: statement.contributionMargin,
     percentage: percentOfSales(statement.contributionMargin),
-    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'} (${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas).`, className: 'financial-subtotal-row'
+    context: `Cobertura de costos ${total.costAvailable ? 'completa' : 'incompleta'} (${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas).`, className: 'financial-subtotal-row financial-highlight-row'
   });
   statement.expenses.forEach(expense => {
     const coverage = financialCoverageLabel(expense);
@@ -1117,10 +1162,10 @@ function renderFinancialStatement(data) {
     className: 'financial-subtotal-row'
   });
   append({
-    label: 'Resultado Operacional 4Wall', amount: statement.operationalResult4Wall ?? statement.partialResult,
+    label: 'EBITDA (4 Wall)', amount: statement.operationalResult4Wall ?? statement.partialResult,
     percentage: percentOfSales(statement.partialResult),
     context: statement.partial ? 'Resultado provisional: existen fuentes o meses sin cobertura completa.' : 'Cobertura operacional completa para el período.',
-    className: `financial-result-row ${(statement.partialResult || 0) < 0 ? 'negative' : 'positive'}`
+    className: `financial-result-row financial-highlight-row ${(statement.partialResult || 0) < 0 ? 'negative' : 'positive'}`
   });
   if (data.scope.location === 'all' && statement.headOffice) {
     const headOfficeAmount = statement.headOffice.available ? -statement.headOffice.amount : null;
@@ -1133,12 +1178,12 @@ function renderFinancialStatement(data) {
       className: statement.headOffice.available ? 'financial-expense-row' : 'financial-incomplete-row'
     });
     append({
-      label: 'Resultado Operacional con Casa Matriz', amount: statement.operationalResultWithHeadOffice,
+      label: 'EBITDA Brewit (con Casa Matriz)', amount: statement.operationalResultWithHeadOffice,
       percentage: percentOfSales(statement.operationalResultWithHeadOffice),
       context: statement.headOffice.complete
         ? 'Resultado consolidado después de gastos de Casa Matriz.'
         : 'Resultado pendiente: faltan meses de Casa Matriz por configurar.',
-      className: `financial-result-row ${(statement.operationalResultWithHeadOffice || 0) < 0 ? 'negative' : 'positive'}`
+      className: `financial-result-row financial-highlight-row ${(statement.operationalResultWithHeadOffice || 0) < 0 ? 'negative' : 'positive'}`
     });
   }
   body.replaceChildren(...rows);
@@ -1218,7 +1263,7 @@ function renderFinancialResults(data) {
     ['Margen contribución', statement.contributionMargin === null ? '—' : formatClp(statement.contributionMargin), ''],
     ['Margen %', financialPercent(statement.contributionMarginPercent), ''],
     ['Gastos operacionales', formatClp(statement.knownOperatingExpenses), 'expense'],
-    ['Resultado 4Wall', statement.operationalResult4Wall === null ? '—' : formatClp(statement.operationalResult4Wall), (statement.operationalResult4Wall || 0) < 0 ? 'negative' : 'positive']
+    ['EBITDA (4 Wall)', statement.operationalResult4Wall === null ? '—' : formatClp(statement.operationalResult4Wall), (statement.operationalResult4Wall || 0) < 0 ? 'negative' : 'positive']
   ];
   document.getElementById('financial-results-summary').replaceChildren(...cards.map(([label, value, tone]) => {
     const card = document.createElement('article');
@@ -1233,7 +1278,7 @@ function renderFinancialResults(data) {
   document.getElementById('financial-statement-context').textContent =
     `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo ${data.revenue.costValuationDate === 'sale-date' ? 'en la fecha de venta (en prueba)' : 'al corte (respaldo)'}.`;
   const badge = document.getElementById('financial-statement-badge');
-  badge.textContent = statement.dataCoverageComplete ? '4Wall · cobertura completa' : '4Wall · revisar cobertura';
+  badge.textContent = statement.dataCoverageComplete ? 'EBITDA 4 Wall · cobertura completa' : 'EBITDA 4 Wall · revisar cobertura';
   badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
   renderFinancialStatement(data);
   renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
@@ -10458,6 +10503,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   organizeWorkspaceNavigation();
   initializeFontScale();
   initializeSidebarToggle();
+  initializeFinancialGeneralExpensesPanel();
   document.body.appendChild(document.getElementById('report-chart-dialog'));
   installReportChartButtons();
   initializeAnalyticalTableCharts();
@@ -10482,6 +10528,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const financialToday = browserIsoToday();
   document.getElementById('financial-results-to').value = financialToday;
   document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
+  syncFinancialResultsPeriod();
   document.getElementById('financial-general-expenses-year').value = financialToday.slice(0, 4);
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
@@ -10629,6 +10676,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     event.preventDefault();
     loadFinancialResults();
   });
+  document.getElementById('financial-results-period').addEventListener('change', syncFinancialResultsPeriod);
   document.getElementById('financial-results-location').addEventListener('change', event => {
     if (event.target.value !== 'all' && locationRegistry[event.target.value]?.type === 'store') {
       document.getElementById('financial-general-expenses-location').value = event.target.value;
