@@ -59,6 +59,14 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
+  assert.deepEqual(await page.locator('.navigation .nav-group-label').allTextContents(),
+    ['Visión ejecutiva', 'Inteligencia comercial', 'Operación y costos', 'Administración']);
+  assert.deepEqual(await page.locator('.navigation .nav-link').evaluateAll(links => links.map(link => link.dataset.view)), [
+    'report', 'financial-results', 'findings',
+    'sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients',
+    'products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection',
+    'uploads', 'config'
+  ]);
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-summary-day"]')?.disabled);
   assert.equal(await page.locator('#weekly-report [data-report-chart]').count(), 18);
   await page.getByRole('button', { name: 'Ver gráfico: Venta del día' }).click();

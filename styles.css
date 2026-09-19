@@ -1027,7 +1027,7 @@ body {
 }
 
 .navigation {
-  margin-top: 90px;
+  margin-top: 70px;
 }
 
 .nav-label {
@@ -1036,6 +1036,24 @@ body {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   margin-bottom: 14px;
+}
+
+.nav-group + .nav-group { margin-top: 18px; }
+
+.nav-group-label {
+  margin: 0 0 7px 10px;
+  color: #b69a74;
+  font-size: calc(9px * var(--font-scale));
+  font-weight: 800;
+  letter-spacing: .14em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.nav-group .nav-link {
+  margin-bottom: 3px;
+  padding-top: 9px;
+  padding-bottom: 9px;
 }
 
 .nav-link {
@@ -1122,10 +1140,9 @@ body {
 }
 
 .findings-nav-link {
-  margin-top: 14px;
-  border: 1px solid rgba(232, 214, 189, 0.3);
-  background: rgba(232, 214, 189, 0.08);
-  color: #fff3df;
+  border: 0;
+  background: transparent;
+  color: #e8d9bd;
 }
 
 .findings-nav-link:hover {
@@ -1184,6 +1201,7 @@ body {
   }
 
   body.sidebar-collapsed .nav-label,
+  body.sidebar-collapsed .nav-group-label,
   body.sidebar-collapsed .nav-text,
   body.sidebar-collapsed .user-copy,
   body.sidebar-collapsed .font-size-controls-label,
@@ -1207,6 +1225,8 @@ body {
     padding-right: 0;
     padding-left: 0;
   }
+
+  body.sidebar-collapsed .nav-group + .nav-group { margin-top: 10px; }
 
   body.sidebar-collapsed .workspace-user .user-row {
     justify-content: center;

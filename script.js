@@ -83,6 +83,29 @@ const FONT_SCALE_MAX = 200;
 const FONT_SCALE_STEP = 10;
 let sidebarCollapsedPreference = false;
 
+function organizeWorkspaceNavigation() {
+  const navigation = document.querySelector('.navigation');
+  if (!navigation || navigation.dataset.organized === 'true') return;
+  const links = new Map([...document.querySelectorAll('.nav-link[data-view]')]
+    .map(link => [link.dataset.view, link]));
+  const groups = [
+    { label: 'Visión ejecutiva', views: ['report', 'financial-results', 'findings'] },
+    { label: 'Inteligencia comercial', views: ['sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients'] },
+    { label: 'Operación y costos', views: ['products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection'] },
+    { label: 'Administración', views: ['uploads', 'config'] }
+  ];
+  navigation.replaceChildren(...groups.map(group => {
+    const section = document.createElement('section');
+    section.className = 'nav-group';
+    const heading = document.createElement('h2');
+    heading.className = 'nav-group-label';
+    heading.textContent = group.label;
+    section.append(heading, ...group.views.map(view => links.get(view)).filter(Boolean));
+    return section;
+  }));
+  navigation.dataset.organized = 'true';
+}
+
 function applyFontScale(percent) {
   const scale = Number(percent);
   const normalized = Number.isFinite(scale) && scale >= FONT_SCALE_MIN && scale <= FONT_SCALE_MAX
@@ -10432,6 +10455,7 @@ async function uploadMasterFiles(replace = false) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  organizeWorkspaceNavigation();
   initializeFontScale();
   initializeSidebarToggle();
   document.body.appendChild(document.getElementById('report-chart-dialog'));
