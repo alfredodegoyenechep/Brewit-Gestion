@@ -2517,6 +2517,14 @@ body {
   border-spacing: 0;
 }
 
+.inventory-kardex-scroll {
+  max-height: 65vh;
+}
+
+#inventory-results-table thead th {
+  z-index: 5;
+}
+
 #inventory-results-table th:nth-child(-n + 4),
 #inventory-results-table td:nth-child(-n + 4) {
   position: sticky;
@@ -2561,7 +2569,7 @@ body {
 }
 
 #inventory-results-table thead th:nth-child(-n + 4) {
-  z-index: 4;
+  z-index: 6;
   background: var(--coffee-soft-2);
 }
 
@@ -8616,3 +8624,37 @@ button:disabled {
     break-inside: avoid;
   }
 }
+
+.inventory-sources {
+  margin: 1rem 0 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border, #514a40);
+  border-radius: 10px;
+}
+.inventory-sources .report-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: 1rem 0; }
+.inventory-sources table { width: 100%; border-collapse: collapse; }
+.inventory-sources td, .inventory-sources th { padding: .6rem; text-align: left; border-bottom: 1px solid var(--border, #514a40); }
+.inventory-sources #stock-result { margin-top: 1rem; }
+.inventory-sources #stock-result summary { cursor: pointer; font-weight: 600; }
+.inventory-sources #stock-rows td { white-space: nowrap; }
+.inventory-sources h3 { margin: 0 0 .6rem; }
+.inventory-sources p { margin: .6rem 0; color: var(--text-soft); line-height: 1.5; font-size: .9rem; }
+.inventory-sources input, .inventory-sources select { padding: .6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
+.inventory-sources #stock-result > label { display: inline-grid; gap: .4rem; margin: .6rem 1rem .8rem 0; color: var(--text-soft); }
+.inventory-sources table { font-size: .85rem; }
+.inventory-sources th { background: var(--coffee-soft-2); color: var(--text-soft); position: sticky; top: 0; }
+.inventory-sources #stock-issues { padding-left: 1.3rem; color: var(--text-soft); line-height: 1.6; font-size: .85rem; }
+.inventory-sources a.icon-button { text-decoration: none; }
+.inventory-calendar { margin-top: .7rem; max-width: 310px; padding: .65rem; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.inventory-calendar-head { display:flex; justify-content:space-between; align-items:center; gap:.5rem; margin-bottom:.7rem; }
+.inventory-calendar-head button,.inventory-calendar-grid button { color:var(--text); background:transparent; border:1px solid transparent; border-radius:5px; cursor:pointer; padding:.45rem .2rem; font:inherit; }
+.inventory-calendar-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; text-align:center; }
+.inventory-calendar-grid span { font-size:.75rem; color:var(--text-soft); }
+.inventory-calendar-grid button.has-physical-count { border:2px solid var(--clay); font-weight:700; }
+.inventory-calendar-grid button.selected { background:var(--coffee); color:var(--cream); }
+.inventory-calendar-grid button:disabled { opacity:.3; cursor:default; }
+.inventory-calendar-grid button:focus-visible { outline:2px solid var(--sage); outline-offset:1px; }
+.inventory-criteria-grid fieldset:not(.inventory-movement-period) > label,
+.inventory-criteria-grid .inventory-calendar { grid-column: 1 / -1; }
+#inventory-initial-date::-webkit-calendar-picker-indicator,
+#inventory-final-date::-webkit-calendar-picker-indicator { display: none; }

@@ -197,5 +197,52 @@ Las definiciones oficiales de venta, costo, margen, descuento y ticket promedio 
 
 ## Toteat master downloads
 
-- `Descargar Todos los Archivos` in the upper-right corner of Cargar Archivos checks the persistent Toteat session. An active session is refreshed before downloading so date-dependent options are current; if authentication is required after that check, Brewit waits for the user to finish login and confirm.
-- The supported batch downloads Proveedores, the Productos / Ingredientes / Extras master (`XLS Adv. Total`), the product (`AB.`), ingredient (`IC.`) and extras (`BA.`) hierarchies in CSV format, plus both recipe master files (Header and Detail). All seven files are delivered to the user's browser. Once every download succeeds, Brewit validates each structure against the current stored master and atomically saves the six master categories with today's effective date; Recipe Header is retained as the companion of Recipe Detail. If one file is missing or incompatible, none of the masters are updated.
+### Primera conexión por API
+
+La validación real de ventas, pagos y compras de La Concepción, sus diferencias y reglas de conversión están en [Validación API Toteat — 21/09/2026](docs/Validacion_API_Toteat_2026-09-21.md).
+
+En **Configuración → Conexión API de Toteat**, selecciona la cafetería e ingresa Restaurant ID, Local ID, Usuario ID y token. El dueño obtiene estos datos en Toteat, en **Configuración → Print Server & API → API Config → Agregar API**, con versión estable y las rutas `/products`, `/sales` y `/shiftstatus` habilitadas en Seguridad. La configuración de Toteat exige un canal de origen incluso para acceso de lectura. Consulta la [documentación oficial](https://developers.toteat.com/#tag/Configuracion-API).
+
+**Probar conexión y guardar** consulta `GET /products` (incluye inactivos). Solo una respuesta válida guarda las credenciales por ubicación. Después, elige la fecha inicial y la frecuencia en **Actualización de ventas por API**, y pulsa **Guardar y sincronizar**. Esta segunda operación comprueba el turno e importa ventas y detalle de pagos para los reportes existentes.
+
+La actualización automática corre cada 5 o 15 minutos mientras el servidor Brewit está encendido. También puede dejarse manual. Consulta órdenes cerradas, con ventanas de hasta 15 días y solicitudes separadas al menos 21 segundos. Refresca las dos ventanas recientes y el turno abierto, y revisa todo el histórico una vez al día. **Revisar todo el histórico** fuerza esa revisión cuando se necesita recuperar una corrección antigua.
+
+Cada cafetería tiene credenciales, fecha inicial y estado independientes; los locales futuros se agregan desde Configuración y siguen el mismo procedimiento. Una respuesta válida sin ventas muestra **Conectado · sin ventas todavía** y permite preparar el local antes de abrir. Un error de autorización nunca se interpreta como ventas cero.
+
+Las dos fuentes (ventas y detalle de pagos) se publican juntas en `uploads/.integrations/toteat-api/sales/`. Los reportes dan preferencia a las órdenes de API y conservan los archivos originales para el resto del histórico, evitando duplicados. Ante un fallo se mantiene la última versión válida. La fuente API admite vista previa y exportación; no se elimina desde Cargar Archivos. Se conservan las últimas tres versiones completas. La fecha inicial se fija tras la primera carga para impedir cambios que dejen huecos silenciosos.
+
+La equivalencia de detalle tiene límites: no hay fecha/hora de pedido individual ni origen en esta respuesta; el costo viene redondeado y ciertas anulaciones no incluyen productos. Estos campos no se inventan. Los pagos sin productos conservan sus importes y se advierten en pantalla, con identificación en el estado de sincronización y en el XLSX. Las notas de crédito revierten el detalle cuando Toteat lo devuelve con signo positivo. La excepción del extra gratuito descrita en la validación sigue pendiente; no debe usarse esta integración para declarar conciliación exacta de unidades o consumo físico.
+
+El token se guarda con permisos `0600` en `uploads/.integrations/toteat-api/credentials.json`, fuera de las rutas de archivos servidos y excluido de Git. No se devuelve al navegador ni se registran respuestas o errores externos. No está cifrado en disco: proteger este directorio y sus respaldos como el perfil de sesión existente. La aplicación continúa bajo el alcance privado/local descrito en `SEGURIDAD_Y_RESPALDOS.md`.
+
+Para probar de nuevo se puede dejar el token vacío; para reemplazarlo, ingresar el nuevo. Una prueba fallida conserva las credenciales anteriores. Las pruebas se separan al menos 21 segundos en cada proceso del servidor, con timeout de 20 segundos. No se siguen redirecciones HTTP para evitar reenviar credenciales a otro destino; si la cuenta legacy requiere una, habrá que verificar el destino oficial antes de habilitarlo. La base de conexión es fija de producción.
+
+### Compras por API
+
+La misma conexión admite compras con el permiso de lectura `/accountingmovements`. En **Configuración → Compras por API de Toteat**, usando la cafetería seleccionada arriba, define la fecha inicial y una frecuencia de 15 minutos, una hora o manual. **Guardar y sincronizar compras** inicia la carga. El panel Compras también tiene **Actualizar compras por API**. Un local nuevo puede conectarse aunque su respuesta todavía esté vacía.
+
+Se consulta `GET /accountingmovements` con `include_sales=false`, compartiendo con ventas la cola de solicitudes separadas al menos 21 segundos. Se actualizan las últimas tres ventanas de 15 días y se revisa todo el histórico diariamente, para recuperar compras ingresadas con fechas antiguas. El botón **Revisar histórico de compras** fuerza esa revisión.
+
+El adaptador conserva proveedor y RUT, documento y tipo, SKU, cantidades facturadas y recibidas, ambas unidades y los importes de línea, incluidos los negativos. Usa `sku`, no el identificador interno del producto. Los totales se toman de `total_price`; nunca se reconstruyen multiplicando el precio unitario redondeado. Se conservan por separado la cabecera y las diferencias de suma. El ID de bodega Toteat queda como referencia, sin asignarlo automáticamente a una bodega Brewit.
+
+Toteat también devuelve entradas manuales de caja (`CASH_FLOW`) dentro de la respuesta contable, incluso con `include_sales=false`. Se excluyen del archivo de compras; solo se importan movimientos de proveedores (`PROVIDERS`). Una clase desconocida detiene la actualización para revisión. Si Toteat ha eliminado la identificación de un producto, se conservan sus cantidades e importe con SKU vacío y una advertencia; esa línea no se enlaza a un ingrediente inventado.
+
+Los campos ausentes (usuario, forma de pago, costo negociado, monto neto anterior al descuento y descuento de línea) permanecen vacíos o **No disponible**. La API no permite certificar por sí sola la base neta de costos usada en los controles tributarios existentes. El costo efectivo unitario se calcula a partir del importe de línea y la cantidad, y se conserva además el precio unitario reportado.
+
+Los reportes de compras, referencias de proveedores y costos leen la fuente publicada en `uploads/.integrations/toteat-api/purchases/`. El identificador de movimiento conserva documentos y líneas repetidas legítimas; el cruce por proveedor, tipo y número de documento evita sumar otra vez el archivo anterior. Los números originales se conservan, normalizando ceros iniciales solo para el cruce. Las eliminaciones posteriores no hacen reaparecer documentos desde archivos viejos. Una respuesta inválida, una compra de otro local o un documento sin detalle conserva la última versión válida. Los archivos originales permanecen disponibles como respaldo y se conservan las últimas tres versiones completas de la fuente API.
+
+## Maestros de inventario y piloto de Kardex
+
+**La Concepción (store-1 / local 001) es la fuente única de los maestros de Brewit.** En Cargar Archivos → Archivos maestros compartidos y en Configuración, el botón “Actualizar maestros desde La Concepción” lee productos/ingredientes/extras, las tres jerarquías, recetas y proveedores. Publica las seis categorías juntas en el índice compartido existente, con vigencia desde el día de lectura en Chile y conservando el historial. Todos los locales, bodegas y futuros locales usan estas versiones; las capturas independientes antiguas de Lyon quedan como evidencia y no participan en la selección de maestros.
+
+La actualización consulta JSON de los servicios autenticados de la aplicación web de Toteat; no descarga reportes ni usa el token público de ventas/compras. Es manual mediante el botón y requiere sesión vigente. Los originales completos quedan privados, incluidas recetas y conversiones, y se generan vistas XLSX compatibles para los lectores existentes. La vista previa, descargas y las etiquetas “Última vigencia” muestran la publicación compartida. No modifica los maestros dentro de Toteat.
+
+El navegador puede ser el perfil administrado existente de Toteat o una sesión local de Chrome mediante `TOTEAT_CDP_ENDPOINT=http://127.0.0.1:9224 npm start`. Esta variable solo acepta un endpoint de este equipo. Se requiere `playwright-core` y Chrome, como en las descargas existentes. Una sesión vencida conserva el último maestro e informa el fallo.
+
+El piloto del 23 al 30 de agosto está disponible en Configuración y se reproduce con `node scripts/toteat-inventory-pilot.js` sobre las capturas privadas. `--capture` vuelve a consultar las fuentes con la sesión autorizada. No reemplaza aún los archivos operativos del Kardex. Alcance, resultados y diferencias: [informe del piloto](docs/Piloto_Kardex_2026-08-23_2026-08-30.md).
+
+### Fuentes originales para el Kardex propio
+
+En **Cargar archivos → Transacciones** se pueden actualizar tomas de inventario, transformaciones y transferencias entre bodegas para cada local. Las tablas locales conservan documentos, estados, líneas y versiones; Bodega Principal usa el ambiente de La Concepción. La vista propia combina esas fuentes con compras y ventas ya sincronizadas y permite exportar el cálculo y contrastarlo con los archivos Kardex/Merma existentes.
+
+El cálculo no usa saldos del Kardex de control. Se presenta como borrador mientras se resuelven consumos con extras/reversos, referencias históricas y cobertura de inventarios iniciales; todavía no incluye valoración a costo última compra. Los reportes anteriores mantienen su fuente actual. Detalles, primera carga y resultados del piloto en [Kardex propio desde fuentes originales](docs/Kardex_Propio_Fuentes_Originales.md).

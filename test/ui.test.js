@@ -865,20 +865,28 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
 
   assert.equal(await page.locator('#file-loader').isVisible(), true);
   assert.equal(await page.getByRole('button', { name: 'Descargar Todos los Archivos Transaccionales', exact: true }).count(), 1);
-  const masterDownloads = [];
+  const masterDownloads = [], masterRequests = [];
   const recordMasterDownload = download => masterDownloads.push(download.suggestedFilename());
   page.on('download', recordMasterDownload);
-  await page.getByRole('button', { name: 'Descargar Todos los Archivos Maestros', exact: true }).click();
-  const masterDownloadDialog = page.getByRole('dialog', { name: 'Inicia sesión en la ventana de Toteat' });
-  await masterDownloadDialog.waitFor();
-  assert.match(await masterDownloadDialog.textContent(), /Proveedores.*XLS Adv\. Total.*Jerarquía de Productos.*Jerarquía de Ingredientes.*Jerarquía de Extras.*Maestro de Recetas/s);
-  await masterDownloadDialog.getByRole('button', { name: 'Ya inicié sesión, descargar' }).click();
-  await page.locator('#toteat-master-download-status').filter({ hasText: /7 archivos fueron descargados y validados.*seis maestros se actualizaron/i }).waitFor();
-  assert.deepEqual(masterDownloads, [
-    'proveedores.xlsx', 'productos-adv-total.xlsx', 'jerarquia-productos.csv',
-    'jerarquia-ingredientes.csv', 'jerarquia-extras.csv', 'HEADERS_RECETAS.txt', 'DETALLE_RECETAS.txt'
-  ]);
+  await page.route('**/api/integrations/toteat/masters/sync', route => {
+    masterRequests.push(route.request().postDataJSON());
+    return route.fulfill({ json: { started: ['store-1'], shared: true }, status: 202 });
+  });
+  await page.route('**/api/integrations/toteat/masters/status', route => route.fulfill({ json: { locations: [{
+    name: 'Maestros compartidos · La Concepción', running: false, observedAt: '2026-08-10T12:00:00Z',
+    publishedAt: '2026-08-10T12:00:00Z', counts: { products: 240, ingredients: 128, extras: 53,
+      recipes: 286, recipeLines: 1187, suppliers: 42, hierarchies: { products: 22, ingredients: 13, extras: 15 } }, warnings: []
+  }] } }));
+  await page.locator('[data-upload-mode="masters"]').click();
+  await page.locator('#master-upload-pane [data-toteat-masters-sync]').click();
+  await page.locator('#master-upload-pane [data-toteat-masters-status]').filter({ hasText: /286 recetas.*42 proveedores/ }).waitFor();
+  assert.deepEqual(masterRequests, [{ location: 'store-1' }]);
+  assert.deepEqual(masterDownloads, []);
+  assert.match(await page.locator('#master-upload-pane .pane-heading').innerText(), /Fuente única: La Concepción/);
+  await page.unroute('**/api/integrations/toteat/masters/sync');
+  await page.unroute('**/api/integrations/toteat/masters/status');
   page.off('download', recordMasterDownload);
+  await page.locator('[data-upload-mode="weekly"]').click();
   assert.equal(await page.getByRole('button', { name: /New Order/i }).count(), 0);
   assert.deepEqual(await page.locator('#products-grouping option').allTextContents(), ['Por jerarquía', 'Todos juntos']);
   assert.equal(await page.locator('#week-select').count(), 0);
@@ -1622,6 +1630,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(exportedWorkbook.Sheets.Merma.A1.v, 'Código');
   await page.locator('#close-waste-summary').click();
   assert.equal(await page.locator('#waste-summary-results').evaluate(dialog => dialog.open), false);
+  // Physical take metadata is separate from daily calculated Kardex balances.
+  server.listeners('request')[0].locals.toteatStockSync.current = () => ({warehouses:[{id:'local',custom_id:2}],daily:[{code:'P1',date:'2026-08-04',warehouse:'local',physicalCount:true},{code:'P1',date:'2026-08-06',warehouse:'local',physicalCount:true}]});
   await page.locator('#process-inventory-report').click();
   await page.locator('#inventory-process-dialog').waitFor({ state: 'visible' });
   const defaults = await page.evaluate(() => {
@@ -1635,16 +1645,17 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
     const iso = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     return { previousMonday: iso(previousMonday), previousSunday: iso(previousSunday), currentMonday: iso(monday) };
   });
-  assert.equal(await page.locator('#inventory-initial-date').inputValue(), defaults.previousMonday);
-  assert.equal(await page.locator('#inventory-final-date').inputValue(), defaults.currentMonday);
-  assert.equal(await page.locator('#inventory-movement-from').inputValue(), defaults.previousMonday);
-  assert.equal(await page.locator('#inventory-movement-to').inputValue(), defaults.previousSunday);
+  assert.equal(await page.locator('#inventory-initial-date').inputValue(), '2026-08-04');
+  assert.equal(await page.locator('#inventory-final-date').inputValue(), '2026-08-07');
+  assert.equal(await page.locator('#inventory-movement-from').inputValue(), '2026-08-04');
+  assert.equal(await page.locator('#inventory-movement-to').inputValue(), '2026-08-06');
   assert.equal(await page.locator('#inventory-initial-basis').inputValue(), 'initial');
   assert.equal(await page.locator('#inventory-final-basis').inputValue(), 'initial');
   await page.locator('#inventory-initial-date').fill('2026-08-04');
   await page.locator('#inventory-final-date').fill('2026-08-06');
-  await page.locator('#inventory-movement-from').fill('2026-08-04');
-  await page.locator('#inventory-movement-to').fill('2026-08-05');
+  assert.equal(await page.locator('#inventory-movement-from').inputValue(), '2026-08-04');
+  assert.equal(await page.locator('#inventory-movement-to').inputValue(), '2026-08-05');
+  assert.equal(await page.locator('#inventory-movement-to').getAttribute('readonly'), '');
   await page.locator('#confirm-inventory-process').click();
   await page.locator('#inventory-source-status').filter({ hasText: /procesado correctamente/i }).waitFor();
   assert.equal(await page.locator('#inventory-executive-summary').isVisible(), true);
@@ -1680,7 +1691,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.ok(inventorySectionOrder.executive < inventorySectionOrder.kardex);
   assert.equal(await page.locator('#inventory-results-table tbody tr').count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: /^Inventario Final Teórico$/ }).count(), 1);
-  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencia de Inventario' }).count(), 1);
+  assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Diferencias después de compensaciones' }).count(), 0);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Costo unitario' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Consumo Colaboradores' }).count(), 1);
   assert.equal(await page.locator('#inventory-results-table th', { hasText: 'Consumo Marketing' }).count(), 1);
@@ -1692,11 +1703,12 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   const employeeColumn = kardexHeaders.indexOf('Consumo Colaboradores');
   const marketingColumn = kardexHeaders.indexOf('Consumo Marketing');
   const theoreticalColumn = kardexHeaders.indexOf('Inventario Final Teórico');
-  const differenceColumn = kardexHeaders.indexOf('Diferencia de Inventario');
+  assert.equal(kardexHeaders[theoreticalColumn - 1], 'Compensaciones');
+  assert.match(kardexHeaders[theoreticalColumn + 1], /Inventario físico/);
   const totalCostColumn = kardexHeaders.indexOf('Costo Total');
   const theoreticalValueColumn = kardexHeaders.indexOf('Valor Inventario Final Teórico');
   const physicalValueColumn = kardexHeaders.indexOf('Valor Inventario Físico');
-  assert.ok(employeeColumn < marketingColumn && marketingColumn < theoreticalColumn && theoreticalColumn < differenceColumn);
+  assert.ok(employeeColumn < marketingColumn && marketingColumn < theoreticalColumn && theoreticalColumn < totalCostColumn);
   assert.deepEqual(
     [totalCostColumn, theoreticalValueColumn, physicalValueColumn],
     [kardexHeaders.length - 3, kardexHeaders.length - 2, kardexHeaders.length - 1]
@@ -1704,13 +1716,12 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.match(await page.locator('#inventory-results-table th').nth(employeeColumn).innerText(), /Consumo\s*\n\s*Colaboradores/);
   assert.equal(await page.locator('#inventory-kardex-decimals option').count(), 4);
   assert.equal(await page.locator('#inventory-kardex-decimals').inputValue(), '2');
-  const differenceCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(differenceColumn);
-  assert.match(await differenceCell.textContent(), /-1,00/);
-  assert.equal(await differenceCell.getAttribute('class'), 'difference-negative');
+  const theoreticalCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(theoreticalColumn);
+  assert.match(await theoreticalCell.textContent(), /10,00/);
   await page.locator('#inventory-kardex-decimals').selectOption('1');
-  assert.match(await differenceCell.textContent(), /-1,0/);
+  assert.match(await theoreticalCell.textContent(), /10,0/);
   await page.locator('#inventory-kardex-decimals').selectOption('3');
-  assert.match(await differenceCell.textContent(), /-1,000/);
+  assert.match(await theoreticalCell.textContent(), /10,000/);
   assert.doesNotMatch(await page.locator('#inventory-results-table tbody tr').first().locator('td').nth(3).textContent(), /,/);
   await page.locator('#inventory-kardex-decimals').selectOption('4');
   const horizontalScroll = await page.locator('#inventory-results-table').evaluate(table => {

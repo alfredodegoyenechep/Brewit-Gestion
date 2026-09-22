@@ -178,6 +178,17 @@ function initializeSidebarToggle() {
   window.matchMedia('(min-width: 901px)').addEventListener('change', applySidebarPreference);
 }
 
+window.addEventListener('brewit-sales-updated', () => {
+  const report = document.getElementById('weekly-report');
+  const sales = document.getElementById('sales-workspace');
+  if (report && !report.hidden && report.style.display !== 'none') loadWeeklySalesReport();
+  if (sales && !sales.hidden && sales.style.display !== 'none') loadSalesDashboard();
+});
+window.addEventListener('brewit-purchases-updated', () => {
+  const view = document.getElementById('purchases-workspace');
+  if (view && !view.hidden && view.style.display !== 'none') loadPurchasesView();
+});
+
 function setView(view) {
   document.querySelectorAll('.main-content > section').forEach(section => {
     section.hidden = true;
@@ -447,7 +458,7 @@ function updateFileUploadControls() {
     actions.replaceChildren();
 
     if (latest) {
-      state.textContent = `Último archivo subido ${expandedUploadHistories.has(field) ? '▲' : '▼'}`;
+      state.textContent = `${latest.origin === 'toteat-api' ? 'Actualización por API' : 'Último archivo subido'} ${expandedUploadHistories.has(field) ? '▲' : '▼'}`;
       state.className = 'file-upload-state uploaded';
       state.disabled = false;
       state.title = 'Ver historial de cargas';
@@ -467,6 +478,8 @@ function updateFileUploadControls() {
       deleteButton.type = 'button';
       deleteButton.className = 'delete-button small';
       deleteButton.textContent = 'Eliminar';
+      deleteButton.disabled = latest.origin === 'toteat-api';
+      if (latest.origin === 'toteat-api') deleteButton.title = 'Administra esta fuente en Configuración → Conexión API de Toteat.';
       deleteButton.addEventListener('click', () => openTransactionDeleteDialog(field, uploaded));
       actions.append(previewButton, deleteButton);
     } else {
@@ -6707,7 +6720,7 @@ function renderPurchasesView() {
         value: row => row.baseUnitCost === null || row.baseUnitCost === undefined ? '—' : formatClp(row.baseUnitCost),
         muted: true
       },
-      { key: 'discount', label: 'Descuento', value: row => formatClp(row.discount) },
+      { key: 'discount', label: 'Descuento', value: row => row.discount === null ? 'No disponible' : formatClp(row.discount) },
       { key: 'effectiveUnitPrice', label: 'Precio Unit. efectivo', headerLines: 'Precio Unit.|efectivo', value: row => formatClp(row.effectiveUnitPrice) },
       { key: 'previousEffectiveUnitPrice', label: 'Precio anterior', value: row => row.previousEffectiveUnitPrice === null ? '—' : formatClp(row.previousEffectiveUnitPrice) },
       {
@@ -8463,6 +8476,7 @@ function refreshInventoryLocationFilter() {
 async function loadInventorySources() {
   const select = document.getElementById('inventory-location-select');
   const location = select.value;
+  document.getElementById('process-original-inventory-report').disabled = !location;
   const status = document.getElementById('inventory-source-status');
   const list = document.getElementById('inventory-source-list');
   const processButton = document.getElementById('process-inventory-report');
@@ -8558,7 +8572,7 @@ async function loadInventorySources() {
     currentButton.disabled = !data.kardexPeriod;
     document.getElementById('inventory-process-note').textContent = data.ready
       ? data.kardexPeriod
-        ? 'Al procesar, confirma por separado los saldos inicial y final y el período inclusivo de movimientos.'
+        ? 'Selecciona las fechas de inventario inicial y final; los movimientos se calculan automáticamente hasta el día anterior al cierre.'
         : `No fue posible interpretar las fechas del Kardex: ${data.kardexError || 'estructura no reconocida'}.`
       : 'Faltan uno o más archivos requeridos. Puedes cargarlos antes de procesar el informe.';
     setStatus(status, data.ready
@@ -8602,27 +8616,75 @@ function inventoryDefaultPeriod() {
   };
 }
 
+let inventoryProcessingMode = 'files';
+let inventoryProcessedProvenance = null;
+let originalInventoryDates = [];
+function processingInventoryDates() { return inventoryProcessingMode === 'originals' ? originalInventoryDates : inventorySourceState?.kardexPeriod?.dates || []; }
 function constrainInventoryDateInput(input) {
-  const dates = inventorySourceState?.kardexPeriod?.dates || [];
+  const dates = processingInventoryDates();
   input.min = dates[0] || '';
   input.max = dates.at(-1) || '';
 }
 
-function openInventoryProcessDialog() {
-  const defaults = inventoryDefaultPeriod();
-  const initialDate = document.getElementById('inventory-initial-date');
-  const finalDate = document.getElementById('inventory-final-date');
-  const movementFrom = document.getElementById('inventory-movement-from');
-  const movementTo = document.getElementById('inventory-movement-to');
-  [initialDate, finalDate, movementFrom, movementTo].forEach(constrainInventoryDateInput);
-  initialDate.value = defaults.previousMonday;
-  finalDate.value = defaults.currentMonday;
-  movementFrom.value = defaults.previousMonday;
-  movementTo.value = defaults.previousSunday;
-  document.getElementById('inventory-initial-basis').value = 'initial';
-  document.getElementById('inventory-final-basis').value = 'initial';
-  setStatus(document.getElementById('inventory-process-dialog-status'), '');
-  document.getElementById('inventory-process-dialog').showModal();
+let inventoryCalendarData = null;
+const inventoryCalendarMonths = {};
+function syncInventoryBoundaries() {
+  const initial=document.getElementById('inventory-initial-date').value;
+  const final=document.getElementById('inventory-final-date').value;
+  document.getElementById('inventory-movement-from').value=initial;
+  document.getElementById('inventory-movement-to').value=final?offsetIsoDate(final,-1):'';
+  for(const kind of ['initial','final'])renderInventoryCalendar(kind);
+}
+function renderInventoryCalendar(kind) {
+  const input=document.getElementById(`inventory-${kind}-date`),container=document.getElementById(`inventory-${kind}-calendar`);
+  if(!inventoryCalendarData)return;
+  const month=inventoryCalendarMonths[kind] || (input.value || inventoryCalendarData.from).slice(0,7);
+  inventoryCalendarMonths[kind]=month;
+  const header=document.createElement('div');header.className='inventory-calendar-head';
+  const title=document.createElement('strong');title.textContent=new Intl.DateTimeFormat('es-CL',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(month+'-01T12:00:00Z'));
+  for(const direction of [-1,1]) {
+    const button=document.createElement('button');button.type='button';button.textContent=direction<0?'‹':'›';button.setAttribute('aria-label',`${direction<0?'Mes anterior':'Mes siguiente'} del inventario ${kind==='initial'?'inicial':'final'}`);
+    button.addEventListener('click',()=>{const date=new Date(month+'-01T12:00:00Z');date.setUTCMonth(date.getUTCMonth()+direction);inventoryCalendarMonths[kind]=date.toISOString().slice(0,7);renderInventoryCalendar(kind);});
+    if(direction<0)header.append(button,title);else header.append(button);
+  }
+  const grid=document.createElement('div');grid.className='inventory-calendar-grid';
+  for(const weekday of ['Lu','Ma','Mi','Ju','Vi','Sá','Do']){const label=document.createElement('span');label.textContent=weekday;grid.append(label);}
+  const first=new Date(month+'-01T12:00:00Z'),offset=(first.getUTCDay()+6)%7;
+  const countDates=new Set(inventoryCalendarData.countDates);
+  for(let i=0;i<42;i++) {
+    const date=offsetIsoDate(month+'-01',i-offset),button=document.createElement('button');button.type='button';button.textContent=String(Number(date.slice(-2)));button.dataset.date=date;
+    const physical=countDates.has(date);button.className=physical?'has-physical-count':'';
+    if(date===input.value)button.classList.add('selected');
+    button.disabled=date<inventoryCalendarData.from||date>inventoryCalendarData.to||date.slice(0,7)!==month;
+    button.setAttribute('aria-label',`${date}${physical?' · toma física registrada':' · sin toma física'}`);button.setAttribute('aria-pressed',String(date===input.value));
+    button.title=physical?'Toma física registrada (puede incluir solo parte de los productos)':'Saldo teórico si no hay toma física';
+    button.addEventListener('click',()=>{input.value=date;syncInventoryBoundaries();});grid.append(button);
+  }
+  container.replaceChildren(header,grid);
+}
+async function openInventoryProcessDialog(source = 'files') {
+  inventoryProcessingMode=source==='originals'?'originals':'files';
+  const location=document.getElementById('inventory-location-select').value;
+  try {
+    const calendar=await apiRequest(`/api/inventory/calendar?location=${encodeURIComponent(location)}&source=${inventoryProcessingMode}`);
+    if(location!==document.getElementById('inventory-location-select').value)return;
+    inventoryCalendarData=calendar;
+    originalInventoryDates=[];for(let date=calendar.from;date<=calendar.to;date=offsetIsoDate(date,1))originalInventoryDates.push(date);
+    const defaults=inventoryDefaultPeriod();
+    const initial=document.getElementById('inventory-initial-date'),final=document.getElementById('inventory-final-date');
+    for(const input of [initial,final]){input.min=calendar.from;input.max=calendar.to;}
+    initial.value=defaults.previousMonday>=calendar.from&&defaults.previousMonday<calendar.to?defaults.previousMonday:calendar.from;
+    final.value=defaults.currentMonday>initial.value&&defaults.currentMonday<=calendar.to?defaults.currentMonday:calendar.to;
+    for(const kind of ['initial','final']) {
+      inventoryCalendarMonths[kind]=document.getElementById(`inventory-${kind}-date`).value.slice(0,7);
+      document.getElementById(`inventory-${kind}-basis`).value='initial';
+      document.getElementById(`inventory-${kind}-basis`).closest('label').hidden=true;
+    }
+    syncInventoryBoundaries();
+    document.getElementById('inventory-process-source').textContent=`${inventoryProcessingMode==='originals'?'Fuentes originales Toteat':'Archivos cargados'}. Recuadro: fecha con toma física. Sin toma al inicio, se reconstruye desde una toma anterior; sin toma al final, solo se informa saldo teórico.`;
+    setStatus(document.getElementById('inventory-process-dialog-status'),'');
+    document.getElementById('inventory-process-dialog').showModal();
+  }catch(error){setStatus(document.getElementById('inventory-source-status'),error.message,'error');}
 }
 
 function openSourceSummaryDialog(field) {
@@ -9528,7 +9590,7 @@ function renderInventoryExecutiveSummary(summary) {
       label,
       metric.available ? formatKardexCost(metric.amount) : 'No disponible',
       metric.available ? formatInventoryExecutivePercent(metric.percentOfNetSales) : '—',
-      context
+      metric.available ? context : 'No disponible para esta fuente o período.'
     ].forEach(value => {
       const cell = document.createElement('td');
       cell.textContent = value;
@@ -9546,6 +9608,7 @@ function renderInventoryExecutiveSummary(summary) {
 }
 
 function renderInventoryResults(data) {
+  inventoryProcessedProvenance = data.provenance || null;
   const report = data.report;
   const physicalInventoryQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
   const inventoryValue = (item, quantity) => (Number(quantity) || 0) * (Number(item.unitCost) || 0);
@@ -9573,7 +9636,10 @@ function renderInventoryResults(data) {
   const netSalesHeader = data.executiveSummary
     ? ` ${executiveLocationLabel}: ${executiveLocations.join(', ') || 'Sin ubicación'} · Venta neta del período: ${formatKardexCost(data.executiveSummary.netSales)}.`
     : '';
-  document.getElementById('inventory-report-period').textContent = `${reportPeriod}${netSalesHeader}`;
+  document.getElementById('inventory-report-period').textContent = `${data.provenance?.label || 'Archivos Kardex de Toteat'} · ${reportPeriod}${netSalesHeader}`;
+  const provenance = document.getElementById('inventory-report-provenance');
+  provenance.hidden = data.provenance?.mode !== 'originals';
+  provenance.textContent = provenance.hidden ? '' : `${data.provenance.note} Lectura: ${new Date(data.provenance.capturedAt).toLocaleString('es-CL')}. ${data.provenance.excluded.length} productos excluidos por saldos desconocidos; ${data.provenance.issues.length} incidencias en la captura. ${data.provenance.physicalFinalItems} productos incluidos con toma física en el saldo final seleccionado.`;
   document.getElementById('inventory-report-item-count').textContent = `${report.itemCount} productos`;
   const columns = [
     { label: 'Código', value: item => item.code, sortValue: item => item.code },
@@ -9596,6 +9662,7 @@ function renderInventoryResults(data) {
       value: item => formatKardexTableQuantity(item.initialInventory),
       sortValue: item => Number(item.initialInventory) || 0
     },
+    ...(report.boundaryMode ? [{label:'Origen apertura',value:item=>`${item.initialSource==='physical'?'Toma física':'Teórico desde toma/registro'} ${item.anchorDate}`}]:[]),
     ...report.movementDefinitions.map(definition => ({
       label: definition.label,
       value: item => formatKardexTableQuantity(item.movements[definition.key]),
@@ -9603,45 +9670,50 @@ function renderInventoryResults(data) {
     })),
     { label: 'Consumo Colaboradores', value: item => formatKardexTableQuantity(item.employeeConsumption), sortValue: item => Number(item.employeeConsumption) || 0 },
     { label: 'Consumo Marketing', value: item => formatKardexTableQuantity(item.marketingConsumption), sortValue: item => Number(item.marketingConsumption) || 0 },
+    ...(report.boundaryMode ? [{
+      label: 'Compensaciones',
+      value: item => formatKardexTableQuantity(item.compensationQuantity),
+      sortValue: item => Number(item.compensationQuantity) || 0
+    }] : []),
     ...(report.selection ? [
       {
         label: 'Inventario Final Teórico',
-        value: item => formatKardexTableQuantity(item.theoreticalFinal),
-        sortValue: item => Number(item.theoreticalFinal) || 0
+        value: item => formatKardexTableQuantity(report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal),
+        sortValue: item => Number(report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal) || 0
       },
       {
-        label: `${basisLabel(report.selection.finalBasis)} ${formatReportDate(report.selection.finalDate)}`,
-        value: item => formatKardexTableQuantity(item.finalInventory),
+        label: `${report.boundaryMode?'Inventario físico':basisLabel(report.selection.finalBasis)} ${formatReportDate(report.selection.finalDate)}`,
+        value: item => item.finalInventory==null?'Sin toma física':formatKardexTableQuantity(item.finalInventory),
         sortValue: item => Number(item.finalInventory) || 0
       }
     ] : [
-      { label: 'Inventario final teórico', value: item => formatKardexTableQuantity(item.theoreticalFinal), sortValue: item => Number(item.theoreticalFinal) || 0 },
+      { label: 'Inventario final teórico', value: item => formatKardexTableQuantity(report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal), sortValue: item => Number(report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal) || 0 },
       { label: `Inventario físico ${formatReportDate(report.physicalInventoryDate)}`, value: item => formatKardexTableQuantity(item.physicalFinal), sortValue: item => Number(item.physicalFinal) || 0 }
     ]),
-    {
+    ...(!report.boundaryMode ? [{
       label: report.selection ? 'Diferencia de Inventario' : 'Diferencia físico − teórico',
-      value: item => formatKardexTableQuantity(item.difference),
+      value: item => item.difference==null?'No comparable':formatKardexTableQuantity(item.difference),
       sortValue: item => Number(item.difference) || 0,
       signValue: item => item.difference,
       finalDifference: true
-    },
+    }] : []),
     {
       label: 'Costo Total',
-      value: item => item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo',
+      value: item => item.totalCost==null?'No comparable':item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo',
       sortValue: item => item.costAvailable ? Number(item.totalCost) || 0 : null,
-      totalValue: items => formatKardexCost(items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0))
+      totalValue: items => items.some(i=>i.totalCost==null)?'No comparable':formatKardexCost(items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0))
     },
     {
       label: 'Valor Inventario Final Teórico',
-      value: item => item.costAvailable ? formatKardexCost(inventoryValue(item, item.theoreticalFinal)) : 'Sin costo',
-      sortValue: item => item.costAvailable ? inventoryValue(item, item.theoreticalFinal) : null,
-      totalValue: items => totalInventoryValue(items, item => item.theoreticalFinal)
+      value: item => item.costAvailable ? formatKardexCost(inventoryValue(item, report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal)) : 'Sin costo',
+      sortValue: item => item.costAvailable ? inventoryValue(item, report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal) : null,
+      totalValue: items => totalInventoryValue(items, item => report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal)
     },
     {
       label: 'Valor Inventario Físico',
-      value: item => item.costAvailable ? formatKardexCost(inventoryValue(item, physicalInventoryQuantity(item))) : 'Sin costo',
+      value: item => physicalInventoryQuantity(item)==null?'Sin toma física':item.costAvailable ? formatKardexCost(inventoryValue(item, physicalInventoryQuantity(item))) : 'Sin costo',
       sortValue: item => item.costAvailable ? inventoryValue(item, physicalInventoryQuantity(item)) : null,
-      totalValue: items => totalInventoryValue(items, physicalInventoryQuantity)
+      totalValue: items => items.some(i=>physicalInventoryQuantity(i)==null)?'Sin toma física completa':totalInventoryValue(items, physicalInventoryQuantity)
     }
   ];
   document.getElementById('inventory-kardex-search').value = '';
@@ -9827,14 +9899,14 @@ async function generateInventoryReport() {
   const button = document.getElementById('confirm-inventory-process');
   const initialInventoryDate = document.getElementById('inventory-initial-date').value;
   const finalInventoryDate = document.getElementById('inventory-final-date').value;
-  const movementDateFrom = document.getElementById('inventory-movement-from').value;
-  const movementDateTo = document.getElementById('inventory-movement-to').value;
-  const availableDates = inventorySourceState?.kardexPeriod?.dates || [];
+  const movementDateFrom = initialInventoryDate;
+  const movementDateTo = finalInventoryDate ? offsetIsoDate(finalInventoryDate,-1) : '';
+  const availableDates = originalInventoryDates;
   if (!initialInventoryDate || !finalInventoryDate || !movementDateFrom || !movementDateTo || movementDateFrom > movementDateTo) {
-    return setStatus(dialogStatus, 'Completa las cuatro fechas y selecciona un rango de movimientos válido.', 'error');
+    return setStatus(dialogStatus, 'Selecciona una fecha final posterior a la inicial.', 'error');
   }
   if (!availableDates.includes(initialInventoryDate) || !availableDates.includes(finalInventoryDate)) {
-    return setStatus(dialogStatus, 'Las fechas de los saldos inicial y final deben existir en el Kardex.', 'error');
+    return setStatus(dialogStatus, 'Las fechas deben estar dentro de la cobertura disponible. Actualiza las fuentes para ampliar el período.', 'error');
   }
   button.disabled = true;
   setStatus(status, 'Consolidando el Kardex para el período seleccionado…');
@@ -9845,6 +9917,8 @@ async function generateInventoryReport() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         location: document.getElementById('inventory-location-select').value,
+        source: inventoryProcessingMode,
+        criteriaMode: 'count-boundaries',
         initialInventoryDate,
         initialInventoryBasis: document.getElementById('inventory-initial-basis').value,
         finalInventoryDate,
@@ -10250,6 +10324,8 @@ async function renderMasterList() {
   }
 }
 
+window.addEventListener('brewit-masters-updated', () => renderMasterList());
+
 function updateLatestMasterDates(data) {
   const latest = {};
   for (const group of Object.values(data)) {
@@ -10400,10 +10476,17 @@ function exportInventoryReport(sectionId) {
       ['Reporte', title],
       ['Ubicación', location],
       ['Período / criterios', period],
+      ['Alcance de las fuentes', section.querySelector('#inventory-report-provenance:not([hidden])')?.textContent || 'Archivos cargados'],
       ['Exportado', new Date().toLocaleString('es-CL')]
     ]);
     XLSX.utils.book_append_sheet(workbook, information, 'Información');
     const usedNames = new Set(['Información']);
+    if (sectionId === 'inventory-report-results' && inventoryProcessedProvenance?.mode === 'originals') {
+      for (const [name, rows] of [['Productos excluidos', inventoryProcessedProvenance.excluded], ['Incidencias de captura', inventoryProcessedProvenance.issues]]) {
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), name);
+        usedNames.add(name);
+      }
+    }
     const tables = [...section.querySelectorAll('table')].filter(table => !table.closest('[hidden]'));
     tables.forEach((table, index) => {
       const sheet = XLSX.utils.table_to_sheet(table, { raw: true });
@@ -10595,7 +10678,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-sales-download-selected').addEventListener('click', () => chooseReportSalesDownloadScope(false));
   document.getElementById('report-sales-download-all').addEventListener('click', () => chooseReportSalesDownloadScope(true));
   document.getElementById('report-sales-download-cancel').addEventListener('click', () => document.getElementById('report-sales-download-scope-dialog').close());
-  document.getElementById('download-all-toteat-files').addEventListener('click', startToteatMasterDownloads);
+  // Shared master updates are handled by toteat-masters-view.js from Local 001.
   document.getElementById('download-all-toteat-transactions').addEventListener('click', () => startToteatTransactionalDownloads());
   document.getElementById('confirm-toteat-master-download').addEventListener('click', confirmToteatMasterDownloads);
   document.getElementById('close-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
@@ -11022,6 +11105,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('current-inventory-date-dialog').close();
     });
   }
+  document.getElementById('process-original-inventory-report').addEventListener('click', async () => {
+    const button = document.getElementById('process-original-inventory-report');
+    const location = document.getElementById('inventory-location-select').value;
+    button.disabled = true;
+    try {
+      await openInventoryProcessDialog('originals');
+    } catch (error) { setStatus(document.getElementById('inventory-source-status'), error.message, 'error'); }
+    finally { button.disabled = false; }
+  });
+  for (const kind of ['initial','final']) document.getElementById(`inventory-${kind}-date`).addEventListener('input',()=>{inventoryCalendarMonths[kind]=document.getElementById(`inventory-${kind}-date`).value.slice(0,7);syncInventoryBoundaries();});
   document.getElementById('confirm-inventory-process').addEventListener('click', generateInventoryReport);
   for (const id of ['close-inventory-process-dialog', 'cancel-inventory-process']) {
     document.getElementById(id).addEventListener('click', () => {

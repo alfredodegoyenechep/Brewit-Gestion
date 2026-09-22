@@ -288,10 +288,12 @@
           <label for="sales-dashboard-location">Cafetería
             <select id="sales-dashboard-location"><option value="all">Todas las cafeterías</option></select>
           </label>
-          <button id="refresh-sales-dashboard" class="icon-button" type="button">Actualizar</button>
+          <button id="refresh-sales-dashboard" class="icon-button" type="button">Actualizar vista</button>
+          <button class="primary" type="button" data-toteat-sales-sync="dashboard">Actualizar ventas por API</button>
         </div>
       </div>
       <div id="sales-dashboard-status" class="form-status" aria-live="polite"></div>
+      <div data-toteat-sales-status class="form-status" aria-live="polite"></div>
 
       <div id="sales-dashboard-metrics" class="sales-dashboard-metrics"></div>
 
@@ -631,10 +633,12 @@
           <select id="report-location-filter">
             <option value="all">Todas las cafeterías</option>
           </select>
-          <button id="report-download-toteat-sales" class="icon-button toteat-download-button" type="button">Descargar Ventas desde web</button>
+          <button class="primary" type="button" data-toteat-sales-sync="report">Actualizar ventas por API</button>
+          <button id="report-download-toteat-sales" class="icon-button toteat-download-button" type="button">Descargar respaldo desde web</button>
         </div>
       </div>
       <div class="report-status-row">
+        <div data-toteat-sales-status class="form-status" aria-live="polite"></div>
         <div id="report-status" class="form-status" aria-live="polite"></div>
         <select id="report-view-filter" aria-label="Vista de ventas">
           <option value="classic">Vista clásica</option>
@@ -1248,6 +1252,7 @@
     </section>
 
     <section id="purchases-workspace" class="panel purchases-workspace" style="display:none;">
+      <div data-toteat-purchases-status class="form-status" aria-live="polite"></div>
       <div class="purchases-workspace-head">
         <div>
           <div class="panel-eyebrow">Compras</div>
@@ -1272,6 +1277,7 @@
             <datalist id="purchases-product-options"></datalist>
           </label>
           <button id="refresh-purchases" class="icon-button" type="button">Actualizar</button>
+          <button class="primary" type="button" data-toteat-purchases-sync="report">Actualizar compras por API</button>
           <div class="purchases-report-actions">
             <button id="open-purchase-cost-variations" class="icon-button" type="button">Variaciones de costo 30 días</button>
             <button id="print-purchases-report" class="icon-button" type="button" disabled>Imprimir / PDF</button>
@@ -1655,25 +1661,27 @@
       <div class="inventory-report-actions">
         <button id="inventory-upload-files" class="icon-button" type="button">Cargar archivos actualizados</button>
         <button id="process-inventory-report" class="primary" type="button" disabled>Procesar informe de inventario</button>
+        <button id="process-original-inventory-report" class="primary" type="button" disabled>Procesar desde fuentes originales Toteat</button>
         <button id="current-inventory-report" class="primary" type="button" disabled>Inventario teórico al día</button>
       </div>
       <p id="inventory-process-note" class="panel-description">Primero deben estar disponibles todos los archivos requeridos.</p>
+      <p class="panel-description">Fuentes originales utiliza las tablas sincronizadas en Cargar archivos. El informe indicará los datos pendientes y la fecha de actualización.</p>
 
       <dialog id="inventory-process-dialog" class="inventory-criteria-dialog">
         <div class="preview-dialog-head">
           <div>
             <div class="panel-eyebrow">Criterios del informe</div>
             <h3>Confirma los datos de inventario</h3>
-            <p class="panel-description">Los saldos y el período de movimientos se seleccionan de forma independiente.</p>
+            <p class="panel-description">Selecciona las fechas inicial y final. Los recuadros del calendario indican días con toma física. Los movimientos terminan el día anterior a la fecha final.</p>
           </div>
           <button id="close-inventory-process-dialog" class="icon-button" type="button">Cerrar</button>
         </div>
         <div class="inventory-criteria-grid">
           <fieldset>
             <legend>Dato Inventario Inicial</legend>
-            <label>Fecha<input id="inventory-initial-date" type="date" required /></label>
+            <label>Fecha<input id="inventory-initial-date" type="date" required /></label><div id="inventory-initial-calendar" class="inventory-calendar"></div>
             <label>Usar
-              <select id="inventory-initial-basis">
+              <select id="inventory-initial-basis" hidden>
                 <option value="initial">Inventario Inicial</option>
                 <option value="final">Inventario Final</option>
               </select>
@@ -1681,9 +1689,9 @@
           </fieldset>
           <fieldset>
             <legend>Dato Inventario Final</legend>
-            <label>Fecha<input id="inventory-final-date" type="date" required /></label>
+            <label>Fecha<input id="inventory-final-date" type="date" required /></label><div id="inventory-final-calendar" class="inventory-calendar"></div>
             <label>Usar
-              <select id="inventory-final-basis">
+              <select id="inventory-final-basis" hidden>
                 <option value="initial">Inventario Inicial</option>
                 <option value="final">Inventario Final</option>
               </select>
@@ -1691,11 +1699,12 @@
           </fieldset>
           <fieldset class="inventory-movement-period">
             <legend>Fechas de movimientos del inventario</legend>
-            <label>Fecha inicial<input id="inventory-movement-from" type="date" required /></label>
-            <label>Fecha final<input id="inventory-movement-to" type="date" required /></label>
+            <label>Fecha inicial<input id="inventory-movement-from" type="date" readonly required /></label>
+            <label>Fecha final<input id="inventory-movement-to" type="date" readonly required /></label>
           </fieldset>
         </div>
         <div id="inventory-process-dialog-status" class="form-status" aria-live="polite"></div>
+        <p id="inventory-process-source" class="panel-description"></p>
         <div class="conflict-actions">
           <button id="confirm-inventory-process" class="primary" type="button">Confirmar y procesar</button>
           <button id="cancel-inventory-process" class="icon-button" type="button">Cancelar</button>
@@ -1783,6 +1792,7 @@
             <div class="panel-eyebrow">Informe procesado</div>
             <h3 id="inventory-report-title">Consolidado de inventario</h3>
             <p id="inventory-report-period" class="panel-description"></p>
+            <p id="inventory-report-provenance" class="form-status" hidden></p>
           </div>
           <div class="inventory-source-actions">
             <span id="inventory-report-item-count" class="chip neutral"></span>
@@ -1844,7 +1854,7 @@
           <button id="clear-inventory-kardex-filters" class="icon-button small" type="button">Limpiar filtros</button>
           <span id="inventory-kardex-visible-count" class="chip neutral"></span>
         </div>
-        <div class="inventory-results-table-wrap">
+        <div class="inventory-results-table-wrap inventory-kardex-scroll" tabindex="0" role="region" aria-label="Consolidado del Kardex, tabla desplazable">
           <table id="inventory-results-table" class="inventory-results-table"></table>
         </div>
         <section id="inventory-lac001-substitution-report" class="consumption-report-card" hidden>
@@ -1958,7 +1968,7 @@
           <p class="panel-description">Incorpora transacciones por ubicación o actualiza archivos maestros compartidos.</p>
         </div>
         <div class="panel-head-actions">
-          <button id="download-all-toteat-files" class="primary" type="button">Descargar Todos los Archivos Maestros</button>
+          <button id="download-all-toteat-files" class="primary" type="button" data-toteat-masters-sync="shared">Actualizar maestros desde La Concepción</button>
           <button id="download-all-toteat-transactions" class="primary" type="button">Descargar Todos los Archivos Transaccionales</button>
         </div>
       </div>
@@ -2033,6 +2043,30 @@
 
           <div class="location-note" id="location-note"></div>
           <div id="week-status" class="form-status" aria-live="polite"></div>
+
+          <section class="inventory-sources" aria-labelledby="stock-title">
+            <h3 id="stock-title">Fuentes para el Kardex propio</h3>
+            <p>Actualiza tomas de inventario, transformaciones y transferencias desde Toteat. El cálculo incorpora las compras y ventas ya sincronizadas y los maestros compartidos de La Concepción.</p>
+            <div class="upload-context-grid">
+              <label>Desde <input id="stock-from" type="date" value="2026-08-23"></label>
+              <label>Hasta <input id="stock-to" type="date"></label>
+            </div>
+            <div class="report-actions">
+              <button type="button" class="primary" id="stock-sync">Actualizar fuentes de inventario</button>
+              <button type="button" class="icon-button" id="stock-view">Ver Kardex propio y comparar</button>
+              <a class="icon-button" id="stock-export" href="/api/integrations/toteat/stock/export?location=store-1">Descargar detalle y comparación</a>
+            </div>
+            <div id="stock-status" class="form-status" aria-live="polite"></div>
+            <table><thead><tr><th>Tabla local</th><th>Documentos</th><th>Aprobados</th><th>Líneas</th></tr></thead><tbody id="stock-sources"></tbody></table>
+            <p>La Bodega Principal y su merma se actualizan desde el ambiente de La Concepción. Los documentos pendientes no afectan existencias.</p>
+            <details id="stock-result"><summary>Kardex calculado y diferencias</summary>
+              <p id="stock-summary"></p>
+              <label>Filtrar por código o producto <input id="stock-search" type="search"></label>
+              <label>Bodega <select id="stock-warehouse"><option value="">Todas</option></select></label>
+              <div style="overflow:auto;max-height:480px"><table><thead><tr><th>Fecha</th><th>Bodega</th><th>Código</th><th>Producto</th><th>Unidad</th><th>Inicial</th><th>Compras</th><th>Transferencias +</th><th>Transferencias −</th><th>Transformaciones +</th><th>Transformaciones −</th><th>Consumo estimado</th><th>Final</th><th>Ajuste por toma</th></tr></thead><tbody id="stock-rows"></tbody></table></div>
+              <p id="stock-row-count"></p><ul id="stock-issues"></ul>
+            </details>
+          </section>
 
           <div class="file-row" data-weekly-field="kardex">
             <label for="file-kardex">Kardex / tarjeta de inventario</label>
@@ -2135,8 +2169,11 @@
       <div id="master-upload-pane" class="upload-pane" hidden>
         <div class="pane-heading">
           <h3>Archivos maestros compartidos</h3>
-          <p>Estos archivos aplican a las dos tiendas y a la bodega principal.</p>
+          <p>Fuente única: La Concepción. Estos maestros aplican a todas las cafeterías y a la bodega principal.</p>
         </div>
+        <button class="primary" type="button" data-toteat-masters-sync="shared">Actualizar maestros desde La Concepción</button>
+        <p class="panel-description">Lee productos, ingredientes, extras, jerarquías, recetas y proveedores desde Toteat y guarda una nueva versión compartida con vigencia de hoy. Requiere una sesión de Toteat vigente.</p>
+        <div data-toteat-masters-status class="form-status" role="status" aria-live="polite"></div>
         <form id="master-upload-form">
           <div id="master-status" class="form-status" aria-live="polite"></div>
           <div class="file-row">
@@ -2273,6 +2310,57 @@
         <button class="icon-button" type="submit">Guardar datos de Brewit</button>
       </form>
 
+      <div class="location-management-section">
+        <h3>Conexión API de Toteat</h3>
+        <p class="panel-description">Conecta cada cafetería y activa la actualización de ventas y detalle de pagos. Un local sin ventas puede quedar conectado antes de abrir.</p>
+        <details>
+          <summary>Cómo obtener las credenciales en Toteat</summary>
+          <p>Con la cuenta del dueño, entra a Configuración → Print Server &amp; API → API Config → Agregar API. Usa el nombre Brewit, versión estable, y habilita /products, /sales y /shiftstatus en Seguridad. Toteat exige seleccionar un canal de origen incluso para consultas. Copia los identificadores y el token de cada local en este formulario.</p>
+          <a href="https://developers.toteat.com/#tag/Configuracion-API" target="_blank" rel="noopener noreferrer">Ver instrucciones de Toteat</a>
+        </details>
+        <form id="toteat-api-form" class="create-location-form" autocomplete="off">
+          <label><span>Ubicación en Brewit</span><select id="toteat-api-location" name="location" required></select></label>
+          <label><span>Restaurant ID</span><input name="restaurantId" type="text" maxlength="100" required /></label>
+          <label><span>Local ID</span><input name="localId" type="text" maxlength="100" required /></label>
+          <label><span>Usuario ID</span><input name="userId" type="text" maxlength="100" required /></label>
+          <label><span>Token de acceso</span><input name="token" type="password" maxlength="1024" autocomplete="new-password" /><small>Se guarda en el servidor. Déjalo vacío para reutilizar el token guardado.</small></label>
+          <button class="primary" type="submit">Probar conexión y guardar</button>
+          <button id="toteat-api-refresh" class="icon-button" type="button">Actualizar ubicaciones</button>
+        </form>
+        <div id="toteat-api-status" class="form-status" role="status" aria-live="polite"></div>
+        <form id="toteat-sales-settings" class="create-location-form">
+          <label><span>Obtener ventas desde</span><input name="from" type="date" required /><small>Incluye el histórico que deseas consultar. Para nuevos locales, usa su fecha de creación en Toteat.</small></label>
+          <label><span>Actualización de ventas</span><select name="frequency"><option value="5">Automática cada 5 minutos</option><option value="15">Automática cada 15 minutos</option><option value="manual">Solo manual</option></select></label>
+          <button class="primary" type="submit">Guardar y sincronizar ventas</button>
+          <button class="icon-button" type="button" data-toteat-sales-sync="selected">Actualizar ahora</button>
+          <button class="icon-button" type="button" data-toteat-sales-sync="history">Revisar todo el histórico</button>
+        </form>
+        <p class="panel-description">La actualización automática funciona mientras el servidor Brewit esté encendido. Toteat entrega órdenes cerradas; las cuentas aún abiertas aparecerán cuando se cierren.</p>
+        <div data-toteat-sales-status class="form-status" aria-live="polite"></div>
+      </div>
+
+      <div class="location-management-section">
+        <h3>Compras por API de Toteat</h3>
+        <p class="panel-description">Usa la cafetería seleccionada en la conexión de arriba. Habilita el permiso /accountingmovements en Toteat; Brewit consulta únicamente compras.</p>
+        <form id="toteat-purchases-settings" class="create-location-form">
+          <label><span>Obtener compras desde</span><input name="from" type="date" required /></label>
+          <label><span>Actualización de compras</span><select name="frequency"><option value="15">Automática cada 15 minutos</option><option value="60">Automática cada hora</option><option value="manual">Solo manual</option></select></label>
+          <button class="primary" type="submit">Guardar y sincronizar compras</button>
+          <button class="icon-button" type="button" data-toteat-purchases-sync="selected">Actualizar compras ahora</button>
+          <button class="icon-button" type="button" data-toteat-purchases-sync="history">Revisar histórico de compras</button>
+        </form>
+        <p class="panel-description">La actualización requiere que Brewit esté encendido. Se conservan los importes de línea; algunos precios unitarios vienen redondeados. Toteat no entrega usuario, forma de pago, costo negociado ni desglose neto/descuento por línea en esta respuesta.</p>
+        <div data-toteat-purchases-status class="form-status" aria-live="polite"></div>
+      </div>
+
+      <div class="location-management-section">
+        <h3>Maestros de inventario de Toteat</h3>
+        <p class="panel-description">La Concepción es la fuente única de los maestros compartidos, incluidos proveedores, para todas las cafeterías. Cada actualización conserva las versiones anteriores.</p>
+        <button class="primary" type="button" data-toteat-masters-sync="shared">Actualizar maestros desde La Concepción</button>
+        <div data-toteat-masters-status class="form-status" role="status" aria-live="polite"></div>
+        <div data-toteat-inventory-pilot class="form-status" aria-live="polite"></div>
+      </div>
+
       <form id="create-location-form" class="create-location-form">
         <label>
           <span>Nombre de la ubicación</span>
@@ -2337,5 +2425,9 @@
   <script src="/vendor/xlsx.full.min.js"></script>
   <script src="demand-view.js"></script>
   <script src="script.js"></script>
+  <script src="toteat-api-view.js"></script>
+  <script src="toteat-purchases-view.js"></script>
+  <script src="toteat-masters-view.js"></script>
+  <script src="toteat-stock-view.js"></script>
 </body>
 </html>

@@ -1,4 +1,8 @@
 const express = require('express');
+const { registerToteatApi } = require('./toteat-api');
+const { readNative } = require('./toteat-native');
+const { createMasterSync } = require('./toteat-masters');
+const { createStockSync } = require('./toteat-stock');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const crypto = require('crypto');
@@ -947,6 +951,7 @@ function parseIngredientCatalog(filePath) {
     const costColumn = findHeaderColumn(headers, ['Costo']);
     const unitColumn = findHeaderColumn(headers, ['Medida Base', 'Unidad Base', 'Unidad de Reportes']);
     const activeColumn = findHeaderColumn(headers, ['Activo']);
+    const stockColumn = findHeaderColumn(headers, ['Control de Stocks Activado', 'wact']);
     for (const row of rows.slice(headerIndex + 1)) {
       const code = String(row[codeColumn] ?? '').trim();
       if (!code) continue;
@@ -956,7 +961,10 @@ function parseIngredientCatalog(filePath) {
         unit: String(row[unitColumn] ?? '').trim(),
         unitCost: numericValue(row[costColumn]) || 0,
         type,
-        active: activeColumn < 0 || numericValue(row[activeColumn]) !== 0
+        active: activeColumn < 0 || numericValue(row[activeColumn]) !== 0,
+        stockManaged: stockColumn < 0 || row[stockColumn] == null ? null
+          : /^(1|true|si|sí)$/i.test(String(row[stockColumn]).trim()) ? true
+            : /^(0|false|no)$/i.test(String(row[stockColumn]).trim()) ? false : null
       });
     }
   }
@@ -1094,8 +1102,8 @@ function enrichKardexReport(report, consumption, catalog, costResolver = null) {
     const marketingConsumption = consumptionQuantityForKardex(consumption.marketing, item.code, item.unit);
     const baseTheoreticalFinal = Number(item.theoreticalFinal) || 0;
     const theoreticalFinal = baseTheoreticalFinal - employeeConsumption - marketingConsumption;
-    const finalInventory = report.selection ? Number(item.finalInventory) || 0 : Number(item.physicalFinal) || 0;
-    const difference = finalInventory - theoreticalFinal;
+    const finalInventory = report.boundaryMode && !item.finalIsPhysical ? null : report.selection ? Number(item.finalInventory) || 0 : Number(item.physicalFinal) || 0;
+    const difference = finalInventory === null ? null : finalInventory - theoreticalFinal;
     const catalogItem = catalog?.get(item.code) || catalog?.get(String(item.code || '').toUpperCase());
     const costReference = costResolver?.resolve(item.code, item.unit, catalogItem)
       || { unitCost: unitCostForRecipeUnit(catalogItem, item.unit) ?? 0, source: 'master', sourceDate: null };
@@ -1112,7 +1120,7 @@ function enrichKardexReport(report, consumption, catalog, costResolver = null) {
       costSource: costReference.source,
       costSourceDate: costReference.sourceDate,
       costAvailable: costReference.source !== 'missing',
-      totalCost: difference * unitCost
+      totalCost: difference === null ? null : difference * unitCost
     };
   });
   return {
@@ -1255,6 +1263,9 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
   const ingredientsWithoutCost = new Set();
   const ingredientsWithoutConversion = new Set();
   for (const product of products) {
+    // Stocked finished goods are already counted in the product consumption
+    // rows. Their ingredients belong to production, not to this consumption.
+    if (catalog.get(product.code)?.stockManaged === true) continue;
     const productRecipe = recipes.get(product.code);
     if (!productRecipe?.length) {
       productsWithoutRecipe.add(product.code || product.name);
@@ -1640,9 +1651,10 @@ function purchaseRecord(row, location, supplierNames) {
   const quantity = billedQuantity ?? receivedQuantity ?? 0;
   const unit = String(rowValue(row, ['Um.Fac', 'Unidad facturada', 'Um.Rec', 'Unidad recibida']) || '').trim();
   const listedUnitPrice = numericValue(rowValue(row, ['Costo', 'Cost'])) || 0;
-  const negotiatedUnitPrice = numericValue(rowValue(row, ['Costo negociado', 'Negotiated cost'])) || 0;
-  const netAmount = numericValue(rowValue(row, ['Monto neto', 'Net amount'])) || 0;
-  const discount = numericValue(rowValue(row, ['Descuento', 'Discount'])) || 0;
+  const missingPurchaseValue = row['API Source'] === 'Toteat' ? null : 0;
+  const negotiatedUnitPrice = numericValue(rowValue(row, ['Costo negociado', 'Negotiated cost'])) ?? missingPurchaseValue;
+  const netAmount = numericValue(rowValue(row, ['Monto neto', 'Net amount'])) ?? missingPurchaseValue;
+  const discount = numericValue(rowValue(row, ['Descuento', 'Discount'])) ?? missingPurchaseValue;
   const reportedTotalAmount = numericValue(rowValue(row, ['Monto total', 'Total amount']));
   const totalAmount = reportedTotalAmount ?? netAmount - discount;
   const effectiveUnitPrice = quantity ? totalAmount / quantity : listedUnitPrice;
@@ -2047,6 +2059,7 @@ function chromeExecutablePath(playwrightExecutablePath = null) {
 
 function createToteatAutomation(profilesRoot, factoryOptions = {}) {
   const contexts = new Map();
+  let nativeQueue = Promise.resolve();
   const diagnosticsRoot = path.join(profilesRoot, 'diagnostics');
   const reportUrls = Array.isArray(factoryOptions.reportUrls) && factoryOptions.reportUrls.length
     ? factoryOptions.reportUrls
@@ -2813,6 +2826,28 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     }
   };
   return {
+    readNativeSources(restaurant, options = {}) {
+      const task = nativeQueue.then(async () => {
+        let browser, context, page;
+        const endpoint = factoryOptions.cdpEndpoint || process.env.TOTEAT_CDP_ENDPOINT;
+        try {
+          if (endpoint) {
+            if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('El navegador de Toteat debe estar en este equipo.');
+            browser = await require('playwright-core').chromium.connectOverCDP(endpoint);
+            context = browser.contexts()[0];
+          } else context = contexts.get('master-downloads') || await launch('master-downloads', true);
+          page = await context.newPage();
+          await selectRestaurantRecord(page, restaurant);
+          return await readNative(page, restaurant, options);
+        } finally {
+          await page?.close().catch(() => {});
+          if (browser) await browser.close().catch(() => {});
+          else if (context && !contexts.has('master-downloads')) await context.close().catch(() => {});
+        }
+      });
+      nativeQueue = task.catch(() => {});
+      return task;
+    },
     async connect(locationId) {
       const current = contexts.get(locationId);
       if (current) {
@@ -3125,6 +3160,18 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
 
 function createApp(options = {}) {
   const app = express();
+  let toteatSalesSync;
+  let toteatMasterSync;
+  function readPurchaseRows(filePath) {
+    const workbook = XLSX.readFile(filePath, { cellDates: true });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
+    return toteatSalesSync?.purchases ? toteatSalesSync.purchases.filterLegacy(filePath, rows) : rows;
+  }
+  function readSalesRows(filePath) {
+    const workbook = XLSX.readFile(filePath, { cellDates: true });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
+    return toteatSalesSync ? toteatSalesSync.filterLegacy(filePath, rows) : rows;
+  }
   const uploadsRoot = options.uploadsRoot || process.env.BREWIT_UPLOADS_ROOT || path.join(__dirname, 'uploads');
   const weeksRoot = path.join(uploadsRoot, 'weeks');
   const mastersRoot = path.join(uploadsRoot, 'masters');
@@ -3257,7 +3304,7 @@ function createApp(options = {}) {
   function storedTransactionFiles(locationId, field) {
     const index = readTransactionIndex(locationId);
     const root = transactionLocationRoot(locationId);
-    return (index.fields?.[field]?.files || []).flatMap(record => {
+    const stored = (index.fields?.[field]?.files || []).flatMap(record => {
       const filePath = path.resolve(root, record.name || '');
       if (!record.name || path.dirname(filePath) !== path.resolve(root) || !fs.existsSync(filePath)) return [];
       return [{
@@ -3269,6 +3316,8 @@ function createApp(options = {}) {
         excludedRanges: index.exclusions?.[record.id] || []
       }];
     });
+    if (field === 'purchases') return [...stored, ...(toteatSalesSync?.purchases.source(locationId, field) || [])];
+    return field === 'payment-details' ? [...stored, ...(toteatSalesSync?.source(locationId, field) || [])] : stored;
   }
 
   function storedSalesFiles(locationId) {
@@ -3286,10 +3335,10 @@ function createApp(options = {}) {
         }
       }
     }
-    return [...output, ...storedTransactionFiles(locationId, 'sales')];
+    return [...output, ...storedTransactionFiles(locationId, 'sales'), ...(toteatSalesSync?.source(locationId, 'sales') || [])];
   }
 
-  function periodSalesData(locationId, dateFrom, dateTo) {
+  function periodSalesData(locationId, dateFrom, dateTo, { apiOnly = false } = {}) {
     const rows = [];
     const orderMap = new Map();
     const rowsByOrder = new Map();
@@ -3297,12 +3346,12 @@ function createApp(options = {}) {
     const warnings = [];
     let filesRead = 0;
 
-    for (const stored of storedSalesFiles(locationId)) {
+    for (const stored of (apiOnly ? toteatSalesSync?.source(locationId, 'sales') || [] : storedSalesFiles(locationId))) {
       try {
         const fileRows = readSalesRows(stored.filePath);
         filesRead += 1;
         for (const row of fileRows) {
-          const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+          const date = cellDate(rowValue(row, apiOnly ? ['Fecha de cierre'] : ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
           if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
           const canonicalRow = Object.entries(row)
             .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
@@ -3315,10 +3364,12 @@ function createApp(options = {}) {
           const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
           const item = {
             orderKey,
+            lineId: row['API Line ID'] ? String(row['API Line ID']) : null,
+            parentLineId: row['API Line Reference'] ? String(row['API Line Reference']) : null,
             date,
             code,
             name: repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code,
-            quantity: Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1),
+            quantity: row['API Source'] === 'Toteat' ? (numericValue(rowValue(row, ['Cantidad'])) ?? 0) : Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1),
             extraHierarchyId: String(rowValue(row, ['BA.']) ?? '').trim(),
             extraHierarchyName: repairMojibake(rowValue(row, ['Jerarquía de Extras', 'Jerarquia de Extras']))
           };
@@ -3346,11 +3397,13 @@ function createApp(options = {}) {
       let currentBase = null;
       for (const item of orderRows) {
         if (baseRows.includes(item)) currentBase = item;
-        item.baseProductCode = currentBase?.code || soleBase?.code || null;
-        item.baseProductName = currentBase?.name || soleBase?.name || null;
+        const parent = item.parentLineId ? orderRows.find(row => row.lineId === item.parentLineId) : null;
+        const base = item.parentLineId ? parent : currentBase || soleBase;
+        item.baseProductCode = base?.code || null;
+        item.baseProductName = base?.name || null;
       }
     }
-    return { rows, orderFacts: [...orderMap.values()], warnings, filesRead };
+    return { rows, orderFacts: [...orderMap.values()], warnings, filesRead, apiOnly };
   }
 
   function recipeLinesForProduct(recipes, code) {
@@ -3733,7 +3786,7 @@ function createApp(options = {}) {
       || String(right.week || '').localeCompare(String(left.week || '')))[0] || null;
   }
 
-  function masterFiles(field) {
+  function masterFiles(field, location) {
     const index = readJson(path.join(mastersRoot, 'masters.json'), {});
     const candidates = [];
     for (const [version, group] of Object.entries(index)) {
@@ -3748,13 +3801,17 @@ function createApp(options = {}) {
       || String(right.savedAt || right.version).localeCompare(String(left.savedAt || left.version)));
   }
 
-  function latestMasterFile(field, effectiveDate) {
-    return masterFiles(field).find(record => record.validFrom <= effectiveDate) || null;
+  function latestMasterFile(field, effectiveDate, location) {
+    return masterFiles(field, location).find(record => record.validFrom <= effectiveDate) || null;
   }
 
-  function resolveRecipes(effectiveDate) {
-    const allMasters = masterFiles('master-recipes');
+  function resolveRecipes(effectiveDate, location) {
+    const allMasters = masterFiles('master-recipes').filter(record => record.source !== 'toteat-shared-api' || record.validFrom <= effectiveDate);
     const datedMaster = allMasters.find(record => record.validFrom <= effectiveDate) || null;
+    if (datedMaster?.source === 'toteat-shared-api') {
+      const recipes = parseRecipes(datedMaster.filePath);
+      return { recipes, primary: datedMaster, sources: [{ master: datedMaster, contributedProducts: recipes.size }], errors: [] };
+    }
     const orderedMasters = [...new Map([
       datedMaster,
       allMasters[0],
@@ -4042,6 +4099,73 @@ function createApp(options = {}) {
 
   app.disable('x-powered-by');
   app.use(express.json());
+  toteatSalesSync = registerToteatApi(app, { uploadsRoot, activeLocation, locations: () => readLocations().locations,
+    fetchImpl: options.toteatApiFetch, enableSync: options.enableToteatSync,
+    requestSpacing: options.toteatRequestSpacing, syncClock: options.toteatSyncClock });
+  app.locals.toteatSalesSync = toteatSalesSync;
+  toteatMasterSync = createMasterSync({ uploadsRoot, activeLocation,
+    credentials: () => readJson(path.join(uploadsRoot, '.integrations', 'toteat-api', 'credentials.json'), {}),
+    reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
+  app.locals.toteatMasterSync = toteatMasterSync;
+  const stockSync = createStockSync({ uploadsRoot, activeLocation,
+    credentials: () => readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {}),
+    masters: () => toteatMasterSync.sharedCurrent(),
+    reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
+  app.locals.toteatStockSync = stockSync;
+  app.get('/api/integrations/toteat/stock/status', (req, res) => {
+    try { res.set('Cache-Control', 'no-store').json(stockSync.status(req.query.location || 'store-1')); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  app.post('/api/integrations/toteat/stock/sync', (req, res) => {
+    try { stockSync.synchronize(req.body.location, req.body).catch(() => {}); res.status(202).json({ started: true }); }
+    catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  app.get('/api/integrations/toteat/stock/current', (req, res) => {
+    try {
+      const data = stockSync.view(req.query.location || 'store-1');
+      if (!data) return res.status(404).json({ error: 'Actualiza primero las fuentes de inventario.' });
+      const comparison = require('./scripts/toteat-inventory-pilot').compareFiles(uploadsRoot, data, data);
+      res.set('Cache-Control', 'no-store').json({ ...data, comparison });
+    } catch { res.status(400).json({ error: 'No se pudo consultar o comparar el inventario local.' }); }
+  });
+  app.get('/api/integrations/toteat/stock/export', (req, res) => {
+    try {
+      const data = stockSync.view(req.query.location || 'store-1');
+      if (!data) return res.status(404).json({ error: 'Actualiza primero las fuentes de inventario.' });
+      const comparison = require('./scripts/toteat-inventory-pilot').compareFiles(uploadsRoot, data, data);
+      res.attachment('Kardex_Propio_Brewit.xlsx').send(stockSync.workbook(data, comparison));
+    } catch { res.status(400).json({ error: 'No se pudo exportar el Kardex propio.' }); }
+  });
+  app.get('/api/integrations/toteat/masters/status', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ locations: [toteatMasterSync.sharedStatus()] });
+  });
+  app.get('/api/integrations/toteat/masters/current', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try { const data = toteatMasterSync.sharedCurrent(); return data ? res.json({ ...data, scope: 'shared', sourceLocation: 'store-1' }) : res.status(404).json({ error: 'Aún no se publicaron los maestros compartidos de La Concepción.' }); }
+    catch { return res.status(400).json({ error: 'Selecciona una cafetería válida.' }); }
+  });
+  app.post('/api/integrations/toteat/masters/sync', (req, res) => {
+    toteatMasterSync.synchronizeShared().catch(() => {});
+    return res.status(202).json({ started: ['store-1'], shared: true });
+  });
+  const inventoryPilotRoot = path.join(uploadsRoot, 'reports', 'inventory', 'pilot-2026-08-23_2026-08-30');
+  app.get('/api/integrations/toteat/inventory/pilot', (req, res) => {
+    const result = readJson(path.join(inventoryPilotRoot, 'results.json'), null);
+    res.set('Cache-Control', 'no-store');
+    if (!result) return res.status(404).json({ error: 'El piloto aún no ha sido ejecutado.' });
+    const r = result.reconciliation;
+    return res.json({ capturedAt: result.capturedAt, range: r.range, rows: r.rowCount, nativeReconciliationPassed: r.nativeReconciliationPassed,
+      comparedMovementCells: r.comparedCells, physicalClosures: r.closures.length,
+      countDifferences: r.closures.filter(c => Math.abs(c.countDifference) > r.epsilon).length,
+      fileDifferences: result.fileComparison.differences.length, missingFileCells: result.fileComparison.missing.length,
+      recipeOrders: result.recipes.includedOrders, recipeSourceOrders: result.recipes.sourceOrders,
+      exportUrl: '/api/integrations/toteat/inventory/pilot/export' });
+  });
+  app.get('/api/integrations/toteat/inventory/pilot/export', (req, res) => {
+    const file = path.join(inventoryPilotRoot, 'Piloto_Kardex_Brewit.xlsx');
+    return fs.existsSync(file) ? res.download(file, 'Piloto_Kardex_Brewit_23-30_Agosto_2026.xlsx') : res.sendStatus(404);
+  });
   app.use('/uploads/weeks', express.static(weeksRoot, { fallthrough: false, dotfiles: 'deny' }));
   app.use('/uploads/transactions', express.static(transactionsRoot, { fallthrough: false, dotfiles: 'deny' }));
   app.use('/uploads/masters', express.static(mastersRoot, { fallthrough: false, dotfiles: 'deny' }));
@@ -4050,6 +4174,10 @@ function createApp(options = {}) {
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
+  app.get('/toteat-api-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-api-view.js')));
+  app.get('/toteat-purchases-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-purchases-view.js')));
+  app.get('/toteat-masters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-masters-view.js')));
+  app.get('/toteat-stock-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-stock-view.js')));
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
   app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
@@ -5860,7 +5988,7 @@ function createApp(options = {}) {
             // Toteat's line-level "Precio a Pagar" is already the final amount after
             // discounts. Apply "Descuento" only when that final-price column is absent.
             const lineGrossSales = paid !== null ? paid : list + discount;
-            const quantity = Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
+            const quantity = row['API Source'] === 'Toteat' ? (numericValue(rowValue(row, ['Cantidad'])) ?? 0) : Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
             const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
             const orderDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento total'])) || 0;
             const existing = orders.get(orderKey) || {
@@ -7839,7 +7967,7 @@ function createApp(options = {}) {
       const balanceDate = parsed.groups.filter(group => group.date <= referenceDate).at(-1)?.date;
       if (!balanceDate) throw new Error(`No hay un saldo de Kardex disponible al ${referenceDate} o en una fecha anterior.`);
       const warnings = [];
-      const catalogMaster = latestMasterFile('master-catalog', balanceDate);
+      const catalogMaster = latestMasterFile('master-catalog', balanceDate, location.id);
       let catalog = null;
       let assignments = new Map();
       if (catalogMaster) {
@@ -7860,7 +7988,7 @@ function createApp(options = {}) {
       ];
       const hierarchyMasters = {};
       hierarchyDefinitions.forEach(([type, field, label, parser]) => {
-        const master = latestMasterFile(field, balanceDate);
+        const master = latestMasterFile(field, balanceDate, location.id);
         hierarchyMasters[field] = master;
         if (!master) return;
         try {
@@ -7904,7 +8032,7 @@ function createApp(options = {}) {
     const waste = latestWeeklyFile(location.id, 'waste');
     if (!waste) return res.status(404).json({ error: 'No hay un archivo de Merma disponible para esta cafetería.' });
     try {
-      const catalogMaster = latestMasterFile('master-catalog', req.query.dateTo);
+      const catalogMaster = latestMasterFile('master-catalog', req.query.dateTo, location.id);
       const catalog = catalogMaster ? parseIngredientCatalog(catalogMaster.filePath) : null;
       const report = buildWasteSummary(
         mergedKardexData(location.id, 'waste'),
@@ -7932,9 +8060,9 @@ function createApp(options = {}) {
     const stored = latestWeeklyFile(location.id, field);
     if (!stored) return res.status(404).json({ error: `No hay un archivo de ${labels[field]} disponible.` });
     try {
-      const recipeResolution = resolveRecipes(req.query.dateTo);
+      const recipeResolution = resolveRecipes(req.query.dateTo, location.id);
       const recipeMaster = recipeResolution.primary;
-      const catalogMaster = latestMasterFile('master-catalog', req.query.dateTo);
+      const catalogMaster = latestMasterFile('master-catalog', req.query.dateTo, location.id);
       if (!recipeMaster || !recipeResolution.recipes.size) throw new Error('No hay un maestro de recetas disponible.');
       if (!catalogMaster) throw new Error('No hay un maestro de productos / ingredientes / extras vigente para la fecha final seleccionada.');
       const catalog = parseIngredientCatalog(catalogMaster.filePath);
@@ -7958,28 +8086,47 @@ function createApp(options = {}) {
     }
   });
 
+  app.get('/api/inventory/calendar', (req, res) => {
+    try {
+      const location=activeLocation(req.query.location);if(!location)throw Error('Selecciona una ubicación activa.');
+      const originalMode=req.query.source==='originals';
+      const stock=stockSync.current(location.id);
+      const warehouse=stock?.warehouses.find(w=>Number(w.custom_id)===(location.type==='warehouse'?1:2));
+      const countDates=[...new Set((stock?.daily||[]).filter(r=>r.warehouse===warehouse?.id&&r.physicalCount).map(r=>r.date))].sort();
+      const parsed=originalMode?null:mergedKardexData(location.id,'kardex');
+      const range=originalMode?stock?.range:parsed?.groups.length?{from:parsed.groups[0].date,to:parsed.groups.at(-1).date}:null;
+      if(!range)throw Error('Actualiza primero las fuentes de inventario.');
+      res.json({countDates,from:range.from,to:require('./inventory-boundaries').advance(range.to,1)});
+    }catch(error){res.status(400).json({error:error.message});}
+  });
+
   app.post('/api/inventory/process', (req, res) => {
     const location = activeLocation(req.body?.location);
     if (!location) return res.status(400).json({ error: 'Select a valid active location.' });
-    const kardex = latestWeeklyFile(location.id, 'kardex');
+    const originalMode = req.body?.source === 'originals';
+    if (req.body?.source && !['files', 'originals'].includes(req.body.source)) return res.status(400).json({ error: 'Fuente de inventario inválida.' });
+    const kardex = originalMode ? { originalName: 'Fuentes originales Toteat', source: 'toteat-originals' } : latestWeeklyFile(location.id, 'kardex');
     if (!kardex) return res.status(404).json({ error: 'No Kardex file is available for this location.' });
     try {
-      const movementDateFrom = req.body?.movementDateFrom || req.body?.dateFrom;
-      const movementDateTo = req.body?.movementDateTo || req.body?.dateTo;
-      const parsed = mergedKardexData(location.id, 'kardex');
+      const boundaryMode=req.body?.criteriaMode==='count-boundaries';
+      const movementDateFrom = boundaryMode?req.body.initialInventoryDate:req.body?.movementDateFrom || req.body?.dateFrom;
+      const movementDateTo = boundaryMode?require('./inventory-boundaries').advance(req.body.finalInventoryDate,-1):req.body?.movementDateTo || req.body?.dateTo;
       const hasCustomSelection = req.body?.initialInventoryDate || req.body?.finalInventoryDate;
       const selection = hasCustomSelection ? {
         initialDate: req.body?.initialInventoryDate,
-        initialBasis: req.body?.initialInventoryBasis,
+        initialBasis: boundaryMode?'initial':req.body?.initialInventoryBasis,
         finalDate: req.body?.finalInventoryDate,
-        finalBasis: req.body?.finalInventoryBasis
+        finalBasis: boundaryMode?'initial':req.body?.finalInventoryBasis
       } : null;
+      const stock = originalMode ? stockSync.rebuild(location.id) : boundaryMode ? stockSync.current(location.id) : null;
+      const original = originalMode ? (boundaryMode ? { parsed:null, excluded:[],physicalFinalItems:0 } : require('./inventory-original-report').originalReportData(stock, location, selection, movementDateFrom, movementDateTo)) : null;
+      const parsed = originalMode ? original.parsed : mergedKardexData(location.id, 'kardex');
       const balanceDate = selection?.finalDate
         || parsed.groups.find(group => group.date > movementDateTo)?.date
         || movementDateTo;
-      const recipeResolution = resolveRecipes(balanceDate);
+      const recipeResolution = resolveRecipes(originalMode ? stock.masterObservedAt.slice(0,10) : balanceDate, location.id);
       const recipeMaster = recipeResolution.primary;
-      const catalogMaster = latestMasterFile('master-catalog', balanceDate);
+      const catalogMaster = latestMasterFile('master-catalog', originalMode ? stock.masterObservedAt.slice(0,10) : balanceDate, location.id);
       let recipes = null;
       let ingredientCatalog = null;
       let catalogAssignments = null;
@@ -7999,7 +8146,7 @@ function createApp(options = {}) {
         masterErrors.push(error.message);
       }
       const masterError = masterErrors.join(' ');
-      const costResolver = buildCostResolver(balanceDate, [location.id]);
+      const costResolver = buildCostResolver(balanceDate, [originalMode && location.type === 'warehouse' ? 'store-1' : location.id], originalMode ? { catalog: ingredientCatalog, recipes } : {});
       const consumption = {};
       for (const [field, label] of [['marketing', 'Consumo de marketing'], ['employees', 'Consumo de colaboradores']]) {
         const stored = latestWeeklyFile(location.id, field);
@@ -8022,7 +8169,12 @@ function createApp(options = {}) {
       }
       let waste = { label: 'Merma', available: false };
       const storedWaste = latestWeeklyFile(location.id, 'waste');
-      if (storedWaste) {
+      if (originalMode) {
+        try {
+          const originalWaste = require('./inventory-original-report').originalReportData(stock, location, boundaryMode ? {...selection,finalDate:movementDateTo} : selection, movementDateFrom, movementDateTo, { waste: true });
+          waste = { label: 'Merma', available: true, source: { originalName: 'Movimientos originales de bodega de merma' }, report: buildWasteSummary(originalWaste.parsed, movementDateFrom, movementDateTo, ingredientCatalog, costResolver) };
+        } catch (error) { waste = { label: 'Merma', available: false, error: error.message }; }
+      } else if (storedWaste) {
         try {
           const { filePath, ...publicSource } = storedWaste;
           waste = {
@@ -8041,15 +8193,50 @@ function createApp(options = {}) {
           waste = { label: 'Merma', available: true, error: error.message };
         }
       }
+      let boundaryReport=null;
+      if(boundaryMode) {
+        const cache=new Map();
+        const correction=(code,unit,from,to)=>{
+          const key=from+'|'+to;
+          if(!cache.has(key)) {
+            const sales=periodSalesData(location.id,from,to,{apiOnly:originalMode});
+            if(originalMode){const included=new Set((stock.includedOrders||[]).map(id=>`${location.id}:order:${id}`));sales.rows=sales.rows.filter(r=>included.has(r.orderKey));sales.orderFacts=sales.orderFacts.filter(r=>included.has(r.orderKey));}
+            const milk=lac001SubstitutionSummary(sales,from,to,recipes,ingredientCatalog,costResolver);
+            const syrup=syrupSauceSubstitutionSummary(sales,from,to,recipes,ingredientCatalog,catalogAssignments,costResolver);
+            const packaging=inventoryAvoidedPackagingSummary(location,sales,from,to,recipes,ingredientCatalog,costResolver);
+            const internal=[];
+            for(const field of ['marketing','employees']) {
+              if(!latestWeeklyFile(location.id,field))continue;
+              const products=mergedConsumptionProducts(location.id,field,from,to);
+              const ingredients=recipes&&ingredientCatalog?buildIngredientConsumption(products.products,recipes,ingredientCatalog,costResolver):{items:[]};
+              internal.push({available:true,products,ingredients});
+            }
+            cache.set(key,{milk,syrup,packaging,internal});
+          }
+          const c=cache.get(key);
+          const additions=[{code:'LAC001',unit:'L',quantity:c.milk.lac001VolumeLiters},...c.syrup.items.filter(i=>i.status==='resolved').map(i=>({code:i.originalCode,unit:i.unit,quantity:i.theoreticalQuantity})),...c.packaging.avoidedDisposablePackaging];
+          return additions.filter(i=>i.code===code).reduce((n,i)=>n+(convertQuantityUnit(i.quantity,i.unit,unit)??0),0)-c.internal.reduce((n,r)=>n+consumptionQuantityForKardex(r,code,unit),0);
+        };
+        let basis=stock;
+        if(!originalMode) {
+          const warehouseId='file';const physical=new Set((stock?.daily||[]).filter(r=>r.physicalCount&&stock.warehouses.find(w=>w.id===r.warehouse)?.custom_id===(location.type==='warehouse'?1:2)).map(r=>r.code+'|'+r.date));
+          const fields={opening:'ii -',closing:'if -',purchase:'buy -',use:'uso -',transfer_local_in:'trl-in -',transfer_local_out:'trl-out -',transfer_warehouse_in:'mov-in -',transfer_warehouse_out:'mov-out -',transformed_in:'trn-in -',transformed_out:'trn-out -'};
+          basis={range:{from:parsed.groups[0].date,to:parsed.groups.at(-1).date},warehouses:[{id:warehouseId,custom_id:location.type==='warehouse'?1:2}],daily:parsed.products.flatMap(p=>parsed.groups.map((g,index)=>({code:p.code,name:p.name,unit:p.unit,date:g.date,warehouse:warehouseId,physicalCount:physical.has(p.code+'|'+g.date),initialRecord:index===0,...Object.fromEntries(Object.entries(fields).map(([field,prefix])=>[field,kardexMetricValue(p,g,m=>m.startsWith(prefix))]))})))};
+        }
+        boundaryReport=require('./inventory-boundaries').countBoundaryReport(basis,location,selection.initialDate,selection.finalDate,correction);
+        if(original)Object.assign(original,{excluded:boundaryReport.excluded,physicalFinalItems:boundaryReport.physicalFinalItems});
+      }
       const report = enrichKardexReport(
-        buildKardexInventoryReport(parsed, movementDateFrom, movementDateTo, selection),
+        boundaryReport || buildKardexInventoryReport(parsed, movementDateFrom, movementDateTo, selection),
         consumption,
         ingredientCatalog,
         costResolver
       );
-      const salesData = periodSalesData(location.id, movementDateFrom, movementDateTo);
+      const salesData = periodSalesData(location.id, movementDateFrom, movementDateTo, { apiOnly: originalMode });
+      const includedOrderKeys = new Set((stock?.includedOrders || []).map(id => `${location.id}:order:${id}`));
+      const adjustmentSales = originalMode ? { ...salesData, rows: salesData.rows.filter(row => includedOrderKeys.has(row.orderKey)), orderFacts: salesData.orderFacts.filter(row => includedOrderKeys.has(row.orderKey)) } : salesData;
       const lac001Substitutions = lac001SubstitutionSummary(
-        salesData,
+        adjustmentSales,
         movementDateFrom,
         movementDateTo,
         recipes,
@@ -8057,7 +8244,7 @@ function createApp(options = {}) {
         costResolver
       );
       const syrupSauceSubstitutions = syrupSauceSubstitutionSummary(
-        salesData,
+        adjustmentSales,
         movementDateFrom,
         movementDateTo,
         recipes,
@@ -8067,13 +8254,20 @@ function createApp(options = {}) {
       );
       const avoidedPackaging = inventoryAvoidedPackagingSummary(
         location,
-        salesData,
+        adjustmentSales,
         movementDateFrom,
         movementDateTo,
         recipes,
         ingredientCatalog,
         costResolver
       );
+      if(boundaryMode) {
+        for(const item of report.items) {
+          const credits=[{code:'LAC001',unit:'L',quantity:lac001Substitutions.lac001VolumeLiters},...syrupSauceSubstitutions.items.filter(i=>i.status==='resolved').map(i=>({code:i.originalCode,unit:i.unit,quantity:i.theoreticalQuantity})),...avoidedPackaging.avoidedDisposablePackaging];
+          item.compensationQuantity=credits.filter(c=>c.code===item.code).reduce((n,c)=>n+(convertQuantityUnit(c.quantity,c.unit,item.unit)??0),0);
+          item.adjustedTheoreticalFinal=item.theoreticalFinal+item.compensationQuantity;
+        }
+      }
       const executiveSummary = buildInventoryExecutiveSummary({
         location,
         dateFrom: movementDateFrom,
@@ -8086,11 +8280,43 @@ function createApp(options = {}) {
         avoidedPackaging,
         salesData
       });
+      if (originalMode) {
+        const unavailable = salesData.filesRead ? [] : ['adjustedKardexTotalCost', 'lac001AdjustedKardexCost', 'syrupSauceSubstitutions', 'syrupSauceAdjustedKardexCost', 'avoidedPackaging', 'packagingKardexCost', 'packagingAdjustedKardexCost'];
+        if (original.physicalFinalItems !== report.itemCount) unavailable.push('physicalInventoryValue');
+        for (const key of unavailable) Object.assign(executiveSummary.metrics[key], { available: false, amount: null, percentOfNetSales: null });
+      }
+      if(boundaryMode) {
+        const amount=report.items.reduce((n,i)=>n+(i.costAvailable?i.adjustedTheoreticalFinal*i.unitCost:0),0);
+        Object.assign(executiveSummary.metrics.theoreticalFinalInventoryValue,{amount,percentOfNetSales:executiveSummary.netSales?amount/executiveSummary.netSales*100:null});
+      }
+      if(boundaryMode && report.items.some(i=>!i.finalIsPhysical)) {
+        for(const key of ['physicalInventoryValue','kardexTotalCost','adjustedKardexTotalCost','lac001AdjustedKardexCost','syrupSauceAdjustedKardexCost','packagingKardexCost','packagingAdjustedKardexCost'])Object.assign(executiveSummary.metrics[key],{available:false,amount:null,percentOfNetSales:null});
+      }
+      // The executive summary retains its baseline and adjusted indicators.
+      // Detail rows expose the compensated difference without applying credits twice.
+      if (boundaryMode) {
+        report.totalCostBeforeCompensations = report.totalCost;
+        for (const item of report.items) {
+          item.differenceBeforeCompensations = item.difference;
+          item.totalCostBeforeCompensations = item.totalCost;
+          item.difference = item.finalInventory === null ? null : item.finalInventory - item.adjustedTheoreticalFinal;
+          item.totalCost = item.difference === null ? null : item.difference * item.unitCost;
+        }
+        report.totalCost = report.items.some(item => item.totalCost === null)
+          ? null : report.items.reduce((sum, item) => sum + item.totalCost, 0);
+      }
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       return res.json({
         location: publicLocation(location),
         source,
+        provenance: originalMode ? {
+          mode: 'originals', label: 'Fuentes originales Toteat · informe provisional', capturedAt: stock.sourceCapturedAt,
+          range: stock.range, masterObservedAt: stock.masterObservedAt, dependencies: stock.dependencies,
+          excluded: original.excluded, issues: stock.issues, assumptions: stock.assumptions,
+          physicalFinalItems: original.physicalFinalItems,
+          note: 'Inventario y merma calculados desde fuentes originales. Marketing y colaboradores usan sus archivos disponibles. Consumo de ventas provisional; productos sin apertura conocida excluidos. Valoración estimada con el resolver de compras/maestros del informe, no costo histórico certificado de Toteat. El saldo final puede ser calculado cuando no existe toma física. El consumo base incluye productos y extras. Las sustituciones de leche, syrup/salsas y envases no usados se compensan una sola vez en el resumen ajustado, únicamente para las órdenes incorporadas al cálculo.'
+        } : { mode: 'files', label: 'Archivos Kardex y Merma de Toteat' },
         waste,
         consumption,
         lac001Substitutions,
@@ -8209,14 +8435,14 @@ function createApp(options = {}) {
     return { key: 'unknown', ambiguous: takeaway && dineIn };
   }
 
-  function paymentDetailModes(stores, warnings, orderFacts = [], sourcePeriod = null) {
+  function paymentDetailModes(stores, warnings, orderFacts = [], sourcePeriod = null, apiOnly = false) {
     const detailsByOrder = new Map();
     const amountFields = new Set();
     const filesReadByLocation = new Map();
     const grossSalesByOrder = new Map(orderFacts.map(fact => [fact.orderKey, fact.net * 1.19]));
     let filesRead = 0;
     for (const location of stores) {
-      for (const stored of storedTransactionFiles(location.id, 'payment-details')
+      for (const stored of (apiOnly ? toteatSalesSync?.source(location.id, 'payment-details') || [] : storedTransactionFiles(location.id, 'payment-details'))
         .filter(file => storedFileIntersectsPeriod(file, sourcePeriod))) {
         try {
           const rows = readSalesRows(stored.filePath);
@@ -8242,7 +8468,7 @@ function createApp(options = {}) {
                 ?? numericValue(rowValue(row, ['A Pagar', 'Due'])) ?? 0);
               return amount > 0 && amount < 200;
             });
-          const amountScale = usesThousands ? 1000 : 1;
+          const amountScale = rows.some(row => row['API Moneda'] === 'CLP') ? 1 : usesThousands ? 1000 : 1;
           for (const row of rows) {
             const dateOrder = dateOrderForHeaders(Object.keys(row));
             const orderId = normalizedTransactionId(rowValue(row, ['Comanda', 'Ticket', 'ID de orden', 'Id de orden']));
@@ -8256,17 +8482,17 @@ function createApp(options = {}) {
             if (comment) detail.comments.add(comment);
             const englishAmount = rowValue(row, ['Due']);
             const spanishAmount = rowValue(row, ['A Pagar']);
-            const amount = numericValue(englishAmount ?? spanishAmount);
+            const amount = numericValue(row['API Total Orden'] ?? englishAmount ?? spanishAmount);
             if (amount !== null) {
               detail.amounts.add(Math.round(amount * amountScale * 100) / 100);
               detail.amountField = englishAmount !== null && englishAmount !== undefined ? 'Due' : 'A Pagar';
               amountFields.add(detail.amountField);
             }
-            const orderTotal = numericValue(rowValue(row, ['Total', 'Order Total']));
+            const orderTotal = numericValue(row['API Total Orden'] ?? rowValue(row, ['Total', 'Order Total']));
             if (orderTotal !== null) detail.totals.add(Math.round(orderTotal * amountScale * 100) / 100);
-            const paidTotal = numericValue(rowValue(row, ['Pagos', 'Payments', 'Paid']));
+            const paidTotal = numericValue(row['API Pagado Orden'] ?? rowValue(row, ['Pagos', 'Payments', 'Paid']));
             if (paidTotal !== null) detail.paidTotals.add(Math.round(paidTotal * amountScale * 100) / 100);
-            const gratuity = numericValue(rowValue(row, ['Propina', 'Gratuity', 'Tip']));
+            const gratuity = numericValue(row['API Propina Orden'] ?? rowValue(row, ['Propina', 'Gratuity', 'Tip']));
             if (gratuity !== null) detail.gratuities.add(Math.round(gratuity * amountScale * 100) / 100);
             detailsByOrder.set(orderKey, detail);
           }
@@ -8352,7 +8578,7 @@ function createApp(options = {}) {
 
   function inventoryAvoidedPackagingSummary(location, salesData, dateFrom, dateTo, recipes, catalog, costResolver = null) {
     const warnings = [...salesData.warnings];
-    const modeData = paymentDetailModes([location], warnings, salesData.orderFacts);
+    const modeData = paymentDetailModes([location], warnings, salesData.orderFacts, { from: dateFrom, to: dateTo }, salesData.apiOnly);
     const modeFor = orderKey => modeData.modes.get(orderKey)?.key || 'unknown';
     const packaging = avoidedPackagingForProducts(salesData.rows, modeFor, recipes, catalog, costResolver);
     const totalOrders = salesData.orderFacts.length;
@@ -11101,7 +11327,7 @@ function createApp(options = {}) {
   app.get('/api/transactions/:location/:field/preview', (req, res) => {
     const location = activeLocation(req.params.location);
     if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
-    const stored = storedTransactionFiles(location.id, req.params.field).find(item => item.sourceId === req.query.source);
+    const stored = storedFieldFiles(location.id, req.params.field).find(item => item.sourceId === req.query.source);
     if (!stored) return res.status(404).json({ error: 'No se encontró la carga transaccional.' });
     try {
       return res.json(buildSpreadsheetPreview(stored.filePath, stored.record.originalName || stored.record.name, {
@@ -11115,6 +11341,7 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/transactions/:location/:field', (req, res) => {
+    if (String(req.query.source || '').startsWith('toteat-api:')) return res.status(409).json({ error: 'Esta fuente se actualiza desde Toteat. Administra la sincronización en Configuración.' });
     const location = activeLocation(req.params.location);
     if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
     const index = readTransactionIndex(location.id);
@@ -11133,6 +11360,7 @@ function createApp(options = {}) {
     const field = String(req.params.field || '');
     const action = String(req.body?.action || '');
     if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
+    if (toteatSalesSync.source(location.id, field).length || toteatSalesSync.purchases.source(location.id, field).length) return res.status(409).json({ error: 'Esta categoría incluye datos por API. Administra su sincronización en Configuración; no se eliminaron datos.' });
     if (!fieldsForLocation(location.type).includes(field)) return res.status(400).json({ error: 'La categoría no corresponde a esta ubicación.' });
     if (!['last', 'all'].includes(action)) return res.status(400).json({ error: 'Selecciona si deseas revertir la última carga o eliminar toda la información.' });
     if (req.body?.confirmed !== true || req.body?.confirmationText !== 'ELIMINAR') {
@@ -11527,7 +11755,7 @@ function createApp(options = {}) {
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || DEFAULT_PORT;
-  createApp().listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
+  createApp({ enableToteatSync: true }).listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
 }
 
 module.exports = {

@@ -1,0 +1,24 @@
+// Rebuild the independent August pilot from saved original documents. No network or Toteat writes.
+const fs=require('node:fs'),path=require('node:path');
+const {buildLedger,createStockSync}=require('../toteat-stock');
+const {createMasterSync}=require('../toteat-masters');
+const {compareFiles}=require('./toteat-inventory-pilot');
+const uploadsRoot=path.resolve(process.env.BREWIT_UPLOADS_ROOT||path.join(__dirname,'../uploads'));
+const read=p=>JSON.parse(fs.readFileSync(p,'utf8'));
+const activeLocation=id=>id==='store-1'?{type:'store'}:null;
+const master=createMasterSync({uploadsRoot,activeLocation,credentials:()=>({})}).sharedCurrent();
+if(!master)throw Error('Faltan los maestros compartidos de La Concepción.');
+const products=master.products.map(p=>({...p,custom_id:p.code,stock_enabled:p.stockManaged,stock_unit:p.stockUnit,name:{translations:{default:p.name}}}));
+const dependency=kind=>{const base=path.join(uploadsRoot,'.integrations/toteat-api',kind,'store-1');const pointer=read(path.join(base,'current.json'));return read(path.join(base,pointer.version,'state.json'));};
+const source=read(path.join(uploadsRoot,'.integrations/toteat-api/operations-review/store-1.json'));
+if(source.range.from>'2026-08-23'||source.range.to<'2026-08-30')throw Error('La captura original no cubre el piloto.');
+source.range={...source.range,from:'2026-08-23',to:'2026-08-30'};
+for(const kind of Object.keys(source.operations))source.operations[kind]=source.operations[kind].filter(d=>d.registration_date.slice(0,10)>=source.range.from&&d.registration_date.slice(0,10)<=source.range.to);
+const result=buildLedger(source,products,dependency('sales'),dependency('purchases'));
+Object.assign(result,{location:'store-1',warehouses:source.warehouses,masterObservedAt:master.observedAt});
+const comparison=compareFiles(uploadsRoot,result,result);
+const output=path.join(uploadsRoot,'reports/inventory/own-kardex');fs.mkdirSync(output,{recursive:true});
+fs.writeFileSync(path.join(output,'pilot-23-30.json'),JSON.stringify({result,comparison}));
+const sync=createStockSync({uploadsRoot,activeLocation,credentials:()=>({}),masters:()=>master});
+fs.writeFileSync(path.join(output,'Piloto_Kardex_Propio_23-30_Agosto.xlsx'),sync.workbook(result,comparison));
+console.log(JSON.stringify({documents:result.documents.reduce((m,r)=>(m[r.kind]=(m[r.kind]||0)+1,m),{}),differences:comparison.differences.reduce((m,r)=>(m[r.field]=(m[r.field]||0)+1,m),{}),issues:result.issues.reduce((m,r)=>(m[r.kind]=(m[r.kind]||0)+1,m),{}),compared:comparison.comparedCells,missing:comparison.missing.length}));
