@@ -889,11 +889,14 @@ function refreshFinancialGeneralExpensesLocationFilter() {
 }
 
 function financialGeneralExpenseInputValue(input) {
-  const digits = String(input?.value || '').replace(/[^\d]/g, '');
-  return digits ? Number(digits) : 0;
+  const raw=String(input?.value || '').trim();
+  if(input?.dataset.category==='inventoryDifference' && !raw)return null;
+  const digits=raw.replace(/[^\d]/g,'');
+  return (raw.startsWith('-') && input?.dataset.category==='inventoryDifference' ? -1 : 1)*(digits?Number(digits):0);
 }
 
 function formatFinancialGeneralExpenseInput(input) {
+  if(input.dataset.category==='inventoryDifference' && !input.value.trim())return;
   input.value = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 })
     .format(financialGeneralExpenseInputValue(input));
 }
@@ -908,7 +911,7 @@ function copyPreviousFinancialExpenseMonth(monthNumber, monthLabels) {
   for (const category of financialGeneralExpensesGridState.categories) {
     const source = document.querySelector(`#financial-general-expenses-grid input[data-category="${category.key}"][data-month="${sourceMonth}"]`);
     const target = document.querySelector(`#financial-general-expenses-grid input[data-category="${category.key}"][data-month="${targetMonth}"]`);
-    target.value = String(financialGeneralExpenseInputValue(source));
+    target.value = financialGeneralExpenseInputValue(source)===null ? '' : String(financialGeneralExpenseInputValue(source));
     formatFinancialGeneralExpenseInput(target);
     target.classList.add('modified');
   }
@@ -987,14 +990,16 @@ async function loadFinancialGeneralExpenses() {
         const input = document.createElement('input');
         input.type = 'text'; input.inputMode = 'numeric'; input.autocomplete = 'off';
         input.name = category.key; input.dataset.category = category.key; input.dataset.month = month;
-        input.value = String(Number(data.values[category.key]) || 0);
+        input.value = category.key==='inventoryDifference' && data.values[category.key]==null ? '' : String(Number(data.values[category.key]) || 0);
+        if(category.key==='inventoryDifference'){input.placeholder='Automático';input.title='Vacío: cálculo automático. Positivo: pérdida/gasto; negativo: sobrante. Se prorratea por días del mes.';}
         formatFinancialGeneralExpenseInput(input);
         input.classList.toggle('unconfigured', !data.configured);
         input.setAttribute('aria-label', `${category.label}, ${monthLabels[index]} ${year}`);
-        input.addEventListener('focus', () => { input.value = String(financialGeneralExpenseInputValue(input)); input.select(); });
+        input.addEventListener('focus', () => { input.value = financialGeneralExpenseInputValue(input)===null ? '' : String(financialGeneralExpenseInputValue(input)); input.select(); });
         input.addEventListener('blur', () => formatFinancialGeneralExpenseInput(input));
         input.addEventListener('input', () => {
-          input.value = input.value.replace(/[^\d]/g, '').slice(0, 10);
+          const sign=category.key==='inventoryDifference' && input.value.startsWith('-')?'-':'';
+          input.value = sign+input.value.replace(/[^\d]/g, '').slice(0, 10);
           financialGeneralExpensesGridState.dirtyMonths.add(month);
           document.querySelectorAll(`#financial-general-expenses-grid input[data-month="${month}"]`)
             .forEach(monthInput => monthInput.classList.add('modified'));
@@ -1145,7 +1150,9 @@ function renderFinancialStatement(data) {
   statement.expenses.forEach(expense => {
     const coverage = financialCoverageLabel(expense);
     let context = `Cobertura: ${coverage}.`;
-    if (expense.key === 'inventoryDifference' && expense.available) {
+    if(expense.key==='inventoryDifference' && expense.locations?.some(item=>item.source==='monthly-override')) {
+      context=`Incluye montos mensuales digitados, prorrateados por días, que reemplazan el cálculo automático en los meses informados. Cobertura: ${coverage}.`;
+    } else if (expense.key === 'inventoryDifference' && expense.available) {
       const adjustments = (expense.locations || []).reduce((totalAdjustment, location) => {
         const detail = location.adjustments || {};
         totalAdjustment.lac001 += Number(detail.lac001SubstitutionCost) || 0;
@@ -1302,6 +1309,9 @@ function renderFinancialResults(data) {
   const missingCosts = data.revenue.missingCostProducts || [];
   const missingPanel = document.getElementById('financial-missing-costs');
   missingPanel.hidden = !missingCosts.length;
+  const costsEmpty = document.getElementById('financial-costs-empty');
+  costsEmpty.hidden = Boolean(missingCosts.length);
+  costsEmpty.textContent = 'No hay productos sin costo calculable en el período consultado.';
   if (missingCosts.length) {
     const affectedLines = missingCosts.reduce((sum, item) => sum + item.lines, 0);
     const affectedSales = missingCosts.reduce((sum, item) => sum + item.netSales, 0);
@@ -3153,6 +3163,7 @@ function findingsSummaryCard(label, value, className = '') {
 }
 
 function renderFindingsView() {
+  document.getElementById('print-findings').disabled = !findingsViewState;
   const summary = document.getElementById('findings-summary');
   const context = document.getElementById('findings-context');
   const report = document.getElementById('findings-report');
@@ -3208,7 +3219,7 @@ function renderFindingsView() {
     formatAxis: integerFormat
   });
   const sourceText = data.sources.length
-    ? `Fuentes maestras: ${data.sources.map(source => `${source.type} “${source.name}” (vigente desde ${formatReportDate(source.validFrom)})`).join(' · ')}.`
+    ? `Fuentes: ${data.sources.map(source => `${source.type}: ${source.name}${source.validFrom ? ` (vigente desde ${formatReportDate(source.validFrom)})` : ''}${source.updatedAt ? ` · actualización ${new Date(source.updatedAt).toLocaleString('es-CL')}` : ''}`).join(' · ')}.`
     : 'No se encontraron fuentes maestras vigentes.';
   const warningText = data.warnings.length ? ` Advertencias de lectura: ${data.warnings.join(' ')}` : '';
   context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${data.summary.salesRowsRead} filas de ventas, ${data.summary.purchaseRowsRead} líneas de compra y ${data.summary.ordersRead} órdenes revisadas. ${sourceText}${warningText}`;
@@ -3348,6 +3359,40 @@ async function updateStoredFinding(id, changes, rerender) {
   }
 }
 
+function printFindingsReport() {
+  const data = findingsViewState;
+  if (!data) return;
+  const root = document.createElement('article');
+  root.id = 'findings-print-document';
+  const add = (tag, text) => { const element = document.createElement(tag); element.textContent = text; root.append(element); };
+  add('h1', 'Brewit · Hallazgos que requieren revisión');
+  const filter = document.getElementById('findings-status-filter').value;
+  add('p', `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${filter === 'open' ? 'Solo abiertos' : 'Todos los hallazgos'}`);
+  add('p', `Revisión: ${new Date(data.generatedAt).toLocaleString('es-CL')} · Emitido: ${new Date().toLocaleString('es-CL')}`);
+  add('p', 'Cada hallazgo es una alerta para confirmar, no una corrección automática. Se incluyen las observaciones guardadas.');
+  const all = data.sections.flatMap(section => section.findings);
+  const visible = all.filter(finding => filter !== 'open' || !finding.closed);
+  add('p', `${visible.length} hallazgos incluidos · ${visible.filter(f => !f.closed).length} abiertos · ${visible.filter(f => f.closed).length} cerrados · ${visible.filter(f => f.severity === 'high').length} de prioridad alta.`);
+  const report = document.getElementById('findings-report').cloneNode(true);
+  report.removeAttribute('id');
+  report.querySelectorAll('.finding-item').forEach(item => {
+    const finding = all.find(f => f.id === item.dataset.findingId);
+    const review = document.createElement('div');
+    review.className = 'finding-print-review';
+    review.textContent = `Estado: ${finding.closed ? 'Cerrado' : 'Abierto'}${finding.closedAt ? ' · Cierre: ' + new Date(finding.closedAt).toLocaleString('es-CL') : ''}\nObservaciones: ${finding.observations || 'Sin observaciones guardadas.'}`;
+    item.querySelector('.finding-review-controls').replaceWith(review);
+  });
+  root.append(report);
+  add('h2', 'Fuentes y cobertura');
+  add('p', document.getElementById('findings-context').textContent);
+  const previousTitle = document.title;
+  document.title = `Hallazgos Brewit - ${data.scope.label} - ${data.period.from} a ${data.period.to}`;
+  document.body.append(root);
+  document.body.classList.add('printing-findings');
+  try { window.print(); }
+  finally { root.remove(); document.body.classList.remove('printing-findings'); document.title = previousTitle; }
+}
+
 async function loadFindingsView() {
   const status = document.getElementById('findings-status');
   const button = document.getElementById('run-findings');
@@ -3357,6 +3402,7 @@ async function loadFindingsView() {
   if (dateFrom) params.set('dateFrom', dateFrom);
   if (dateTo) params.set('dateTo', dateTo);
   button.disabled = true;
+  document.getElementById('print-findings').disabled = true;
   setStatus(status, 'Revisando productos, recetas, costos, inventarios, órdenes, compras y ventas…');
   try {
     const data = await apiRequest(`/api/findings?${params}`);
@@ -3613,7 +3659,12 @@ function renderSalesServiceModes() {
 function renderSalesInsights() {
   if (!salesDashboardState) return;
   const key = document.getElementById('sales-insight-period').value;
-  const insight = salesDashboardState.sales.productInsights[key];
+  document.getElementById('sales-insight-custom').hidden = key !== 'custom';
+  const rankBy = document.getElementById('sales-ranking-order').value;
+  const originalInsight = salesDashboardState.sales.productInsights[key];
+  if (!originalInsight) return;
+  setStatus(document.getElementById('sales-insight-range-status'), `${formatReportDate(originalInsight.period.from)} – ${formatReportDate(originalInsight.period.to)} · Se consideran las ventas disponibles para el período seleccionado.`, 'muted');
+  const insight = originalInsight.analysisProducts ? {...originalInsight,...window.buildFilteredSalesInsights(originalInsight.analysisProducts,{bar:document.getElementById('sales-insight-bar').value,groupFormats:document.getElementById('sales-insight-formats').checked,rankBy})} : originalInsight;
   const productContainer = document.getElementById('sales-top-products');
   if (!insight.topProducts.length) {
     productContainer.textContent = 'No hay productos vendidos en este período.';
@@ -3634,8 +3685,10 @@ function renderSalesInsights() {
       const values = document.createElement('div');
       values.className = 'sales-ranked-values';
       values.innerHTML = `<strong></strong><small></small>`;
-      values.querySelector('strong').textContent = `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(product.quantity)} un.`;
-      values.querySelector('small').textContent = formatClp(product.netSales);
+      const units = `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(product.quantity)} un.`;
+      values.querySelector('strong').textContent = rankBy === 'netSales' ? formatClp(product.netSales) : units;
+      values.querySelector('small').textContent = rankBy === 'netSales' ? units : formatClp(product.netSales);
+      const share=document.createElement('small');share.textContent=`${(product.salesSharePercent||0).toFixed(2)}% de ventas · Acum. ${(product.cumulativeSalesSharePercent||0).toFixed(2)}%`;values.append(share);
       row.append(rank, name, values);
       return row;
     }));
@@ -3722,7 +3775,7 @@ function renderSalesInsights() {
     type: 'bar',
     allowedTypes: ['bar'],
     title: 'Productos más vendidos',
-    subtitle: `${formatReportDate(insight.period.from)} – ${formatReportDate(insight.period.to)} · ranking de hasta 10 productos del período seleccionado.`,
+    subtitle: `${formatReportDate(insight.period.from)} – ${formatReportDate(insight.period.to)} · ranking por ${rankBy === 'netSales' ? 'venta neta ($)' : 'unidades'} de hasta 100 productos del filtro seleccionado.`,
     labels: insight.topProducts.map(product => product.name),
     metrics: [
       {
@@ -4595,6 +4648,16 @@ async function loadSalesDashboard() {
       params.set('serviceDateFrom', dateFrom);
       params.set('serviceDateTo', dateTo);
     }
+    const insightFrom = document.getElementById('sales-insight-from').value;
+    const insightTo = document.getElementById('sales-insight-to').value;
+    if (document.getElementById('sales-insight-period').value === 'custom') {
+      if (!insightFrom || !insightTo || insightFrom > insightTo || !document.getElementById('sales-insight-to').checkValidity()) {
+        setStatus(document.getElementById('sales-insight-range-status'), 'Selecciona fechas válidas de inicio y término, sin superar el día actual.', 'error');
+        return;
+      }
+      params.set('insightDateFrom', insightFrom);
+      params.set('insightDateTo', insightTo);
+    }
     const report = await apiRequest(`/api/sales/dashboard?${params}`);
     if (location !== select.value) return;
     salesDashboardState = report;
@@ -4605,6 +4668,11 @@ async function loadSalesDashboard() {
     customTo.max = report.date;
     if (!customTo.value) customTo.value = report.date;
     if (!customFrom.value) customFrom.value = offsetIsoDate(report.date, -29);
+    for (const [id, value] of [['sales-insight-from', offsetIsoDate(report.date, -29)], ['sales-insight-to', report.date]]) {
+      const input = document.getElementById(id);
+      input.max = report.date;
+      if (!input.value) input.value = value;
+    }
     syncSalesServiceModeControls();
     document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA y ticket promedio con IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
     renderSalesDashboardMetrics(report.sales.metrics);
@@ -5031,6 +5099,7 @@ function formatPurchaseConversion(value) {
 }
 
 function costSourceDescription(item) {
+  if (item?.costSource === 'toteat-api') return `Costo última compra · API Toteat${item.costSourceDate ? ` · ${formatReportDate(item.costSourceDate)}` : ''}`;
   if (item?.costSource === 'recipe') {
     return `Calculado desde receta e ingredientes${item.costSourceDate ? ` · compras hasta ${formatReportDate(item.costSourceDate)}` : ''}`;
   }
@@ -5042,6 +5111,7 @@ function costSourceDescription(item) {
 }
 
 function costSourceShort(item) {
+  if (item?.costSource === 'toteat-api') return 'API Toteat';
   if (item?.costSource === 'recipe') return 'Receta calculada';
   if (item?.costSource === 'purchase') return `Compra${item.costSourceDate ? ` ${formatReportDate(item.costSourceDate)}` : ''}`;
   if (item?.costSource === 'master') return 'Maestro';
@@ -6723,7 +6793,7 @@ function renderPurchasesView() {
         muted: true
       },
       { key: 'discount', label: 'Descuento', value: row => row.discount === null ? 'No disponible' : formatClp(row.discount) },
-      { key: 'effectiveUnitPrice', label: 'Precio Unit. efectivo', headerLines: 'Precio Unit.|efectivo', value: row => formatClp(row.effectiveUnitPrice) },
+      { key: 'comparisonUnitCost', label: 'Precio comparable', headerLines: 'Precio comparable|por unidad', value: row => `${formatClp(row.comparisonUnitCost)} / ${row.comparisonUnit || '—'}` },
       { key: 'previousEffectiveUnitPrice', label: 'Precio anterior', value: row => row.previousEffectiveUnitPrice === null ? '—' : formatClp(row.previousEffectiveUnitPrice) },
       {
         key: 'priceChangePercent',
@@ -6875,19 +6945,19 @@ function exportPurchasesReport() {
     const headers = [
       'Fecha', 'Ubicación', 'Proveedor', 'RUT proveedor', 'Tipo documento', 'Documento', 'Línea',
       'Código', 'Insumo', 'Cantidad', 'UDC', 'Unidades x UDC', 'Unidad Medida',
-      'Costo UDC registrado', 'Costo Unitario', 'Descuento', 'Precio Unit. efectivo',
+      'Costo UDC registrado', 'Costo Unitario', 'Descuento', 'Precio comparable', 'Unidad comparable',
       'Precio anterior', 'Cambio %', 'Monto neto', 'Monto total', 'Fuente'
     ];
     const values = data.rows.map(row => [
       row.date, row.locationName, row.supplier, row.supplierTaxId || '', row.documentType || '',
       row.document || '', row.line || '', row.code || '', row.product || '', row.quantity,
       row.purchaseUnit || row.unit || '', row.unitsPerPurchaseUnit, row.baseUnit || '',
-      row.listedUnitPrice, row.baseUnitCost, row.discount, row.effectiveUnitPrice,
+      row.listedUnitPrice, row.baseUnitCost, row.discount, row.comparisonUnitCost, row.comparisonUnit,
       row.previousEffectiveUnitPrice, row.priceChangePercent, row.netAmount, row.totalAmount,
       row.sourceType === 'kardex-buy' ? 'Kardex BUY' : 'Archivo de compras'
     ]);
     const purchasesSheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
-    purchasesSheet['!autofilter'] = { ref: `A1:V${values.length + 1}` };
+    purchasesSheet['!autofilter'] = { ref: `A1:W${values.length + 1}` };
     purchasesSheet['!cols'] = headers.map((header, index) => ({
       wch: index === 8 ? 45 : Math.min(Math.max(header.length + 2, 12), 24)
     }));
@@ -7256,7 +7326,7 @@ function renderPurchaseProjection() {
     row.appendChild(packageCell);
     const plainValues = [
       { value: formatProjectionMetric(item.currentInventory) },
-      { value: formatProjectionMetric(item.consumption30) },
+      { value: formatProjectionMetric(item.consumption30), title: item.consumptionBreakdown ? `Período: ${item.consumptionFrom} · ${item.consumptionDays} días. Ventas: ${formatProjectionMetric(item.consumptionBreakdown.sales)} · Transferencias salida: ${formatProjectionMetric(item.consumptionBreakdown.transfersOut)} · Transformaciones salida: ${formatProjectionMetric(item.consumptionBreakdown.transformationsOut)} · Compensaciones menos internos: ${formatProjectionMetric(item.consumptionBreakdown.netCompensationsAndInternal)}` : '' },
       { value: formatProjectionMetric(item.averageDailyConsumption) },
       {
         value: item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
@@ -7266,6 +7336,7 @@ function renderPurchaseProjection() {
     plainValues.forEach(entry => {
       const cell = document.createElement('td');
       cell.textContent = entry.value;
+      if (entry.title) cell.title=entry.title;
       if (entry.lowCoverage) cell.classList.add('projection-coverage-low');
       row.appendChild(cell);
     });
@@ -7539,8 +7610,8 @@ async function loadPurchaseProjection(options = {}) {
       ? ` El último inventario disponible corresponde al ${formatReportDate(data.period.dataThrough)}.`
       : '';
     setStatus(status,
-      `Consumo considerado: ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. ${data.consumptionCriteria}.${stale}`,
-      stale ? 'muted' : 'success');
+      `Consumo considerado: ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. ${data.consumptionCriteria}.${stale} ${(data.warnings||[]).join(' ')}`,
+      stale || data.warnings?.length ? 'muted' : 'success');
   } catch (error) {
     purchaseProjectionState = null;
     renderPurchaseProjection();
@@ -8665,7 +8736,7 @@ function renderInventoryCalendar(kind) {
   container.replaceChildren(header,grid);
 }
 async function openInventoryProcessDialog(source = 'files') {
-  inventoryProcessingMode=source==='originals'?'originals':'files';
+  inventoryProcessingMode=(window.brewitSynchronizedSources || source==='originals')?'originals':'files';
   const location=document.getElementById('inventory-location-select').value;
   try {
     const calendar=await apiRequest(`/api/inventory/calendar?location=${encodeURIComponent(location)}&source=${inventoryProcessingMode}`);
@@ -8683,7 +8754,7 @@ async function openInventoryProcessDialog(source = 'files') {
       document.getElementById(`inventory-${kind}-basis`).closest('label').hidden=true;
     }
     syncInventoryBoundaries();
-    document.getElementById('inventory-process-source').textContent=`${inventoryProcessingMode==='originals'?'Fuentes originales Toteat':'Archivos cargados'}. Recuadro: fecha con toma física. Sin toma al inicio, se reconstruye desde una toma anterior; sin toma al final, solo se informa saldo teórico.`;
+    document.getElementById('inventory-process-source').textContent=`${inventoryProcessingMode==='originals'?'Inventario API Toteat':'Archivos cargados'}. Recuadro: fecha con toma física. Sin toma al inicio, se reconstruye desde una toma anterior; sin toma al final, solo se informa saldo teórico.`;
     setStatus(document.getElementById('inventory-process-dialog-status'),'');
     document.getElementById('inventory-process-dialog').showModal();
   }catch(error){setStatus(document.getElementById('inventory-source-status'),error.message,'error');}
@@ -10360,6 +10431,19 @@ function openMasterPreview(version, field) {
   );
 }
 
+function openLatestMasterPreview(field, label) {
+  openSpreadsheetPreview(async () => {
+    const index = await apiRequest('/api/masters');
+    const records = Object.entries(index).flatMap(([version, group]) =>
+      Object.entries(group).filter(([key]) => (LEGACY_MASTER_FIELDS[key] || key) === field)
+        .map(([key, record]) => ({ version, key, record })));
+    records.sort((a, b) => String(b.record.savedAt || b.version).localeCompare(String(a.record.savedAt || a.version)));
+    const latest = records[0];
+    if (!latest) throw new Error('Aún no hay un archivo disponible para este maestro.');
+    return `/api/masters/${encodeURIComponent(latest.version)}/${encodeURIComponent(latest.key)}/preview`;
+  }, label);
+}
+
 async function openSpreadsheetPreview(endpoint, fallbackTitle, ids = {}) {
   const dialog = document.getElementById(ids.dialog || 'master-preview-dialog');
   const title = document.getElementById(ids.title || 'master-preview-title');
@@ -10368,7 +10452,7 @@ async function openSpreadsheetPreview(endpoint, fallbackTitle, ids = {}) {
   content.textContent = 'Cargando vista previa…';
   dialog.showModal();
   try {
-    const preview = await apiRequest(endpoint);
+    const preview = await apiRequest(typeof endpoint === 'function' ? await endpoint() : endpoint);
     title.textContent = preview.originalName;
     content.replaceChildren();
     if (preview.selectedRange) {
@@ -10786,6 +10870,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('run-findings').addEventListener('click', loadFindingsView);
   document.getElementById('findings-status-filter').addEventListener('change', renderFindingsView);
+  document.getElementById('print-findings').addEventListener('click', printFindingsReport);
   document.getElementById('refresh-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
   document.getElementById('sales-ingredients-location').addEventListener('change', loadSalesIngredientsView);
   document.getElementById('run-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
@@ -10823,6 +10908,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     syncSalesServiceModeControls();
     renderSalesServiceModes();
   });
+  document.getElementById('apply-sales-insight-range').addEventListener('click', loadSalesDashboard);
   document.getElementById('apply-sales-service-mode-range').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-hierarchy-back').addEventListener('click', () => {
     salesHierarchyPath = salesHierarchyPath.slice(0, -1);
@@ -10959,7 +11045,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
     applySort(purchasesSort, header.dataset.sortKey,
-      ['quantity', 'unitsPerPurchaseUnit', 'listedUnitPrice', 'baseUnitCost', 'discount', 'effectiveUnitPrice', 'previousEffectiveUnitPrice', 'priceChangePercent', 'totalAmount'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+      ['quantity', 'unitsPerPurchaseUnit', 'listedUnitPrice', 'baseUnitCost', 'discount', 'effectiveUnitPrice', 'comparisonUnitCost', 'previousEffectiveUnitPrice', 'priceChangePercent', 'totalAmount'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderPurchasesView();
   });
   document.getElementById('open-purchase-cost-variations').addEventListener('click', openPurchaseCostVariations);
@@ -11300,14 +11386,23 @@ async function loadUploadOverview() {
     const data = await apiRequest('/api/uploads/overview');
     const cell = (tag, text) => { const e=document.createElement(tag);e.textContent=text;return e; };
     el('upload-master-list').replaceChildren(...data.masters.map(m=>{
-      const item=document.createElement('div');item.append(cell('strong',m.label),cell('span',date(m.updatedAt)));return item;
+      const item=document.createElement('button');item.type='button';item.setAttribute('aria-label',`Ver maestro: ${m.label}`);
+      item.append(cell('strong',m.label),cell('span',date(m.updatedAt)));
+      item.addEventListener('click',()=>openLatestMasterPreview(m.key,m.label));return item;
     }));
     const table=el('upload-transaction-matrix'),head=document.createElement('thead'),header=document.createElement('tr');
     header.append(cell('th','Ubicación'),...data.columns.map(c=>cell('th',c.label)));head.append(header);
     const body=document.createElement('tbody');
     for(const location of data.rows){const row=document.createElement('tr');row.append(cell('th',location.name));
       for(const item of location.cells){const td=cell('td',item.applicable?date(item.updatedAt):'No aplica');
-        if(item.applicable){td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
+        if(item.applicable){
+          const label=`${data.columns.find(c=>c.key===item.key).label} · ${location.name}`;
+          const open=()=>window.openUploadRecords(location.id,item.key,label);
+          td.classList.add('upload-record-cell');td.tabIndex=0;td.setAttribute('aria-label',`Ver registros: ${label}`);
+          td.addEventListener('click',event=>{if(!event.target.closest('button'))open();});
+          td.addEventListener('keydown',event=>{if(event.target===td&&['Enter',' '].includes(event.key)){event.preventDefault();open();}});
+          const view=cell('button','Ver registros');view.type='button';view.className='icon-button';view.setAttribute('aria-label',`Ver registros: ${label}`);view.addEventListener('click',event=>{event.stopPropagation();open();});td.append(view);
+          td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
           if(['mercadopago','marketing','employees'].includes(item.key)) {
             const button=cell('button','Cargar archivo');button.type='button';button.className='icon-button';
             button.dataset.uploadLocation=location.id;button.dataset.uploadField=item.key;
@@ -11366,3 +11461,94 @@ document.getElementById('upload-native-schedule').addEventListener('submit',asyn
     uploadScheduleDirty=false;setStatus(document.getElementById('upload-schedule-status'),'Frecuencias guardadas. Se ejecutan mientras el servidor esté encendido.','success');await loadUploadOverview();
   }catch(error){setStatus(document.getElementById('upload-schedule-status'),error.message,'error');}finally{button.disabled=false;}
 });
+
+// Make the active data policy visible in every workspace, including historical periods.
+(async function showSourcePolicy(){
+  try {
+    const policy=await apiRequest('/api/source-policy');
+    if(policy.mode!=='synchronized')return;
+    window.brewitSynchronizedSources=true;
+    const notice=document.createElement('details');notice.className='source-policy-notice';
+    const title=document.createElement('summary');title.textContent=policy.message;notice.append(title);
+    const note=document.createElement('p');note.textContent=policy.masterNote+' Carga manual: '+policy.manual.join(', ')+'.';notice.append(note);
+    for(const location of policy.locations){const line=document.createElement('p');line.textContent=location.name+': ventas '+(location.sales?(location.sales.lastSuccess?'sincronizadas desde '+location.sales.from:'sin sincronizar'):'no aplica')+'; compras '+(location.purchases.lastSuccess?'sincronizadas desde '+location.purchases.from:'sin sincronizar')+'; inventario '+(location.inventory?location.inventory.range.from+' a '+location.inventory.range.to:'sin sincronizar')+'. Los días fuera de cobertura no representan actividad cero.';notice.append(line);}
+    document.querySelector('.main-content').prepend(notice);
+  }catch(error){console.warn('No se pudo consultar la política de fuentes.');}
+})();
+
+document.getElementById('sales-ranking-order').addEventListener('change', renderSalesInsights);
+document.getElementById('sales-insight-bar').addEventListener('change',()=>{salesHierarchyPath=[];renderSalesInsights();});
+document.getElementById('sales-insight-formats').addEventListener('change',renderSalesInsights);
+
+// Keep existing controls and report nodes alive while changing the visible block.
+function installWorkspaceTabs(workspaceId, headingSelector, definitions) {
+  const workspace = document.getElementById(workspaceId);
+  const navigation = document.createElement('div');
+  navigation.className = 'workspace-tabs';
+  navigation.setAttribute('role', 'tablist');
+  navigation.setAttribute('aria-label', workspace.querySelector('h2').textContent);
+  const entries = definitions.map(([key, label, selectors]) => {
+    const nodes = selectors.flatMap(selector => [...workspace.querySelectorAll(selector)]);
+    const panel = document.createElement('div');
+    panel.id = `${workspaceId}-panel-${key}`;
+    panel.className = 'workspace-tab-panel';
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `${workspaceId}-tab-${key}`);
+    panel.tabIndex = 0;
+    nodes[0].before(panel);
+    panel.append(...nodes);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = `${workspaceId}-tab-${key}`;
+    button.textContent = label;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', panel.id);
+    navigation.append(button);
+    return { button, panel };
+  });
+  function activate(index, focus = false) {
+    entries.forEach(({ button, panel }, current) => {
+      const selected = current === index;
+      button.setAttribute('aria-selected', String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      panel.hidden = !selected;
+    });
+    if (focus) entries[index].button.focus();
+    window.dispatchEvent(new Event('resize'));
+  }
+  entries.forEach(({ button }, index) => {
+    button.addEventListener('click', () => activate(index));
+    button.addEventListener('keydown', event => {
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % entries.length;
+      if (event.key === 'ArrowLeft') next = (index - 1 + entries.length) % entries.length;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = entries.length - 1;
+      if (next !== undefined) { event.preventDefault(); activate(next, true); }
+    });
+  });
+  workspace.querySelector(headingSelector).after(navigation);
+  activate(0);
+}
+
+installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
+  ['overview', 'Resumen y cafeterías', ['#sales-dashboard-metrics', '.sales-location-panel']],
+  ['service', 'Modalidad de consumo', ['.sales-service-mode-panel']],
+  ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-custom', '#sales-insight-range-status', '.sales-insight-controls', '.sales-insights-grid']],
+  ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
+  ['customers', 'Clientes recurrentes', ['.mercadopago-panel']]
+]);
+installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
+  ['statement', 'Estado de resultados', ['#financial-results-summary', '.financial-statement-panel']],
+  ['expenses', 'Gastos generales', ['.financial-general-expenses-panel']],
+  ['breakdowns', 'Participación', ['.financial-breakdowns-grid']],
+  ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
+  ['costs', 'Revisión de costos', ['#financial-costs-empty', '#financial-missing-costs']]
+]);
+installWorkspaceTabs('demand-analysis-workspace', '.demand-heading', [
+  ['overview', 'Resumen del período', ['#demand-report > .demand-section:nth-child(1)']],
+  ['exploration', 'Composición de la demanda', ['#demand-report > .demand-section:nth-child(2)']],
+  ['hypotheses', 'Hipótesis', ['#demand-report > .demand-section:nth-child(3)']],
+  ['actions', 'Acciones', ['#demand-report > .demand-section:nth-child(4)']],
+  ['advanced', 'Análisis avanzado', ['#demand-report > .demand-section:nth-child(5)']]
+]);

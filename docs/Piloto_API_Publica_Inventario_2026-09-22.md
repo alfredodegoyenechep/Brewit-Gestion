@@ -107,3 +107,65 @@ node scripts/compare-public-inventory-pilot.js d6250792-122c-4ecc-863c-709a4c781
 ```
 
 El análisis reutiliza los archivos registrados en los índices locales; sus nombres quedan documentados en `comparison.json`. Si se incorporan nuevas descargas del mismo período, la selección de referencia puede cambiar.
+
+## Adopción autorizada de la API pública
+
+Tras la decisión del usuario de utilizar la API, se incorporó `inventorystate` a la actualización manual y programada de inventario de ambas cafeterías. Se habilitó exclusivamente el permiso de lectura de movimientos en Lyon y se actualizaron ambos locales del 23-08 al 22-09-2026. La Concepción entrega datos; Lyon respondió correctamente sin movimientos identificados. La Bodega Principal y sus bodegas de merma se consultan con La Concepción.
+
+El informe usa las cantidades y el costo de última compra de API por bodega y fecha de corte, incluidos los ceros y las compras negativas. Los costos de productos sin dato directo pueden calcularse desde sus recetas usando costos API de sus ingredientes; no se sustituye silenciosamente un costo API por el costo del archivo o del maestro. El consumo de ventas ya no se reconstruye con las recetas actuales. Las compensaciones y consumos internos siguen aplicándose en el consolidado.
+
+La fuente conserva los agregados diarios y la respuesta original en cada versión local; no presenta esos agregados como documentos individuales de tomas, transferencias o transformaciones. Se conservan las versiones anteriores. `last-api-read.json` permite revisar la última lectura completa incluso si falla su publicación. Las consultas comparten la cola y el límite de frecuencia de ventas/compras.
+
+Durante la ampliación al mes completo aparecieron dos discrepancias internas de API el 09-09-2026 en la bodega del local: PAC008 tiene una diferencia de +2 UN entre el saldo informado y el calculado con sus movimientos, y SUB005 una de +0,018 KG. Se conservan ambos valores como incidencia `api-balance-discrepancy`; no se inventa un movimiento compensatorio. Un movimiento neto incompatible con sus componentes, valores inválidos o una lectura rechazada sí impiden publicar la nueva versión.
+
+Los días omitidos se completan con el último saldo conocido entre extremos iguales, antes de una nueva toma física y hasta el fin de una consulta completa sin nuevos movimientos informados. Se marcan como `carriedForward`, nunca como nuevas tomas. Un cambio de saldo sin toma que impida explicar un intervalo se deja pendiente y no se rellena. El informe excluye productos sin cobertura suficiente.
+
+Verificación real del consolidado del 23 al 30 de agosto: respuesta correcta, 131 productos incluidos con toma final, 10 excluidos por criterios de cobertura/identidad, todos los costos directos del consolidado con origen `toteat-api`, 34 sustituciones de leche y nueve códigos de envases evitados. La cifra de productos difiere de la reconstrucción anterior; no se completaron saldos desconocidos con ceros.
+
+La opción principal se identifica como «Procesar inventario desde API Toteat»; el procesamiento desde archivos anteriores sigue disponible para contraste. La vista de inventario al día utiliza los saldos y costos de API cuando la ubicación ya tiene esta fuente activa; distingue ese saldo informado del consolidado con ajustes de Brewit.
+
+**Alcance pendiente:** maestros completos siguen mediante servicios internos autenticados de Toteat; MercadoPago, marketing y colaboradores siguen con carga manual. Este cambio no convierte esas fuentes en API pública ni certifica la cobertura de merma central cuando tenga actividad.
+
+### Corrección de valorización: prioridad a última compra
+
+A petición del usuario, el consolidado, la merma y la consulta de inventario al día priorizan ahora la última compra comparable hasta la fecha de corte, buscando en los locales y en las compras centrales recibidas por La Concepción. Se aplican las conversiones disponibles y se excluyen devoluciones/notas de crédito de la selección de precio. No se utiliza una compra futura para valorizar un período anterior.
+
+Sin compra comparable, se consulta el último costo positivo de inventario API disponible hasta el corte; si corresponde, se calcula la receta con los costos disponibles. Un cero API sin respaldo ya no se presenta como costo conocido: se informa «Sin costo». No se usa el maestro para inventar una compra histórica.
+
+Verificación inicial del 23 al 30 de agosto: 62 productos valorizados desde compras; LAC001 utiliza $1.012 de la compra del 28-08. PAC014, PAC018, PAC005 y PAC002 no tienen costo verificable en las fuentes consultadas y quedan identificados sin costo. Las cantidades de inventario no se modificaron.
+
+### Respaldo solicitado: costo del maestro
+
+El usuario solicita usar los maestros cuando no exista compra comparable. El criterio queda: última compra hasta el corte → costo positivo del maestro compartido de ingredientes/productos, convertido a la unidad del informe → respaldo API positivo o receta cuando tampoco exista costo directo de maestro. La prioridad del maestro directo también aplica a productos con receta. Se mantiene visible el origen «Maestro» y «Sin costo» cuando no hay un antecedente utilizable. Este criterio sustituye la exclusión del maestro descrita en la corrección anterior.
+
+## Proyección de compras con inventario API
+
+Proyección de compras usa ahora la fuente API cuando la ubicación está migrada, sin consultar su Kardex descargado. El cálculo comparte con el informe consolidado las tomas, el avance diario, las compensaciones por leche/syrup/salsas/envases y el consumo de marketing y colaboradores disponible. Los saldos se reconstruyen desde una apertura conocida, con reinicio en las tomas intermedias; no se vuelve a sumar una transformación calculada por receta sobre la transformación API.
+
+Para el consumo se consideran ventas, transferencias salientes y transformaciones salientes, se agregan consumos internos y se restan compensaciones. Las compras, transferencias entrantes y transformaciones entrantes modifican inventario, pero no se cuentan como consumo. La bodega operativa de cafetería es la 2 y la principal es la 1 del ambiente de La Concepción; las bodegas de merma no se suman como inventario disponible ni como una segunda salida. La transferencia hacia merma sí sale del inventario operativo.
+
+La ventana objetivo es de 30 días hasta la fecha actual, limitada a la cobertura sincronizada. Para productos sin 30 días continuos, se reconstruye desde una toma/apertura disponible y se divide el consumo por los días efectivamente cubiertos, con advertencia visible y detalle por producto. No se tratan días desconocidos como consumo cero. Sin registros, Lyon presenta una proyección vacía y advertencia, sin fabricar inventario ni necesidades.
+
+Se conservan criterios administrados, proveedores, UDC, empaques, órdenes seleccionadas y consolidación de demanda de las cafeterías hacia la Bodega Principal. Los productos con manejo de stock también pueden aparecer para administrar su reposición. El respaldo de costos usa compras y maestros conforme al informe de inventario.
+
+Validación real al 22-09-2026: La Concepción presenta 140 ítems elegibles (10 con historial parcial entre los productos reconstruidos); Bodega Principal, 119; Lyon, ninguno por ausencia de inventario informado. La comparación con el consolidado del 24-08 al cierre del 22-09 coincide en los 131 productos comparados. SAN021: 0,081 UN; SAN010: 0,003 KG. Pruebas: 141 aprobadas, incluyendo reinicios por toma física, compensaciones, transformaciones, aislamiento de bodegas y cobertura parcial.
+
+## Recuperación de actualización de maestros compartidos
+
+El 22-09-2026 se corrigió la conexión del lector: estaba utilizando un perfil de navegador distinto de la sesión autenticada. Ahora permite configurar el navegador local en `uploads/.integrations/toteat/browser-connection.json` (`cdpEndpoint`), con prioridad para la configuración explícita y la variable `TOTEAT_CDP_ENDPOINT`, y reutiliza la pestaña autenticada sin cerrarla al terminar. El endpoint debe ser localhost.
+
+Se comprobaron dos lecturas consecutivas y la publicación mediante el botón de actualización: a las 17:05 de Santiago quedaron publicados los seis maestros, con 240 productos, 128 ingredientes, 53 extras, 286 recetas (1.187 líneas), jerarquías de productos/ingredientes/extras de 22/13/15 registros y 42 proveedores. El estado del proceso pasó a completado.
+
+Los maestros completos siguen dependiendo de los servicios internos y de una sesión web vigente; no se presentan como API pública. Si el navegador no está disponible o no se confirma el local, el proceso informa un diagnóstico específico y conserva la última versión compartida completa. El navegador conectado debe permanecer abierto para las actualizaciones programadas.
+
+## Hallazgos: fuentes sincronizadas y saldos corregidos
+
+Hallazgos prioriza las ventas API por fecha de cierre cuando existe una sincronización, sin mezclarlas con descargas anteriores. Las compras API se auditan por bodega: 2/3 para cafeterías y 1/4 para Bodega Principal desde La Concepción. Las líneas sin bodega reconocida se advierten; no se asignan arbitrariamente. La fecha documental de compras se mantiene para auditoría comercial; los movimientos del inventario provienen del saldo diario API.
+
+El inventario utiliza el mismo cálculo de Proyección de compras y del informe de inventario: apertura conocida, movimientos, tomas intermedias, compensaciones y consumos de marketing/colaboradores. El cálculo acepta el período de Hallazgos, además del predeterminado de 30 días. La falta de cobertura o de inventario en Lyon no se considera stock cero. Solo ubicaciones sin inventario API conservan la lectura histórica, identificada en las fuentes.
+
+Los costos priorizan la última compra comparable entre locales, excluyen notas de crédito y cantidades no positivas, y utilizan el maestro como respaldo antes de la receta. Los productos con manejo de stock no generan la alerta de venta sin receta. Las comparaciones de costos maestros y compras convierten las unidades antes de calcular el porcentaje.
+
+Las fuentes mostradas incluyen los seis maestros compartidos, ventas, compras, inventario, consumos internos disponibles y órdenes locales. Se conservan identificadores, observaciones y cierres. Los hallazgos abiertos del modelo anterior que no se reconocen en la nueva revisión quedan guardados, pero no se suman a las alertas actuales; la pantalla informa cuántos son.
+
+Validación real del 24-08 al 22-09-2026 para todas las ubicaciones: 4.273 filas de ventas, 105 líneas de compras y 6 órdenes; 30 hallazgos abiertos y 2 cerrados. Se conservaron 178 registros abiertos de fuentes anteriores fuera de esta revisión. Se informan coberturas parciales de inventario y el inicio de sincronización de Lyon el 14-09.

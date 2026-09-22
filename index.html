@@ -167,6 +167,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5L9 20l-5-5L15 4Z"/><path d="m14 5 5 5M5 4v3M3.5 5.5h3M19 16v4M17 18h4"/></svg>
               Buscar hallazgos
             </button>
+            <button id="print-findings" class="icon-button" type="button" disabled>Imprimir / PDF</button>
             <label for="findings-status-filter">Mostrar
               <select id="findings-status-filter">
                 <option value="open">Solo abiertos</option>
@@ -289,7 +290,7 @@
             <select id="sales-dashboard-location"><option value="all">Todas las cafeterías</option></select>
           </label>
           <button id="refresh-sales-dashboard" class="icon-button" type="button">Actualizar vista</button>
-          <button class="primary" type="button" data-toteat-sales-sync="dashboard">Actualizar ventas por API</button>
+          <button class="primary" type="button" data-toteat-sales-sync="dashboard">Actualizar Ventas</button>
         </div>
       </div>
       <div id="sales-dashboard-status" class="form-status" aria-live="polite"></div>
@@ -373,14 +374,27 @@
         <label for="sales-insight-period">Período
           <select id="sales-insight-period">
             <option value="day">Hoy</option>
-            <option value="week" selected>Semana</option>
-            <option value="month">Mes</option>
+            <option value="week">Semana</option>
+            <option value="month" selected>Mes</option>
+            <option value="year">Año en curso</option>
+            <option value="custom">Personalizado</option>
           </select>
         </label>
       </div>
+      <div id="sales-insight-custom" hidden>
+        <label>Desde <input type="date" id="sales-insight-from"></label>
+        <label>Hasta <input type="date" id="sales-insight-to"></label>
+        <button type="button" id="apply-sales-insight-range">Aplicar período</button>
+      </div>
+      <p id="sales-insight-range-status" role="status"></p>
+      <div class="sales-insight-controls">
+        <label>Barra <select id="sales-insight-bar"><option value="all">Todas</option><option value="hot">Barra Caliente</option><option value="cold">Barra Fría</option><option value="other">Otros</option></select></label>
+        <label><input type="checkbox" id="sales-insight-formats"> Agrupar formatos de bebidas (CL, GR, XTR; anteriores M, G, X)</label>
+        <p>Aplica a ambos cuadros. Ranking de hasta 100 productos. Participación y acumulado sobre la venta neta total del filtro, incluidos los productos fuera del top 100. Otros incluye los productos sin clasificación de barra.</p>
+      </div>
       <div class="sales-insights-grid">
         <section class="panel">
-          <div class="panel-head"><div><div class="panel-eyebrow">Ranking</div><h3>Productos más vendidos</h3></div></div>
+          <div class="panel-head"><div><div class="panel-eyebrow">Ranking</div><h3>Productos más vendidos</h3></div><label>Ordenar por <select id="sales-ranking-order"><option value="quantity">Unidades vendidas</option><option value="netSales" selected>Venta neta ($)</option></select></label></div>
           <div id="sales-top-products" class="sales-ranked-list"></div>
         </section>
         <section class="panel">
@@ -633,7 +647,7 @@
           <select id="report-location-filter">
             <option value="all">Todas las cafeterías</option>
           </select>
-          <button class="primary" type="button" data-toteat-sales-sync="report">Actualizar ventas por API</button>
+          <button class="primary" type="button" data-toteat-sales-sync="report">Actualizar Ventas</button>
           <button id="report-download-toteat-sales" class="icon-button toteat-download-button" type="button">Descargar respaldo desde web</button>
         </div>
       </div>
@@ -1348,7 +1362,7 @@
           <thead>
             <tr>
               <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th><th data-sort-key="unitsPerPackage" data-header-lines="Unidades x|empaque">Unidades x<br />empaque</th>
-              <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th data-sort-key="consumption30" data-header-lines="Consumo y TRN-OUT|30 días">Consumo y TRN-OUT<br />30 días</th><th data-sort-key="averageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
+              <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th data-sort-key="consumption30" data-header-lines="Consumo y salidas|del período">Consumo y salidas<br />del período</th><th data-sort-key="averageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
               <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th id="projection-branch-orders-header" hidden><button id="open-projection-branch-orders" class="projection-orders-header-button" type="button" title="Seleccionar sucursales para consolidar">OC Suc</button></th><th data-sort-key="suggestedInternalQuantity" data-header-lines="Sugerencia|interna">Sugerencia<br />interna</th><th data-sort-key="purchaseUnit">UDC</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
               <th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Unidades x|UDC">Unidades x<br />UDC</th><th data-sort-key="suggestedPurchaseUnits" data-header-lines="UDC|sugeridas">UDC<br />sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo UDC|estimado">Costo UDC<br />estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
             </tr>
@@ -1548,7 +1562,7 @@
           <div>
             <div class="panel-eyebrow">Base mensual por unidad</div>
             <h3>Gastos Generales Unidades y Casa Matriz</h3>
-            <p class="panel-description">Ingresa montos netos mensuales por cafetería o para Casa Matriz. En el estado de resultados se prorratean según los días del período incluidos en cada mes.</p>
+            <p class="panel-description">Ingresa montos netos mensuales por cafetería o para Casa Matriz. En el estado de resultados se prorratean según los días del período incluidos en cada mes. Diferencia de Inventario ajustada: vacío usa el cálculo automático; un monto digitado lo reemplaza. Positivo indica pérdida/gasto y negativo, sobrante.</p>
           </div>
           <div class="financial-general-expenses-controls">
             <button id="financial-general-expenses-toggle" class="secondary small" type="button" aria-expanded="true" aria-controls="financial-general-expenses-selector financial-general-expenses-form">Colapsar</button>
@@ -1621,6 +1635,7 @@
         </div>
         <div id="financial-hierarchy-list" class="financial-hierarchy-list"></div>
       </section>
+      <p id="financial-costs-empty" class="panel-description">Genera resultados para revisar la cobertura de costos del período.</p>
       <section id="financial-missing-costs" class="panel financial-missing-costs" hidden>
         <div class="panel-head">
           <div>
@@ -1660,12 +1675,12 @@
       <div id="inventory-source-list" class="inventory-source-list"></div>
       <div class="inventory-report-actions">
         <button id="inventory-upload-files" class="icon-button" type="button">Cargar archivos actualizados</button>
-        <button id="process-inventory-report" class="primary" type="button" disabled>Procesar informe de inventario</button>
-        <button id="process-original-inventory-report" class="primary" type="button" disabled>Procesar desde fuentes originales Toteat</button>
+        <button id="process-original-inventory-report" class="primary" type="button" disabled>Procesar inventario desde API Toteat</button>
+        <button id="process-inventory-report" class="icon-button" type="button" disabled>Procesar desde archivos anteriores</button>
         <button id="current-inventory-report" class="primary" type="button" disabled>Inventario teórico al día</button>
       </div>
       <p id="inventory-process-note" class="panel-description">Primero deben estar disponibles todos los archivos requeridos.</p>
-      <p class="panel-description">Fuentes originales utiliza las tablas sincronizadas en Cargar archivos. El informe indicará los datos pendientes y la fecha de actualización.</p>
+      <p class="panel-description">El informe API utiliza el inventario sincronizado en Cargar archivos. El informe indicará los datos pendientes y la fecha de actualización.</p>
 
       <dialog id="inventory-process-dialog" class="inventory-criteria-dialog">
         <div class="preview-dialog-head">
@@ -2076,7 +2091,7 @@
 
           <section class="inventory-sources" aria-labelledby="stock-title">
             <h3 id="stock-title">Fuentes para el Kardex propio</h3>
-            <p>Actualiza tomas de inventario, transformaciones y transferencias desde Toteat. El cálculo incorpora las compras y ventas ya sincronizadas y los maestros compartidos de La Concepción.</p>
+            <p>Actualiza saldos, tomas, compras, consumos, transformaciones y transferencias diarios desde la API pública de Toteat. El informe usa el costo de última compra recibido por API.</p>
             <div class="upload-context-grid">
               <label>Desde <input id="stock-from" type="date" value="2026-08-23"></label>
               <label>Hasta <input id="stock-to" type="date"></label>
@@ -2088,12 +2103,12 @@
             </div>
             <div id="stock-status" class="form-status" aria-live="polite"></div>
             <table><thead><tr><th>Tabla local</th><th>Documentos</th><th>Aprobados</th><th>Líneas</th></tr></thead><tbody id="stock-sources"></tbody></table>
-            <p>La Bodega Principal y su merma se actualizan desde el ambiente de La Concepción. Los documentos pendientes no afectan existencias.</p>
+            <p>La Bodega Principal y su merma se actualizan desde el ambiente de La Concepción. La API entrega datos diarios agregados, sin documentos individuales.</p>
             <details id="stock-result"><summary>Kardex calculado y diferencias</summary>
               <p id="stock-summary"></p>
               <label>Filtrar por código o producto <input id="stock-search" type="search"></label>
               <label>Bodega <select id="stock-warehouse"><option value="">Todas</option></select></label>
-              <div style="overflow:auto;max-height:480px"><table><thead><tr><th>Fecha</th><th>Bodega</th><th>Código</th><th>Producto</th><th>Unidad</th><th>Inicial</th><th>Compras</th><th>Transferencias +</th><th>Transferencias −</th><th>Transformaciones +</th><th>Transformaciones −</th><th>Consumo estimado</th><th>Final</th><th>Ajuste por toma</th></tr></thead><tbody id="stock-rows"></tbody></table></div>
+              <div style="overflow:auto;max-height:480px"><table><thead><tr><th>Fecha</th><th>Bodega</th><th>Código</th><th>Producto</th><th>Unidad</th><th>Inicial</th><th>Compras</th><th>Transferencias +</th><th>Transferencias −</th><th>Transformaciones +</th><th>Transformaciones −</th><th>Consumo ventas</th><th>Final</th><th>Ajuste por toma</th></tr></thead><tbody id="stock-rows"></tbody></table></div>
               <p id="stock-row-count"></p><ul id="stock-issues"></ul>
             </details>
           </section>
@@ -2266,6 +2281,9 @@
         </div>
       </div>
 
+
+    </section>
+
       <dialog id="master-preview-dialog" class="preview-dialog">
         <div class="preview-dialog-head">
           <div>
@@ -2276,7 +2294,6 @@
         </div>
         <div id="master-preview-content" class="preview-content"></div>
       </dialog>
-    </section>
 
     <section id="demand-analysis-workspace" class="demand-workspace" style="display:none;">
       <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Análisis de la demanda</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
@@ -2454,6 +2471,8 @@
 
   <script src="/vendor/xlsx.full.min.js"></script>
   <script src="demand-view.js"></script>
+  <script src="upload-records-view.js"></script>
+  <script src="sales-insight-filters.js"></script>
   <script src="script.js"></script>
   <script src="toteat-api-view.js"></script>
   <script src="toteat-purchases-view.js"></script>

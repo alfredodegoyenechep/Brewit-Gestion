@@ -52,7 +52,7 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
           let status, updatedAt, origin = 'Archivo cargado';
           if (['sales','payment-details'].includes(key)) { status=sale; updatedAt=sale?.lastSuccess; }
           if (key === 'purchases') { status=purchase; updatedAt=purchase?.lastSuccess; }
-          if (['counts','transformations','transfers'].includes(key)) { status=inventory; updatedAt=inventory?.updatedAt; origin='Toteat'; }
+          if (['counts','transformations','transfers'].includes(key)) { status=inventory; updatedAt=inventory?.updatedAt; origin=inventory?.sourceKind==='public-inventory'?'Toteat API pública':'Toteat'; }
           if (updatedAt && origin === 'Archivo cargado') origin='Toteat API';
           if (!updatedAt && !['counts','transformations','transfers'].includes(key)) updatedAt=latest(files(source,key))?.savedAt;
           return { key, applicable: true, updatedAt: updatedAt || null, origin, sharedFrom:central?'La Concepción':null,
@@ -81,7 +81,7 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
       if(updateInventory){
         const from=stock.status(location.id).range?.from || s.from;
         add(`${location.name} · Inventario${location.id==='store-1'?' (incluye Bodega Principal y mermas)':' (incluye mermas)'}`,
-          ['Tomas de Inventario','Transformaciones','Transferencias entre bodegas'],'Servicios internos · sesión web',
+          ['Tomas de Inventario','Transformaciones','Transferencias entre bodegas'],'API pública · token',
           ()=>stock.synchronize(location.id,{from,to:new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Santiago'}).format(new Date())}),
           s.configured&&from?null:'Configura la conexión y el período inicial.');
       }
@@ -96,9 +96,9 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
         if(step.state==='skipped')continue;
         Object.assign(step,{state:'running',startedAt:new Date(now()).toISOString()});saveJob();
         try { await execute();step.state='complete';step.message='Fuentes actualizadas y guardadas.'; }
-        catch {step.state='error';step.message=step.method.startsWith('API pública')
+        catch (error) {step.state='error';step.message=error.safeMasterMessage || (step.method.startsWith('API pública')
           ? 'No se completó la lectura. Revisa credenciales, permisos o límites de Toteat en Configuración. Se conserva la actualización anterior.'
-          : 'No se completó la lectura o publicación. Revisa la sesión web de Toteat y la conexión del local. Se conserva la actualización anterior.';}
+          : 'No se completó la lectura o publicación. Revisa la sesión web de Toteat y la conexión del local. Se conserva la actualización anterior.');}
         step.finishedAt=new Date(now()).toISOString();saveJob();
       }
     })().catch(()=>{

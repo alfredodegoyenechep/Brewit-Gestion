@@ -55,7 +55,8 @@ const GENERAL_EXPENSE_CATEGORIES = [
   ['insurance', 'Seguros'],
   ['mediaMarketing', 'Marketing Medios'],
   ['marketingAgencySocial', 'Agencia Marketing y RRSS'],
-  ['otherExpenses', 'Otros gastos']
+  ['otherExpenses', 'Otros gastos'],
+  ['inventoryDifference', 'Diferencia de Inventario ajustada']
 ];
 
 function ensureDir(directory) {
@@ -553,10 +554,10 @@ function buildSpreadsheetPreview(filePath, originalName, options = {}) {
     );
     return {
       name: sheetName,
-      rows: allRows.slice(0, PREVIEW_MAX_ROWS).map(row => row.slice(0, PREVIEW_MAX_COLUMNS)),
+      rows: options.complete ? allRows : allRows.slice(0, PREVIEW_MAX_ROWS).map(row => row.slice(0, PREVIEW_MAX_COLUMNS)),
       totalRows: allRows.length,
       frozenRows: previewFrozenRowCount(allRows, options.field),
-      truncated: allRows.length > PREVIEW_MAX_ROWS || allRows.some(row => row.length > PREVIEW_MAX_COLUMNS)
+      truncated: !options.complete && (allRows.length > PREVIEW_MAX_ROWS || allRows.some(row => row.length > PREVIEW_MAX_COLUMNS))
     };
   });
   return {
@@ -1007,7 +1008,7 @@ function parsePurchaseUnitConversions(filePath) {
         const purchaseUnit = String(row[group.unitColumn] ?? '').trim();
         const numerator = numericValue(row[group.numeratorColumn]);
         const denominator = numericValue(row[group.denominatorColumn]);
-        if (!purchaseUnit || numerator === null || denominator === null || denominator === 0) continue;
+        if (!purchaseUnit || !(numerator > 0) || !(denominator > 0)) continue;
         conversions.set(normalizedUnit(purchaseUnit), {
           purchaseUnit,
           baseUnit: String(row[group.baseUnitColumn] ?? '').trim() || baseUnit,
@@ -2828,19 +2829,23 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
   return {
     readNativeSources(restaurant, options = {}) {
       const task = nativeQueue.then(async () => {
-        let browser, context, page;
-        const endpoint = factoryOptions.cdpEndpoint || process.env.TOTEAT_CDP_ENDPOINT;
+        let browser, context, page, ownsPage = false;
+        const connection = readJson(path.join(profilesRoot, 'browser-connection.json'), {});
+        const endpoint = factoryOptions.cdpEndpoint || process.env.TOTEAT_CDP_ENDPOINT || connection.cdpEndpoint;
         try {
           if (endpoint) {
             if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('El navegador de Toteat debe estar en este equipo.');
-            browser = await require('playwright-core').chromium.connectOverCDP(endpoint);
+            try { browser = await require('playwright-core').chromium.connectOverCDP(endpoint); }
+            catch { throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503); }
             context = browser.contexts()[0];
           } else context = contexts.get('master-downloads') || await launch('master-downloads', true);
-          page = await context.newPage();
+          // Reuse the authenticated SPA: a new tab can lose Toteat's in-memory session.
+          page = context.pages().filter(p => /^https:\/\/res\d*\.toteat\.com\//.test(p.url())).at(-1);
+          if (!page) { page = await context.newPage(); ownsPage = true; }
           await selectRestaurantRecord(page, restaurant);
           return await readNative(page, restaurant, options);
         } finally {
-          await page?.close().catch(() => {});
+          if (ownsPage) await page?.close().catch(() => {});
           if (browser) await browser.close().catch(() => {});
           else if (context && !contexts.has('master-downloads')) await context.close().catch(() => {});
         }
@@ -3188,6 +3193,17 @@ function createApp(options = {}) {
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
   const findingsRegistryPath = path.join(configRoot, 'findings.json');
   const generalExpensesPath = path.join(configRoot, 'general-expenses.json');
+  const sourcePolicyPath = path.join(configRoot, 'source-policy.json');
+  const synchronizedOnly = options.sourceMode === 'synchronized' || (options.sourceMode !== 'legacy' && readJson(sourcePolicyPath, {}).mode === 'synchronized');
+  const { TRANSACTION_FIELDS, INVENTORY_FIELDS, synchronizedMaster } = require('./synchronized-sources');
+  function synchronizedTransactions(locationId, field) {
+    return field === 'purchases' ? toteatSalesSync?.purchases.source(locationId,field) || [] : toteatSalesSync?.source(locationId,field) || [];
+  }
+  function synchronizedStock(locationId) {
+    const state=stockSync.current(locationId);
+    if(!state || state.sourceKind !== 'public-inventory') throw Error('No hay inventario API sincronizado para esta ubicación. Actualiza las fuentes; no se utilizará un Kardex descargado.');
+    return state;
+  }
   const productAnalyticsSourceCache = new Map();
   const demandEnrichmentCache = new Map();
   const toteatMasterDownloadBatches = new Map();
@@ -3302,6 +3318,8 @@ function createApp(options = {}) {
   }
 
   function storedTransactionFiles(locationId, field) {
+    if(synchronizedOnly && TRANSACTION_FIELDS.has(field)) return synchronizedTransactions(locationId,field);
+    if(synchronizedOnly && INVENTORY_FIELDS.has(field)) return [];
     const index = readTransactionIndex(locationId);
     const root = transactionLocationRoot(locationId);
     const stored = (index.fields?.[field]?.files || []).flatMap(record => {
@@ -3321,6 +3339,7 @@ function createApp(options = {}) {
   }
 
   function storedSalesFiles(locationId) {
+    if(synchronizedOnly) return synchronizedTransactions(locationId,'sales');
     const output = [];
     for (const week of fs.readdirSync(weeksRoot).filter(isValidWeekKey)) {
       const destination = path.join(weeksRoot, week, locationId);
@@ -3633,6 +3652,8 @@ function createApp(options = {}) {
   }
 
   function storedWeeklyFiles(locationId, field) {
+    if(synchronizedOnly && TRANSACTION_FIELDS.has(field)) return synchronizedTransactions(locationId,field);
+    if(synchronizedOnly && INVENTORY_FIELDS.has(field)) return [];
     const output = [];
     for (const week of fs.readdirSync(weeksRoot).filter(isValidWeekKey)) {
       const destination = path.join(weeksRoot, week, locationId);
@@ -3658,6 +3679,10 @@ function createApp(options = {}) {
   }
 
   function mergedKardexData(locationId, field) {
+    if(synchronizedOnly) {
+      const state=synchronizedStock(locationId),location=activeLocation(locationId);
+      return require('./inventory-original-report').originalReportData(state,location,{initialDate:state.range.from,finalDate:state.range.to,initialBasis:'initial',finalBasis:'final'},state.range.from,state.range.to,{waste:field==='waste',completeSeries:true}).parsed;
+    }
     const sources = chronologicalSources(locationId, field);
     if (!sources.length) return null;
     const productMap = new Map();
@@ -3767,6 +3792,11 @@ function createApp(options = {}) {
   }
 
   function latestWeeklyFile(locationId, field) {
+    if(synchronizedOnly && INVENTORY_FIELDS.has(field)) {
+      const state=stockSync.current(locationId);
+      if(state?.sourceKind!=='public-inventory')return null;
+      return {originalName:field==='waste'?'Merma · Toteat API':'Inventario · Toteat API',source:'toteat-api',dataThrough:state.range.to,confirmedRange:state.range,detectedRange:state.range,savedAt:state.sourceCapturedAt,previewUrl:`/api/inventory/synchronized-preview?location=${encodeURIComponent(locationId)}&field=${field}`,url:`/api/integrations/toteat/stock/export?location=${encodeURIComponent(locationId)}`};
+    }
     const candidates = storedWeeklyFiles(locationId, field).map(stored => ({
       ...stored.record,
       week: stored.week,
@@ -3792,6 +3822,7 @@ function createApp(options = {}) {
     for (const [version, group] of Object.entries(index)) {
       const record = group[field];
       if (!record || !record.name || !isValidDate(record.validFrom)) continue;
+      if(synchronizedOnly && record.source !== 'toteat-shared-api') continue;
       const filePath = path.resolve(mastersRoot, record.name);
       if (path.dirname(filePath) !== path.resolve(mastersRoot) || !fs.existsSync(filePath)) continue;
       candidates.push({ ...record, version, filePath });
@@ -3802,10 +3833,16 @@ function createApp(options = {}) {
   }
 
   function latestMasterFile(field, effectiveDate, location) {
-    return masterFiles(field, location).find(record => record.validFrom <= effectiveDate) || null;
+    const records=masterFiles(field,location);
+    return synchronizedOnly ? synchronizedMaster(records,effectiveDate) : records.find(record => record.validFrom <= effectiveDate) || null;
   }
 
   function resolveRecipes(effectiveDate, location) {
+    if(synchronizedOnly) {
+      const master=latestMasterFile('master-recipes',effectiveDate,location);
+      const recipes=master?parseRecipes(master.filePath):new Map();
+      return {recipes,primary:master,sources:master?[{master,contributedProducts:recipes.size}]:[],errors:[]};
+    }
     const allMasters = masterFiles('master-recipes').filter(record => record.source !== 'toteat-shared-api' || record.validFrom <= effectiveDate);
     const datedMaster = allMasters.find(record => record.validFrom <= effectiveDate) || null;
     if (datedMaster?.source === 'toteat-shared-api') {
@@ -4099,6 +4136,34 @@ function createApp(options = {}) {
 
   app.disable('x-powered-by');
   app.use(express.json());
+  app.use('/api', (req,res,next)=>{
+    if(!synchronizedOnly || !/^\/(reports\/|sales\/|products(?:\/|$)|ingredients$|sales-by-ingredients$|financial-results$|findings$|purchase-projections$|inventory\/)/.test(req.path))return next();
+    const send=res.json.bind(res);
+    res.json=payload=>{
+      if(payload && !Array.isArray(payload) && typeof payload==='object' && req.path !== '/masters') payload.sourcePolicy={mode:'synchronized',legacyFallback:false,
+        masterHistory:'Se usa un maestro compartido observado; no se certifican recetas ni costos maestros históricos anteriores a la sincronización.',
+        manualSources:['MercadoPago','Marketing','Colaboradores','Órdenes y gastos de Brewit']};
+      if(payload?.sourcePolicy) {
+        const from=payload.period?.from || req.query.dateFrom || req.body?.initialInventoryDate;
+        const scope=payload.scope?.location || req.query.location || req.body?.location || 'all';
+        const coverageWarnings=[];
+        for(const location of readLocations().locations.filter(l=>l.status==='active' && (scope==='all'||scope===l.id))) {
+          const id=location.type==='warehouse'?'store-1':location.id;
+          for(const [name,service] of [['Ventas',toteatSalesSync],['Compras',toteatSalesSync.purchases]]) {
+            if(name==='Ventas'&&location.type!=='store')continue;
+            const status=service.status(id);
+            if(!status.lastSuccess)coverageWarnings.push(`${name} (${location.name}): no hay sincronización disponible; no equivale a actividad cero.`);
+            else if(from && status.from && status.from>from)coverageWarnings.push(`${name} (${location.name}): la cobertura comienza el ${status.from}; el período solicitado empieza antes.`);
+          }
+        }
+        payload.sourcePolicy.coverageWarnings=coverageWarnings;
+        if(Array.isArray(payload.warnings))payload.warnings.push(...coverageWarnings);
+      }
+      return send(payload);
+    };
+    next();
+  });
+
   toteatSalesSync = registerToteatApi(app, { uploadsRoot, activeLocation, locations: () => readLocations().locations,
     fetchImpl: options.toteatApiFetch, enableSync: options.enableToteatSync,
     requestSpacing: options.toteatRequestSpacing, syncClock: options.toteatSyncClock });
@@ -4110,9 +4175,67 @@ function createApp(options = {}) {
   const stockSync = createStockSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {}),
     masters: () => toteatMasterSync.sharedCurrent(),
+    publicReader: (config, range, warehouses) => toteatSalesSync.requestInventory(config, range, warehouses),
     reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
   app.locals.toteatStockSync = stockSync;
   require('./upload-overview').registerUploadOverview(app, { uploadsRoot, enableSync: options.enableToteatSync, locations: () => readLocations().locations, sales: toteatSalesSync, masters: toteatMasterSync, stock: stockSync, files: (id, field) => storedFieldFiles(id, field).map(item => item.record), masterFiles: field => masterFiles(field) });
+  require('./upload-records').registerUploadRecords(app, {location:activeLocation,load(location,field,from,to) {
+    const central=location.id==='main-warehouse',id=central?'store-1':location.id;
+    const within=d=>d&&d>=from&&d<=to;
+    if(['counts','transformations','transfers'].includes(field)) {
+      const state=stockSync.current(id);
+      if(!state)return {rows:[],note:'Esta ubicación aún no tiene inventario sincronizado.'};
+      const warehouses=new Map(state.warehouses.filter(w=>central?[1,4].includes(Number(w.custom_id)):[2,3].includes(Number(w.custom_id))).map(w=>[w.id,w.name]));
+      const rows=state.daily.filter(r=>warehouses.has(r.warehouse)&&within(r.date)&&!r.carriedForward).flatMap(r=>{
+        const base={Fecha:r.date,Bodega:warehouses.get(r.warehouse),Código:r.code,Producto:r.name,Unidad:r.unit};
+        if(field==='counts')return r.physicalCount?[{...base,'Cantidad toma':r.opening}]:[];
+        const defs=field==='transformations'?[['transformed_in','Entrada transformación',1],['transformed_out','Salida transformación',-1]]:[['transfer_local_in','Entrada entre locales',1],['transfer_local_out','Salida entre locales',-1],['transfer_warehouse_in','Entrada entre bodegas',1],['transfer_warehouse_out','Salida entre bodegas',-1]];
+        return defs.filter(([k])=>r[k]!==0).map(([k,label,sign])=>({...base,Movimiento:label,Cantidad:r[k]*sign}));
+      });
+      return {rows,note:'Registros diarios por producto y bodega; no documentos individuales. Incluye la bodega de merma correspondiente.',updatedAt:state.sourceCapturedAt,coverage:state.range};
+    }
+    if(['marketing','employees'].includes(field)) {
+      const sources=chronologicalSources(id,field),seen=new Set(),rows=[];let unreadable=0;
+      for(const source of sources) {
+        let sheets;try{sheets=consumptionProductSheets(XLSX.readFile(source.filePath,{cellDates:true}));}catch{unreadable++;continue;}
+        for(let date=from;date<=to;date=addDays(date,1)) {
+          if(dateIsExcluded(date,source.excludedRanges))continue;
+          let data;try{data=parseConsumptionProductsFromSheets(sheets,date,date);}catch{continue;}
+          for(const p of data.products){const key=date+'|'+(p.code||normalizeHeader(p.name));if(seen.has(key))continue;seen.add(key);rows.push({Fecha:date,Código:p.code,Producto:p.name,Cantidad:p.quantity,Unidad:p.unit});}
+        }
+      }
+      return {rows,note:`Consumos por producto y día de los archivos cargados.${unreadable?' Hay archivos que no pudieron leerse.':''}`};
+    }
+    if(field==='purchases'&&toteatSalesSync.purchases.get(id)) {
+      const state=toteatSalesSync.purchases.get(id),rows=[];
+      for(const d of state.documents||[]) {
+        const date=String(d.received_date||d.recieived_date||d.emission_date||'').replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3').slice(0,10);
+        if(!within(date))continue;
+        for(const p of d.products||[]) {
+          if(central?![1,4].includes(Number(p.warehouse)):![2,3].includes(Number(p.warehouse)))continue;
+          rows.push({Fecha:date,Documento:d.document_id,Tipo:d.document_type,Proveedor:d.provider,Bodega:p.warehouse,Código:p.sku,Producto:p.product,'Cantidad recibida':p.received_quantity,Unidad:p.received_measurement,'Costo unitario':p.unit_price,'Total línea':p.total_price});
+        }
+      }
+      return {rows,note:'Detalle de compras API por fecha de recepción (emisión si no se informó recepción), filtrado por bodega de la ubicación y su merma.'};
+    }
+    const api=['sales','payment-details'].includes(field)?toteatSalesSync.source(id,field):[];
+    const sources=api.length?api:storedFieldFiles(id,field),rows=[],seen=new Set();let unreadable=0;
+    if(central&&field==='purchases')return {rows:[],note:'Sin compras API que permitan identificar la bodega principal.'};
+    for(const source of sources) {
+      try {
+        for(const sheet of readGenericTransactionSheets(source.filePath)) {
+          const header=sheet.rows[0]||[];
+          for(const values of sheet.rows.slice(1)) {
+            const row=Object.fromEntries(header.map((h,i)=>[String(h||`Columna ${i+1}`),values[i]??null]));
+            const date=field==='mercadopago'?mercadoPagoDateTime(row)?.slice(0,10):cellDate(rowValue(row,field==='sales'?['Fecha de cierre','Fecha de creacion']:field==='payment-details'?['FechaCierre','Fecha cierre','Fecha']:['Fecha emisión','Fecha']));
+            if(!within(date)||dateIsExcluded(date,source.excludedRanges))continue;
+            const key=JSON.stringify(row);if(seen.has(key))continue;seen.add(key);rows.push(row);
+          }
+        }
+      }catch{unreadable++;}
+    }
+    return {rows,note:`${api.length?'Datos sincronizados desde Toteat API.':'Datos de los archivos cargados.'}${unreadable?' Hay archivos que no pudieron leerse.':''}`};
+  }});
   app.get('/api/integrations/toteat/stock/status', (req, res) => {
     try { res.set('Cache-Control', 'no-store').json(stockSync.status(req.query.location || 'store-1')); }
     catch (e) { res.status(400).json({ error: e.message }); }
@@ -4125,7 +4248,7 @@ function createApp(options = {}) {
     try {
       const data = stockSync.view(req.query.location || 'store-1');
       if (!data) return res.status(404).json({ error: 'Actualiza primero las fuentes de inventario.' });
-      const comparison = require('./scripts/toteat-inventory-pilot').compareFiles(uploadsRoot, data, data);
+      const comparison = synchronizedOnly ? null : require('./scripts/toteat-inventory-pilot').compareFiles(uploadsRoot, data, data);
       res.set('Cache-Control', 'no-store').json({ ...data, comparison });
     } catch { res.status(400).json({ error: 'No se pudo consultar o comparar el inventario local.' }); }
   });
@@ -4133,7 +4256,7 @@ function createApp(options = {}) {
     try {
       const data = stockSync.view(req.query.location || 'store-1');
       if (!data) return res.status(404).json({ error: 'Actualiza primero las fuentes de inventario.' });
-      const comparison = require('./scripts/toteat-inventory-pilot').compareFiles(uploadsRoot, data, data);
+      const comparison = synchronizedOnly ? null : require('./scripts/toteat-inventory-pilot').compareFiles(uploadsRoot, data, data);
       res.attachment('Kardex_Propio_Brewit.xlsx').send(stockSync.workbook(data, comparison));
     } catch { res.status(400).json({ error: 'No se pudo exportar el Kardex propio.' }); }
   });
@@ -4175,14 +4298,22 @@ function createApp(options = {}) {
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
+  app.get('/sales-insight-filters.js', (req,res)=>res.sendFile(path.join(__dirname,'sales-insight-filters.js')));
   app.get('/toteat-api-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-api-view.js')));
   app.get('/toteat-purchases-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-purchases-view.js')));
   app.get('/toteat-masters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-masters-view.js')));
+  app.get('/upload-records-view.js', (req, res) => res.sendFile(path.join(__dirname, 'upload-records-view.js')));
   app.get('/toteat-stock-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-stock-view.js')));
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
   app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
   app.get('/api/health', (req, res) => res.json({ ok: true }));
+  app.get('/api/source-policy', (req,res) => res.json({mode:synchronizedOnly?'synchronized':'legacy',
+    message:synchronizedOnly?'Fuentes Toteat sincronizadas. Las descargas históricas no alimentan los cálculos.':'Fuentes históricas habilitadas.',
+    manual:['MercadoPago','Marketing','Colaboradores','Órdenes de compra y gastos de Brewit'],
+    masterNote:'Maestros compartidos desde La Concepción mediante servicios internos con sesión web. Para períodos anteriores a su primera lectura se usa el maestro observado disponible, sin certificar una versión histórica.',
+    locations:readLocations().locations.filter(l=>l.status==='active').map(l=>{const id=l.type==='warehouse'?'store-1':l.id;const stock=stockSync.current(l.id);return {id:l.id,name:l.name,sales:l.type==='store'?toteatSalesSync.status(id):null,purchases:toteatSalesSync.purchases.status(id),inventory:stock?{range:stock.range,updatedAt:stock.sourceCapturedAt}:null};})}));
+
   app.get('/api/locations', (req, res) => {
     const active = readLocations().locations.filter(location => location.status === 'active');
     res.json(Object.fromEntries(active.map(location => [location.id, publicLocation(location)])));
@@ -4209,8 +4340,8 @@ function createApp(options = {}) {
     const record = readGeneralExpenses().records.find(item => item.locationId === locationId && item.month === month) || null;
     return res.json({
       location: publicLocation(location), month,
-      categories: GENERAL_EXPENSE_CATEGORIES.map(([key, label]) => ({ key, label })),
-      values: Object.fromEntries(GENERAL_EXPENSE_CATEGORIES.map(([key]) => [key, Number(record?.values?.[key]) || 0])),
+      categories: GENERAL_EXPENSE_CATEGORIES.filter(([key])=>key!=='inventoryDifference'||location.type==='store').map(([key, label]) => ({ key, label })),
+      values: Object.fromEntries(GENERAL_EXPENSE_CATEGORIES.map(([key]) => [key, key==='inventoryDifference' ? record?.values?.[key] ?? null : Number(record?.values?.[key]) || 0])),
       configured: Boolean(record), updatedAt: record?.updatedAt || null
     });
   });
@@ -4223,6 +4354,13 @@ function createApp(options = {}) {
     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Selecciona un mes válido.' });
     const values = {};
     for (const [key] of GENERAL_EXPENSE_CATEGORIES) {
+      if(key==='inventoryDifference') {
+        const raw=req.body?.values?.[key];
+        if(raw===null || raw==='' || raw===undefined){values[key]=null;continue;}
+        const value=Number(raw);
+        if(!Number.isFinite(value)||Math.abs(value)>1_000_000_000)return res.status(400).json({error:'La diferencia de inventario debe ser un monto válido, positivo o negativo.'});
+        values[key]=Math.round(value);continue;
+      }
       const value = Number(req.body?.values?.[key]);
       if (!Number.isFinite(value) || value < 0 || value > 1_000_000_000) {
         return res.status(400).json({ error: 'Cada gasto debe ser un monto mensual válido y no negativo.' });
@@ -4462,7 +4600,7 @@ function createApp(options = {}) {
     const activeStores = activeLocations.filter(location => location.type === 'store');
     const requestedLocation = query.location || 'all';
     const selectedLocations = requestedLocation === 'all'
-      ? activeStores
+      ? (synchronizedOnly ? activeLocations : activeStores)
       : activeLocations.filter(location => location.id === requestedLocation);
     if (requestedLocation !== 'all' && !selectedLocations.length) {
       const error = new Error('Selecciona una ubicación válida.');
@@ -4474,7 +4612,9 @@ function createApp(options = {}) {
     const unique = new Map();
     let sourceFileCount = 0;
     for (const location of selectedLocations) {
-      if (location.type === 'warehouse') {
+      const auditApi = (query.auditSources || synchronizedOnly) && toteatSalesSync.purchases.get(location.type === 'warehouse' ? 'store-1' : location.id);
+      if (location.type === 'warehouse' && !auditApi) {
+        if(synchronizedOnly) continue;
         if (latestWeeklyFile(location.id, 'kardex')) {
           sourceFileCount += 1;
           for (const purchase of kardexPurchaseRows(location)) {
@@ -4484,9 +4624,10 @@ function createApp(options = {}) {
         }
         continue;
       }
-      for (const stored of storedWeeklyFiles(location.id, 'purchases')) {
+      for (const stored of (auditApi ? toteatSalesSync.purchases.source(location.type === 'warehouse' ? 'store-1' : location.id, 'purchases') : storedWeeklyFiles(location.id, 'purchases'))) {
         sourceFileCount += 1;
         for (const row of readPurchaseRows(stored.filePath)) {
+          if (auditApi && !(location.type === 'warehouse' ? [1,4] : [2,3]).includes(Number(row['API Bodega Toteat']))) continue;
           const purchase = purchaseRecord(row, location, supplierNames);
           if (!purchase) continue;
           if (dateIsExcluded(purchase.date, stored.excludedRanges)) continue;
@@ -4518,9 +4659,9 @@ function createApp(options = {}) {
       const sameAsBase = catalogItem && normalizedUnit(row.unit) === normalizedUnit(catalogItem.baseUnit);
       row.purchaseUnit = row.unit;
       row.baseUnit = conversion?.baseUnit || catalogItem?.baseUnit || null;
-      row.unitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit ?? (sameAsBase ? 1 : null);
+      row.unitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit ?? (sameAsBase ? 1 : catalogItem ? convertQuantityUnit(1,row.unit,catalogItem.baseUnit) : null);
       row.baseUnitCost = row.unitsPerPurchaseUnit
-        ? row.listedUnitPrice / row.unitsPerPurchaseUnit
+        ? row.effectiveUnitPrice / row.unitsPerPurchaseUnit
         : null;
     });
     const dates = allRows.map(row => row.date).sort();
@@ -4550,26 +4691,10 @@ function createApp(options = {}) {
       name: row.product
     }])).values()].sort((left, right) => left.name.localeCompare(right.name, 'es'));
 
-    const previousPrices = new Map();
-    const previousUnitCosts = new Map();
     allRows.sort((left, right) => left.date.localeCompare(right.date)
       || left.document.localeCompare(right.document, 'es', { numeric: true })
       || left.line.localeCompare(right.line, 'es', { numeric: true }));
-    allRows.forEach(row => {
-      const historyKey = [row.locationId, row.supplierKey, row.code || normalizeHeader(row.product), row.unit].join('|');
-      row.previousEffectiveUnitPrice = previousPrices.get(historyKey) ?? null;
-      row.priceChangePercent = row.previousEffectiveUnitPrice
-        ? ((row.effectiveUnitPrice / row.previousEffectiveUnitPrice) - 1) * 100
-        : null;
-      previousPrices.set(historyKey, row.effectiveUnitPrice);
-      row.comparisonUnitCost = row.baseUnitCost ?? row.listedUnitPrice;
-      row.comparisonUnit = row.baseUnit || row.purchaseUnit || row.unit || '';
-      row.previousComparisonUnitCost = previousUnitCosts.get(historyKey) ?? null;
-      row.unitCostChangePercent = row.previousComparisonUnitCost
-        ? ((row.comparisonUnitCost / row.previousComparisonUnitCost) - 1) * 100
-        : null;
-      previousUnitCosts.set(historyKey, row.comparisonUnitCost);
-    });
+    require('./purchase-price-history').applyPurchasePriceHistory(allRows, normalizedUnit);
 
     const rows = allRows.filter(row => (!dateFrom || row.date >= dateFrom)
       && (!dateTo || row.date <= dateTo)
@@ -4606,7 +4731,7 @@ function createApp(options = {}) {
     const activeStores = activeLocations.filter(location => location.type === 'store');
     const requestedIds = [...new Set((locationIds || []).filter(id => activeLocations.some(location => location.id === id)))];
     const requestedSet = new Set(requestedIds.length ? requestedIds : activeStores.map(location => location.id));
-    const locationsToRead = new Set([...requestedSet, ...activeStores.map(location => location.id)]);
+    const locationsToRead = new Set([...requestedSet, ...(synchronizedOnly ? activeLocations : activeStores).map(location => location.id)]);
     const localByCode = new Map();
     const globalByCode = new Map();
     const rowIdentity = row => [row.locationId, row.date, row.document, row.line, row.code, row.purchaseUnit || row.unit].join('|');
@@ -4635,8 +4760,9 @@ function createApp(options = {}) {
       for (const row of rows) {
         const code = String(row.code || '').trim().toUpperCase();
         if (!code || row.date > cutoffDate) continue;
+        if ((options.purchaseOnly || options.validPurchasesOnly || synchronizedOnly) && (!(row.quantity > 0) || /credito|credit note|credit_note/.test(normalizeHeader(row.documentType)))) continue;
         if (requestedSet.has(locationId)) addCandidate(localByCode, code, row);
-        if (activeStores.some(location => location.id === locationId)) addCandidate(globalByCode, code, row);
+        if ((synchronizedOnly ? activeLocations : activeStores).some(location => location.id === locationId)) addCandidate(globalByCode, code, row);
       }
     }
     for (const map of [localByCode, globalByCode]) {
@@ -4668,6 +4794,7 @@ function createApp(options = {}) {
             seen.add(identity);
             return true;
           });
+        if (options.latestAcrossLocations || synchronizedOnly) candidates.sort(compareLatest);
         for (const purchase of candidates) {
           const unitCost = purchaseCostInUnit(purchase, targetUnit);
           if (unitCost === null) continue;
@@ -4683,7 +4810,7 @@ function createApp(options = {}) {
             fallback: false
           };
         }
-        const masterCost = unitCostForRecipeUnit(catalogItem, targetUnit);
+        const masterCost = options.purchaseOnly ? null : unitCostForRecipeUnit(catalogItem, targetUnit);
         if (masterCost !== null) {
           return {
             unitCost: masterCost,
@@ -4712,8 +4839,24 @@ function createApp(options = {}) {
     };
   }
 
+  function buildInventoryPurchaseCostResolver(dateTo, location, state, {catalog=null,recipes=null,waste=false}={}) {
+    // La Concepción's purchase feed includes Central; search all stores by date,
+    // not by warehouse, since receiving transfers does not establish a purchase price.
+    const purchases=buildDirectCostResolver(dateTo, [location.type==='warehouse'?'store-1':location.id], {purchaseOnly:true,latestAcrossLocations:true});
+    const api=require('./toteat-public-inventory').publicInventoryCostResolver(state,location.type==='warehouse'?(waste?4:1):(waste?3:2),dateTo,convertQuantityUnit,{positiveOnly:true});
+    const directResolver={dateTo,resolve(code,unit,item) {
+      const purchase=purchases.resolve(code,unit,item);
+      if(purchase.source==='purchase')return purchase;
+      const masterCost=unitCostForRecipeUnit(item,unit);
+      if(masterCost>0)return {unitCost:masterCost,source:'master',sourceDate:state.masterObservedAt?.slice(0,10)||null,fallback:true};
+      const reference=api.resolve(code,unit);
+      return reference.unitCost>0?reference:{unitCost:0,source:'missing',sourceDate:null};
+    }};
+    return buildCostResolver(dateTo,[],{catalog,recipes,directResolver,preferDirectMaster:true});
+  }
+
   function buildCostResolver(dateTo, locationIds = [], options = {}) {
-    const directResolver = buildDirectCostResolver(dateTo, locationIds, options);
+    const directResolver = options.directResolver || buildDirectCostResolver(dateTo, locationIds, options);
     const cutoffDate = directResolver.dateTo;
     let catalog = options.catalog || null;
     let recipes = options.recipes || null;
@@ -4746,7 +4889,7 @@ function createApp(options = {}) {
       if (cache.has(cacheKey)) return cache.get(cacheKey);
 
       const direct = directResolver.resolve(key, requestedUnit, catalogItem);
-      if (direct.source === 'purchase') {
+      if (direct.source === 'purchase' || direct.source === 'toteat-api' || ((options.preferDirectMaster || synchronizedOnly) && direct.source === 'master')) {
         cache.set(cacheKey, direct);
         return direct;
       }
@@ -4847,7 +4990,7 @@ function createApp(options = {}) {
     const activeLocations = readLocations().locations.filter(location => location.status === 'active');
     const activeStores = activeLocations.filter(location => location.type === 'store');
     const requestedIds = [...new Set(locationIds.filter(id => activeLocations.some(location => location.id === id)))];
-    const locationsToRead = [...new Set([...requestedIds, ...activeStores.map(location => location.id)])];
+    const locationsToRead = [...new Set([...requestedIds, ...(synchronizedOnly ? activeLocations : activeStores).map(location => location.id)])];
     const purchaseRowsByLocation = new Map();
     const changeDates = new Set();
     for (const locationId of locationsToRead) {
@@ -4939,12 +5082,12 @@ function createApp(options = {}) {
     });
     const rowsByItem = new Map();
     for (const row of purchases.rows) {
+      if (!(row.quantity > 0) || !(row.comparisonUnitCost > 0) || /credito|credit_note|credit note/.test(normalizeHeader(row.documentType))) continue;
       const key = [
         row.supplierKey,
         row.locationId,
         row.code || normalizeHeader(row.product),
-        row.purchaseUnit || row.unit,
-        row.comparisonUnit
+        normalizedUnit(row.comparisonUnit)
       ].join('|');
       if (!rowsByItem.has(key)) rowsByItem.set(key, []);
       rowsByItem.get(key).push(row);
@@ -4970,7 +5113,7 @@ function createApp(options = {}) {
         product: first.product,
         locationId: first.locationId,
         locationName: first.locationName,
-        purchaseUnit: first.purchaseUnit || first.unit,
+        purchaseUnit: latest.purchaseUnit || latest.unit,
         comparisonUnit: first.comparisonUnit,
         firstCost: firstComparableCost,
         latestCost: latest.comparisonUnitCost,
@@ -5097,17 +5240,18 @@ function createApp(options = {}) {
     const local = new Map();
     const global = new Map();
     const bySupplier = new Map();
+    const newer=(a,b)=>!b || a.date>b.date || (a.date===b.date && (a.document.localeCompare(b.document,'es',{numeric:true}) || a.line.localeCompare(b.line,'es',{numeric:true}))>0);
     for (const store of stores) {
       for (const stored of storedWeeklyFiles(store.id, 'purchases')) {
         for (const sourceRow of readPurchaseRows(stored.filePath)) {
           const row = purchaseRecord(sourceRow, store, supplierDirectory);
-          if (!row || !row.code || row.date > cutoffDate || dateIsExcluded(row.date, stored.excludedRanges)) continue;
+          if (!row || !row.code || row.date > cutoffDate || dateIsExcluded(row.date, stored.excludedRanges) || !(row.quantity > 0) || /credito|credit_note|credit note/.test(normalizeHeader(row.documentType))) continue;
           suppliers.set(row.supplierKey, { key: row.supplierKey, name: row.supplier, taxId: row.supplierTaxId });
           const key = row.code.toUpperCase();
-          if (!global.has(key) || global.get(key).date < row.date) global.set(key, row);
-          if (store.id === locationId && (!local.has(key) || local.get(key).date < row.date)) local.set(key, row);
+          if (newer(row,global.get(key))) global.set(key,row);
+          if (store.id === locationId && newer(row,local.get(key))) local.set(key,row);
           const supplierItemKey = `${key}|${row.supplierKey}`;
-          if (!bySupplier.has(supplierItemKey) || bySupplier.get(supplierItemKey).date < row.date) {
+          if (newer(row,bySupplier.get(supplierItemKey))) {
             bySupplier.set(supplierItemKey, row);
           }
         }
@@ -5248,6 +5392,41 @@ function createApp(options = {}) {
     return Math.ceil((value / conversion) - 1e-9);
   }
 
+  function inventoryCorrection(location,stock,recipes,ingredientCatalog,catalogAssignments,costResolver,originalMode=true) {
+        const cache=new Map();
+        return (code,unit,from,to)=>{
+          const key=from+'|'+to;
+          if(!cache.has(key)) {
+            const sales=periodSalesData(location.id,from,to,{apiOnly:originalMode});
+            if(originalMode && stock.sourceKind !== 'public-inventory'){const included=new Set((stock.includedOrders||[]).map(id=>`${location.id}:order:${id}`));sales.rows=sales.rows.filter(r=>included.has(r.orderKey));sales.orderFacts=sales.orderFacts.filter(r=>included.has(r.orderKey));}
+            const milk=lac001SubstitutionSummary(sales,from,to,recipes,ingredientCatalog,costResolver);
+            const syrup=syrupSauceSubstitutionSummary(sales,from,to,recipes,ingredientCatalog,catalogAssignments,costResolver);
+            const packaging=inventoryAvoidedPackagingSummary(location,sales,from,to,recipes,ingredientCatalog,costResolver);
+            const internal=[];
+            for(const field of ['marketing','employees']) {
+              if(!latestWeeklyFile(location.id,field))continue;
+              let products;try{products=mergedConsumptionProducts(location.id,field,from,to);}catch(e){if(/No product sheet contains dates/.test(e.message))continue;throw e;}
+              const ingredients=recipes&&ingredientCatalog?buildIngredientConsumption(products.products,recipes,ingredientCatalog,costResolver):{items:[]};
+              internal.push({available:true,products,ingredients});
+            }
+            cache.set(key,{milk,syrup,packaging,internal});
+          }
+          const c=cache.get(key);
+          const additions=[{code:'LAC001',unit:'L',quantity:c.milk.lac001VolumeLiters},...c.syrup.items.filter(i=>i.status==='resolved').map(i=>({code:i.originalCode,unit:i.unit,quantity:i.theoreticalQuantity})),...c.packaging.avoidedDisposablePackaging];
+          return additions.filter(i=>i.code===code).reduce((n,i)=>n+(convertQuantityUnit(i.quantity,i.unit,unit)??0),0)-c.internal.reduce((n,r)=>n+consumptionQuantityForKardex(r,code,unit),0);
+        };
+  }
+
+  function apiProjectionBasis(location,today,state,periodFrom) {
+    const master=latestMasterFile('master-catalog',state.masterObservedAt?.slice(0,10)||today,location.id);
+    if(!master)throw Error('Actualiza los maestros compartidos para calcular el inventario API.');
+    const catalog=parseIngredientCatalog(master.filePath),assignments=parseInventoryHierarchyAssignments(master.filePath);
+    const recipes=resolveRecipes(state.masterObservedAt?.slice(0,10)||today,location.id).recipes;
+    const cost=buildInventoryPurchaseCostResolver(today,location,state,{catalog,recipes});
+    const correction=inventoryCorrection(location,state,recipes,catalog,assignments,cost,true);
+    return require('./projection-inventory').projectionInventory(state,location,today,correction,periodFrom);
+  }
+
   function buildPurchaseProjection(locationId, selectedBranchLocationIds = null, selectedPurchaseOrderIds = null) {
     const location = activeLocation(locationId);
     if (!location) {
@@ -5255,13 +5434,16 @@ function createApp(options = {}) {
       error.status = 400;
       throw error;
     }
-    const parsed = mergedKardexData(location.id, 'kardex');
+    const today = projectionToday();
+    const state=synchronizedOnly?synchronizedStock(location.id):stockSync.current(location.id);
+    const apiProjection=state?.sourceKind==='public-inventory'?apiProjectionBasis(location,today,state):null;
+    const apiItems=new Map((apiProjection?.items||[]).map(r=>[r.code+'|'+r.unit,r]));
+    const parsed = apiProjection?{products:apiProjection.items,groups:[{date:apiProjection.to,metrics:[]}]}:mergedKardexData(location.id, 'kardex');
     if (!parsed?.groups.length) {
       const error = new Error('La ubicación no tiene un Kardex disponible para proyectar compras.');
       error.status = 404;
       throw error;
     }
-    const today = projectionToday();
     const periodFrom = addDays(today, -29);
     const groups = parsed.groups.filter(group => group.date <= today);
     const latestGroup = groups.at(-1);
@@ -5286,11 +5468,11 @@ function createApp(options = {}) {
     const catalogAssignments = parseInventoryHierarchyAssignments(catalogMaster.filePath);
     const isProjectionItem = product => {
       const key = String(product.code || '').trim().toUpperCase();
-      return key === 'SUB005' || catalogAssignments.get(key)?.type === 'ingredient';
+      return key === 'SUB005' || catalogAssignments.get(key)?.type === 'ingredient' || (apiProjection && toteatMasterSync.sharedCurrent()?.products.some(p=>p.code===key&&p.stockManaged===true));
     };
     const conversions = parsePurchaseUnitConversions(catalogMaster.filePath);
     const costCatalog = parseIngredientCatalog(catalogMaster.filePath);
-    const costResolver = buildCostResolver(today, [location.id]);
+    const costResolver = apiProjection?buildInventoryPurchaseCostResolver(today,location,state,{catalog:costCatalog}):buildCostResolver(today, [location.id]);
     const supplierOptions = new Map(references.suppliers);
     supplierOptions.set('unassigned', { key: 'unassigned', name: 'Proveedor no asignado', taxId: '' });
     const items = parsed.products.filter(product => (product.code || product.name) && isProjectionItem(product)).map(product => {
@@ -5303,19 +5485,20 @@ function createApp(options = {}) {
       const managed = policy.managed === true;
       const metricMatcher = metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
         || metric.startsWith('mov-out -') || metric.startsWith('trn-out -');
-      const consumption30 = consumptionGroups.reduce((sum, group) =>
+      const apiItem=apiItems.get(product.code+'|'+product.unit);
+      const consumption30 = apiItem?apiItem.consumption30:consumptionGroups.reduce((sum, group) =>
         sum + kardexMetricTotal(product, group, metricMatcher), 0);
-      const averageDailyConsumption = consumption30 / 30;
+      const averageDailyConsumption = consumption30 / (apiItem?.consumptionDays || apiProjection?.days || 30);
       const hasFinal = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
-      const currentInventory = kardexMetricValue(product, latestGroup,
+      const currentInventory = apiItem?apiItem.currentInventory:kardexMetricValue(product, latestGroup,
         metric => metric.startsWith(hasFinal ? 'if -' : 'ii -'));
       const supplierSpecificPurchase = policy.supplierKey
         ? references.bySupplier.get(`${key}|${policy.supplierKey}`)
         : null;
-      const latestPurchase = supplierSpecificPurchase || references.local.get(key) || references.global.get(key) || null;
+      const latestPurchase = supplierSpecificPurchase || references.global.get(key) || references.local.get(key) || null;
       const catalogItem = conversions.get(key);
       let conversion = latestPurchase ? catalogItem?.conversions.get(normalizedUnit(latestPurchase.unit)) : null;
-      if (!conversion && catalogItem) {
+      if (!latestPurchase && !conversion && catalogItem) {
         conversion = [...catalogItem.conversions.values()].find(item =>
           normalizedUnit(item.purchaseUnit) !== normalizedUnit(catalogItem.baseUnit))
           || [...catalogItem.conversions.values()][0]
@@ -5380,7 +5563,11 @@ function createApp(options = {}) {
         name: product.name,
         internalUnit: product.unit,
         currentInventory,
-        currentInventoryBasis: hasFinal ? 'Inventario Final' : 'Inventario Inicial',
+        currentInventoryBasis: apiItem?'Teórico API con compensaciones e internos':hasFinal ? 'Inventario Final' : 'Inventario Inicial',
+        inventoryAnchorDate:apiItem?.anchorDate||null,
+        consumptionFrom:apiItem?.consumptionFrom||periodFrom,
+        consumptionDays:apiItem?.consumptionDays||30,
+        consumptionBreakdown:apiItem?{sales:apiItem.salesConsumption,transfersOut:apiItem.transferOut,transformationsOut:apiItem.transformationOut,netCompensationsAndInternal:apiItem.netCorrections}:null,
         consumption30,
         averageDailyConsumption,
         currentCoverageDays: averageDailyConsumption > 0 ? currentInventory / averageDailyConsumption : null,
@@ -5424,8 +5611,11 @@ function createApp(options = {}) {
     return {
       location: publicLocation(location),
       company: readCompanyProfile(),
-      period: { from: periodFrom, to: today, dataThrough: latestGroup.date, days: 30 },
-      consumptionCriteria: location.type === 'warehouse'
+      period: { from: apiProjection?.from||periodFrom, to: today, dataThrough: latestGroup.date, days: apiProjection?.days??30 },
+      inventorySource:apiProjection?'toteat-api':'files',
+      excluded:apiProjection?.excluded||[],
+      warnings:apiProjection?.warnings||[],
+      consumptionCriteria: apiProjection ? 'Salidas API: ventas, transferencias y transformaciones, más consumos internos y menos compensaciones; inventario desde tomas y movimientos con el mismo criterio del informe' : location.type === 'warehouse'
         ? 'Transferencias y transformaciones salientes del Kardex'
         : 'Consumo por ventas, transferencias y transformaciones salientes del Kardex',
       branchOrders: branchOrders ? {
@@ -6916,7 +7106,7 @@ function createApp(options = {}) {
       const periodHistory = history.filter(row => row.date >= dateFrom && row.date <= dateTo);
       const purchaseCost = row => {
         const rawCost = row.baseUnitCost ?? row.effectiveUnitPrice;
-        const sourceUnit = row.baseUnit || row.unit;
+        const sourceUnit = row.baseUnitCost != null ? row.baseUnit : row.unit;
         return unitCostForRecipeUnit({ unitCost: rawCost, unit: sourceUnit }, ingredient.unit);
       };
       const firstCost = periodHistory.length ? purchaseCost(periodHistory[0]) : null;
@@ -7238,7 +7428,19 @@ function createApp(options = {}) {
     });
   }
 
-  function financialInventoryForLocation(location, dateFrom, dateTo, ingredientCatalog, recipes) {
+  function financialInventoryForLocation(location,dateFrom,dateTo,ingredientCatalog,recipes) {
+    const result=automaticFinancialInventoryForLocation(location,dateFrom,dateTo,ingredientCatalog,recipes);
+    const override=require('./inventory-monthly-override').monthlyInventoryOverride(readGeneralExpenses().records,location.id,dateFrom,dateTo,
+      (from,to)=>automaticFinancialInventoryForLocation(location,from,to,ingredientCatalog,recipes).inventoryDifference);
+    if(override) {
+      result.inventoryDifference=override;
+      result.warnings=result.warnings.filter(message=>!message.startsWith('Diferencia de inventario no disponible'));
+      if(!override.available)result.warnings.push(`Diferencia de inventario: faltan meses con monto manual o cálculo automático disponible en ${location.name}.`);
+    }
+    return result;
+  }
+
+  function automaticFinancialInventoryForLocation(location, dateFrom, dateTo, ingredientCatalog, recipes) {
     const result = {
       location: publicLocation(location),
       marketing: { amount: 0, available: false },
@@ -7298,6 +7500,23 @@ function createApp(options = {}) {
       result.waste = { amount: waste.totalCost, available: true };
     } catch (error) {
       result.warnings.push(`Merma no disponible para ${location.name}: ${error.message}.`);
+    }
+    if(synchronizedOnly) {
+      try {
+        const state=synchronizedStock(location.id);
+        const cost=buildInventoryPurchaseCostResolver(dateTo,location,state,{catalog:inventoryCatalog,recipes});
+        const correction=inventoryCorrection(location,state,recipes,inventoryCatalog,inventoryCatalogAssignments,cost,true);
+        const report=require('./inventory-boundaries').countBoundaryReport(state,location,dateFrom,addDays(dateTo,1),correction);
+        if(report.excluded.length || report.items.some(item=>!item.finalIsPhysical)) throw Error('No hay toma física final completa al inicio del día siguiente al cierre; no se calcula una pérdida usando saldos teóricos como conteo físico.');
+        let adjustedDifferenceValue=0;
+        for(const item of report.items) {
+          const reference=cost.resolve(item.code,item.unit,inventoryCatalog.get(item.code));
+          if(reference.source==='missing')throw Error(`Sin costo verificable para ${item.code}.`);
+          adjustedDifferenceValue+=(item.finalInventory-item.theoreticalFinal-correction(item.code,item.unit,dateFrom,dateTo))*reference.unitCost;
+        }
+        result.inventoryDifference={amount:-adjustedDifferenceValue,available:true,adjustedDifferenceValue,openingDate:dateFrom,closingDate:addDays(dateTo,1),closingBasis:'physical',source:'toteat-api'};
+      } catch(error) { result.warnings.push(`Diferencia de inventario no disponible para ${location.name}: ${error.message}`); }
+      return result;
     }
     try {
       if (!parsed) throw new Error('no hay Kardex disponible');
@@ -7464,7 +7683,7 @@ function createApp(options = {}) {
       cursor = next.toISOString().slice(0, 10);
     }
     const expectedRecords = locations.length * months.length;
-    return GENERAL_EXPENSE_CATEGORIES.map(([key, label]) => {
+    return GENERAL_EXPENSE_CATEGORIES.filter(([key])=>key!=='inventoryDifference').map(([key, label]) => {
       let amount = 0;
       let configuredRecords = 0;
       const detail = [];
@@ -7907,6 +8126,16 @@ function createApp(options = {}) {
     }
   });
 
+  app.get('/api/inventory/synchronized-preview', (req,res)=>{
+    try {
+      const location=activeLocation(req.query.location);if(!location)throw Error('Ubicación inválida.');
+      const state=synchronizedStock(location.id),waste=req.query.field==='waste';
+      const warehouse=state.warehouses.find(w=>Number(w.custom_id)===(location.type==='warehouse'?(waste?4:1):(waste?3:2)));
+      const columns=['date','code','name','unit','opening','purchase','use','transfer_local_in','transfer_local_out','transfer_warehouse_in','transfer_warehouse_out','transformed_in','transformed_out','closing','physicalCount'];
+      const rows=state.daily.filter(r=>r.warehouse===warehouse?.id && (!req.query.dateFrom || r.date>=req.query.dateFrom) && (!req.query.dateTo || r.date<=req.query.dateTo)).map(r=>columns.map(k=>r[k]??''));
+      res.json({originalName:waste?'Merma · Toteat API':'Inventario · Toteat API',sheets:[{name:'Registros diarios API',rows:[columns,...rows],totalRows:rows.length+1,frozenRows:1,truncated:false}]});
+    }catch(error){res.status(422).json({error:error.message});}
+  });
   app.get('/api/inventory/sources', (req, res) => {
     const location = activeLocation(req.query.location);
     if (!location) return res.status(400).json({ error: 'Select a valid active location.' });
@@ -7922,7 +8151,7 @@ function createApp(options = {}) {
         if (!latest) return { ...definition, available: false, file: null };
         const { filePath, ...publicFile } = latest;
         const stored = chronologicalSources(location.id, definition.field);
-        const dataRange = combinedDateRange(stored.map(item => ({ detectedRange: item.record.confirmedRange || item.record.detectedRange })));
+        const dataRange = latest.source==='toteat-api' ? latest.confirmedRange : combinedDateRange(stored.map(item => ({ detectedRange: item.record.confirmedRange || item.record.detectedRange })));
         return { ...definition, available: true, file: { ...publicFile, dataRange, dataThrough: dataRange?.to || publicFile.dataThrough, fileCount: stored.length } };
       });
       const kardex = latestWeeklyFile(location.id, 'kardex');
@@ -7957,17 +8186,20 @@ function createApp(options = {}) {
   app.get('/api/inventory/current', (req, res) => {
     const location = activeLocation(req.query.location);
     if (!location) return res.status(400).json({ error: 'Selecciona una ubicación activa válida.' });
-    const kardex = latestWeeklyFile(location.id, 'kardex');
+    const apiStock = stockSync.current(location.id);
+    const publicInventory = apiStock?.sourceKind === 'public-inventory';
+    const kardex = publicInventory ? {originalName:'Inventario API pública Toteat',source:'toteat-api'} : latestWeeklyFile(location.id, 'kardex');
     if (!kardex) return res.status(404).json({ error: 'No hay un archivo de Kardex disponible para esta ubicación.' });
     try {
       const today = projectionToday();
       const referenceDate = String(req.query.date || today);
       if (!isValidDate(referenceDate)) throw new Error('Selecciona una fecha de referencia válida.');
       if (referenceDate > today) throw new Error('La fecha de referencia no puede ser posterior a hoy.');
-      const parsed = mergedKardexData(location.id, 'kardex');
+      const apiDate = publicInventory ? (referenceDate < apiStock.range.to ? referenceDate : apiStock.range.to) : null;
+      const parsed = publicInventory ? require('./inventory-original-report').originalReportData(apiStock, location, {initialDate:apiDate,finalDate:apiDate,initialBasis:'initial',finalBasis:'final'}, apiDate, apiDate).parsed : mergedKardexData(location.id, 'kardex');
       const balanceDate = parsed.groups.filter(group => group.date <= referenceDate).at(-1)?.date;
       if (!balanceDate) throw new Error(`No hay un saldo de Kardex disponible al ${referenceDate} o en una fecha anterior.`);
-      const warnings = [];
+      const warnings = publicInventory ? ['Saldos de API Toteat valorizados a última compra disponible al corte (respaldo: maestro de ingredientes/productos, luego costo API positivo o receta); esta vista muestra el saldo informado por Toteat. Las compensaciones e internos de Brewit se calculan en el informe consolidado.', ...apiStock.issues.filter(i=>i.kind==='api-balance-discrepancy').map(i=>`${i.code} ${i.date}: ${i.message}`)] : [];
       const catalogMaster = latestMasterFile('master-catalog', balanceDate, location.id);
       let catalog = null;
       let assignments = new Map();
@@ -8017,7 +8249,7 @@ function createApp(options = {}) {
           catalog,
           assignments,
           hierarchyLookups,
-          buildCostResolver(balanceDate, [location.id])
+          publicInventory ? buildInventoryPurchaseCostResolver(balanceDate, location, apiStock, {catalog}) : buildCostResolver(balanceDate, [location.id])
         )
       });
     } catch (error) {
@@ -8090,7 +8322,7 @@ function createApp(options = {}) {
   app.get('/api/inventory/calendar', (req, res) => {
     try {
       const location=activeLocation(req.query.location);if(!location)throw Error('Selecciona una ubicación activa.');
-      const originalMode=req.query.source==='originals';
+      const originalMode=synchronizedOnly || req.query.source==='originals';
       const stock=stockSync.current(location.id);
       const warehouse=stock?.warehouses.find(w=>Number(w.custom_id)===(location.type==='warehouse'?1:2));
       const countDates=[...new Set((stock?.daily||[]).filter(r=>r.warehouse===warehouse?.id&&r.physicalCount).map(r=>r.date))].sort();
@@ -8104,12 +8336,12 @@ function createApp(options = {}) {
   app.post('/api/inventory/process', (req, res) => {
     const location = activeLocation(req.body?.location);
     if (!location) return res.status(400).json({ error: 'Select a valid active location.' });
-    const originalMode = req.body?.source === 'originals';
+    const originalMode = synchronizedOnly || req.body?.source === 'originals';
     if (req.body?.source && !['files', 'originals'].includes(req.body.source)) return res.status(400).json({ error: 'Fuente de inventario inválida.' });
     const kardex = originalMode ? { originalName: 'Fuentes originales Toteat', source: 'toteat-originals' } : latestWeeklyFile(location.id, 'kardex');
     if (!kardex) return res.status(404).json({ error: 'No Kardex file is available for this location.' });
     try {
-      const boundaryMode=req.body?.criteriaMode==='count-boundaries';
+      const boundaryMode=synchronizedOnly || req.body?.criteriaMode==='count-boundaries';
       const movementDateFrom = boundaryMode?req.body.initialInventoryDate:req.body?.movementDateFrom || req.body?.dateFrom;
       const movementDateTo = boundaryMode?require('./inventory-boundaries').advance(req.body.finalInventoryDate,-1):req.body?.movementDateTo || req.body?.dateTo;
       const hasCustomSelection = req.body?.initialInventoryDate || req.body?.finalInventoryDate;
@@ -8119,7 +8351,7 @@ function createApp(options = {}) {
         finalDate: req.body?.finalInventoryDate,
         finalBasis: boundaryMode?'initial':req.body?.finalInventoryBasis
       } : null;
-      const stock = originalMode ? stockSync.rebuild(location.id) : boundaryMode ? stockSync.current(location.id) : null;
+      const stock = originalMode ? (synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null;
       const original = originalMode ? (boundaryMode ? { parsed:null, excluded:[],physicalFinalItems:0 } : require('./inventory-original-report').originalReportData(stock, location, selection, movementDateFrom, movementDateTo)) : null;
       const parsed = originalMode ? original.parsed : mergedKardexData(location.id, 'kardex');
       const balanceDate = selection?.finalDate
@@ -8147,7 +8379,9 @@ function createApp(options = {}) {
         masterErrors.push(error.message);
       }
       const masterError = masterErrors.join(' ');
-      const costResolver = buildCostResolver(balanceDate, [originalMode && location.type === 'warehouse' ? 'store-1' : location.id], originalMode ? { catalog: ingredientCatalog, recipes } : {});
+      const costResolver = originalMode && stock.sourceKind === 'public-inventory'
+        ? buildInventoryPurchaseCostResolver(balanceDate, location, stock, {catalog:ingredientCatalog,recipes})
+        : buildCostResolver(balanceDate, [originalMode && location.type === 'warehouse' ? 'store-1' : location.id], originalMode ? { catalog: ingredientCatalog, recipes } : {});
       const consumption = {};
       for (const [field, label] of [['marketing', 'Consumo de marketing'], ['employees', 'Consumo de colaboradores']]) {
         const stored = latestWeeklyFile(location.id, field);
@@ -8173,7 +8407,7 @@ function createApp(options = {}) {
       if (originalMode) {
         try {
           const originalWaste = require('./inventory-original-report').originalReportData(stock, location, boundaryMode ? {...selection,finalDate:movementDateTo} : selection, movementDateFrom, movementDateTo, { waste: true });
-          waste = { label: 'Merma', available: true, source: { originalName: 'Movimientos originales de bodega de merma' }, report: buildWasteSummary(originalWaste.parsed, movementDateFrom, movementDateTo, ingredientCatalog, costResolver) };
+          waste = { label: 'Merma', available: true, source: { originalName: 'Movimientos originales de bodega de merma' }, report: buildWasteSummary(originalWaste.parsed, movementDateFrom, movementDateTo, ingredientCatalog, stock.sourceKind === 'public-inventory' ? buildInventoryPurchaseCostResolver(balanceDate, location, stock, {catalog:ingredientCatalog,recipes,waste:true}) : costResolver) };
         } catch (error) { waste = { label: 'Merma', available: false, error: error.message }; }
       } else if (storedWaste) {
         try {
@@ -8196,28 +8430,7 @@ function createApp(options = {}) {
       }
       let boundaryReport=null;
       if(boundaryMode) {
-        const cache=new Map();
-        const correction=(code,unit,from,to)=>{
-          const key=from+'|'+to;
-          if(!cache.has(key)) {
-            const sales=periodSalesData(location.id,from,to,{apiOnly:originalMode});
-            if(originalMode){const included=new Set((stock.includedOrders||[]).map(id=>`${location.id}:order:${id}`));sales.rows=sales.rows.filter(r=>included.has(r.orderKey));sales.orderFacts=sales.orderFacts.filter(r=>included.has(r.orderKey));}
-            const milk=lac001SubstitutionSummary(sales,from,to,recipes,ingredientCatalog,costResolver);
-            const syrup=syrupSauceSubstitutionSummary(sales,from,to,recipes,ingredientCatalog,catalogAssignments,costResolver);
-            const packaging=inventoryAvoidedPackagingSummary(location,sales,from,to,recipes,ingredientCatalog,costResolver);
-            const internal=[];
-            for(const field of ['marketing','employees']) {
-              if(!latestWeeklyFile(location.id,field))continue;
-              const products=mergedConsumptionProducts(location.id,field,from,to);
-              const ingredients=recipes&&ingredientCatalog?buildIngredientConsumption(products.products,recipes,ingredientCatalog,costResolver):{items:[]};
-              internal.push({available:true,products,ingredients});
-            }
-            cache.set(key,{milk,syrup,packaging,internal});
-          }
-          const c=cache.get(key);
-          const additions=[{code:'LAC001',unit:'L',quantity:c.milk.lac001VolumeLiters},...c.syrup.items.filter(i=>i.status==='resolved').map(i=>({code:i.originalCode,unit:i.unit,quantity:i.theoreticalQuantity})),...c.packaging.avoidedDisposablePackaging];
-          return additions.filter(i=>i.code===code).reduce((n,i)=>n+(convertQuantityUnit(i.quantity,i.unit,unit)??0),0)-c.internal.reduce((n,r)=>n+consumptionQuantityForKardex(r,code,unit),0);
-        };
+        const correction=inventoryCorrection(location,stock,recipes,ingredientCatalog,catalogAssignments,costResolver,originalMode);
         let basis=stock;
         if(!originalMode) {
           const warehouseId='file';const physical=new Set((stock?.daily||[]).filter(r=>r.physicalCount&&stock.warehouses.find(w=>w.id===r.warehouse)?.custom_id===(location.type==='warehouse'?1:2)).map(r=>r.code+'|'+r.date));
@@ -8235,7 +8448,7 @@ function createApp(options = {}) {
       );
       const salesData = periodSalesData(location.id, movementDateFrom, movementDateTo, { apiOnly: originalMode });
       const includedOrderKeys = new Set((stock?.includedOrders || []).map(id => `${location.id}:order:${id}`));
-      const adjustmentSales = originalMode ? { ...salesData, rows: salesData.rows.filter(row => includedOrderKeys.has(row.orderKey)), orderFacts: salesData.orderFacts.filter(row => includedOrderKeys.has(row.orderKey)) } : salesData;
+      const adjustmentSales = originalMode && stock.sourceKind !== 'public-inventory' ? { ...salesData, rows: salesData.rows.filter(row => includedOrderKeys.has(row.orderKey)), orderFacts: salesData.orderFacts.filter(row => includedOrderKeys.has(row.orderKey)) } : salesData;
       const lac001Substitutions = lac001SubstitutionSummary(
         adjustmentSales,
         movementDateFrom,
@@ -8312,11 +8525,11 @@ function createApp(options = {}) {
         location: publicLocation(location),
         source,
         provenance: originalMode ? {
-          mode: 'originals', label: 'Fuentes originales Toteat · informe provisional', capturedAt: stock.sourceCapturedAt,
+          mode: 'originals', label: stock.sourceKind === 'public-inventory' ? 'Inventario API pública Toteat' : 'Fuentes originales Toteat · informe provisional', capturedAt: stock.sourceCapturedAt,
           range: stock.range, masterObservedAt: stock.masterObservedAt, dependencies: stock.dependencies,
           excluded: original.excluded, issues: stock.issues, assumptions: stock.assumptions,
           physicalFinalItems: original.physicalFinalItems,
-          note: 'Inventario y merma calculados desde fuentes originales. Marketing y colaboradores usan sus archivos disponibles. Consumo de ventas provisional; productos sin apertura conocida excluidos. Valoración estimada con el resolver de compras/maestros del informe, no costo histórico certificado de Toteat. El saldo final puede ser calculado cuando no existe toma física. El consumo base incluye productos y extras. Las sustituciones de leche, syrup/salsas y envases no usados se compensan una sola vez en el resumen ajustado, únicamente para las órdenes incorporadas al cálculo.'
+          note: stock.sourceKind === 'public-inventory' ? 'Cantidades desde la API pública Toteat. Valorización por última compra disponible hasta la fecha de corte, incluidas compras centrales; sin compra comparable, costo del maestro de ingredientes o productos; después, costo API positivo o receta calculada con costos disponibles. Sin antecedente verificable se indica Sin costo. Marketing y colaboradores usan sus archivos disponibles. Compensaciones aplicadas una sola vez. Los días sin cobertura no se consideran inventario cero; las incidencias se detallan en las fuentes. El saldo final es teórico cuando no hay toma física.' : 'Inventario y merma calculados desde fuentes originales. Marketing y colaboradores usan sus archivos disponibles. Consumo de ventas provisional; productos sin apertura conocida excluidos. Valoración estimada con el resolver de compras/maestros del informe, no costo histórico certificado de Toteat. El saldo final puede ser calculado cuando no existe toma física. El consumo base incluye productos y extras. Las sustituciones de leche, syrup/salsas y envases no usados se compensan una sola vez en el resumen ajustado, únicamente para las órdenes incorporadas al cálculo.'
         } : { mode: 'files', label: 'Archivos Kardex y Merma de Toteat' },
         waste,
         consumption,
@@ -8764,6 +8977,12 @@ function createApp(options = {}) {
     const dashboardCatalogMaster = latestMasterFile('master-catalog', todayKey);
     let dashboardCatalog = new Map();
     try { if (dashboardCatalogMaster) dashboardCatalog = parseIngredientCatalog(dashboardCatalogMaster.filePath); } catch {}
+    let dashboardProducts=new Map(),dashboardBars=null;
+    try { if(dashboardCatalogMaster)dashboardProducts=parseSalesAnalysisCatalog(dashboardCatalogMaster.filePath).products;
+      const master=latestMasterFile('extras-hierarchy',todayKey);
+      if(master)dashboardBars=parseNamedHierarchies(master.filePath,['Nombre Jerarquía Producto *','Nombre Jerarquia Producto *','Nombre Jerarquía *']);
+    } catch {}
+    const dashboardHot=dashboardBars?.descendantIds('BA.001')||new Set(['BA.001']),dashboardCold=dashboardBars?.descendantIds('BA.002')||new Set(['BA.002']);
     const dashboardCostResolver = buildCostResolver(todayKey, stores.map(location => location.id));
     let hierarchyLookup = null;
     if (hierarchyMaster) {
@@ -8815,6 +9034,7 @@ function createApp(options = {}) {
             const hierarchy = resolvedHierarchyPath.join(' / ');
             if (code || name) productFacts.push({
               orderKey, locationId: location.id, date, code, name: name || code, quantity,
+              barType: require('./sales-insight-filters').classifySalesBar({ hierarchyIds: dashboardProducts.get(code.toUpperCase())?.hierarchyIds || [], hierarchyPath: resolvedHierarchyPath, name }, dashboardHot, dashboardCold),
               net: grossLine / 1.19,
               cost: lineCost,
               unitCost: costReference.unitCost,
@@ -8855,17 +9075,29 @@ function createApp(options = {}) {
         month: periodSalesMetric(facts, periods.month.current, periods.month.previous).netSales
       };
     });
+    const insightFrom = String(query.insightDateFrom || addDays(todayKey, -29));
+    const insightTo = String(query.insightDateTo || todayKey);
+    if (!isValidDate(insightFrom) || !isValidDate(insightTo) || insightFrom > insightTo || insightTo > todayKey) {
+      const error = new Error('Selecciona fechas válidas para productos y jerarquías, sin superar el día actual.');
+      error.status = 400;
+      throw error;
+    }
+    const insightPeriods = {
+      day: periods.day.current, week: periods.week.current, month: periods.month.current,
+      year: { from: `${todayKey.slice(0, 4)}-01-01`, to: todayKey },
+      custom: { from: insightFrom, to: insightTo }
+    };
     const productInsights = {};
-    for (const key of ['day', 'week', 'month']) {
-      const period = periods[key].current;
+    for (const [key, period] of Object.entries(insightPeriods)) {
       const selected = productFacts.filter(fact => fact.date >= period.from && fact.date <= period.to);
       const products = new Map();
       const hierarchies = new Map();
       selected.forEach(fact => {
         const productKey = fact.code || normalizeHeader(fact.name);
-        const product = products.get(productKey) || { code: fact.code, name: fact.name, quantity: 0, netSales: 0 };
+        const product = products.get(productKey) || { code: fact.code, name: fact.name, barType:fact.barType,hierarchyPath:fact.hierarchyPath,quantity: 0, netSales: 0,totalCost:0,costAvailable:true };
         product.quantity += fact.quantity;
         product.netSales += fact.net;
+        product.totalCost+=fact.cost;product.costAvailable=product.costAvailable&&fact.costAvailable;
         products.set(productKey, product);
         hierarchies.set(fact.hierarchy, (hierarchies.get(fact.hierarchy) || 0) + fact.net);
       });
@@ -8927,7 +9159,8 @@ function createApp(options = {}) {
       });
       productInsights[key] = {
         period,
-        topProducts: [...products.values()].sort((left, right) => right.quantity - left.quantity || right.netSales - left.netSales).slice(0, 10),
+        analysisProducts:[...products.values()],
+        topProducts: require('./sales-insight-filters').buildSalesInsights([...products.values()]).topProducts,
         hierarchies: [...hierarchies].map(([name, netSales]) => ({
           name, netSales, percent: totalHierarchySales ? netSales / totalHierarchySales * 100 : 0
         })).sort((left, right) => right.netSales - left.netSales),
@@ -9092,7 +9325,7 @@ function createApp(options = {}) {
       ['products', 'Productos', 'Precios, costos, márgenes, jerarquías y códigos vendidos.'],
       ['recipes', 'Recetas', 'Cobertura de productos vendidos, cantidades, rendimientos e ingredientes referenciados.'],
       ['costs', 'Costos', 'Costos maestros, costos de compra y variaciones relevantes.'],
-      ['inventory', 'Inventarios', 'Vigencia del Kardex, saldos negativos y productos consumidos sin stock.'],
+      ['inventory', 'Inventarios', 'Cobertura de inventario, saldos corregidos y productos consumidos sin stock.'],
       ['purchase-orders', 'Órdenes de compra', 'Estado, proveedor, cantidades, costos y consistencia de totales.'],
       ['purchases', 'Compras', 'Proveedores, códigos, unidades, conversiones y montos registrados.'],
       ['sales', 'Ventas', 'Cobertura, productos desconocidos, cantidades y montos atípicos.']
@@ -9115,17 +9348,18 @@ function createApp(options = {}) {
     };
     const masterSource = (type, master) => {
       if (!master) return;
-      sources.push({ type, name: master.originalName || master.name, validFrom: master.validFrom });
+      sources.push({ type, name: master.originalName || master.name, validFrom: master.validFrom, updatedAt: master.savedAt, origin: master.sourceVersion ? 'Maestros compartidos sincronizados · La Concepción' : 'Maestro compartido' });
     };
 
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
     const recipeResolution = resolveRecipes(dateTo);
     const recipeMaster = recipeResolution.primary;
     const hierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
-    const findingsCostResolver = buildCostResolver(dateTo, auditedLocations.map(location => location.id));
+    const findingsCostResolver = buildCostResolver(dateTo, [], { latestAcrossLocations: true, preferDirectMaster: true, validPurchasesOnly: true });
     masterSource('Catálogo', catalogMaster);
     masterSource('Recetas', recipeMaster);
     masterSource('Jerarquía de productos', hierarchyMaster);
+    for (const [field,label] of [['ingredient-hierarchy','Jerarquía de ingredientes'],['extras-hierarchy','Jerarquía de extras'],['master-suppliers','Proveedores']]) masterSource(label,latestMasterFile(field,dateTo));
     let products = [];
     let productByCode = new Map();
     let ingredientCatalog = new Map();
@@ -9176,10 +9410,16 @@ function createApp(options = {}) {
     let suspiciousDiscounts = 0;
     let salesRowsRead = 0;
     for (const location of auditedStores) {
-      for (const stored of storedSalesFiles(location.id)) {
+      const apiSources = toteatSalesSync.source(location.id, 'sales');
+      const apiState = toteatSalesSync.status(location.id);
+      const useApi = !!apiState.lastSuccess || apiSources.length > 0;
+      sources.push({type:'Ventas · '+location.name,name:useApi?'Toteat API':'Archivos históricos',updatedAt:apiState.lastSuccess});
+      if(useApi && apiState.from > dateFrom) warnings.push(`Ventas (${location.name}): la sincronización comienza el ${apiState.from}, después del inicio solicitado.`);
+      if(apiState.lastError) warnings.push(`Ventas (${location.name}): la última sincronización tuvo problemas; se usa la última lectura guardada.`);
+      for (const stored of (useApi ? apiSources : storedSalesFiles(location.id))) {
         try {
           for (const row of readSalesRows(stored.filePath)) {
-            const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+            const date = cellDate(rowValue(row, useApi ? ['Fecha de cierre'] : ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
             if (!date || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
             if (!latestSalesDate.get(location.id) || date > latestSalesDate.get(location.id)) latestSalesDate.set(location.id, date);
             if (date < dateFrom) continue;
@@ -9223,12 +9463,12 @@ function createApp(options = {}) {
         }
       }
       const latest = latestSalesDate.get(location.id);
-      if (!latest || latest < addDays(dateTo, -3)) {
+      if ((!useApi && (!latest || latest < addDays(dateTo, -3))) || (useApi && (!apiState.lastSuccess || apiState.lastSuccess.slice(0,10) < dateTo))) {
         add('sales', {
           severity: 'medium', title: `Ventas desactualizadas en ${location.name}`,
           detail: latest ? `La última venta disponible es del ${latest}.` : 'No se encontraron ventas legibles.',
           observed: latest || 'Sin datos', location: location.name,
-          action: 'Descarga y procesa el reporte de ventas más reciente.'
+          action: 'Actualiza las ventas desde Toteat y revisa la cobertura del período.'
         });
       }
     }
@@ -9346,7 +9586,7 @@ function createApp(options = {}) {
       });
     }
     for (const [code, quantity] of salesQuantityByCode) {
-      if (quantity > 0 && productByCode.has(code) && !recipesByCode.has(code)) add('recipes', {
+      if (quantity > 0 && productByCode.has(code) && !recipesByCode.has(code) && !fullCatalog.get(code)?.stockManaged) add('recipes', {
         severity: 'medium', title: `Producto vendido sin receta: ${productByCode.get(code).name}`,
         detail: `${quantity.toLocaleString('es-CL')} unidad(es) vendidas en el período no pueden descomponerse en ingredientes.`,
         observed: `${quantity.toLocaleString('es-CL')} unidades`, code,
@@ -9368,14 +9608,30 @@ function createApp(options = {}) {
     const purchaseRows = [];
     const purchaseScopes = selectedLocation
       ? [selectedLocation.id]
-      : ['all', ...locations.filter(location => location.type === 'warehouse').map(location => location.id)];
+      : auditedLocations.map(location => location.id);
     for (const location of purchaseScopes) {
       try {
-        purchaseRows.push(...buildPurchasesPayload({ location, supplier: 'all', product: '', dateFrom, dateTo }).rows);
+        purchaseRows.push(...buildPurchasesPayload({ location, supplier: 'all', product: '', dateFrom, dateTo, auditSources: true }).rows);
       } catch (error) {
         warnings.push(`Compras (${location}): ${error.message}`);
       }
     }
+    for(const location of auditedLocations) {
+      const status=toteatSalesSync.purchases.status(location.type==='warehouse'?'store-1':location.id);
+      sources.push({type:'Compras · '+location.name,name:status.lastSuccess?'Toteat API · bodega de la ubicación y merma':'Archivos históricos',updatedAt:status.lastSuccess});
+      const purchaseState=toteatSalesSync.purchases.get(location.type==='warehouse'?'store-1':location.id);
+      if(purchaseState) {
+        if(purchaseState.from>dateFrom || purchaseState.through<dateTo) warnings.push(`Compras (${location.name}): cobertura API ${purchaseState.from} a ${purchaseState.through}.`);
+        const unknown=(purchaseState.documents||[]).flatMap(d=>d.products||[]).filter(p=>![1,2,3,4].includes(Number(p.warehouse))).length;
+        if(unknown) warnings.push(`Compras (${location.name}): ${unknown} líneas sin bodega reconocida no se asignaron a esta ubicación.`);
+      }
+      if(status.lastError) warnings.push(`Compras (${location.name}): la última sincronización tuvo problemas; se usa la última lectura guardada.`);
+      for(const [field,label] of [['marketing','Marketing'],['employees','Colaboradores']]) {
+        const file=latestWeeklyFile(location.id,field);
+        if(file)sources.push({type:label+' · '+location.name,name:file.record?.originalName || 'Archivos cargados',updatedAt:file.record?.savedAt});
+      }
+    }
+    sources.push({type:'Órdenes de compra',name:'Registros locales de Brewit'});
     const latestPurchaseByCode = new Map();
     for (const row of purchaseRows) {
       const code = String(row.code || '').toUpperCase();
@@ -9416,18 +9672,49 @@ function createApp(options = {}) {
     }
     for (const [code, purchase] of latestPurchaseByCode) {
       const ingredient = ingredientCatalog.get(code);
-      const comparablePurchaseCost = purchase.baseUnitCost;
+      const convertedUnit = ingredient ? convertQuantityUnit(1,purchase.baseUnit,ingredient.unit) : null;
+      const comparablePurchaseCost = convertedUnit > 0 ? purchase.baseUnitCost / convertedUnit : null;
       if (!ingredient || !(comparablePurchaseCost > 0) || !ingredient.unitCost) continue;
       const difference = (comparablePurchaseCost / ingredient.unitCost - 1) * 100;
       if (Math.abs(difference) >= 20) add('costs', {
         severity: Math.abs(difference) >= 40 ? 'high' : 'medium', title: `Costo maestro desalineado: ${ingredient.name}`,
-        detail: `Última compra ${comparablePurchaseCost.toLocaleString('es-CL')} por ${purchase.baseUnit}; maestro ${ingredient.unitCost.toLocaleString('es-CL')} por ${ingredient.unit}.`,
+        detail: `Última compra ${comparablePurchaseCost.toLocaleString('es-CL')} por ${ingredient.unit}; maestro ${ingredient.unitCost.toLocaleString('es-CL')} por ${ingredient.unit}.`,
         observed: `${difference > 0 ? '+' : ''}${difference.toFixed(1)}%`, date: purchase.date, location: purchase.locationName, code,
         action: 'Confirma la conversión y actualiza el costo maestro si corresponde.'
       });
     }
 
     for (const location of auditedLocations) {
+      const state = stockSync.current(location.id);
+      if (state?.sourceKind === 'public-inventory') {
+        sources.push({type:'Inventario · '+location.name,name:'Toteat API pública · saldos con compensaciones y consumos internos',updatedAt:state.sourceCapturedAt,range:state.range});
+        try {
+          const basis=apiProjectionBasis(location,dateTo,state,dateFrom);
+          warnings.push(...basis.warnings.map(message=>`${location.name}: ${message}`));
+          if (!basis.items.length || basis.to < dateTo || basis.from > dateFrom || basis.excluded.length) add('inventory',{
+            title:`Cobertura de inventario incompleta: ${location.name}`,location:location.name,
+            detail:basis.warnings.join(' '),action:'Actualiza las fuentes de inventario y verifica las tomas físicas. No se supone stock cero donde faltan datos.'
+          });
+          for (const product of basis.items) {
+            if(product.currentInventory < -0.005) add('inventory',{
+              severity:'high',title:`Inventario negativo: ${product.name || product.code}`,
+              detail:`${product.currentInventory.toLocaleString('es-CL')} ${product.unit} al ${basis.to} en ${location.name}. Incluye compensaciones y consumos internos.`,
+              observed:product.currentInventory,date:basis.to,location:location.name,code:product.code,
+              action:'Revisa movimientos, unidades y conteos físicos en las fuentes sincronizadas.'
+            });
+            else if(Math.abs(product.currentInventory)<0.005 && product.consumption30>0) add('inventory',{
+              title:`Producto consumido sin stock: ${product.name || product.code}`,
+              detail:`Stock teórico cero y salidas netas de ${product.consumption30.toLocaleString('es-CL')} ${product.unit} desde ${product.consumptionFrom}.`,
+              observed:'Stock 0',date:basis.to,location:location.name,code:product.code,action:'Confirma el stock físico y evalúa reposición.'
+            });
+          }
+        } catch(error) {
+          warnings.push(`Inventario API (${location.name}): ${error.message}`);
+          add('inventory',{title:`Inventario API no calculable: ${location.name}`,location:location.name,detail:error.message,action:'Actualiza las fuentes de inventario y los maestros compartidos.'});
+        }
+        continue;
+      }
+      sources.push({type:'Inventario · '+location.name,name:'Kardex histórico (sin inventario API sincronizado)'});
       let kardex;
       try { kardex = mergedKardexData(location.id, 'kardex'); } catch (error) {
         warnings.push(`Kardex (${location.name}): ${error.message}`);
@@ -9542,6 +9829,7 @@ function createApp(options = {}) {
     }));
     const findings = serializedSections.flatMap(section => section.findings);
     return {
+      sourceModel: 3,
       generatedAt: new Date().toISOString(),
       period: { from: dateFrom, to: dateTo },
       scope: selectedLocation
@@ -9594,6 +9882,7 @@ function createApp(options = {}) {
         && record.occurrenceDate >= payload.period.from && record.occurrenceDate <= payload.period.to);
       const common = {
         sectionKey: section.key,
+        sourceModel: payload.sourceModel,
         severity: finding.severity,
         title: finding.title,
         detail: finding.detail,
@@ -9633,7 +9922,11 @@ function createApp(options = {}) {
       || record.affectedLocationId === payload.scope.location
       || (!record.affectedLocationId && ['all', payload.scope.location].includes(record.scopeLocation));
     const records = registry.records.filter(record => record.occurrenceDate >= payload.period.from
-      && record.occurrenceDate <= payload.period.to && matchesScope(record));
+      && record.occurrenceDate <= payload.period.to && matchesScope(record)
+      && (record.sourceModel === payload.sourceModel || record.closed));
+    const previousSources = registry.records.filter(record => !record.closed && record.sourceModel !== payload.sourceModel
+      && record.occurrenceDate >= payload.period.from && record.occurrenceDate <= payload.period.to && matchesScope(record)).length;
+    if(previousSources) payload.warnings.push(`${previousSources} hallazgos históricos de fuentes anteriores no se incluyen en esta revisión; sus registros y observaciones se conservan.`);
     const severityOrder = { high: 0, medium: 1, low: 2 };
     const sections = payload.sections.map(section => ({
       key: section.key,
@@ -11703,7 +11996,8 @@ function createApp(options = {}) {
 
   app.get('/api/masters', (req, res) => {
     try {
-      res.json(readJson(path.join(mastersRoot, 'masters.json'), {}));
+      const index=readJson(path.join(mastersRoot,'masters.json'),{});
+      res.json(synchronizedOnly ? Object.fromEntries(Object.entries(index).map(([version,group])=>[version,Object.fromEntries(Object.entries(group).filter(([,record])=>record.source==='toteat-shared-api'))]).filter(([,group])=>Object.keys(group).length)) : index);
     } catch (error) {
       res.status(500).json({ error: 'Could not read master-file metadata.' });
     }
@@ -11722,7 +12016,7 @@ function createApp(options = {}) {
         return res.status(404).json({ error: 'Stored master file not found.' });
       }
 
-      return res.json(buildSpreadsheetPreview(filePath, record.originalName || record.name, { field: req.params.field }));
+      return res.json(buildSpreadsheetPreview(filePath, record.originalName || record.name, { field: req.params.field, complete: true }));
     } catch (error) {
       return res.status(422).json({ error: 'Could not preview this master file.' });
     }

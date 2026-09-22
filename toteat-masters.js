@@ -192,9 +192,16 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
         const source = await reader({ restaurantId: config.restaurantId, localId: config.localId }, { includeSuppliers: true });
         const result = publish('store-1', source);
         publishSharedMasters(uploadsRoot, source, result.counts, clock, read(path.join(dir('store-1'), 'current.json')).version);
-      } catch {
-        sharedError = 'No se pudieron actualizar todos los maestros desde La Concepción. Se conserva la versión compartida anterior; revisa la sesión web de Toteat.';
-        throw Error(sharedError);
+      } catch (error) {
+        const reasons = {
+          TOTEAT_BROWSER_UNAVAILABLE: 'El navegador conectado de Toteat no está disponible. Abre el navegador de la conexión y vuelve a actualizar.',
+          TOTEAT_RESTAURANT_NOT_FOUND: 'La sesión de Toteat no permite seleccionar La Concepción. Revisa el acceso al local en el navegador conectado.',
+          TOTEAT_RESTAURANT_SWITCH_FAILED: 'No se confirmó La Concepción como local activo. Vuelve a seleccionar el local en Toteat.'
+        };
+        sharedError = (reasons[error.code] || 'No se completó la lectura o publicación de todos los maestros de La Concepción. Revisa la sesión del navegador conectado de Toteat.') + ' Se conserva la versión compartida anterior.';
+        const failure = Error(sharedError);
+        failure.safeMasterMessage = sharedError;
+        throw failure;
       } finally { sharedTask = null; }
       return sharedStatus();
     });

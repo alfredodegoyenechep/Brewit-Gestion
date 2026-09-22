@@ -29,6 +29,7 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
   const sync = createSalesSync({ uploadsRoot, activeLocation, credentials: read, request, clock: syncClock });
   const purchases = createPurchaseSync({ uploadsRoot, activeLocation, credentials: read, request, clock: syncClock });
   sync.purchases = purchases;
+  sync.requestInventory = (config, range, warehouses) => require('./toteat-public-inventory').readPublicInventory(request, config, range, warehouses);
   const publicConfig = config => config ? {
     configured: true, restaurantId: config.restaurantId, localId: config.localId,
     userId: config.userId, verifiedAt: config.verifiedAt, productCount: config.productCount

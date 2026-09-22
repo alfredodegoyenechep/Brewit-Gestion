@@ -1672,7 +1672,8 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
     .then(result => result.json());
   assert.equal(storedExpenses.configured, true);
   assert.equal(storedExpenses.values.rent, 310000);
-  assert.equal(storedExpenses.categories.length, 13);
+  assert.equal(storedExpenses.categories.length, 14);
+  assert.equal(storedExpenses.values.inventoryDifference, null);
   const reportWithGeneralExpenses = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`)
     .then(result => result.json());
   const rentExpense = reportWithGeneralExpenses.statement.expenses.find(item => item.key === 'general:rent');
@@ -1695,6 +1696,13 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   assert.equal(Math.round(consolidated.statement.headOffice.amount), 150000);
   assert.equal(Math.round(consolidated.statement.operationalResultWithHeadOffice),
     Math.round(consolidated.statement.operationalResult4Wall - 150000));
+  const manualSaved=await fetch(`${baseUrl}/api/financial-results/general-expenses`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'store-1',month:'2026-08',values:{...generalExpenseValues,inventoryDifference:-31000}})});
+  assert.equal(manualSaved.status,200);
+  const manualReport=await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`).then(r=>r.json());
+  const differences=manualReport.statement.expenses.filter(item=>item.key==='inventoryDifference');
+  assert.equal(differences.length,1);assert.equal(differences[0].amount,-15000);assert.equal(differences[0].available,true);
+  assert.equal(manualReport.statement.expenses.some(item=>item.key==='general:inventoryDifference'),false);
+
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
@@ -1749,7 +1757,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(all.suppliers[1].name, 'Proveedor Uno');
   assert.equal(all.summary.totalAmount, 920);
   const changed = all.rows.find(row => row.document === '11');
-  assert.equal(changed.previousEffectiveUnitPrice, 100);
+  assert.equal(changed.previousEffectiveUnitPrice, 100 / 12);
   assert.equal(Math.round(changed.priceChangePercent), 20);
   assert.equal(changed.purchaseUnit, 'CAJ');
   assert.equal(changed.unitsPerPurchaseUnit, 12);
@@ -1760,7 +1768,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(kilograms.purchaseUnit, 'KG');
   assert.equal(kilograms.unitsPerPurchaseUnit, 1);
   assert.equal(kilograms.baseUnit, 'kg');
-  assert.equal(kilograms.baseUnitCost, 500);
+  assert.equal(kilograms.baseUnitCost, 450); // Effective cost includes the line discount.
   assert.equal(kilograms.costBasisEvidence, 'net-field-consistent');
 
   const costVariations = await fetch(`${baseUrl}/api/purchase-cost-variations?location=all`).then(response => response.json());
@@ -3531,6 +3539,13 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   const dashboardResponse = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1`);
   assert.equal(dashboardResponse.status, 200);
   const dashboard = await dashboardResponse.json();
+  assert.deepEqual(dashboard.sales.productInsights.year.period, { from: `${dashboard.date.slice(0, 4)}-01-01`, to: dashboard.date });
+  const customResponse = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1&insightDateFrom=${dashboard.date}&insightDateTo=${dashboard.date}`);
+  assert.equal(customResponse.status, 200);
+  const insightDashboard = await customResponse.json();
+  assert.deepEqual(insightDashboard.sales.productInsights.custom.topProducts, dashboard.sales.productInsights.day.topProducts);
+  assert.deepEqual(insightDashboard.sales.productInsights.custom.period, {from: dashboard.date, to: dashboard.date});
+  assert.equal((await fetch(`${baseUrl}/api/sales/dashboard?insightDateFrom=2026-08-20&insightDateTo=2026-08-01`)).status, 400);
   assert.equal(dashboard.sales.metrics.day.netSales, 300);
   assert.equal(dashboard.sales.metrics.day.previous.netSales, 100);
   assert.equal(Math.round(dashboard.sales.metrics.day.changePercent), 200);
@@ -3849,7 +3864,7 @@ test('warns on duplicate master start dates and replaces only after confirmation
   assert.equal((await supplier.json()).saved['master-suppliers'].originalName, 'suppliers.xlsx');
 });
 
-test('limits spreadsheet previews to 400 rows and 400 columns', async t => {
+test('shows every row and column of master previews', async t => {
   const baseUrl = await startTestServer(t);
   const workbook = XLSX.utils.book_new();
   const matrix = Array.from({ length: 405 }, (_, row) =>
@@ -3872,10 +3887,10 @@ test('limits spreadsheet previews to 400 rows and 400 columns', async t => {
   const version = Object.keys(versions)[0];
   const preview = await fetch(`${baseUrl}/api/masters/${encodeURIComponent(version)}/master-catalog/preview`)
     .then(response => response.json());
-  assert.equal(preview.sheets[0].rows.length, 400);
-  assert.equal(preview.sheets[0].rows[0].length, 400);
-  assert.equal(preview.sheets[0].rows[0].at(-1), 'R1C400');
+  assert.equal(preview.sheets[0].rows.length, 405);
+  assert.equal(preview.sheets[0].rows[0].length, 405);
+  assert.equal(preview.sheets[0].rows[0].at(-1), 'R1C405');
   assert.equal(preview.sheets[0].totalRows, 405);
   assert.equal(preview.sheets[0].frozenRows, 2);
-  assert.equal(preview.sheets[0].truncated, true);
+  assert.equal(preview.sheets[0].truncated, false);
 });

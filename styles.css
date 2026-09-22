@@ -8669,7 +8669,7 @@ button:disabled {
 #inventory-results-table .difference-negative { color: #c0392b; }
 .upload-overview-actions { display:flex; align-items:flex-start; gap:24px; flex-wrap:wrap; margin:20px 0; }
 .upload-master-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:18px 0 28px; }
-.upload-master-list > div { border:1px solid var(--border-soft); border-radius:10px; padding:16px; display:grid; gap:8px; }
+.upload-master-list > button { text-align:left; background:transparent; color:var(--text); font:inherit; cursor:pointer; border:1px solid var(--border-soft); border-radius:10px; padding:16px; display:grid; gap:8px; }
 .upload-master-list span { color:var(--text-soft); }
 #upload-transaction-matrix th, #upload-transaction-matrix td { min-width:150px; white-space:normal; text-align:left; vertical-align:top; }
 #upload-transaction-matrix small { display:block; margin-top:6px; color:var(--text-soft); }
@@ -8685,3 +8685,68 @@ button:disabled {
 #upload-refresh-steps tr[data-state="error"] td:nth-child(4) { color:var(--red); font-weight:700; }
 #upload-refresh-steps tr[data-state="complete"] td:nth-child(4) { color:var(--green); font-weight:700; }
 #upload-refresh-steps tr[data-state="running"] td:nth-child(4) { color:#2869a8; font-weight:700; }
+
+.upload-record-cell { cursor: pointer; }
+.upload-record-cell:hover, .upload-record-cell:focus-visible { background: #322b21; outline: 2px solid #b08050; outline-offset: -2px; }
+.upload-record-cell button { display: block; margin-top: .5rem; }
+.upload-records-dialog { width: min(95vw, 1500px); max-height: 90vh; overflow: auto; }
+.upload-records-dialog .panel-heading { display: flex; justify-content: space-between; gap: 1rem; }
+.upload-records-scroll { overflow: auto; max-height: 58vh; margin: 1rem 0; }
+.upload-records-scroll table { width: 100%; border-collapse: collapse; }
+.upload-records-scroll th { position: sticky; top: 0; background: #29261f; z-index: 1; }
+.upload-records-scroll th, .upload-records-scroll td { padding: .5rem; border: 1px solid #49463e; white-space: nowrap; }
+
+.upload-master-list > button:hover { background:var(--coffee-soft-2); }
+.upload-master-list > button:focus-visible { outline:2px solid #76b8ff; outline-offset:3px; }
+
+.source-policy-notice { padding:12px 16px; margin-bottom:16px; border:1px solid var(--border-soft); border-radius:10px; color:var(--text-soft); }
+.source-policy-notice summary { cursor:pointer; font-weight:600; }
+
+#findings-print-document { display:none; }
+@media print {
+  body.printing-findings { display:block !important; background:#fff !important; margin:0; color:#111 !important; }
+  body.printing-findings > *:not(#findings-print-document) { display:none !important; }
+  body.printing-findings #findings-print-document { display:block !important; font:10pt/1.4 Arial,sans-serif; }
+  #findings-print-document * { color:#111 !important; background:transparent !important; box-shadow:none !important; overflow:visible !important; max-height:none !important; }
+  #findings-print-document h1 { font-size:18pt; }
+  #findings-print-document h2, #findings-print-document h3 { font-size:13pt; break-after:avoid; }
+  #findings-print-document .findings-report, #findings-print-document .findings-list, #findings-print-document .finding-item { display:block; }
+  #findings-print-document .findings-section { border:0; padding:0; margin:14pt 0; }
+  #findings-print-document .finding-item { border:1px solid #aaa; padding:9pt; margin:8pt 0; break-inside:avoid; opacity:1; }
+  #findings-print-document .finding-severity { display:inline-block; border:1px solid #777; padding:2pt 5pt; margin-bottom:5pt; }
+  #findings-print-document .finding-copy strong, #findings-print-document .finding-number { display:block; }
+  #findings-print-document .finding-print-review { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:6pt; }
+  #findings-print-document p { overflow-wrap:anywhere; }
+}
+
+.sales-insight-controls {display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:12px 0;}
+.sales-insight-controls p {width:100%;margin:0;color:var(--text-soft);font-size:12px;}
+#sales-top-products {max-height:640px;overflow-y:auto;}
+#sales-top-products .sales-ranked-values small {display:block;white-space:normal;}
+
+.workspace-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 0 14px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border, #49443e);
+}
+.workspace-tabs [role="tab"] {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  border: 1px solid var(--border, #49443e);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.workspace-tabs [aria-selected="true"] {
+  background: #503a23;
+  border-color: #bd8253;
+  font-weight: 700;
+}
+.workspace-tabs [role="tab"]:focus-visible { outline: 2px solid #d8a477; outline-offset: 2px; }
+.workspace-tab-panel[hidden] { display: none !important; }
+.workspace-tab-panel > .panel { margin-bottom: 18px; }

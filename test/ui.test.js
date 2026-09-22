@@ -642,8 +642,13 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#financial-statement-body .financial-highlight-row').count(), 4);
   assert.equal(await page.locator('#financial-statement-body .financial-highlight-row').first().evaluate(row => getComputedStyle(row.cells[0]).fontSize), '14px');
   assert.equal(await page.locator('#financial-general-expenses-location option').last().textContent(), 'Casa Matriz');
-  assert.equal(await page.locator('#financial-general-expenses-grid tr').count(), 13);
-  assert.equal(await page.locator('#financial-general-expenses-grid input').count(), 156);
+  assert.equal(await page.locator('#financial-general-expenses-grid tr').count(), 14);
+  assert.equal(await page.locator('#financial-general-expenses-grid input').count(), 168);
+  const inventoryDifference=page.getByRole('textbox',{name:'Diferencia de Inventario ajustada, Ago 2026'});
+  assert.equal(await inventoryDifference.inputValue(),'');
+  await inventoryDifference.fill('-31000');await inventoryDifference.blur();assert.equal(await inventoryDifference.inputValue(),'-31.000');
+  await inventoryDifference.fill('0');await inventoryDifference.blur();assert.equal(await inventoryDifference.inputValue(),'0');
+  await inventoryDifference.fill('');await inventoryDifference.blur();assert.equal(await inventoryDifference.inputValue(),'');
   const augustRent = page.getByRole('textbox', { name: 'Arriendo, Ago 2026' });
   await augustRent.fill('1234567');
   await augustRent.blur();
@@ -1219,7 +1224,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await purchaseHeaders.nth(7).innerText(), 'Unidades x\nUDC');
   assert.equal(await purchaseHeaders.nth(8).innerText(), 'Unidad\nMedida');
   assert.equal(await purchaseHeaders.nth(9).innerText(), 'Costo UDC\nregistrado');
-  assert.equal(await purchaseHeaders.nth(12).innerText(), 'Precio Unit.\nefectivo');
+  assert.equal(await purchaseHeaders.nth(12).innerText(), 'Precio comparable\npor unidad');
   assert.equal(await page.getByRole('button', { name: 'Imprimir / PDF' }).isEnabled(), true);
   assert.equal(await page.getByRole('button', { name: 'Exportar Excel' }).isEnabled(), true);
   await page.evaluate(() => {
@@ -1279,7 +1284,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 1);
   const projectionRow = page.locator('#purchase-projection-body tr[data-key]').first();
   assert.equal(await page.locator('.purchase-projection-table th').nth(4).innerText(), 'Unidad\ninterna');
-  assert.equal(await page.locator('.purchase-projection-table th').nth(7).innerText(), 'Consumo y TRN-OUT\n30 días');
+  assert.equal(await page.locator('.purchase-projection-table th').nth(7).innerText(), 'Consumo y salidas\ndel período');
   assert.equal(await page.locator('.purchase-projection-table th').nth(9).innerText(), 'Cobertura\nactual');
   assert.equal(await page.locator('.purchase-projection-table th').nth(13).innerText(), 'Sugerencia\ninterna');
   assert.equal(await page.locator('.purchase-projection-table th').nth(19).innerText(), 'Costo UDC\nestimado');
