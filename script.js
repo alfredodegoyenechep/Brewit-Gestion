@@ -194,10 +194,11 @@ function setView(view) {
     section.hidden = true;
     section.style.display = 'none';
   });
-  if (view === 'uploads') {
-    const loader = document.getElementById('file-loader');
+  if (view === 'uploads' || view === 'uploads-previous') {
+    const loader = document.getElementById(view === 'uploads' ? 'upload-overview' : 'file-loader');
     loader.hidden = false;
     loader.style.display = '';
+    if (view === 'uploads') loadUploadOverview();
     return;
   }
   if (view === 'config') {
@@ -708,6 +709,7 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
     clearInspection();
     await loadTransactionFiles();
     if (uploadContext?.refreshReport) await loadWeeklySalesReport();
+    if (uploadContext?.source === 'overview') await loadUploadOverview();
     const importMessages = [];
     if (result.imports?.sales) {
       const imported = result.imports.sales;
@@ -11283,4 +11285,84 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('location-trash-dialog').addEventListener('close', () => {
     pendingTrashLocation = null;
   });
+});
+
+
+let uploadOverviewBusy = false;
+let uploadScheduleDirty = false;
+let uploadManualTarget = null;
+async function loadUploadOverview() {
+  if (uploadOverviewBusy) return;
+  uploadOverviewBusy = true;
+  const el = id => document.getElementById(id);
+  const date = value => value ? new Date(value).toLocaleString('es-CL') : 'Sin actualizar';
+  try {
+    const data = await apiRequest('/api/uploads/overview');
+    const cell = (tag, text) => { const e=document.createElement(tag);e.textContent=text;return e; };
+    el('upload-master-list').replaceChildren(...data.masters.map(m=>{
+      const item=document.createElement('div');item.append(cell('strong',m.label),cell('span',date(m.updatedAt)));return item;
+    }));
+    const table=el('upload-transaction-matrix'),head=document.createElement('thead'),header=document.createElement('tr');
+    header.append(cell('th','Ubicación'),...data.columns.map(c=>cell('th',c.label)));head.append(header);
+    const body=document.createElement('tbody');
+    for(const location of data.rows){const row=document.createElement('tr');row.append(cell('th',location.name));
+      for(const item of location.cells){const td=cell('td',item.applicable?date(item.updatedAt):'No aplica');
+        if(item.applicable){td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
+          if(['mercadopago','marketing','employees'].includes(item.key)) {
+            const button=cell('button','Cargar archivo');button.type='button';button.className='icon-button';
+            button.dataset.uploadLocation=location.id;button.dataset.uploadField=item.key;
+            button.setAttribute('aria-label',`Cargar ${data.columns.find(c=>c.key===item.key).label} · ${location.name}`);
+            button.addEventListener('click',()=>{
+              if(inspectionState){document.getElementById('date-confirmation').showModal();return;}
+              uploadManualTarget={location:location.id,field:item.key};
+              document.getElementById('upload-overview-file').click();
+            });td.append(button);
+          }
+        }row.append(td);
+      }body.append(row);
+    }table.replaceChildren(head,body);
+    el('upload-refresh-schedule').replaceChildren(...data.rows.flatMap(r=>r.schedules.map(s=>cell('div',`${r.name} · ${s.label}: ${s.enabled?'cada '+s.minutes+' minutos':'automático desactivado'}`))),...Object.entries(data.schedule).map(([key,value])=>cell('div',`${key==='masters'?'Maestros compartidos':'Fuentes de inventario'}: ${value.minutes?'cada '+value.minutes+' minutos':'manual'}`)));
+    if(!uploadScheduleDirty)for(const key of ['masters','inventory'])el(`upload-${key}-frequency`).value=data.schedule[key].minutes || '';
+    el('refresh-upload-api').disabled=data.job.running || data.masterStatus.running || data.rows.some(r=>r.cells.some(c=>c.running));
+    const job=data.job,summary=job.summary || {};
+    el('upload-refresh-report').hidden=!job.steps.length;
+    el('upload-refresh-progress').textContent=`${job.running?'En curso':'Finalizado'} · ${summary.complete||0} grupos actualizados · ${summary.error||0} con problemas · ${summary.skipped||0} omitidos · ${(summary.pending||0)+(summary.running||0)} pendientes. Inicio: ${date(job.startedAt)}${job.finishedAt?' · Fin: '+date(job.finishedAt):''}`;
+    const progressHead=document.createElement('thead'),progressHeader=document.createElement('tr');
+    progressHeader.append(...['Local / grupo','Fuentes previstas','Conexión','Estado','Resultado','Último cambio'].map(label=>cell('th',label)));progressHead.append(progressHeader);
+    const progressBody=document.createElement('tbody');
+    for(const step of job.steps){const row=document.createElement('tr');
+      row.dataset.state=step.state;
+      row.append(cell('td',step.label),cell('td',(step.sources||[]).join(' · ')),cell('td',step.method||''),cell('td',({pending:'Pendiente',running:'Actualizando…',complete:'Actualizado',error:'Con problemas',skipped:'Omitido'})[step.state]),cell('td',step.message||(step.state==='running'?'Consultando y guardando las fuentes…':'En espera de su turno.')),cell('td',date(step.finishedAt||step.startedAt)));
+      progressBody.append(row);
+    }el('upload-refresh-steps').replaceChildren(progressHead,progressBody);
+    const otherRunning=data.rows.filter(r=>r.cells.some(c=>c.running)).map(r=>r.name);
+    setStatus(el('upload-overview-status'),data.job.running?'Actualización en curso…':otherRunning.length?'Hay actualizaciones independientes en curso: '+otherRunning.join(', '):data.masterStatus.running?'Maestros actualizándose desde otra vista…':data.job.finishedAt?'Último proceso finalizado: '+date(data.job.finishedAt):'');
+  } catch(error){setStatus(el('upload-overview-status'),error.message,'error');}finally{uploadOverviewBusy=false;}
+}
+document.getElementById('open-previous-upload').addEventListener('click',()=>setView('uploads-previous'));
+document.getElementById('return-upload-overview').addEventListener('click',()=>setView('uploads'));
+document.getElementById('refresh-upload-api').addEventListener('click',async()=>{
+  const button=document.getElementById('refresh-upload-api');button.disabled=true;
+  try{await apiRequest('/api/uploads/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
+  catch(error){setStatus(document.getElementById('upload-overview-status'),error.message,'error');button.disabled=false;}
+});
+setInterval(()=>{const view=document.getElementById('upload-overview');if(!view.hidden&&view.style.display!=='none')loadUploadOverview();},5000);
+
+// The confirmation dialog is shared by both upload views.
+document.body.append(document.getElementById('date-confirmation'));
+document.getElementById('upload-overview-file').addEventListener('change',async event=>{
+  const input=event.currentTarget,file=input.files[0],target=uploadManualTarget;
+  if(!file||!target)return;
+  transactionUploadContext={source:'overview',statusId:'upload-manual-status',location:target.location};
+  await inspectTransactionFile(file,target.field,target.location,input);
+  input.value='';
+});
+for(const key of ['masters','inventory'])document.getElementById(`upload-${key}-frequency`).addEventListener('change',()=>{uploadScheduleDirty=true;});
+document.getElementById('upload-native-schedule').addEventListener('submit',async event=>{
+  event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;
+  try{
+    const body=Object.fromEntries(['masters','inventory'].map(key=>[key,Number(document.getElementById(`upload-${key}-frequency`).value)||null]));
+    await apiRequest('/api/uploads/schedule',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    uploadScheduleDirty=false;setStatus(document.getElementById('upload-schedule-status'),'Frecuencias guardadas. Se ejecutan mientras el servidor esté encendido.','success');await loadUploadOverview();
+  }catch(error){setStatus(document.getElementById('upload-schedule-status'),error.message,'error');}finally{button.disabled=false;}
 });

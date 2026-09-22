@@ -312,6 +312,8 @@ test('transactional downloads show each local and report progressing in order', 
   const page = await browser.newPage({ acceptDownloads: true });
   await page.goto(baseUrl);
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
+  await page.locator('#upload-overview').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Vista Carga Anterior', exact: true }).click();
   await page.locator('#download-all-toteat-transactions').click();
   await page.locator('#toteat-transactional-download-dialog').waitFor({ state: 'visible' });
   assert.match(await page.locator('#toteat-transactional-locations').innerText(), /ID local 1/);
@@ -860,7 +862,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.unroute('**/api/findings/H-000001');
 
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
-  await page.getByRole('heading', { name: 'Cargar archivos' }).waitFor({ state: 'visible' });
+  await page.locator('#upload-overview').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Vista Carga Anterior', exact: true }).click();
+  await page.getByRole('heading', { name: 'Vista Carga Anterior' }).waitFor({ state: 'visible' });
   await page.locator('[data-weekly-field="sales"] .file-upload-state.uploaded').waitFor();
 
   assert.equal(await page.locator('#file-loader').isVisible(), true);
@@ -1835,6 +1839,8 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#inventory-report-results').evaluate(dialog => dialog.open), false);
 
   await page.getByRole('link', { name: 'Cargar Archivos' }).click();
+  await page.locator('#upload-overview').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Vista Carga Anterior', exact: true }).click();
 
   const salesRow = page.locator('[data-weekly-field="sales"]');
   await salesRow.getByRole('button', { name: 'Previsualizar' }).click();
@@ -1871,9 +1877,9 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
 
   await page.getByRole('tab', { name: 'Archivos maestros' }).click();
   assert.equal(await page.getByText('Maestro Productos / Ingredientes / Extras', { exact: true }).count(), 1);
-  assert.equal(await page.getByText('Jerarquía Productos', { exact: true }).count(), 1);
-  assert.equal(await page.getByText('Jerarquía Ingredientes', { exact: true }).count(), 1);
-  assert.equal(await page.getByText('Jerarquía Extras', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#file-loader').getByText('Jerarquía Productos', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#file-loader').getByText('Jerarquía Ingredientes', { exact: true }).count(), 1);
+  assert.equal(await page.locator('#file-loader').getByText('Jerarquía Extras', { exact: true }).count(), 1);
   assert.equal(await page.getByText('Maestro Proveedores', { exact: true }).count(), 1);
 
   await page.locator('#master-suppliers').setInputFiles({
@@ -1973,4 +1979,29 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#cost-review-state').selectOption('missing');
   assert.match(await page.locator('#cost-review-count').textContent(), /artículos activos/);
   assert.deepEqual(pageErrors, []);
+});
+
+test('Nueva carga permite archivos manuales por local y guarda las frecuencias nativas', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+  const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-upload-native-ui-'));
+  const server=createApp({uploadsRoot,enableToteatSync:false}).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  const browser=await chromium.launch({executablePath:CHROME_PATH,headless:true});t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));fs.rmSync(uploadsRoot,{recursive:true,force:true});});
+  const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.getByRole('link',{name:'Cargar Archivos',exact:true}).click();
+  await page.locator('[data-upload-location="store-1"][data-upload-field="marketing"]').waitFor();
+  assert.equal(await page.locator('[data-upload-field]').count(),6);
+  assert.equal(await page.locator('[data-upload-location="main-warehouse"]').count(),0);
+  for(const field of ['marketing','employees','mercadopago']) {
+    const chooser=page.waitForEvent('filechooser');await page.locator(`[data-upload-location="store-1"][data-upload-field="${field}"]`).click();
+    await (await chooser).setFiles({name:field+'.csv',mimeType:'text/csv',buffer:Buffer.from(field==='mercadopago'?'TRANSACTION_DATE\tSOURCE_ID\tTRANSACTION_TYPE\tTRANSACTION_AMOUNT\tFEE_AMOUNT\n2026-08-05T10:00:00.000-04:00\tmp-ui-1\tSETTLEMENT\t1190\t-20':'ID Producto **\tNombre Producto *\t2026-08-05\nP1\tProducto Uno\t1')});
+    await page.locator('#date-confirmation').waitFor({state:'visible',timeout:5000}).catch(async error=>{throw Error(await page.locator('#upload-manual-status').innerText()+' | '+error.message);});
+    assert.equal(await page.locator('#file-loader').isVisible(),false);
+    await page.locator('#dates-confirmed').check();await page.locator('#keep-transactions-btn').click();
+    await page.locator('#date-confirmation').waitFor({state:'hidden'});
+    await page.locator('#upload-manual-status').filter({hasText:/agregaron|MercadoPago nueva/}).waitFor();
+    const data=await page.request.get(`http://127.0.0.1:${server.address().port}/api/transactions?location=store-1`).then(r=>r.json());assert.equal(data.files[field].fileCount,1);
+  }
+  await page.locator('#upload-masters-frequency').selectOption('60');await page.locator('#upload-inventory-frequency').selectOption('15');await page.getByRole('button',{name:'Guardar frecuencias'}).click();
+  await page.locator('#upload-schedule-status').filter({hasText:'Frecuencias guardadas'}).waitFor();
+  await page.reload();await page.getByRole('link',{name:'Cargar Archivos',exact:true}).click();
+  await page.waitForFunction(()=>document.getElementById('upload-masters-frequency').value==='60');
+  assert.equal(await page.locator('#upload-inventory-frequency').inputValue(),'15');
 });

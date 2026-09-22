@@ -8667,3 +8667,21 @@ button:disabled {
 /* Signed Kardex quantities and valuations share the same color convention. */
 #inventory-results-table .difference-positive { color: #2869a8; }
 #inventory-results-table .difference-negative { color: #c0392b; }
+.upload-overview-actions { display:flex; align-items:flex-start; gap:24px; flex-wrap:wrap; margin:20px 0; }
+.upload-master-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:18px 0 28px; }
+.upload-master-list > div { border:1px solid var(--border-soft); border-radius:10px; padding:16px; display:grid; gap:8px; }
+.upload-master-list span { color:var(--text-soft); }
+#upload-transaction-matrix th, #upload-transaction-matrix td { min-width:150px; white-space:normal; text-align:left; vertical-align:top; }
+#upload-transaction-matrix small { display:block; margin-top:6px; color:var(--text-soft); }
+#upload-transaction-matrix tbody th { position:static; }
+#upload-transaction-matrix tbody th:first-child,
+#upload-transaction-matrix thead th:first-child { position:sticky; left:0; z-index:2; background:var(--coffee-soft-2); }
+#upload-transaction-matrix thead th:first-child { z-index:3; }
+#upload-native-schedule label { display:grid; gap:6px; }
+#upload-native-schedule select { padding:9px; border:1px solid var(--border-soft); border-radius:8px; background:var(--panel); color:var(--text); }
+#upload-transaction-matrix button { margin-top:10px; }
+#upload-refresh-steps { width:100%; }
+#upload-refresh-steps td, #upload-refresh-steps th { white-space:normal; text-align:left; vertical-align:top; }
+#upload-refresh-steps tr[data-state="error"] td:nth-child(4) { color:var(--red); font-weight:700; }
+#upload-refresh-steps tr[data-state="complete"] td:nth-child(4) { color:var(--green); font-weight:700; }
+#upload-refresh-steps tr[data-state="running"] td:nth-child(4) { color:#2869a8; font-weight:700; }

@@ -4112,6 +4112,7 @@ function createApp(options = {}) {
     masters: () => toteatMasterSync.sharedCurrent(),
     reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
   app.locals.toteatStockSync = stockSync;
+  require('./upload-overview').registerUploadOverview(app, { uploadsRoot, enableSync: options.enableToteatSync, locations: () => readLocations().locations, sales: toteatSalesSync, masters: toteatMasterSync, stock: stockSync, files: (id, field) => storedFieldFiles(id, field).map(item => item.record), masterFiles: field => masterFiles(field) });
   app.get('/api/integrations/toteat/stock/status', (req, res) => {
     try { res.set('Cache-Control', 'no-store').json(stockSync.status(req.query.location || 'store-1')); }
     catch (e) { res.status(400).json({ error: e.message }); }
