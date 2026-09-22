@@ -9102,6 +9102,12 @@ function normalizedInventorySearch(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
+// Keep source quantities unchanged; show each movement's effect on inventory.
+function signedKardexMovement(item, definition) {
+  const direction = /^(uso-|trl-out-|mov-out-|trn-out-)/.test(definition.key) ? -1 : 1;
+  return direction * (Number(item.movements[definition.key]) || 0);
+}
+
 function renderInventoryKardexTable() {
   if (!inventoryKardexTableState) return;
   const { report, columns } = inventoryKardexTableState;
@@ -9193,10 +9199,10 @@ function renderInventoryKardexTable() {
         const cell = document.createElement('td');
         cell.textContent = column.value(item);
         if (columnIndex < 4) cell.title = cell.textContent;
-        if (column.signValue) {
-          const value = Number(column.signValue(item)) || 0;
-          if (value < 0) cell.className = 'difference-negative';
-          else if (value > 0) cell.className = column.finalDifference ? 'difference-final-positive' : 'difference-positive';
+        const numericValue = column.signValue ? column.signValue(item) : column.sortValue?.(item);
+        if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
+          if (numericValue < 0) cell.className = 'difference-negative';
+          else if (numericValue > 0) cell.className = 'difference-positive';
         }
         row.appendChild(cell);
       }
@@ -9209,7 +9215,14 @@ function renderInventoryKardexTable() {
   columns.forEach((column, index) => {
     const cell = document.createElement('td');
     if (index === 0) cell.textContent = 'TOTAL';
-    else if (column.totalValue) cell.textContent = column.totalValue(items);
+    else if (column.totalValue) {
+      cell.textContent = column.totalValue(items);
+      const values = items.map(item => column.sortValue?.(item));
+      if (values.every(value => typeof value === 'number' && Number.isFinite(value)) && !/Sin |No comparable/.test(cell.textContent)) {
+        const total = values.reduce((sum, value) => sum + value, 0);
+        if (total) cell.className = total > 0 ? 'difference-positive' : 'difference-negative';
+      }
+    }
     totalRow.appendChild(cell);
   });
   foot.appendChild(totalRow);
@@ -9521,10 +9534,11 @@ function renderInventoryExecutiveSummary(summary) {
     `${formatReportDate(summary.period.dateFrom)} – ${formatReportDate(summary.period.dateTo)} · ${locationLabel}: ${locations.join(', ') || 'Sin ubicación'}.${summary.salesFilesRead ? '' : ' No se encontró un archivo de ventas legible para el período.'}`;
 
   const metrics = summary.metrics;
-  const lac001 = metrics.lac001AdjustedKardexCost;
-  const syrupSauce = metrics.syrupSauceAdjustedKardexCost;
-  const packaging = metrics.packagingAdjustedKardexCost;
   const adjustedKardex = metrics.adjustedKardexTotalCost;
+  const inventoryContext = (label, metric) => metric?.available
+    ? `${label}: ${formatKardexCost(metric.amount)} (${formatInventoryExecutivePercent(metric.percentOfNetSales)} de la venta neta del período).`
+    : `${label}: no disponible para esta fuente o período.`;
+
   const rows = [
     {
       label: 'Costo consumo marketing', metric: metrics.marketingConsumption, tone: 'executive-negative-concept',
@@ -9539,38 +9553,16 @@ function renderInventoryExecutiveSummary(summary) {
       context: `${metrics.waste.itemCount} ítem(s) con adiciones. Se presenta en rojo porque representa pérdida o merma.`
     },
     {
-      label: 'Costo Total del Kardex', metric: metrics.kardexTotalCost,
-      tone: inventoryExecutiveResultTone(metrics.kardexTotalCost),
-      context: 'Diferencia entre inventario físico y teórico valorizada. Un resultado positivo se muestra en azul; uno negativo, en rojo.'
-    },
-    {
       label: 'Costo Total Kardex ajustado por sustit. y vasos no ut.', metric: adjustedKardex,
       tone: inventoryExecutiveResultTone(adjustedKardex),
-      context: `Costo Total del Kardex ${formatKardexCost(adjustedKardex.kardexTotalCost)} − sustituciones de syrup y salsas ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} − vasos y tapas no utilizados ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.amount)}. Valor Inventario Final Teórico ajustado: ${formatKardexCost(adjustedKardex.theoreticalFinalInventoryValue)} + ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} + ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} + ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.adjustedTheoreticalFinalInventoryValue)}.`
-    },
-    { label: 'Valor Inventario Final Teórico', metric: metrics.theoreticalFinalInventoryValue, context: 'Saldo teórico valorizado al cierre.' },
-    { label: 'Valor Inventario Físico', metric: metrics.physicalInventoryValue, context: 'Saldo físico valorizado al cierre.' },
-    {
-      label: 'Costo Total Kardex LAC001 ajustado', metric: lac001, tone: inventoryExecutiveResultTone(lac001),
-      context: `Costo Total Kardex LAC001 ${formatKardexCost(lac001.kardexCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(lac001.compensationCost)} = ${formatKardexCost(lac001.amount)}. Compensación calculada sobre ${formatInventoryQuantity(lac001.substitutedQuantity)} L y ${formatInventoryQuantity(lac001.substitutionCount)} sustitución(es).`
-    },
-    {
-      label: 'Sustituciones de syrup y salsas', metric: metrics.syrupSauceSubstitutions, tone: 'executive-benefit',
-      context: `${formatInventoryQuantity(metrics.syrupSauceSubstitutions.substitutionCount)} sustitución(es); corresponde al costo teórico del ingrediente original no utilizado.`
-    },
-    {
-      label: 'Costo Total Kardex syrup y salsas ajustado', metric: syrupSauce,
-      tone: inventoryExecutiveResultTone(syrupSauce),
-      context: `Costo Total Kardex de ${syrupSauce.matchedItemCount} ingrediente(s) original(es) sustituido(s) ${formatKardexCost(syrupSauce.kardexCost)} − costo sustituido ${formatKardexCost(syrupSauce.compensationCost)} = ${formatKardexCost(syrupSauce.amount)}.${syrupSauce.codes.length ? ` Códigos: ${syrupSauce.codes.join(', ')}.` : ''}`
-    },
-    {
-      label: 'Vasos y tapas no utilizados', metric: metrics.avoidedPackaging, tone: 'executive-benefit',
-      context: `${formatInventoryQuantity(metrics.avoidedPackaging.quantity)} unidad(es) desechable(s) evitada(s); corresponde a su costo teórico no consumido.`
-    },
-    {
-      label: 'Costo Total Kardex vasos y tapas ajustado', metric: packaging,
-      tone: inventoryExecutiveResultTone(packaging),
-      context: `Costo Total Kardex de ${packaging.matchedItemCount} código(s) de vasos y tapas ${formatKardexCost(packaging.kardexCost)} − costo no utilizado ${formatKardexCost(packaging.compensationCost)} = ${formatKardexCost(packaging.amount)}.`
+      alwaysShowContext: true,
+      context: [
+        adjustedKardex.available
+          ? `Costo Total del Kardex ${formatKardexCost(adjustedKardex.kardexTotalCost)} − sustituciones de syrup y salsas ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} − vasos y tapas no utilizados ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.amount)}.`
+          : 'Costo ajustado no disponible para esta fuente o período.',
+        inventoryContext('Valor Inventario Final Teórico', metrics.theoreticalFinalInventoryValue),
+        inventoryContext('Valor Inventario Físico', metrics.physicalInventoryValue)
+      ].join(' ')
     }
   ];
   const table = document.getElementById('inventory-executive-summary-table');
@@ -9583,27 +9575,45 @@ function renderInventoryExecutiveSummary(summary) {
   });
   head.appendChild(headRow);
   const body = document.createElement('tbody');
-  rows.forEach(({ label, metric, context, tone = '' }) => {
+  const netSales = Number(summary.netSales) || 0;
+  const displayedAmount = metric => -Math.round(Math.abs(Number(metric.amount) || 0));
+  const percent = amount => netSales !== 0 ? amount / netSales * 100 : null;
+  const availableRows = rows.filter(({ metric }) => metric.available);
+  rows.forEach(({ label, metric, context, tone = '', alwaysShowContext = false }) => {
     const row = document.createElement('tr');
     row.className = tone;
+    const amount = metric.available ? displayedAmount(metric) : null;
     [
       label,
-      metric.available ? formatKardexCost(metric.amount) : 'No disponible',
-      metric.available ? formatInventoryExecutivePercent(metric.percentOfNetSales) : '—',
-      metric.available ? context : 'No disponible para esta fuente o período.'
-    ].forEach(value => {
+      metric.available ? formatKardexCost(amount) : 'No disponible',
+      metric.available ? formatInventoryExecutivePercent(percent(amount)) : '—',
+      metric.available || alwaysShowContext ? context : 'No disponible para esta fuente o período.'
+    ].forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
+      if ((index === 1 || index === 2) && metric.available) cell.className = 'executive-total-cost';
       row.appendChild(cell);
     });
     body.appendChild(row);
   });
-  table.replaceChildren(head, body);
+  const foot = document.createElement('tfoot');
+  const totalRow = document.createElement('tr');
+  const total = availableRows.reduce((sum, { metric }) => sum + displayedAmount(metric), 0);
+  const complete = availableRows.length === rows.length;
+  [
+    complete ? 'TOTAL' : 'TOTAL DISPONIBLE',
+    availableRows.length ? formatKardexCost(total) : 'No disponible',
+    availableRows.length ? formatInventoryExecutivePercent(percent(total)) : '—',
+    complete ? '' : 'Suma de los indicadores disponibles; faltan datos para completar el total.'
+  ].forEach((value, index) => {
+    const cell = document.createElement('td');
+    cell.textContent = value;
+    if ((index === 1 || index === 2) && availableRows.length) cell.className = 'executive-total-cost';
+    totalRow.appendChild(cell);
+  });
+  foot.appendChild(totalRow);
+  table.replaceChildren(head, body, foot);
 
-  const comparison = summary.packagingComparison;
-  const comparisonElement = document.getElementById('inventory-executive-packaging-comparison');
-  comparisonElement.textContent =
-    `Criterio de compensación: los costos teóricos no utilizados se restan del Costo Total del Kardex del mismo ingrediente o grupo de insumos. Para vasos y tapas: ${formatKardexCost(comparison.kardexTotalCost)} − ${formatKardexCost(comparison.avoidedPackagingCost)} = ${formatKardexCost(comparison.adjustedKardexCost)}.`;
   section.hidden = false;
 }
 
@@ -9639,7 +9649,7 @@ function renderInventoryResults(data) {
   document.getElementById('inventory-report-period').textContent = `${data.provenance?.label || 'Archivos Kardex de Toteat'} · ${reportPeriod}${netSalesHeader}`;
   const provenance = document.getElementById('inventory-report-provenance');
   provenance.hidden = data.provenance?.mode !== 'originals';
-  provenance.textContent = provenance.hidden ? '' : `${data.provenance.note} Lectura: ${new Date(data.provenance.capturedAt).toLocaleString('es-CL')}. ${data.provenance.excluded.length} productos excluidos por saldos desconocidos; ${data.provenance.issues.length} incidencias en la captura. ${data.provenance.physicalFinalItems} productos incluidos con toma física en el saldo final seleccionado.`;
+  provenance.textContent = provenance.hidden ? '' : `${data.provenance.note} Lectura: ${new Date(data.provenance.capturedAt).toLocaleString('es-CL')}. ${data.provenance.excluded.length} productos excluidos (motivos en Excel); ${data.provenance.issues.length} incidencias en la captura. ${data.provenance.physicalFinalItems} productos incluidos con toma física en el saldo final seleccionado.`;
   document.getElementById('inventory-report-item-count').textContent = `${report.itemCount} productos`;
   const columns = [
     { label: 'Código', value: item => item.code, sortValue: item => item.code },
@@ -9665,11 +9675,11 @@ function renderInventoryResults(data) {
     ...(report.boundaryMode ? [{label:'Origen apertura',value:item=>`${item.initialSource==='physical'?'Toma física':'Teórico desde toma/registro'} ${item.anchorDate}`}]:[]),
     ...report.movementDefinitions.map(definition => ({
       label: definition.label,
-      value: item => formatKardexTableQuantity(item.movements[definition.key]),
-      sortValue: item => Number(item.movements[definition.key]) || 0
+      value: item => formatKardexTableQuantity(signedKardexMovement(item, definition)),
+      sortValue: item => signedKardexMovement(item, definition)
     })),
-    { label: 'Consumo Colaboradores', value: item => formatKardexTableQuantity(item.employeeConsumption), sortValue: item => Number(item.employeeConsumption) || 0 },
-    { label: 'Consumo Marketing', value: item => formatKardexTableQuantity(item.marketingConsumption), sortValue: item => Number(item.marketingConsumption) || 0 },
+    { label: 'Consumo Colaboradores', value: item => formatKardexTableQuantity(-(Number(item.employeeConsumption) || 0)), sortValue: item => -(Number(item.employeeConsumption) || 0) },
+    { label: 'Consumo Marketing', value: item => formatKardexTableQuantity(-(Number(item.marketingConsumption) || 0)), sortValue: item => -(Number(item.marketingConsumption) || 0) },
     ...(report.boundaryMode ? [{
       label: 'Compensaciones',
       value: item => formatKardexTableQuantity(item.compensationQuantity),
@@ -9690,13 +9700,13 @@ function renderInventoryResults(data) {
       { label: 'Inventario final teórico', value: item => formatKardexTableQuantity(report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal), sortValue: item => Number(report.boundaryMode?item.adjustedTheoreticalFinal:item.theoreticalFinal) || 0 },
       { label: `Inventario físico ${formatReportDate(report.physicalInventoryDate)}`, value: item => formatKardexTableQuantity(item.physicalFinal), sortValue: item => Number(item.physicalFinal) || 0 }
     ]),
-    ...(!report.boundaryMode ? [{
-      label: report.selection ? 'Diferencia de Inventario' : 'Diferencia físico − teórico',
+    {
+      label: 'Diff de Inventario',
       value: item => item.difference==null?'No comparable':formatKardexTableQuantity(item.difference),
-      sortValue: item => Number(item.difference) || 0,
+      sortValue: item => item.difference == null ? null : Number(item.difference),
       signValue: item => item.difference,
       finalDifference: true
-    }] : []),
+    },
     {
       label: 'Costo Total',
       value: item => item.totalCost==null?'No comparable':item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo',

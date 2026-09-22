@@ -1,3 +1,4 @@
+const { inventoryExclusion } = require('./inventory-exclusions');
 // Adapt the independent ledger to the existing report contract without reading a control Kardex.
 const metrics=[['opening','II - Inventario inicial'],['purchase','BUY - Compras'],['transfer_local_in','TRL-IN - Transferencia local entrada'],['transfer_warehouse_in','MOV-IN - Transferencia bodega entrada'],['transformed_in','TRN-IN - Transformación entrada'],['use','USO - Consumo estimado'],['transfer_local_out','TRL-OUT - Transferencia local salida'],['transfer_warehouse_out','MOV-OUT - Transferencia bodega salida'],['transformed_out','TRN-OUT - Transformación salida'],['adjustment','AJU - Ajustes por toma'],['closing','IF - Inventario final']];
 const key=label=>label.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
@@ -15,6 +16,8 @@ function originalReportData(state,location,selection,from,to,{waste=false}={}) {
   const byCode=new Map();for(const r of daily){const id=`${r.code}|${r.unit}`;if(!byCode.has(id))byCode.set(id,[]);byCode.get(id).push(r);}
   const excluded=[],products=[];let physicalFinalItems=0;
   for(const rows of byCode.values()){
+    const exclusion=inventoryExclusion(rows[0].code);
+    if(exclusion){excluded.push({code:rows[0].code,name:rows[0].name,reason:exclusion});continue;}
     const first=rows.find(r=>r.date===selection.initialDate),last=rows.find(r=>r.date===selection.finalDate);
     const initialField=selection.initialBasis==='initial'?'opening':'closing',finalField=selection.finalBasis==='initial'?'opening':'closing';
     if(!waste&&(!Number.isFinite(first?.[initialField])||!Number.isFinite(last?.[finalField]))){excluded.push({code:rows[0].code,name:rows[0].name,reason:'Saldo inicial o final desconocido; producto excluido del consolidado.'});continue;}

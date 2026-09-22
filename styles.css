@@ -2132,15 +2132,20 @@ body {
   line-height: 1.45;
 }
 
-#inventory-executive-summary-table tr.executive-negative-concept td:nth-child(-n + 3),
-#inventory-executive-summary-table tr.executive-negative-result td:nth-child(-n + 3) {
+#inventory-executive-summary-table tr.executive-negative-concept td:nth-child(3),
+#inventory-executive-summary-table tr.executive-negative-result td:nth-child(3) {
   color: var(--red);
   font-weight: 900;
 }
 
-#inventory-executive-summary-table tr.executive-positive-result td:nth-child(-n + 3),
-#inventory-executive-summary-table tr.executive-benefit td:nth-child(-n + 3) {
+#inventory-executive-summary-table tr.executive-positive-result td:nth-child(3),
+#inventory-executive-summary-table tr.executive-benefit td:nth-child(3) {
   color: #2869a8;
+  font-weight: 900;
+}
+
+#inventory-executive-summary-table tr td.executive-total-cost {
+  color: #c0392b;
   font-weight: 900;
 }
 
@@ -8658,3 +8663,7 @@ button:disabled {
 .inventory-criteria-grid .inventory-calendar { grid-column: 1 / -1; }
 #inventory-initial-date::-webkit-calendar-picker-indicator,
 #inventory-final-date::-webkit-calendar-picker-indicator { display: none; }
+
+/* Signed Kardex quantities and valuations share the same color convention. */
+#inventory-results-table .difference-positive { color: #2869a8; }
+#inventory-results-table .difference-negative { color: #c0392b; }

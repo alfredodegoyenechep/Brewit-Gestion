@@ -44,3 +44,15 @@ test('HTTP derives movement dates, exposes take dates, and keeps unknown physica
  const res=await fetch(url+'/api/inventory/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'store-1',source:'originals',criteriaMode:'count-boundaries',initialInventoryDate:'2026-08-25',finalInventoryDate:'2026-08-29',movementDateFrom:'2026-01-01',movementDateTo:'2026-12-31'})});
  const data=await res.json();assert.equal(res.status,200,JSON.stringify(data));assert.equal(data.report.dateFrom,'2026-08-25');assert.equal(data.report.dateTo,'2026-08-28');assert.equal(data.report.items[0].initialInventory,94);assert.equal(data.report.items[0].finalInventory,null);assert.equal(data.report.items[0].totalCost,null);assert.equal(data.executiveSummary.metrics.physicalInventoryValue.available,false);assert.equal(data.executiveSummary.metrics.adjustedKardexTotalCost.available,false);
 });
+test('excludes only the four requested internal codes and preserves source records',()=>{
+ const s=fixture();
+ const codes=['6a43d03f8d79da0be6d748ee','6a0622b9cb89ca1b523aca41','6a0622b9cb89ca1b523aca42','6a0622b9cb89ca1b523aca43'];
+ const original=[...s.daily];
+ for(const code of [...codes,'6a0622b9cb89ca1b523aca44'])s.daily.push(...original.map(r=>({...r,code,name:code})));
+ const snapshot=JSON.stringify(s);
+ const r=countBoundaryReport(s,location,'2026-08-23','2026-08-30');
+ assert.equal(r.itemCount,2);assert.equal(r.physicalFinalItems,2);
+ assert.deepEqual(r.excluded.map(i=>i.code).sort(),codes.sort());
+ assert.ok(r.excluded.every(i=>/Código interno/.test(i.reason)));
+ assert.equal(JSON.stringify(s),snapshot);
+});

@@ -131,4 +131,20 @@ Validación con La Concepción: la apertura calculada del 25 de agosto coincide 
 
 ### Compensaciones en el detalle del consolidado
 
-La tabla incluye **Compensaciones** inmediatamente antes de **Inventario Final Teórico**. Expresa las cantidades de LAC001, salsas/syrup y vasos/tapas no consumidas, convertidas a la unidad del producto. El inventario final teórico mostrado incluye esas cantidades una sola vez. Se elimina la columna de diferencias después de compensaciones; el costo total sigue valorizando la diferencia entre el físico y ese teórico compensado. El resumen ejecutivo conserva sus indicadores antes y después del ajuste sin descontarlo dos veces. Sin toma física, el costo de diferencia sigue sin comparación. La impresión y Excel conservan esta disposición.
+La tabla incluye **Compensaciones** inmediatamente antes de **Inventario Final Teórico**. Expresa las cantidades de LAC001, salsas/syrup y vasos/tapas no consumidas, convertidas a la unidad del producto. El inventario final teórico mostrado incluye esas cantidades una sola vez. La columna **Diff de Inventario**, entre el inventario físico y Costo Total, muestra físico menos teórico compensado en la unidad del producto; el costo total valoriza esa misma diferencia. Sin toma física, la diferencia se muestra como «No comparable». El resumen ejecutivo conserva sus indicadores antes y después del ajuste sin descontarlo dos veces. Sin toma física, el costo de diferencia sigue sin comparación. La impresión y Excel conservan esta disposición.
+
+### Signos de movimientos y colores
+
+El consolidado muestra compras y entradas con su signo de entrada; consumo de ventas, transferencias/transformaciones de salida y consumos de marketing/colaboradores con signo de salida. Las reversas conservan su efecto contrario, sin forzar valores absolutos. Compensaciones y ajustes por tomas conservan su signo. Las cantidades y valorizaciones positivas se muestran en azul, las negativas en rojo y los ceros sin énfasis. La apertura más los movimientos firmados, consumos internos y compensaciones suma el teórico final; se verificó esta igualdad para los 135 productos del piloto. Los signos se conservan al ordenar, imprimir y exportar Excel; las cantidades originales de las fuentes no se modifican.
+
+### Exclusiones solicitadas de códigos internos
+
+Se excluyen del consolidado y sus totales los códigos `6a43d03f8d79da0be6d748ee`, `6a0622b9cb89ca1b523aca41`, `6a0622b9cb89ca1b523aca42` y `6a0622b9cb89ca1b523aca43`. La exclusión es explícita: no se descartan otros códigos por su formato. Las fuentes se conservan y el Excel de fuentes originales registra el motivo en Productos excluidos. El piloto del 23 al 30 de agosto pasa de 135 a 131 productos incluidos.
+
+### Resumen ejecutivo simplificado
+
+El resumen presenta cuatro filas: consumo de marketing, consumo de colaboradores, merma y Costo Total Kardex ajustado por sustituciones y vasos no utilizados. Los valores de inventario final teórico y físico se presentan en el Contexto del costo ajustado, cada uno con su porcentaje de la venta neta del período. Sin venta neta el porcentaje se indica con «—»; sin toma final el físico se indica como no disponible y se conserva el teórico. Se retiran las filas separadas del costo base, saldos y desglose de LAC001, syrup/salsas y vasos/tapas. Los cálculos y los detalles de las secciones del informe se conservan.
+
+En el resumen ejecutivo, los títulos de indicadores usan el color normal y los importes de Total se presentan como costos negativos en rojo (cero se conserva como cero). Es una convención de presentación; no cambia el cálculo original ni la explicación del Contexto. Excel e impresión conservan esta presentación.
+
+El porcentaje de cada indicador del resumen se calcula con el importe negativo mostrado en Total dividido por la venta neta del período. La última fila suma esos importes y calcula su porcentaje sobre la misma venta neta, sin sumar porcentajes redondeados. Si faltan indicadores se identifica como TOTAL DISPONIBLE; sin venta neta el porcentaje es «—». Se elimina el comentario inferior «Criterio de compensación».

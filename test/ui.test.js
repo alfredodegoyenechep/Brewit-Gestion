@@ -1659,28 +1659,35 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   await page.locator('#confirm-inventory-process').click();
   await page.locator('#inventory-source-status').filter({ hasText: /procesado correctamente/i }).waitFor();
   assert.equal(await page.locator('#inventory-executive-summary').isVisible(), true);
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').count(), 12);
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').count(), 4);
   assert.deepEqual(await page.locator('#inventory-executive-summary-table th').allTextContents(),
     ['Indicador', 'Total', '% de venta neta', 'Contexto']);
   assert.match(await page.locator('#inventory-executive-net-sales').textContent(), /Venta neta.*\$0/i);
   assert.match(await page.locator('#inventory-executive-period').textContent(), /04.*ago.*2026.*05.*ago.*2026.*Ubicación considerada.*Tienda 2/i);
-  assert.match(await page.locator('#inventory-executive-summary-table').textContent(), /Costo consumo marketing.*Costo consumo colaboradores.*Costo de merma.*Costo Total del Kardex.*Costo Total Kardex ajustado por sustit\. y vasos no ut\..*Valor Inventario Final Teórico.*Valor Inventario Físico.*Costo Total Kardex LAC001 ajustado.*Sustituciones de syrup y salsas.*Costo Total Kardex syrup y salsas ajustado.*Vasos y tapas no utilizados.*Costo Total Kardex vasos y tapas ajustado/s);
+  assert.deepEqual(await page.locator('#inventory-executive-summary-table tbody td:first-child').allTextContents(), [
+    'Costo consumo marketing', 'Costo consumo colaboradores', 'Costo de merma', 'Costo Total Kardex ajustado por sustit. y vasos no ut.'
+  ]);
+  assert.match(await page.locator('#inventory-executive-summary-table tbody tr').last().locator('td').last().textContent(), /Valor Inventario Final Teórico:.*de la venta neta del período.*Valor Inventario Físico:.*de la venta neta del período/s);
   assert.equal(await page.locator('#inventory-executive-summary-table tbody td:nth-child(3)').evaluateAll(cells =>
     cells.every(cell => cell.textContent === '—')), true);
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(0).getAttribute('class'), 'executive-negative-concept');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(1).getAttribute('class'), 'executive-negative-concept');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(2).getAttribute('class'), 'executive-negative-concept');
   assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(3).getAttribute('class'), 'executive-negative-result');
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(8).getAttribute('class'), 'executive-benefit');
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(10).getAttribute('class'), 'executive-benefit');
-  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(0).locator('td').nth(1).evaluate(cell =>
-    getComputedStyle(cell).color), 'rgb(209, 112, 69)');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').nth(2).locator('td').nth(1).evaluate(cell =>
+    getComputedStyle(cell).color), 'rgb(192, 57, 43)');
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').first().evaluate(row =>
+    getComputedStyle(row.cells[0]).color === getComputedStyle(row.cells[3]).color), true);
+  assert.equal(await page.locator('#inventory-executive-summary-table tbody td.executive-total-cost:nth-child(2)').evaluateAll(cells =>
+    cells.every(cell => cell.textContent.includes('-') || /^\$\s*0$/.test(cell.textContent))), true);
   assert.deepEqual(await page.evaluate(() => [
     inventoryExecutiveResultTone({ amount: 1 }),
     inventoryExecutiveResultTone({ amount: -1 }),
     inventoryExecutiveResultTone({ amount: 0 })
   ]), ['executive-positive-result', 'executive-negative-result', '']);
-  assert.match(await page.locator('#inventory-executive-packaging-comparison').textContent(), /Criterio de compensación.*Costo Total del Kardex/i);
+  assert.equal(await page.locator('#inventory-executive-packaging-comparison').count(), 0);
+  assert.equal(await page.locator('#inventory-executive-summary-table tfoot tr').count(), 1);
+  assert.match(await page.locator('#inventory-executive-summary-table tfoot').textContent(), /TOTAL DISPONIBLE/);
   assert.match(await page.locator('#inventory-report-period').textContent(), /Ubicación considerada.*Tienda 2.*Venta neta del período.*\$0/i);
   const inventorySectionOrder = await page.locator('#inventory-report-results').evaluate(section => ({
     executive: section.querySelector('#inventory-executive-summary').getBoundingClientRect().top,
@@ -1706,6 +1713,11 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(kardexHeaders[theoreticalColumn - 1], 'Compensaciones');
   assert.match(kardexHeaders[theoreticalColumn + 1], /Inventario físico/);
   const totalCostColumn = kardexHeaders.indexOf('Costo Total');
+  assert.equal(kardexHeaders[totalCostColumn - 1], 'Diff de Inventario');
+  assert.match(kardexHeaders[totalCostColumn - 2], /Inventario físico/);
+  const quantityDifference = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(totalCostColumn - 1);
+  assert.equal(await quantityDifference.textContent(), '-1,00');
+  assert.equal(await quantityDifference.getAttribute('class'), 'difference-negative');
   const theoreticalValueColumn = kardexHeaders.indexOf('Valor Inventario Final Teórico');
   const physicalValueColumn = kardexHeaders.indexOf('Valor Inventario Físico');
   assert.ok(employeeColumn < marketingColumn && marketingColumn < theoreticalColumn && theoreticalColumn < totalCostColumn);
@@ -1718,6 +1730,13 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#inventory-kardex-decimals').inputValue(), '2');
   const theoreticalCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(theoreticalColumn);
   assert.match(await theoreticalCell.textContent(), /10,00/);
+  assert.equal(await theoreticalCell.getAttribute('class'), 'difference-positive');
+  const consumptionColumn = kardexHeaders.findIndex(label => /USO|Consumo ventas|Consumo por Ventas/.test(label));
+  assert.ok(consumptionColumn >= 0);
+  const consumptionCell = page.locator('#inventory-results-table tbody tr').first().locator('td').nth(consumptionColumn);
+  assert.match(await consumptionCell.textContent(), /-7,00/);
+  assert.equal(await consumptionCell.getAttribute('class'), 'difference-negative');
+
   await page.locator('#inventory-kardex-decimals').selectOption('1');
   assert.match(await theoreticalCell.textContent(), /10,0/);
   await page.locator('#inventory-kardex-decimals').selectOption('3');

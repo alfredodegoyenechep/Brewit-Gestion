@@ -1,3 +1,4 @@
+const { inventoryExclusion } = require('./inventory-exclusions');
 const advance=(date,n)=>new Date(Date.parse(date+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
 const valid=d=>/^\d{4}-\d{2}-\d{2}$/.test(d||'')&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
 const definitions=[['purchase','buy-compras','Compras',1],['use','uso-consumo-estimado','Consumo ventas',-1],['transfer_local_in','trl-in-transferencia-local','Transferencia local entrada',1],['transfer_local_out','trl-out-transferencia-local','Transferencia local salida',-1],['transfer_warehouse_in','mov-in-transferencia-bodega','Transferencia bodega entrada',1],['transfer_warehouse_out','mov-out-transferencia-bodega','Transferencia bodega salida',-1],['transformed_in','trn-in-transformacion','Transformación entrada',1],['transformed_out','trn-out-transformacion','Transformación salida',-1]];
@@ -14,6 +15,8 @@ function countBoundaryReport(state,location,initial,final,correction=()=>0) {
  const items=[],excluded=[];
  for(const rows of series.values()){
   rows.sort((a,b)=>a.date.localeCompare(b.date));const identity=rows[0];
+  const exclusion=inventoryExclusion(identity.code);
+  if(exclusion){excluded.push({code:identity.code,name:identity.name,reason:exclusion});continue;}
   const anchor=rows.filter(r=>r.date<=initial&&r.physicalCount&&Number.isFinite(r.opening)).at(-1) || rows.find(r=>r.date<=initial&&r.initialRecord&&Number.isFinite(r.opening));
   if(!anchor){excluded.push({code:identity.code,name:identity.name,reason:'Sin toma física anterior o en la fecha inicial dentro de la cobertura.'});continue;}
   const byDate=new Map(rows.map(r=>[r.date,r]));let opening=anchor.opening,missing=false;
