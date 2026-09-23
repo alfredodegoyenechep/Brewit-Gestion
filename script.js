@@ -11419,6 +11419,8 @@ async function loadUploadOverview() {
     el('upload-refresh-schedule').replaceChildren(...data.rows.flatMap(r=>r.schedules.map(s=>cell('div',`${r.name} · ${s.label}: ${s.enabled?'cada '+s.minutes+' minutos':'automático desactivado'}`))),...Object.entries(data.schedule).map(([key,value])=>cell('div',`${key==='masters'?'Maestros compartidos':'Fuentes de inventario'}: ${value.minutes?'cada '+value.minutes+' minutos':'manual'}`)));
     if(!uploadScheduleDirty)for(const key of ['masters','inventory'])el(`upload-${key}-frequency`).value=data.schedule[key].minutes || '';
     el('refresh-upload-api').disabled=data.job.running || data.masterStatus.running || data.rows.some(r=>r.cells.some(c=>c.running));
+    el('upload-master-connection').textContent = `${data.masterStatus.connection || 'Servicios internos · sesión web'} · Última publicación: ${date(data.masterStatus.publishedAt)}${data.masterStatus.lastError ? ' · '+data.masterStatus.lastError : ''}`;
+    el('upload-refresh-methods').textContent = `Ventas, pagos, compras e inventario: API pública con token. Maestros: ${data.masterStatus.connection || 'servicios internos con sesión web'}.`;
     const job=data.job,summary=job.summary || {};
     el('upload-refresh-report').hidden=!job.steps.length;
     el('upload-refresh-progress').textContent=`${job.running?'En curso':'Finalizado'} · ${summary.complete||0} grupos actualizados · ${summary.error||0} con problemas · ${summary.skipped||0} omitidos · ${(summary.pending||0)+(summary.running||0)} pendientes. Inicio: ${date(job.startedAt)}${job.finishedAt?' · Fin: '+date(job.finishedAt):''}`;

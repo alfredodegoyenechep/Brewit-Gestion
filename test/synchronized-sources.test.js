@@ -14,3 +14,16 @@ test('synchronized installation never falls back to a downloaded sale or Kardex,
  const inv=await fetch(base+'/api/purchase-projections?location=store-1');assert.notEqual(inv.status,200);assert.match((await inv.json()).error,/API/);
  const policy=await(await fetch(base+'/api/source-policy')).json();assert.equal(policy.mode,'synchronized');
 });
+
+
+test('historical costs never restore a recipe removed from the applicable synchronized version', () => {
+  const { effectiveRecipeVersions } = require('../synchronized-sources');
+  const records = [
+    {name:'manual',source:'manual',validFrom:'2026-09-22'},
+    {name:'direct-api',source:'toteat-shared-api',validFrom:'2026-09-22',recipes:[]},
+    {name:'previous-sync',source:'toteat-shared-api',validFrom:'2026-09-21',recipes:['RETIRED']}
+  ];
+  assert.deepEqual(effectiveRecipeVersions(records,'2026-09-22',true).flatMap(r=>r.recipes),[]);
+  assert.deepEqual(effectiveRecipeVersions(records,'2026-09-21',true).flatMap(r=>r.recipes),['RETIRED']);
+  assert.deepEqual(effectiveRecipeVersions(records,'2026-09-20',true),[]);
+});

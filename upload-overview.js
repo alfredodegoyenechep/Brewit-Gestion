@@ -70,7 +70,7 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
     if(job.running)return;
     const plan=[];
     const add=(label,sources,method,execute,message=null)=>plan.push({step:{label,sources,method,state:message?'skipped':'pending',message,startedAt:null,finishedAt:null},execute});
-    if(updateMasters)add('Maestros compartidos · La Concepción',masterLabels.map(([,label])=>label),'Servicios internos · sesión web',()=>masters.synchronizeShared());
+    if(updateMasters)add('Maestros compartidos · La Concepción',masterLabels.map(([,label])=>label),require('./toteat-direct-masters').configured(uploadsRoot)?'API interna directa · autenticación autorizada':'Servicios internos · sesión web',()=>masters.synchronizeShared());
     const stores=active().filter(l=>l.type==='store');
     for(const location of stores) {
       const s=sales.status(location.id),p=sales.purchases.status(location.id);

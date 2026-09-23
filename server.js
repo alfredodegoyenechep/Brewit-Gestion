@@ -3195,7 +3195,7 @@ function createApp(options = {}) {
   const generalExpensesPath = path.join(configRoot, 'general-expenses.json');
   const sourcePolicyPath = path.join(configRoot, 'source-policy.json');
   const synchronizedOnly = options.sourceMode === 'synchronized' || (options.sourceMode !== 'legacy' && readJson(sourcePolicyPath, {}).mode === 'synchronized');
-  const { TRANSACTION_FIELDS, INVENTORY_FIELDS, synchronizedMaster } = require('./synchronized-sources');
+  const { TRANSACTION_FIELDS, INVENTORY_FIELDS, synchronizedMaster, effectiveRecipeVersions } = require('./synchronized-sources');
   function synchronizedTransactions(locationId, field) {
     return field === 'purchases' ? toteatSalesSync?.purchases.source(locationId,field) || [] : toteatSalesSync?.source(locationId,field) || [];
   }
@@ -4170,7 +4170,9 @@ function createApp(options = {}) {
   app.locals.toteatSalesSync = toteatSalesSync;
   toteatMasterSync = createMasterSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations', 'toteat-api', 'credentials.json'), {}),
-    reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
+    reader: (restaurant, readOptions) => require('./toteat-direct-masters').configured(uploadsRoot)
+      ? require('./toteat-direct-masters').readDirectMasters(uploadsRoot, restaurant)
+      : toteatAutomation.readNativeSources(restaurant, readOptions) });
   app.locals.toteatMasterSync = toteatMasterSync;
   const stockSync = createStockSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {}),
@@ -4311,7 +4313,7 @@ function createApp(options = {}) {
   app.get('/api/source-policy', (req,res) => res.json({mode:synchronizedOnly?'synchronized':'legacy',
     message:synchronizedOnly?'Fuentes Toteat sincronizadas. Las descargas históricas no alimentan los cálculos.':'Fuentes históricas habilitadas.',
     manual:['MercadoPago','Marketing','Colaboradores','Órdenes de compra y gastos de Brewit'],
-    masterNote:'Maestros compartidos desde La Concepción mediante servicios internos con sesión web. Para períodos anteriores a su primera lectura se usa el maestro observado disponible, sin certificar una versión histórica.',
+    masterNote:`Maestros compartidos desde La Concepción mediante ${require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa con autenticación autorizada' : 'servicios internos con sesión web'}. Para períodos anteriores a su primera lectura se usa el maestro observado disponible, sin certificar una versión histórica.`,
     locations:readLocations().locations.filter(l=>l.status==='active').map(l=>{const id=l.type==='warehouse'?'store-1':l.id;const stock=stockSync.current(l.id);return {id:l.id,name:l.name,sales:l.type==='store'?toteatSalesSync.status(id):null,purchases:toteatSalesSync.purchases.status(id),inventory:stock?{range:stock.range,updatedAt:stock.sourceCapturedAt}:null};})}));
 
   app.get('/api/locations', (req, res) => {
@@ -5030,7 +5032,7 @@ function createApp(options = {}) {
         try { if (catalogMaster) catalog = parseIngredientCatalog(catalogMaster.filePath); } catch {}
         catalogs.set(catalogKey, catalog);
       }
-      const applicableRecipes = recipeMasters.filter(master => master.validFrom <= epoch);
+      const applicableRecipes = effectiveRecipeVersions(recipeMasters, epoch, synchronizedOnly);
       const recipeKey = applicableRecipes.map(master => master.filePath).join('|');
       if (!recipes.has(recipeKey)) {
         const resolved = new Map();
@@ -7813,8 +7815,10 @@ function createApp(options = {}) {
             const fallbackHierarchy = repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos'])) || 'Sin jerarquía';
             const product = analysisCatalog.products.get(code);
             const barIds = product?.hierarchyIds || [];
-            const isHot = barIds.some(id => hotIds.has(id));
-            const isCold = barIds.some(id => coldIds.has(id));
+            const classifiedBar = require('./sales-insight-filters').classifySalesBar({
+              hierarchyIds: barIds, hierarchyPath: hierarchyPath.length ? hierarchyPath : [fallbackHierarchy],
+              name: product?.name || name
+            }, hotIds, coldIds);
             const recipeCodes = new Set((recipes.get(code) || []).map(line => String(line.ingredientId || '').toUpperCase()));
             const ingredientType = recipeCodes.has('CAF008') ? 'matcha' : recipeCodes.has('SUB005') ? 'coffee' : 'other';
             facts.push({
@@ -7836,7 +7840,7 @@ function createApp(options = {}) {
               missingComponent: totalCost === null ? costReference.missingComponent || null : null,
               hierarchy: hierarchyPath.length ? hierarchyPath.join(' / ') : fallbackHierarchy,
               hierarchyPath: hierarchyPath.length ? hierarchyPath : [fallbackHierarchy],
-              barType: isCold ? 'cold' : isHot ? 'hot' : 'none',
+              barType: classifiedBar === 'other' ? 'none' : classifiedBar,
               ingredientType,
               extraHierarchyId: String(rowValue(row, ['BA.']) ?? '').trim()
             });

@@ -28,18 +28,23 @@ test('Análisis de la demanda abre sus cuatro capas y conserva el detalle aun si
   assert.equal(await page.locator('#demand-product option').first().innerText(), 'Sin productos con ventas');
   assert.equal(await page.locator('#demand-summary .demand-kpi').count(), 5);
   assert.equal(await page.locator('#demand-locations-body tr').count(), 3);
+  await page.locator('#demand-analysis-workspace-tab-hypotheses').click();
   assert.equal(await page.locator('#demand-hypotheses').isVisible(), true);
+  await page.locator('#demand-analysis-workspace-tab-actions').click();
   assert.equal(await page.locator('#demand-actions').isVisible(), true);
   assert.equal(await page.locator('#demand-advanced .demand-insight').count(), 7);
+  await page.locator('#demand-analysis-workspace-tab-advanced').click();
   await page.getByRole('button', { name: 'Abrir análisis: Estacionalidad anual' }).click();
   await page.locator('#demand-advanced-dialog').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#demand-advanced-title').innerText(), 'Estacionalidad anual');
   assert.match(await page.locator('#demand-advanced-content').innerText(), /Alcance.*Datos disponibles.*Limitaciones.*Información necesaria/s);
   await page.locator('#demand-advanced-close').click();
+  await page.locator('#demand-analysis-workspace-tab-exploration').click();
   await page.getByRole('button', { name: 'Combinaciones' }).click();
   assert.match(await page.locator('#demand-exploration').innerText(), /Lift/);
   await page.getByRole('button', { name: 'Horarios y evolución' }).click();
   assert.deepEqual(await page.locator('.demand-heatmap-summary strong').allTextContents(), ['Total', '% total']);
+  await page.locator('#demand-analysis-workspace-tab-overview').click();
   await page.locator('#demand-report .demand-detail').first().click();
   await page.locator('#demand-detail-dialog').waitFor({ state: 'visible' });
   await page.waitForFunction(() => /^\d+ pedidos/.test(document.getElementById('demand-detail-status')?.textContent || ''));
@@ -131,6 +136,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
     document.getElementById('sales-service-mode-period').value = 'month';
     document.getElementById('sales-service-mode-hierarchies').innerHTML = '<tr><th>Barra Cafe / Café Caliente</th><td><div><strong>$125.000</strong><small>20 pedidos</small></div></td><td>$250.000</td><td>$5.000</td><td>$380.000</td></tr>';
   });
+  await page.locator('#sales-workspace-tab-service').click();
   await page.getByRole('button', { name: 'Ver gráfico: Composición de ventas por modalidad' }).click();
   assert.equal(await page.locator('#report-chart-metric option').count(), 4);
   assert.match(await page.locator('#report-chart-data-body tr').first().locator('td').nth(1).textContent(), /125\.000/);
@@ -155,6 +161,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
     salesHierarchyPath = [];
     renderSalesInsights();
   });
+  await page.locator('#sales-workspace-tab-products').click();
   await page.getByRole('button', { name: 'Ver gráfico: Productos más vendidos' }).click();
   assert.equal(await page.locator('#report-chart-metric option').count(), 2);
   assert.equal(await page.locator('[data-chart-type="pie"]').evaluate(button => button.hidden), true);
@@ -644,6 +651,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#financial-general-expenses-location option').last().textContent(), 'Casa Matriz');
   assert.equal(await page.locator('#financial-general-expenses-grid tr').count(), 14);
   assert.equal(await page.locator('#financial-general-expenses-grid input').count(), 168);
+  await page.locator('#financial-results-workspace-tab-expenses').click();
   const inventoryDifference=page.getByRole('textbox',{name:'Diferencia de Inventario ajustada, Ago 2026'});
   assert.equal(await inventoryDifference.inputValue(),'');
   await inventoryDifference.fill('-31000');await inventoryDifference.blur();assert.equal(await inventoryDifference.inputValue(),'-31.000');
@@ -1068,6 +1076,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.deepEqual(await page.locator('#sales-service-mode-period option').allTextContents(), [
     'Mes actual', 'Semana actual', 'Semana anterior', 'Últimos 30 días', 'Definir rango de fechas'
   ]);
+  await page.locator('#sales-workspace-tab-service').click();
   await page.locator('#sales-service-mode-period').selectOption('month');
   assert.match(await page.locator('.sales-service-mode-card.dineIn').textContent(), /Servir en el local.*1 pedido.*\$100/is);
   assert.match(await page.locator('.sales-service-mode-card.dineIn').textContent(), /Ticket promedio con IVA.*\$119/is);
@@ -1088,6 +1097,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   ]);
   await page.locator('#sales-service-mode-status').filter({ hasText: /09.*ago.*2026.*1 de 1 pedidos/is }).waitFor();
   assert.match(await page.locator('.sales-service-mode-card.dineIn').textContent(), /1 pedido.*\$100/is);
+  await page.locator('#sales-workspace-tab-products').click();
   await page.locator('#sales-insight-period').selectOption('month');
   assert.match(await page.locator('#sales-top-products').textContent(), /Producto Uno/);
   await page.getByRole('button', { name: 'Ver detalle de Bebidas' }).click();
@@ -1097,6 +1107,7 @@ test('Cargar Archivos opens the upload workspace', { skip: !fs.existsSync(CHROME
   assert.equal(await page.locator('#sales-hierarchy-back').isVisible(), true);
   await page.locator('#sales-hierarchy-back').click();
   assert.equal(await page.locator('#sales-hierarchy-title').textContent(), 'Venta por jerarquía');
+  await page.locator('#sales-workspace-tab-hourly').click();
   await page.locator('#hourly-demand-status').filter({ hasText: /promedio calculado/i }).waitFor();
   assert.equal(await page.locator('#hourly-demand-body tr').count(), 7);
   assert.match(await page.locator('#hourly-demand-body tr').first().textContent(), /07:00–09:00.*1.*\$100/s);

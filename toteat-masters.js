@@ -19,7 +19,7 @@ function normalizeMasters(source) {
     : p.stockManaged && p.recipe?.ingredients?.length && !p.recipe.manufacturing_use_only
       ? [{ code: p.code, type: 'stock-with-sale-recipe', message: 'Stock habilitado y receta no restringida a transformación: comprobar movimientos originales.' }] : []);
   return { restaurantId: source.restaurantId, localId: source.localId, localRef: source.localRef,
-    observedAt: source.capturedAt, historicalValidity: 'observed-at-capture', products, hierarchies,
+    observedAt: source.capturedAt, source: source.source || 'toteat-authenticated-web', historicalValidity: 'observed-at-capture', products, hierarchies,
     warehouses: source.warehouses.map(w => ({ id: w.id, code: w.custom_id, name: w.name, status: w.status })),
     suppliers: (source.suppliers || []).map(p => ({ id: p.id, code: p.custom_id, taxId: p.vat, name: p.name, status: p.status })), warnings };
 }
@@ -115,7 +115,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   function status(location) {
     const s = current(location);
     return { location, running: running.has(location), lastError: errors.get(location) || null, observedAt: s?.observedAt || null,
-      source: 'Sesión web de Toteat', counts: s ? {
+      source: require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa · autenticación autorizada' : 'Sesión web de Toteat', counts: s ? {
         products: s.products.filter(p => p.types.includes('PRODUCT')).length,
         ingredients: s.products.filter(p => p.types.includes('INGREDIENT')).length,
         extras: s.products.filter(p => p.types.includes('EXTRA')).length,
@@ -166,7 +166,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
       if (!normalized || !fs.existsSync(filePath)) return [];
       const validFrom = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago' }).format(new Date(normalized.observedAt));
       return [{ name: `${field}.xlsx`, originalName: `Toteat ${location} ${field}`, filePath, version: d.name, validFrom,
-        savedAt: normalized.observedAt, source: 'toteat-authenticated-web', location }];
+        savedAt: normalized.observedAt, source: normalized.source || 'toteat-authenticated-web', location }];
     });
   }
   function sharedRecord() {
@@ -180,6 +180,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   function sharedStatus() {
     const record = sharedRecord();
     return { location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError,
+      connection: require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa · autenticación autorizada' : 'Servicios internos · sesión web',
       observedAt: record?.observedAt || null, publishedAt: record?.savedAt || null, counts: record?.counts || null, warnings: [], shared: true };
   }
   function synchronizeShared() {
@@ -198,7 +199,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
           TOTEAT_RESTAURANT_NOT_FOUND: 'La sesión de Toteat no permite seleccionar La Concepción. Revisa el acceso al local en el navegador conectado.',
           TOTEAT_RESTAURANT_SWITCH_FAILED: 'No se confirmó La Concepción como local activo. Vuelve a seleccionar el local en Toteat.'
         };
-        sharedError = (reasons[error.code] || 'No se completó la lectura o publicación de todos los maestros de La Concepción. Revisa la sesión del navegador conectado de Toteat.') + ' Se conserva la versión compartida anterior.';
+        sharedError = (error.safeMasterMessage || reasons[error.code] || 'No se completó la lectura o publicación de todos los maestros de La Concepción. Revisa la sesión del navegador conectado de Toteat.') + ' Se conserva la versión compartida anterior.';
         const failure = Error(sharedError);
         failure.safeMasterMessage = sharedError;
         throw failure;

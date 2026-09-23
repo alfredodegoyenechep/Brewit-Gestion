@@ -32,7 +32,7 @@ La política es global: también aplica a nuevos locales sin sincronización. No
 
 ## Excepciones explícitas
 
-- Los maestros completos utilizan servicios internos de Toteat con sesión web, **no la API pública con token**. Sigue siendo necesario mantener esa conexión disponible.
+- Los maestros completos se actualizan mediante **API interna directa con autenticación autorizada**. Cada actualización corre desde el servidor sin navegar por Toteat; la autenticación puede vencer y requerir renovación. No es el token público del menú comercial.
 - MercadoPago, marketing y colaboradores siguen siendo archivos cargados manualmente. No se ha inventado una integración API para estas fuentes.
 - Los informes/snapshots guardados y los archivos históricos conservan su carácter histórico. No son entradas de la nueva selección operativa. Los endpoints explícitos de vista previa de archivos y los scripts de conciliación histórica permiten inspeccionarlos; no alimentan los cálculos actuales.
 - Sin historial maestro sincronizado anterior a un período, se usa el maestro observado disponible. Esto se informa en la política visible; no certifica las recetas o los costos maestros originales de agosto.
@@ -61,3 +61,35 @@ Caso BOL008: 25-08, 1 CAJ de 36 UN a $38.960 = $1.082,222222 por UN; 22-09, 36 U
 La tabla de Gastos Generales incorpora Diferencia de Inventario ajustada para cada cafetería. Se guarda por ubicación y mes: vacío (`null`) conserva el cálculo automático, cero es un reemplazo explícito y un monto firmado reemplaza el resultado automático del mes. Positivo representa gasto/pérdida; negativo representa sobrante. Se prorratea por días incluidos, igual que el resto de la base mensual. En períodos que abarcan varios meses, los no informados conservan su cálculo automático; si falta esa información, se indica cobertura incompleta.
 
 El valor se presenta únicamente en la fila `inventoryDifference` del estado de resultados, sin agregar otra fila de gasto general. La pantalla identifica el uso de valores manuales. No altera Kardex, tomas físicas ni movimientos Toteat.
+
+
+## Reauditoría después de conectar los maestros por API interna directa
+
+Se revisaron los selectores compartidos, sus consumidores y los respaldos de ventas, pagos, compras, maestros, recetas y stock, además de las cachés de análisis de productos y demanda. La instalación continúa en `mode: synchronized`.
+
+### Evidencia de selección de maestros
+
+Los seis campos seleccionados corresponden a una sola publicación sincronizada: `2026-09-22T23:32:13.290Z`, versión `2026-09-22T23-32-13-225Z-6db7a863`. Se excluyen 5 versiones manuales de catálogo, 2 de cada jerarquía, 4 de recetas y 5 de proveedores. No se borraron estas versiones: siguen disponibles únicamente para inspección histórica explícita.
+
+La API directa mantiene el identificador de origen operativo `toteat-shared-api` para que todos los consumidores existentes reciban la nueva publicación. Sus datos originales registran `toteat-internal-direct-api`. Los XLSX que genera el publicador son vistas locales de la respuesta API actual, necesarias para los lectores existentes; no son los reportes descargados antiguos.
+
+### Corrección encontrada
+
+El resolutor de costos históricos filtraba maestros sincronizados, pero todavía completaba recetas ausentes recorriendo versiones anteriores. Se corrigió para usar solamente la versión sincronizada aplicable a la fecha. Una receta retirada ya no reaparece desde otra captura. Una fecha anterior al primer maestro conserva el comportamiento de costo histórico no verificable: no se atribuye una receta futura como histórica.
+
+La regresión cubre archivo manual más nuevo, receta retirada en la captura actual, receta vigente en el día anterior y fecha sin captura aplicable. No modifica el uso explícito de versiones históricas cuando realmente corresponden a la fecha consultada.
+
+### Consultas reales
+
+Respondieron HTTP 200 las 22 comprobaciones de política de fuentes, estado de cargas, resumen semanal, red de cafeterías, dashboard comercial, productos, ingredientes de Bodega Principal, compras consolidadas, costos por revisar, variaciones de costos, proyección de cafetería y bodega principal, fuentes de inventario, inventario actual, calendario, merma, resultados financieros, ventas por ingredientes, auditoría de transacciones, demanda, franjas horarias y Hallazgos. Período de referencia de los reportes con fechas: 24-08 a 22-09-2026.
+
+Las verificaciones de regresión incluyen la ausencia de respaldo a ventas/Kardex descargados cuando falta API, la exclusión de maestros manuales y la conservación de la última publicación ante una actualización rechazada. Se ajustaron también las pruebas de interfaz para recorrer las pestañas añadidas recientemente, manteniendo sus verificaciones de datos y gráficos.
+
+### Límites de la confirmación
+
+- Se confirma el origen de los cálculos operativos, no la exactitud de cada dato que entrega Toteat.
+- Los períodos sin cobertura API y los costos históricos sin evidencia continúan informándose como incompletos.
+- MercadoPago, marketing y colaboradores permanecen como cargas manuales autorizadas; gastos, órdenes y criterios son datos propios de Brewit.
+- Informes guardados, archivos y observaciones históricas no se reescriben; los cálculos nuevos utilizan los selectores auditados. Es necesario regenerar un informe guardado si se quiere reflejar la nueva fuente.
+
+Validación de cierre de esta reauditoría: **162 pruebas aprobadas, 0 fallidas, 0 omitidas**. Corrección del selector histórico aplicada al servidor local.
