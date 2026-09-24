@@ -15,6 +15,7 @@
         p.textContent = `${s.name}: ${s.running ? 'Actualizando…' : s.lastError || (s.counts
           ? `${s.counts.products} productos · ${s.counts.ingredients} ingredientes · ${s.counts.extras} extras · ${s.counts.recipes} recetas (${s.counts.recipeLines} líneas) · ${s.counts.suppliers} proveedores · jerarquías ${Object.values(s.counts.hierarchies).join(' / ')} · leído ${new Date(s.observedAt).toLocaleString('es-CL')}${s.warnings.length ? ` · ${s.warnings.length} configuraciones de stock por revisar` : ''}`
           : 'Pendiente de lectura')}`;
+        p.append(document.createTextNode(` · Última lectura exitosa: ${s.observedAt ? new Date(s.observedAt).toLocaleString('es-CL') : 'Sin lectura'}${s.lastFailedAt ? ` · Último intento fallido: ${new Date(s.lastFailedAt).toLocaleString('es-CL')}` : ''}. Autenticación de servicio pendiente de Toteat; la conexión actual depende de sesión.`));
         return p;
       }));
       const version = locations[0]?.publishedAt;
@@ -35,12 +36,4 @@
     finally { await poll(); }
   }));
   setInterval(poll, 10000); poll();
-  fetch('/api/integrations/toteat/inventory/pilot', { cache: 'no-store' }).then(async response => {
-    if (!response.ok) return;
-    const s = await response.json(), output = document.querySelector('[data-toteat-inventory-pilot]');
-    const p = document.createElement('p'), link = document.createElement('a');
-    p.textContent = `Piloto 23–30 agosto: ${s.rows} registros · ${s.nativeReconciliationPassed ? 'movimientos conciliados con Toteat' : 'movimientos por revisar'}. ${s.countDifferences} diferencias de conteo físico; ${s.fileDifferences} diferencias frente a archivos anteriores y ${s.missingFileCells} celdas sin correspondencia. Recetas estimadas sobre ${s.recipeOrders} de ${s.recipeSourceOrders} órdenes. El piloto aún no reemplaza los archivos de inventario.`;
-    link.href = s.exportUrl; link.textContent = 'Descargar comparación del piloto';
-    output.replaceChildren(p, link);
-  }).catch(() => {});
 })();

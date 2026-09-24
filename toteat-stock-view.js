@@ -18,7 +18,7 @@
   }catch(e){el('stock-status').textContent=e.message;}}
   async function poll(){if(busy)return;busy=true;const selected=location.value;try{const s=await request('/status');if(selected!==location.value)return;
     el('stock-sync').disabled=s.running;
-    el('stock-status').textContent=s.running?'Actualizando las tres fuentes…':s.error||(!s.updatedAt?'Fuentes aún no sincronizadas.':`Última lectura: ${new Date(s.updatedAt).toLocaleString('es-CL')} · período ${s.range.from} a ${s.range.to}.`);
+    el('stock-status').textContent=[s.running?'Actualizando las fuentes…':s.error,s.updatedAt?`Última lectura exitosa: ${new Date(s.updatedAt).toLocaleString('es-CL')} · período ${s.range.from} a ${s.range.to}.`:'Fuentes aún no sincronizadas.',s.sourceKind==='public-inventory'?'Fuente: API pública Toteat.':''].filter(Boolean).join(' ');
     el('stock-sources').replaceChildren(...[['counts','Tomas de inventario'],['transformations','Transformaciones'],['transfers','Transferencias entre bodegas']].map(([k,label])=>{const tr=document.createElement('tr'),v=s.counts?.[k];[label,s.sourceKind==='public-inventory'?'Agregados diarios API':v?.documents??'Sin sincronizar',v?.approved??'—',v?.lines??'—'].forEach(x=>tr.append(cell(x)));return tr;}));
     el('stock-export').href=base+'/export?location='+encodeURIComponent(location.value);
     if(last&&s.updatedAt!==last&&s.updatedAt)await show();last=s.updatedAt;

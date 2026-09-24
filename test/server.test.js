@@ -17,7 +17,7 @@ async function startTestServer(t, options = {}) {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-test-'));
   options.beforeCreate?.(uploadsRoot);
   const { beforeCreate, ...appOptions } = options;
-  const server = createApp({ uploadsRoot, ...appOptions }).listen(0, '127.0.0.1');
+  const server = createApp({ enableLegacyTools: true, uploadsRoot, ...appOptions }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -78,7 +78,7 @@ test('serves the app and exposes the three upload locations', async t => {
   assert.equal(excelLibrary.status, 200);
   assert.match(excelLibrary.headers.get('content-type'), /javascript/);
   assert.ok((await excelLibrary.arrayBuffer()).byteLength > 0);
-  assert.match(await page.text(), /Cargar Archivos/);
+  assert.match(await page.text(), /Datos y sincronización/);
   assert.deepEqual(Object.keys(locations), ['store-1', 'store-2', 'main-warehouse']);
   assert.deepEqual(locations['store-1'].fields, [
     'kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'

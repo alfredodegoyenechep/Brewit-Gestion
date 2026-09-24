@@ -1,0 +1,280 @@
+    <section id="file-loader" class="panel" style="display:none;">
+      <div class="panel-head upload-workspace-head">
+        <div>
+          <div class="panel-eyebrow">Datos de Brewit</div>
+          <h2>Vista Carga Anterior</h2>
+          <button id="return-upload-overview" class="icon-button" type="button">Volver a Cargar archivos</button>
+          <p class="panel-description">Incorpora transacciones por ubicación o actualiza archivos maestros compartidos.</p>
+        </div>
+        <div class="panel-head-actions">
+          <button id="download-all-toteat-files" class="primary" type="button" data-toteat-masters-sync="shared">Actualizar maestros desde La Concepción</button>
+          <button id="download-all-toteat-transactions" class="primary" type="button">Descargar Todos los Archivos Transaccionales</button>
+        </div>
+      </div>
+      <div id="toteat-master-download-status" class="form-status" aria-live="polite"></div>
+
+      <dialog id="toteat-master-download-dialog" class="inventory-criteria-dialog" aria-labelledby="toteat-master-download-title">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Descarga desde Toteat</div>
+            <h3 id="toteat-master-download-title">Inicia sesión en la ventana de Toteat</h3>
+            <p id="toteat-master-download-copy" class="panel-description">Tómate el tiempo necesario para ingresar. Cuando veas Toteat abierto y autenticado, vuelve aquí para descargar los siete archivos maestros.</p>
+          </div>
+          <button id="close-toteat-master-download" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="toteat-download-files" aria-label="Archivos que se descargarán">
+          <span>1</span><div><strong>Proveedores</strong><small>Exportación desde Proveedores</small></div>
+          <span>2</span><div><strong>Productos / Ingredientes / Extras</strong><small>Exportación XLS Adv. Total</small></div>
+          <span>3</span><div><strong>Jerarquía de Productos</strong><small>Exportación CSV</small></div>
+          <span>4</span><div><strong>Jerarquía de Ingredientes</strong><small>Exportación CSV</small></div>
+          <span>5</span><div><strong>Jerarquía de Extras</strong><small>Exportación CSV</small></div>
+          <span>6</span><div><strong>Maestro de Recetas</strong><small>Dos archivos: Header y Detalle. Tras validar los siete archivos, se actualizarán los seis maestros con vigencia de hoy.</small></div>
+        </div>
+        <div id="toteat-master-dialog-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-toteat-master-download" class="primary" type="button">Ya inicié sesión, descargar</button>
+          <button id="cancel-toteat-master-download" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+
+      <dialog id="toteat-transactional-download-dialog" class="inventory-criteria-dialog toteat-transactional-dialog" aria-labelledby="toteat-transactional-download-title">
+        <div class="preview-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Descarga transaccional desde TotEat</div>
+            <h3 id="toteat-transactional-download-title">Reportes por cafetería</h3>
+            <p id="toteat-transactional-download-copy" class="panel-description"></p>
+          </div>
+          <button id="close-toteat-transactional-download" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div id="toteat-transactional-locations" class="toteat-range-list" aria-label="Archivos y fechas que se descargarán"></div>
+        <section id="toteat-transactional-progress" class="toteat-transactional-progress" aria-label="Progreso de descarga" hidden>
+          <div class="toteat-progress-heading">
+            <strong id="toteat-transactional-progress-count">0 de 0 reportes procesados</strong>
+            <span id="toteat-transactional-progress-percent">0%</span>
+          </div>
+          <progress id="toteat-transactional-progress-bar" value="0" max="1"></progress>
+          <div id="toteat-transactional-progress-list" class="toteat-progress-list"></div>
+        </section>
+        <div id="toteat-transactional-dialog-status" class="form-status" aria-live="polite"></div>
+        <div class="conflict-actions">
+          <button id="confirm-toteat-transactional-download" class="primary" type="button">Ya inicié sesión, descargar reportes</button>
+          <button id="cancel-toteat-transactional-download" class="icon-button" type="button">Cancelar</button>
+        </div>
+      </dialog>
+
+      <div class="upload-mode-switch" role="tablist" aria-label="Tipo de carga">
+        <button class="upload-mode active" type="button" data-upload-mode="weekly" role="tab" aria-selected="true">Transacciones</button>
+        <button class="upload-mode" type="button" data-upload-mode="masters" role="tab" aria-selected="false">Archivos maestros</button>
+      </div>
+
+      <div id="weekly-upload-pane" class="upload-pane">
+        <form id="weekly-upload-form">
+          <div class="upload-context-grid">
+            <label>
+              <span>Ubicación</span>
+              <select id="location-select" name="location">
+                <option value="store-1">Tienda 1</option>
+                <option value="store-2">Tienda 2</option>
+                <option value="main-warehouse">Bodega principal</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="location-note" id="location-note"></div>
+          <div id="week-status" class="form-status" aria-live="polite"></div>
+
+          <section class="inventory-sources" aria-labelledby="stock-title">
+            <h3 id="stock-title">Fuentes para el Kardex propio</h3>
+            <p>Actualiza saldos, tomas, compras, consumos, transformaciones y transferencias diarios desde la API pública de Toteat. El informe usa el costo de última compra recibido por API.</p>
+            <div class="upload-context-grid">
+              <label>Desde <input id="stock-from" type="date" value="2026-08-23"></label>
+              <label>Hasta <input id="stock-to" type="date"></label>
+            </div>
+            <div class="report-actions">
+              <button type="button" class="primary" id="stock-sync">Actualizar fuentes de inventario</button>
+              <button type="button" class="icon-button" id="stock-view">Ver Kardex propio y comparar</button>
+              <a class="icon-button" id="stock-export" href="/api/integrations/toteat/stock/export?location=store-1">Descargar detalle y comparación</a>
+            </div>
+            <div id="stock-status" class="form-status" aria-live="polite"></div>
+            <table><thead><tr><th>Tabla local</th><th>Documentos</th><th>Aprobados</th><th>Líneas</th></tr></thead><tbody id="stock-sources"></tbody></table>
+            <p>La Bodega Principal y su merma se actualizan desde el ambiente de La Concepción. La API entrega datos diarios agregados, sin documentos individuales.</p>
+            <details id="stock-result"><summary>Kardex calculado y diferencias</summary>
+              <p id="stock-summary"></p>
+              <label>Filtrar por código o producto <input id="stock-search" type="search"></label>
+              <label>Bodega <select id="stock-warehouse"><option value="">Todas</option></select></label>
+              <div style="overflow:auto;max-height:480px"><table><thead><tr><th>Fecha</th><th>Bodega</th><th>Código</th><th>Producto</th><th>Unidad</th><th>Inicial</th><th>Compras</th><th>Transferencias +</th><th>Transferencias −</th><th>Transformaciones +</th><th>Transformaciones −</th><th>Consumo ventas</th><th>Final</th><th>Ajuste por toma</th></tr></thead><tbody id="stock-rows"></tbody></table></div>
+              <p id="stock-row-count"></p><ul id="stock-issues"></ul>
+            </details>
+          </section>
+
+          <div class="file-row" data-weekly-field="kardex">
+            <label for="file-kardex">Kardex / tarjeta de inventario</label>
+            <input type="file" id="file-kardex" name="kardex" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row" data-weekly-field="waste">
+            <label for="file-waste">Merma</label>
+            <input type="file" id="file-waste" name="waste" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="marketing">
+            <label for="file-marketing">Consumo de marketing</label>
+            <input type="file" id="file-marketing" name="marketing" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="employees">
+            <label for="file-employees">Consumo de colaboradores</label>
+            <input type="file" id="file-employees" name="employees" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="purchases">
+            <label for="file-purchases">Compras</label>
+            <input type="file" id="file-purchases" name="purchases" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="sales">
+            <label for="file-sales">Transacciones de venta</label>
+            <input type="file" id="file-sales" name="sales" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="payment-details">
+            <label for="file-payment-details">Detalle Pagos</label>
+            <input type="file" id="file-payment-details" name="payment-details" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+          <div class="file-row store-only" data-weekly-field="mercadopago">
+            <label for="file-mercadopago">Transacciones MercadoPago</label>
+            <input type="file" id="file-mercadopago" name="mercadopago" accept=".csv,.xls,.xlsx,.txt" />
+          </div>
+        </form>
+
+        <dialog id="date-confirmation" class="inventory-criteria-dialog transaction-confirmation-dialog" aria-labelledby="transaction-confirmation-title">
+          <div class="preview-dialog-head">
+            <div>
+              <div class="panel-eyebrow">Confirmación requerida</div>
+              <h3 id="transaction-confirmation-title">Revisa las fechas detectadas</h3>
+              <p id="transaction-confirmation-copy" class="panel-description">Confirma que este rango corresponde a todos los archivos antes de guardarlos.</p>
+            </div>
+            <button id="close-transaction-confirmation" class="icon-button" type="button">Cerrar</button>
+          </div>
+          <div id="detected-files-list" class="detected-files-list"></div>
+          <div class="confirmation-dates">
+            <label>Desde <input type="date" id="confirmed-date-from" /></label>
+            <label>Hasta <input type="date" id="confirmed-date-to" /></label>
+          </div>
+          <label id="date-confirmation-row" class="confirmation-check">
+            <input type="checkbox" id="dates-confirmed" />
+            Confirmo que estas fechas son válidas para los archivos seleccionados.
+          </label>
+          <label id="inventory-file-confirmation-row" class="confirmation-check" hidden>
+            <input type="checkbox" id="inventory-file-confirmed" />
+            <span id="inventory-file-confirmation-copy">Confirmo que seleccioné el archivo correcto.</span>
+          </label>
+          <div id="transaction-overlap-notice" class="transaction-overlap-notice" hidden></div>
+          <div id="transaction-confirmation-status" class="form-status" aria-live="polite"></div>
+          <div class="conflict-actions">
+            <button id="keep-transactions-btn" class="primary" type="button">Mantener existentes y agregar nuevos</button>
+            <button id="replace-transactions-btn" class="delete-button" type="button" hidden>Reemplazar días coincidentes</button>
+            <button id="cancel-transaction-confirmation" class="icon-button" type="button">Cancelar</button>
+          </div>
+        </dialog>
+
+        <dialog id="transaction-delete-dialog" class="inventory-criteria-dialog transaction-delete-dialog">
+          <div class="preview-dialog-head">
+            <div>
+              <div class="panel-eyebrow">Eliminar información</div>
+              <h3 id="transaction-delete-title">Administrar datos guardados</h3>
+              <p id="transaction-delete-description" class="panel-description"></p>
+            </div>
+            <button id="close-transaction-delete" class="icon-button" type="button">Cerrar</button>
+          </div>
+          <fieldset class="transaction-delete-options">
+            <legend>¿Qué deseas eliminar?</legend>
+            <label>
+              <input type="radio" name="transaction-delete-action" value="last" checked />
+              <span><strong>Revertir la última carga</strong><small>Elimina solo el archivo incorporado más recientemente y restaura los datos anteriores que esa carga hubiera reemplazado.</small></span>
+            </label>
+            <label>
+              <input type="radio" name="transaction-delete-action" value="all" />
+              <span><strong>Eliminar toda la información</strong><small>Elimina todas las cargas de esta categoría para la ubicación seleccionada, incluidas las cargas históricas.</small></span>
+            </label>
+          </fieldset>
+          <div class="transaction-delete-confirmation">
+            <label for="transaction-delete-confirmation">Para confirmar, escribe <strong>ELIMINAR</strong></label>
+            <input id="transaction-delete-confirmation" type="text" autocomplete="off" />
+          </div>
+          <div id="transaction-delete-status" class="form-status" aria-live="polite"></div>
+          <div class="conflict-actions">
+            <button id="confirm-transaction-delete" class="delete-button" type="button" disabled>Confirmar eliminación</button>
+            <button id="cancel-transaction-delete" class="icon-button" type="button">Cancelar</button>
+          </div>
+        </dialog>
+
+      </div>
+
+      <div id="master-upload-pane" class="upload-pane" hidden>
+        <div class="pane-heading">
+          <h3>Archivos maestros compartidos</h3>
+          <p>Fuente única: La Concepción. Estos maestros aplican a todas las cafeterías y a la bodega principal.</p>
+        </div>
+        <button class="primary" type="button" data-toteat-masters-sync="shared">Actualizar maestros desde La Concepción</button>
+        <p class="panel-description">Lee productos, ingredientes, extras, jerarquías, recetas y proveedores desde Toteat y guarda una nueva versión compartida con vigencia de hoy. Requiere una sesión de Toteat vigente.</p>
+        <div data-toteat-masters-status class="form-status" role="status" aria-live="polite"></div>
+        <form id="master-upload-form">
+          <div id="master-status" class="form-status" aria-live="polite"></div>
+          <div class="file-row">
+            <label for="master-catalog">Maestro Productos / Ingredientes / Extras</label>
+            <input type="file" id="master-catalog" name="master-catalog" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="master-catalog-from">Válido desde</label>
+            <input type="date" id="master-catalog-from" name="master-catalog-from" />
+            <span class="latest-valid-date" data-master-field="master-catalog">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="product-hierarchy">Jerarquía Productos</label>
+            <input type="file" id="product-hierarchy" name="product-hierarchy" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="product-hierarchy-from">Válido desde</label>
+            <input type="date" id="product-hierarchy-from" name="product-hierarchy-from" />
+            <span class="latest-valid-date" data-master-field="product-hierarchy">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="ingredient-hierarchy">Jerarquía Ingredientes</label>
+            <input type="file" id="ingredient-hierarchy" name="ingredient-hierarchy" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="ingredient-hierarchy-from">Válido desde</label>
+            <input type="date" id="ingredient-hierarchy-from" name="ingredient-hierarchy-from" />
+            <span class="latest-valid-date" data-master-field="ingredient-hierarchy">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="extras-hierarchy">Jerarquía Extras</label>
+            <input type="file" id="extras-hierarchy" name="extras-hierarchy" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="extras-hierarchy-from">Válido desde</label>
+            <input type="date" id="extras-hierarchy-from" name="extras-hierarchy-from" />
+            <span class="latest-valid-date" data-master-field="extras-hierarchy">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="master-recipes">Maestro de recetas</label>
+            <input type="file" id="master-recipes" name="master-recipes" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="master-recipes-from">Válido desde</label>
+            <input type="date" id="master-recipes-from" name="master-recipes-from" />
+            <span class="latest-valid-date" data-master-field="master-recipes">Última vigencia: —</span>
+          </div>
+          <div class="file-row">
+            <label for="master-suppliers">Maestro Proveedores</label>
+            <input type="file" id="master-suppliers" name="master-suppliers" accept=".csv,.xls,.xlsx,.txt" />
+            <label for="master-suppliers-from">Válido desde</label>
+            <input type="date" id="master-suppliers-from" name="master-suppliers-from" />
+            <span class="latest-valid-date" data-master-field="master-suppliers">Última vigencia: —</span>
+          </div>
+          <div style="margin-top:12px;">
+            <button id="upload-master-btn" class="primary" type="submit">Guardar archivos maestros</button>
+          </div>
+        </form>
+        <section id="master-conflict" class="master-conflict" hidden aria-live="assertive">
+          <h3>Ya existe un archivo con la misma fecha</h3>
+          <p id="master-conflict-message"></p>
+          <div class="conflict-actions">
+            <button id="replace-master-btn" class="primary" type="button">Reemplazar</button>
+            <button id="cancel-master-btn" class="icon-button" type="button">Cancelar</button>
+          </div>
+        </section>
+        <div id="master-versions" class="upload-history">
+          <h3>Versiones guardadas</h3>
+          <div id="master-list"></div>
+        </div>
+      </div>
+
+
+    </section>
+

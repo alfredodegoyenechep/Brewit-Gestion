@@ -104,7 +104,24 @@ function publishSharedMasters(uploadsRoot, source, counts, clock = () => new Dat
 function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, clock = () => new Date() }) {
   const root = path.join(uploadsRoot, '.integrations', 'toteat-api', 'masters');
   const running = new Map(), errors = new Map();
-  let sharedTask = null, sharedError = null;
+  let sharedTask = null;
+  const attemptsFile = path.join(root, 'shared-attempts.json');
+  const savedAttempt = fs.existsSync(attemptsFile) ? JSON.parse(fs.readFileSync(attemptsFile, 'utf8')) : {};
+  let sharedError = savedAttempt.lastError || null, lastFailedAt = savedAttempt.lastFailedAt || null;
+  // Preserve the last known failure when upgrading from the coordinator-only status.
+  if (!fs.existsSync(attemptsFile)) {
+    const jobFile = path.join(uploadsRoot, '.integrations', 'toteat-api', 'last-refresh.json');
+    const job = fs.existsSync(jobFile) ? JSON.parse(fs.readFileSync(jobFile, 'utf8')) : null;
+    const failed = job?.steps?.find(step => step.label === 'Maestros compartidos · La Concepción' && step.state === 'error');
+    const indexFile = path.join(uploadsRoot, 'masters', 'masters.json');
+    const index = fs.existsSync(indexFile) ? JSON.parse(fs.readFileSync(indexFile, 'utf8')) : {};
+    const lastSuccess = Object.values(index).map(group => group['master-catalog']?.savedAt || '').sort().at(-1) || '';
+    if (failed?.finishedAt && failed.finishedAt > lastSuccess) {
+      sharedError = failed.message;
+      lastFailedAt = failed.finishedAt;
+    }
+  }
+  const saveAttempt = () => require('./toteat-sales').atomicJson(attemptsFile, { lastError: sharedError, lastFailedAt });
   const valid = location => typeof location === 'string' && /^[a-zA-Z0-9_-]+$/.test(location) && activeLocation(location)?.type === 'store';
   const dir = location => { if (!valid(location)) throw Error('Selecciona una cafetería válida.'); return path.join(root, location); };
   const read = file => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
@@ -179,7 +196,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   }
   function sharedStatus() {
     const record = sharedRecord();
-    return { location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError,
+    return { location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError, lastFailedAt, authentication: 'session-dependent',
       connection: require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa · autenticación autorizada' : 'Servicios internos · sesión web',
       observedAt: record?.observedAt || null, publishedAt: record?.savedAt || null, counts: record?.counts || null, warnings: [], shared: true };
   }
@@ -193,6 +210,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
         const source = await reader({ restaurantId: config.restaurantId, localId: config.localId }, { includeSuppliers: true });
         const result = publish('store-1', source);
         publishSharedMasters(uploadsRoot, source, result.counts, clock, read(path.join(dir('store-1'), 'current.json')).version);
+        saveAttempt();
       } catch (error) {
         const reasons = {
           TOTEAT_BROWSER_UNAVAILABLE: 'El navegador conectado de Toteat no está disponible. Abre el navegador de la conexión y vuelve a actualizar.',
@@ -200,6 +218,8 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
           TOTEAT_RESTAURANT_SWITCH_FAILED: 'No se confirmó La Concepción como local activo. Vuelve a seleccionar el local en Toteat.'
         };
         sharedError = (error.safeMasterMessage || reasons[error.code] || 'No se completó la lectura o publicación de todos los maestros de La Concepción. Revisa la sesión del navegador conectado de Toteat.') + ' Se conserva la versión compartida anterior.';
+        lastFailedAt = clock().toISOString();
+        saveAttempt();
         const failure = Error(sharedError);
         failure.safeMasterMessage = sharedError;
         throw failure;

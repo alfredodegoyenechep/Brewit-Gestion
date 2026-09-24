@@ -78,6 +78,14 @@ test('shared synchronization always reads La Concepcion and publishes all six ca
   await assert.rejects(sync.synchronizeShared(), /versión compartida anterior/);
   assert.equal(fs.readFileSync(indexPath, 'utf8'), first);
   assert.equal(sync.sharedCurrent().suppliers.length, 1);
+  const failedStatus = sync.sharedStatus();
+  assert.equal(failedStatus.observedAt, group['master-catalog'].observedAt);
+  assert.ok(Number.isFinite(Date.parse(failedStatus.lastFailedAt)));
+  const restarted = createMasterSync({ uploadsRoot, activeLocation: () => ({ type: 'store' }), credentials: () => ({}) });
+  assert.equal(restarted.sharedStatus().lastFailedAt, failedStatus.lastFailedAt);
+  assert.equal(restarted.sharedStatus().lastError, failedStatus.lastError);
+  assert.equal(restarted.sharedCurrent().suppliers.length, 1);
   fail = false; await sync.synchronizeShared();
+  assert.equal(sync.sharedStatus().lastError, null);
   assert.equal(Object.keys(JSON.parse(fs.readFileSync(indexPath, 'utf8'))).length, 2);
 });

@@ -34,7 +34,7 @@ test('coverage gaps and invalid dates fail; next day closing is theoretical',()=
 test('HTTP derives movement dates, exposes take dates, and keeps unknown physical values unavailable',async t=>{
  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-boundaries-'));
- const app=require('../server').createApp({uploadsRoot:root,enableToteatSync:false});
+ const app=require('../server').createApp({ enableLegacyTools: true,uploadsRoot:root,enableToteatSync:false});
  const state={...fixture(),masterObservedAt:'2026-09-22T03:00:00Z',includedOrders:[],issues:[],assumptions:[],sourceCapturedAt:'2026-09-22T03:00:00Z'};
  app.locals.toteatStockSync.rebuild=()=>state;app.locals.toteatStockSync.current=()=>state;
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));

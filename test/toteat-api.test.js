@@ -8,7 +8,7 @@ const { chromium } = require('playwright-core');
 
 async function setup(t, toteatApiFetch, uploadsRoot) {
   const root = uploadsRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-api-'));
-  const server = createApp({ uploadsRoot: root, toteatApiFetch }).listen(0, '127.0.0.1');
+  const server = createApp({ enableLegacyTools: true, uploadsRoot: root, toteatApiFetch }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
   t.after(async () => {
     server.closeAllConnections();

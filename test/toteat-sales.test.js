@@ -133,7 +133,7 @@ test('all report readers use API data without double counting an old upload', as
   t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
   fs.mkdirSync(path.join(uploadsRoot, '.integrations/toteat-api'), { recursive: true });
   fs.writeFileSync(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), JSON.stringify({ 'store-1': { localId: '1', restaurantId: 'r', userId: 'u', token: 'secret' } }));
-  const app = createApp({ uploadsRoot, toteatRequestSpacing: 0, toteatSyncClock: () => '2026-09-21', toteatApiFetch: async url => Response.json({ ok: true, data: url.pathname.endsWith('shiftstatus') ? { status: 'closed', localNumber: 1 } : [payment()] }) });
+  const app = createApp({ enableLegacyTools: true, uploadsRoot, toteatRequestSpacing: 0, toteatSyncClock: () => '2026-09-21', toteatApiFetch: async url => Response.json({ ok: true, data: url.pathname.endsWith('shiftstatus') ? { status: 'closed', localNumber: 1 } : [payment()] }) });
   const dir = path.join(uploadsRoot, 'transactions/store-1'); fs.mkdirSync(dir, { recursive: true });
   const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{ 'ID de orden': 'o1', 'Fecha de creacion': '2026-09-21', 'Pago total': 99999, 'ID Producto': 'B1', Cantidad: 1, 'Precio a Pagar': 99999 }]), 'Ventas');
   XLSX.writeFile(workbook, path.join(dir, 'old.xlsx'));

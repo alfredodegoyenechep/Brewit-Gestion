@@ -197,10 +197,10 @@ function setView(view) {
     section.style.display = 'none';
   });
   if (view === 'uploads' || view === 'uploads-previous') {
-    const loader = document.getElementById(view === 'uploads' ? 'upload-overview' : 'file-loader');
+    const loader = document.getElementById('upload-overview');
     loader.hidden = false;
     loader.style.display = '';
-    if (view === 'uploads') loadUploadOverview();
+    loadUploadOverview();
     return;
   }
   if (view === 'config') {
@@ -771,11 +771,12 @@ function updateLocationFields() {
   currentWeekFiles = {};
   clearWeeklySelections();
   clearInspection(true);
-  loadTransactionFiles();
+  if (document.getElementById('week-status')) loadTransactionFiles();
 }
 
 async function loadTransactionFiles() {
   const status = document.getElementById('week-status');
+  if (!status) return;
   const location = document.getElementById('location-select').value;
   if (!location) return;
   try {
@@ -2675,480 +2676,6 @@ function changeReportView() {
     locationFilter.removeAttribute('title');
   }
   loadWeeklySalesReport();
-}
-
-function downloadReportSalesFromToteat() {
-  const location = document.getElementById('report-location-filter').value || 'all';
-  if (location === 'all') return startToteatTransactionalDownloads({ mode: 'sales' });
-  if (locationRegistry[location]?.type !== 'store') {
-    return setStatus(document.getElementById('report-status'), 'Selecciona una cafetería válida.', 'error');
-  }
-  document.getElementById('report-sales-download-location-name').textContent = locationRegistry[location].name;
-  document.getElementById('report-sales-download-scope-dialog').showModal();
-}
-
-function chooseReportSalesDownloadScope(allLocations) {
-  const dialog = document.getElementById('report-sales-download-scope-dialog');
-  if (dialog.open) dialog.close();
-  const selected = document.getElementById('report-location-filter').value || 'all';
-  return startToteatTransactionalDownloads({ mode: 'sales', locationId: allLocations ? 'all' : selected });
-}
-
-async function saveToteatMasterDownload(endpoint, fallbackFilename) {
-  const separator = endpoint.includes('?') ? '&' : '?';
-  const batchEndpoint = toteatMasterDownloadBatchId
-    ? `${endpoint}${separator}batchId=${encodeURIComponent(toteatMasterDownloadBatchId)}`
-    : endpoint;
-  const response = await fetch(batchEndpoint, { method: 'POST' });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    const error = new Error(payload.error || 'No se pudo descargar el archivo desde Toteat.');
-    error.code = payload.code;
-    error.state = payload.state;
-    throw error;
-  }
-  const triggerDownload = (blob, filename) => {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-  if ((response.headers.get('Content-Type') || '').includes('application/json')) {
-    const payload = await response.json();
-    if (!Array.isArray(payload.files) || !payload.files.length) throw new Error('TotEat no entregó archivos para descargar.');
-    const filenames = [];
-    for (const [index, file] of payload.files.entries()) {
-      const binary = window.atob(file.data || '');
-      const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-      const filename = file.filename || `${index + 1}-${fallbackFilename}`;
-      triggerDownload(new Blob([bytes], { type: file.contentType || 'application/octet-stream' }), filename);
-      filenames.push(filename);
-      if (index < payload.files.length - 1) await new Promise(resolve => window.setTimeout(resolve, 150));
-    }
-    return filenames;
-  }
-  const blob = await response.blob();
-  const disposition = response.headers.get('Content-Disposition') || '';
-  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
-  triggerDownload(blob, filename);
-  return [filename];
-}
-
-async function startToteatMasterDownloads() {
-  const button = document.getElementById('download-all-toteat-files');
-  const status = document.getElementById('toteat-master-download-status');
-  button.disabled = true;
-  setStatus(status, 'Abriendo Toteat para iniciar sesión…');
-  try {
-    const response = await fetch('/api/integrations/toteat/master-downloads/connect', { method: 'POST' });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'No se pudo abrir Toteat.');
-    toteatMasterDownloadBatchId = payload.batchId || null;
-    const requiresAuthentication = payload.requiresAuthentication === true;
-    document.getElementById('toteat-master-download-title').textContent = requiresAuthentication
-      ? 'Inicia sesión en la ventana de Toteat'
-      : 'Sesión de Toteat actualizada';
-    document.getElementById('toteat-master-download-copy').textContent = requiresAuthentication
-      ? 'Tómate el tiempo necesario para ingresar. Cuando veas Toteat abierto y autenticado, vuelve aquí para descargar los siete archivos maestros.'
-      : 'Encontramos una sesión activa y refrescamos Toteat para actualizar sus opciones de fecha. Puedes comenzar las descargas.';
-    setStatus(document.getElementById('toteat-master-dialog-status'), '', 'muted');
-    document.getElementById('toteat-master-download-dialog').showModal();
-    setStatus(status, requiresAuthentication
-      ? 'Toteat solicita login. Completa el inicio de sesión y confirma para comenzar las descargas.'
-      : 'La sesión existente de Toteat fue refrescada y está lista para descargar.', 'muted');
-  } catch (error) {
-    setStatus(status, error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function closeToteatMasterDownloadDialog() {
-  const dialog = document.getElementById('toteat-master-download-dialog');
-  if (dialog.open) dialog.close();
-}
-
-function closeToteatTransactionalDownloadDialog() {
-  const dialog = document.getElementById('toteat-transactional-download-dialog');
-  if (dialog.open) dialog.close();
-}
-
-const TOTEAT_TRANSACTION_REPORTS = [
-  { label: 'Ventas Totales', route: 'sales', field: 'sales', emptyCode: 'TOTEAT_NO_SALES_AVAILABLE' },
-  { label: 'Detalle Pagos', route: 'payment-details', field: 'payment-details', emptyCode: 'TOTEAT_NO_PAYMENT_DETAILS_AVAILABLE' },
-  { label: 'Compras', route: 'purchases', field: 'purchases', emptyCode: 'TOTEAT_NO_PURCHASES_AVAILABLE' }
-];
-const TOTEAT_LOCAL_KARDEX_REPORTS = [
-  { label: 'Kardex Bodega Local', route: 'kardex-local', field: 'kardex', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
-  { label: 'Kardex Bodega Merma', route: 'kardex-waste', field: 'waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
-];
-const TOTEAT_CENTRAL_KARDEX_REPORTS = [
-  { label: 'Kardex Bodega Central', route: 'kardex-central', field: 'kardex', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' },
-  { label: 'Kardex Bodega Central Merma', route: 'kardex-central-waste', field: 'waste', emptyCode: 'TOTEAT_NO_KARDEX_AVAILABLE' }
-];
-const toteatReportsForLocation = location => location.central
-  ? TOTEAT_CENTRAL_KARDEX_REPORTS
-  : toteatTransactionalMode === 'sales'
-    ? TOTEAT_TRANSACTION_REPORTS.slice(0, 2)
-    : [...TOTEAT_TRANSACTION_REPORTS, ...TOTEAT_LOCAL_KARDEX_REPORTS];
-
-function toteatSuggestedStart(location, route) {
-  if (route === 'sales') return location.dateFrom;
-  if (route === 'payment-details') return location.paymentDetailsDateFrom;
-  if (route === 'purchases') return location.purchasesDateFrom;
-  if (route === 'kardex-local' || route === 'kardex-central') return location.kardexDateFrom;
-  return location.wasteDateFrom;
-}
-
-function renderToteatTransactionalRanges() {
-  const list = document.getElementById('toteat-transactional-locations');
-  list.replaceChildren();
-  const locations = [...toteatTransactionalLocations,
-    ...(toteatTransactionalCentralWarehouse ? [toteatTransactionalCentralWarehouse] : [])];
-  locations.forEach((location, index) => {
-    const section = document.createElement('section');
-    section.className = 'toteat-range-location';
-    const heading = document.createElement('h4');
-    heading.textContent = `${index + 1}. ${location.name}${location.central
-      ? ` · administrada por ID local ${location.toteatLocalId}`
-      : ` · ${location.toteatName} · ID local ${location.toteatLocalId || location.id}`}`;
-    section.append(heading);
-    const grid = document.createElement('div');
-    grid.className = 'toteat-range-grid';
-    for (const report of toteatReportsForLocation(location)) {
-      const card = document.createElement('div');
-      card.className = 'toteat-range-card';
-      card.dataset.location = location.id;
-      card.dataset.route = report.route;
-      const title = document.createElement('strong');
-      title.textContent = report.label;
-      card.append(title);
-      for (const [field, label, value] of [
-        ['dateFrom', 'Fecha inicial', toteatSuggestedStart(location, report.route)],
-        ['dateTo', 'Fecha final', location.dateTo]
-      ]) {
-        const wrapper = document.createElement('label');
-        wrapper.textContent = label;
-        const input = document.createElement('input');
-        input.type = 'date';
-        input.name = field;
-        input.value = value;
-        input.dataset.suggestedValue = value;
-        input.max = location.dateTo;
-        input.required = true;
-        input.setAttribute('aria-label', `${label} de ${report.label} para ${location.name}`);
-        const markChanged = () => input.classList.toggle('changed-from-suggested',
-          Boolean(input.value) && input.value !== input.dataset.suggestedValue);
-        input.addEventListener('input', markChanged);
-        input.addEventListener('change', markChanged);
-        wrapper.append(input);
-        card.append(wrapper);
-      }
-      grid.append(card);
-    }
-    section.append(grid);
-    list.append(section);
-  });
-}
-
-function selectedToteatTransactionalRanges() {
-  const ranges = new Map();
-  for (const card of document.querySelectorAll('#toteat-transactional-locations .toteat-range-card')) {
-    const from = card.querySelector('[name="dateFrom"]');
-    const to = card.querySelector('[name="dateTo"]');
-    if (!from.checkValidity() || !to.checkValidity() || from.value > to.value) {
-      (from.checkValidity() ? to : from).focus();
-      throw new Error('Revisa las fechas inicial y final de cada archivo. La fecha inicial no puede ser posterior a la final ni la fecha final superar hoy.');
-    }
-    ranges.set(`${card.dataset.location}:${card.dataset.route}`, { dateFrom: from.value, dateTo: to.value });
-  }
-  return ranges;
-}
-
-const toteatTransactionalStatus = () => document.getElementById(
-  toteatTransactionalMode === 'sales' ? 'report-status' : 'toteat-master-download-status'
-);
-
-function createToteatTransactionalProgress(locations) {
-  const panel = document.getElementById('toteat-transactional-progress');
-  const list = document.getElementById('toteat-transactional-progress-list');
-  const bar = document.getElementById('toteat-transactional-progress-bar');
-  const count = document.getElementById('toteat-transactional-progress-count');
-  const percent = document.getElementById('toteat-transactional-progress-percent');
-  const total = locations.reduce((sum, location) => sum + toteatReportsForLocation(location).length * 2, 0);
-  const rows = new Map();
-  const downloaded = new Set();
-  const finished = new Set();
-  let processed = 0;
-  list.replaceChildren();
-  panel.hidden = false;
-  bar.max = Math.max(total, 1);
-  bar.value = 0;
-  count.textContent = `0 de ${total} pasos completados`;
-  percent.textContent = '0%';
-  for (const location of locations) {
-    const group = document.createElement('div');
-    group.className = 'toteat-progress-location';
-    const heading = document.createElement('strong');
-    heading.textContent = `${location.name} · ID local ${location.toteatLocalId || location.id}`;
-    group.append(heading);
-    for (const report of toteatReportsForLocation(location)) {
-      const row = document.createElement('div');
-      row.className = 'toteat-progress-report';
-      row.dataset.state = 'waiting';
-      const label = document.createElement('span');
-      label.textContent = report.label;
-      const state = document.createElement('span');
-      state.textContent = 'En espera';
-      row.append(label, state);
-      group.append(row);
-      rows.set(`${location.id}:${report.route}`, { row, state });
-    }
-    list.append(group);
-  }
-  return {
-    update(location, report, status, message) {
-      const key = `${location.id}:${report.route}`;
-      const entry = rows.get(key);
-      entry.row.dataset.state = status;
-      entry.state.textContent = message;
-      if (status === 'active') entry.row.scrollIntoView({ block: 'nearest' });
-      if (['done', 'empty'].includes(status) && !downloaded.has(key)) {
-        downloaded.add(key);
-        processed += 1;
-      }
-      if (['empty', 'imported', 'import-error'].includes(status) && !finished.has(key)) {
-        finished.add(key);
-        processed += 1;
-      }
-      if (['done', 'empty', 'imported', 'import-error'].includes(status)) {
-        bar.value = processed;
-        count.textContent = `${processed} de ${total} pasos completados`;
-        percent.textContent = `${Math.round(processed / Math.max(total, 1) * 100)}%`;
-      }
-    }
-  };
-}
-
-async function importToteatTransactionalFile(location, report, blob, filename) {
-  const form = new FormData();
-  form.append(report.field, blob, filename);
-  const inspection = await apiRequest(`/api/uploads/transactions/inspect?location=${encodeURIComponent(location.id)}`, {
-    method: 'POST', body: form
-  });
-  const file = inspection.files?.[0];
-  const dates = file?.recordDates || [];
-  if (inspection.location !== location.id || inspection.files?.length !== 1
-    || file.field !== report.field || !file.structure?.ok || !dates.length) {
-    throw new Error('El archivo no pasó la validación de estructura o no contiene registros con fecha. Se conservó la información anterior.');
-  }
-  const result = await apiRequest('/api/uploads/transactions/confirm', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      token: inspection.token,
-      dateFrom: dates[0],
-      dateTo: dates.at(-1),
-      confirmed: true,
-      categoryConfirmed: ['kardex', 'waste'].includes(report.field),
-      overlapAction: 'replace',
-      replaceOnlyIncomingDates: true
-    })
-  });
-  if (!result.imports?.[report.field]?.saved) {
-    throw new Error('El archivo fue revisado, pero no se guardaron registros nuevos. Se conservó la información anterior.');
-  }
-  return result;
-}
-
-async function startToteatTransactionalDownloads({ mode = 'all', locationId = 'all' } = {}) {
-  toteatTransactionalMode = mode;
-  const button = document.getElementById(mode === 'sales'
-    ? 'report-download-toteat-sales' : 'download-all-toteat-transactions');
-  const status = toteatTransactionalStatus();
-  button.disabled = true;
-  setStatus(status, 'Preparando la descarga transaccional por cafetería…');
-  try {
-    const payload = await apiRequest('/api/integrations/toteat/transactional-downloads/connect', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: locationId, includeCentral: mode === 'all' })
-    });
-    toteatTransactionalLocations = (payload.locations || []).filter(location => locationId === 'all' || location.id === locationId);
-    if (!toteatTransactionalLocations.length) throw new Error('No hay cafeterías activas para descargar.');
-    toteatTransactionalCentralWarehouse = mode === 'all' && payload.centralWarehouse
-      ? { ...payload.centralWarehouse, central: true } : null;
-    document.getElementById('toteat-transactional-progress').hidden = true;
-    document.getElementById('confirm-toteat-transactional-download').textContent = 'Ya inicié sesión, descargar reportes';
-    renderToteatTransactionalRanges();
-    document.getElementById('toteat-transactional-download-title').textContent = payload.requiresAuthentication
-      ? 'Inicia sesión en la ventana de TotEat'
-      : 'Sesión de TotEat actualizada';
-    document.getElementById('toteat-transactional-download-copy').textContent = mode === 'sales'
-      ? 'Revisa o ajusta las fechas de Ventas Totales y Detalle Pagos de cada cafetería. Luego Brewit validará y cargará cada archivo sin duplicar fechas.'
-      : payload.requiresAuthentication
-        ? 'Completa el login y vuelve aquí. Puedes ajustar las fechas de cada archivo antes de iniciar las descargas y cargas.'
-        : 'Revisa o ajusta las fechas de cada archivo. Brewit actualizará cada ubicación, reemplazando solo las fechas presentes en los archivos descargados.';
-    setStatus(document.getElementById('toteat-transactional-dialog-status'), '', 'muted');
-    document.getElementById('toteat-transactional-download-dialog').showModal();
-    setStatus(status, payload.requiresAuthentication
-      ? 'TotEat solicita login. Completa la sesión antes de continuar.'
-      : 'La sesión de TotEat está lista para descargar los reportes por cafetería y bodega.', 'muted');
-  } catch (error) {
-    setStatus(status, error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function confirmToteatTransactionalDownloads() {
-  const button = document.getElementById('confirm-toteat-transactional-download');
-  const closeButton = document.getElementById('close-toteat-transactional-download');
-  const cancelButton = document.getElementById('cancel-toteat-transactional-download');
-  const dialogStatus = document.getElementById('toteat-transactional-dialog-status');
-  const status = toteatTransactionalStatus();
-  let selectedRanges;
-  try {
-    selectedRanges = selectedToteatTransactionalRanges();
-  } catch (error) {
-    setStatus(dialogStatus, error.message, 'error');
-    return;
-  }
-  button.disabled = true;
-  closeButton.disabled = true;
-  cancelButton.disabled = true;
-  const completed = [];
-  const withoutData = [];
-  const downloaded = [];
-  const imported = [];
-  const importErrors = [];
-  const jobs = toteatTransactionalLocations.map(location => ({ location, selectionLocationId: location.id }));
-  if (toteatTransactionalCentralWarehouse) jobs.push({
-    location: toteatTransactionalCentralWarehouse,
-    selectionLocationId: toteatTransactionalCentralWarehouse.ownerLocationId
-  });
-  const progress = createToteatTransactionalProgress(jobs.map(job => job.location));
-  let activeLocation = null;
-  let activeReport = null;
-  try {
-    for (const [index, job] of jobs.entries()) {
-      const { location, selectionLocationId } = job;
-      activeLocation = location;
-      activeReport = null;
-      setStatus(dialogStatus, `Local ${location.toteatLocalId || location.id}: seleccionando ${location.name} (${index + 1} de ${jobs.length})…`);
-      const selection = await fetch('/api/integrations/toteat/transactional-downloads/select-location', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: selectionLocationId })
-      });
-      if (!selection.ok) {
-        const payload = await selection.json().catch(() => ({}));
-        throw new Error(payload.error || `No se pudo seleccionar ${location.name} en TotEat.`);
-      }
-      for (const report of toteatReportsForLocation(location)) {
-        activeReport = report;
-        progress.update(location, report, 'active', 'Descargando…');
-        setStatus(dialogStatus, `Local ${location.toteatLocalId || location.id} · ${location.name}: descargando ${report.label} (${index + 1} de ${jobs.length})…`);
-        const response = await fetch(`/api/integrations/toteat/transactional-downloads/${report.route}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ location: location.id, ...selectedRanges.get(`${location.id}:${report.route}`) })
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          if (payload.code === report.emptyCode || payload.code === 'TOTEAT_NO_DATA_AVAILABLE') {
-            withoutData.push(`${report.label} de ${location.name}`);
-            progress.update(location, report, 'empty', 'Sin datos');
-            continue;
-          }
-          throw new Error(payload.error || `No se pudo descargar ${report.label} de ${location.name}.`);
-        }
-        const blob = await response.blob();
-        const disposition = response.headers.get('Content-Disposition') || '';
-        const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-          || `${location.toteatLocalId || location.id}_${report.route}-toteat-${location.id}.csv`;
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        completed.push(`${report.label} de ${location.name}`);
-        downloaded.push({ location, report, blob, filename });
-        progress.update(location, report, 'done', 'Descargado');
-      }
-    }
-    for (const [index, item] of downloaded.entries()) {
-      const { location, report, blob, filename } = item;
-      progress.update(location, report, 'active', 'Cargando…');
-      setStatus(dialogStatus, `Validando y cargando ${report.label} de ${location.name} (${index + 1} de ${downloaded.length})…`);
-      try {
-        await importToteatTransactionalFile(location, report, blob, filename);
-        imported.push(`${report.label} de ${location.name}`);
-        progress.update(location, report, 'imported', 'Actualizado');
-      } catch (error) {
-        importErrors.push(`${report.label} de ${location.name}: ${error.message}`);
-        progress.update(location, report, 'import-error', 'No cargado');
-      }
-    }
-    await loadTransactionFiles();
-    if (toteatTransactionalMode === 'sales') await loadWeeklySalesReport();
-    const skipped = withoutData.length ? ` Sin registros: ${withoutData.join(', ')}.` : '';
-    const failures = importErrors.length ? ` No se cargaron ${importErrors.length}: ${importErrors.join(' · ')}.` : '';
-    const summary = `${completed.length} archivo(s) descargados; ${imported.length} actualizado(s).${skipped}${failures}`;
-    setStatus(status, summary, importErrors.length ? 'error' : 'success');
-    setStatus(dialogStatus, summary, importErrors.length ? 'error' : 'success');
-    button.textContent = 'Descargar nuevamente';
-  } catch (error) {
-    if (activeLocation && activeReport) progress.update(activeLocation, activeReport, 'error', 'Error');
-    setStatus(dialogStatus, `${completed.length} archivo(s) descargados antes del error. ${error.message}`, 'error');
-  } finally {
-    button.disabled = false;
-    closeButton.disabled = false;
-    cancelButton.disabled = false;
-  }
-}
-
-async function confirmToteatMasterDownloads() {
-  const button = document.getElementById('confirm-toteat-master-download');
-  const dialogStatus = document.getElementById('toteat-master-dialog-status');
-  const status = document.getElementById('toteat-master-download-status');
-  const downloads = [
-    ['Proveedores', '/api/integrations/toteat/master-downloads/suppliers', 'proveedores-toteat.xlsx', 1],
-    ['Productos / Ingredientes / Extras', '/api/integrations/toteat/master-downloads/products', 'productos-ingredientes-extras-toteat.xlsx', 1],
-    ['Jerarquía de Productos', '/api/integrations/toteat/master-downloads/product-hierarchy', 'jerarquia-productos-toteat.csv', 1],
-    ['Jerarquía de Ingredientes', '/api/integrations/toteat/master-downloads/ingredient-hierarchy', 'jerarquia-ingredientes-toteat.csv', 1],
-    ['Jerarquía de Extras', '/api/integrations/toteat/master-downloads/extras-hierarchy', 'jerarquia-extras-toteat.csv', 1],
-    ['Maestro de Recetas (Header y Detalle)', '/api/integrations/toteat/master-downloads/recipes', 'recetas-toteat.txt', 2]
-  ];
-  const expectedFileCount = downloads.reduce((sum, download) => sum + download[3], 0);
-  const completed = [];
-  button.disabled = true;
-  try {
-    for (const [index, [label, endpoint, fallbackFilename]] of downloads.entries()) {
-      setStatus(dialogStatus, `Descargando ${index + 1} de ${downloads.length}: ${label}…`);
-      completed.push(...await saveToteatMasterDownload(endpoint, fallbackFilename));
-    }
-    setStatus(dialogStatus, 'Los siete archivos llegaron correctamente. Validando sus estructuras contra los maestros vigentes…');
-    const update = await apiRequest('/api/integrations/toteat/master-downloads/finalize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ batchId: toteatMasterDownloadBatchId })
-    });
-    closeToteatMasterDownloadDialog();
-    toteatMasterDownloadBatchId = null;
-    setStatus(status, `Los ${expectedFileCount} archivos fueron descargados y validados. Los seis maestros se actualizaron con vigencia ${formatReportDate(update.validFrom)}.`, 'success');
-    await renderMasterList();
-  } catch (error) {
-    const authenticationMessage = error.code === 'TOTEAT_AUTH_REQUIRED'
-      ? 'Toteat todavía solicita autenticación. Completa el inicio de sesión en su ventana y vuelve a intentar.'
-      : error.message;
-    const progress = completed.length ? `${completed.length} de ${expectedFileCount} archivo(s) ya fueron descargados. ` : '';
-    setStatus(dialogStatus, `${progress}${authenticationMessage}`, 'error');
-  } finally {
-    button.disabled = false;
-  }
 }
 
 function refreshSalesDashboardLocationFilter() {
@@ -8613,16 +8140,14 @@ async function loadInventorySources() {
   document.getElementById('process-original-inventory-report').disabled = !location;
   const status = document.getElementById('inventory-source-status');
   const list = document.getElementById('inventory-source-list');
-  const processButton = document.getElementById('process-inventory-report');
   const currentButton = document.getElementById('current-inventory-report');
   if (!location) {
     inventorySourceState = null;
     list.replaceChildren();
-    processButton.disabled = true;
     currentButton.disabled = true;
     return setStatus(status, 'No hay ubicaciones activas disponibles.', 'muted');
   }
-  setStatus(status, 'Buscando los archivos más recientes…');
+  setStatus(status, 'Consultando las fuentes sincronizadas…');
   try {
     const data = await apiRequest(`/api/inventory/sources?location=${encodeURIComponent(location)}`);
     if (location !== select.value) return;
@@ -8702,20 +8227,18 @@ async function loadInventorySources() {
       card.append(name, details, actions);
       return card;
     }));
-    processButton.disabled = !data.ready || !data.kardexPeriod;
     currentButton.disabled = !data.kardexPeriod;
     document.getElementById('inventory-process-note').textContent = data.ready
       ? data.kardexPeriod
         ? 'Selecciona las fechas de inventario inicial y final; los movimientos se calculan automáticamente hasta el día anterior al cierre.'
         : `No fue posible interpretar las fechas del Kardex: ${data.kardexError || 'estructura no reconocida'}.`
-      : 'Faltan uno o más archivos requeridos. Puedes cargarlos antes de procesar el informe.';
+      : 'Faltan fuentes sincronizadas. Actualízalas en Datos y sincronización antes de procesar el informe.';
     setStatus(status, data.ready
       ? 'La ubicación tiene todas las fuentes requeridas disponibles.'
       : 'La ubicación todavía no tiene todas las fuentes requeridas.', data.ready ? 'success' : 'muted');
   } catch (error) {
     inventorySourceState = null;
     list.replaceChildren();
-    processButton.disabled = true;
     currentButton.disabled = true;
     setStatus(status, error.message, 'error');
   }
@@ -8750,10 +8273,10 @@ function inventoryDefaultPeriod() {
   };
 }
 
-let inventoryProcessingMode = 'files';
+const inventoryProcessingMode = 'originals';
 let inventoryProcessedProvenance = null;
 let originalInventoryDates = [];
-function processingInventoryDates() { return inventoryProcessingMode === 'originals' ? originalInventoryDates : inventorySourceState?.kardexPeriod?.dates || []; }
+function processingInventoryDates() { return originalInventoryDates; }
 function constrainInventoryDateInput(input) {
   const dates = processingInventoryDates();
   input.min = dates[0] || '';
@@ -8796,8 +8319,7 @@ function renderInventoryCalendar(kind) {
   }
   container.replaceChildren(header,grid);
 }
-async function openInventoryProcessDialog(source = 'files') {
-  inventoryProcessingMode=(window.brewitSynchronizedSources || source==='originals')?'originals':'files';
+async function openInventoryProcessDialog() {
   const location=document.getElementById('inventory-location-select').value;
   try {
     const calendar=await apiRequest(`/api/inventory/calendar?location=${encodeURIComponent(location)}&source=${inventoryProcessingMode}`);
@@ -8815,7 +8337,7 @@ async function openInventoryProcessDialog(source = 'files') {
       document.getElementById(`inventory-${kind}-basis`).closest('label').hidden=true;
     }
     syncInventoryBoundaries();
-    document.getElementById('inventory-process-source').textContent=`${inventoryProcessingMode==='originals'?'Inventario API Toteat':'Archivos cargados'}. Recuadro: fecha con toma física. Sin toma al inicio, se reconstruye desde una toma anterior; sin toma al final, solo se informa saldo teórico.`;
+    document.getElementById('inventory-process-source').textContent=`Inventario API Toteat. Recuadro: fecha con toma física. Sin toma al inicio, se reconstruye desde una toma anterior; sin toma al final, solo se informa saldo teórico.`;
     setStatus(document.getElementById('inventory-process-dialog-status'),'');
     document.getElementById('inventory-process-dialog').showModal();
   }catch(error){setStatus(document.getElementById('inventory-source-status'),error.message,'error');}
@@ -10119,7 +9641,7 @@ async function refreshLocationConfiguration() {
     select.replaceChildren(...options);
     if (locationRegistry[previous]) select.value = previous;
     renderLocationManagement(data);
-    updateLocationFields();
+    if (document.getElementById('weekly-upload-form')) updateLocationFields();
     return data;
   } catch (error) {
     setStatus(status, error.message, 'error');
@@ -10420,6 +9942,7 @@ function showInspection(manifest, { openDialog = true } = {}) {
 
 async function renderMasterList() {
   const container = document.getElementById('master-list');
+  if (!container) return;
   container.replaceChildren();
   try {
     const data = await apiRequest('/api/masters');
@@ -10824,30 +10347,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  document.getElementById('location-select').addEventListener('change', updateLocationFields);
+
   document.querySelectorAll('#weekly-upload-form input[type="file"]').forEach(input => {
     input.addEventListener('change', () => {
       transactionUploadContext = { source: 'uploads', statusId: 'week-status', location: document.getElementById('location-select').value };
       inspectSelectedTransactionFile(input);
     });
   });
-  document.getElementById('report-download-toteat-sales').addEventListener('click', downloadReportSalesFromToteat);
-  document.getElementById('report-sales-download-selected').addEventListener('click', () => chooseReportSalesDownloadScope(false));
-  document.getElementById('report-sales-download-all').addEventListener('click', () => chooseReportSalesDownloadScope(true));
-  document.getElementById('report-sales-download-cancel').addEventListener('click', () => document.getElementById('report-sales-download-scope-dialog').close());
-  // Shared master updates are handled by toteat-masters-view.js from Local 001.
-  document.getElementById('download-all-toteat-transactions').addEventListener('click', () => startToteatTransactionalDownloads());
-  document.getElementById('confirm-toteat-master-download').addEventListener('click', confirmToteatMasterDownloads);
-  document.getElementById('close-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
-  document.getElementById('cancel-toteat-master-download').addEventListener('click', closeToteatMasterDownloadDialog);
-  document.getElementById('confirm-toteat-transactional-download').addEventListener('click', confirmToteatTransactionalDownloads);
-  document.getElementById('close-toteat-transactional-download').addEventListener('click', closeToteatTransactionalDownloadDialog);
-  document.getElementById('cancel-toteat-transactional-download').addEventListener('click', closeToteatTransactionalDownloadDialog);
-  document.getElementById('toteat-transactional-download-dialog').addEventListener('cancel', event => {
-    if (document.getElementById('confirm-toteat-transactional-download').disabled) event.preventDefault();
-  });
-  document.body.appendChild(document.getElementById('toteat-transactional-download-dialog'));
-  document.getElementById('weekly-upload-form').addEventListener('submit', event => event.preventDefault());
+  document.getElementById('weekly-upload-form')?.addEventListener('submit', event => event.preventDefault());
 
   document.getElementById('transaction-delete-confirmation').addEventListener('input', event => {
     document.getElementById('confirm-transaction-delete').disabled = event.target.value.trim() !== 'ELIMINAR';
@@ -10890,17 +10397,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('keep-transactions-btn').addEventListener('click', () => confirmTransactionUpload('keep'));
   document.getElementById('replace-transactions-btn').addEventListener('click', () => confirmTransactionUpload('replace'));
 
-  document.getElementById('master-upload-form').addEventListener('submit', event => {
+  document.getElementById('master-upload-form')?.addEventListener('submit', event => {
     event.preventDefault();
     uploadMasterFiles(false);
   });
-  document.getElementById('replace-master-btn').addEventListener('click', () => uploadMasterFiles(true));
-  document.getElementById('cancel-master-btn').addEventListener('click', () => {
+  document.getElementById('replace-master-btn')?.addEventListener('click', () => uploadMasterFiles(true));
+  document.getElementById('cancel-master-btn')?.addEventListener('click', () => {
     document.getElementById('master-upload-form').reset();
     hideMasterConflict();
     setStatus(document.getElementById('master-status'), 'Carga cancelada.', 'muted');
   });
-  document.getElementById('master-upload-form').addEventListener('change', () => {
+  document.getElementById('master-upload-form')?.addEventListener('change', () => {
     hideMasterConflict();
   });
   document.getElementById('close-master-preview').addEventListener('click', () => {
@@ -11256,7 +10763,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('products-comparison').hidden = true;
   });
   document.getElementById('inventory-location-select').addEventListener('change', loadInventorySources);
-  document.getElementById('process-inventory-report').addEventListener('click', openInventoryProcessDialog);
   document.getElementById('current-inventory-report').addEventListener('click', openCurrentInventoryDateDialog);
   document.getElementById('confirm-current-inventory-report').addEventListener('click', generateCurrentInventoryReport);
   for (const id of ['close-current-inventory-date-dialog', 'cancel-current-inventory-date-dialog']) {
@@ -11269,7 +10775,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const location = document.getElementById('inventory-location-select').value;
     button.disabled = true;
     try {
-      await openInventoryProcessDialog('originals');
+      await openInventoryProcessDialog();
     } catch (error) { setStatus(document.getElementById('inventory-source-status'), error.message, 'error'); }
     finally { button.disabled = false; }
   });
@@ -11339,7 +10845,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setView('uploads');
     if (locationRegistry[location]) {
       document.getElementById('location-select').value = location;
-      updateLocationFields();
+      if (document.getElementById('weekly-upload-form')) updateLocationFields();
     }
   });
 
@@ -11451,6 +10957,32 @@ async function loadUploadOverview() {
       item.append(cell('strong',m.label),cell('span',date(m.updatedAt)));
       item.addEventListener('click',()=>openLatestMasterPreview(m.key,m.label));return item;
     }));
+    const manualColumns=data.columns.filter(c=>['mercadopago','marketing','employees'].includes(c.key));
+    const manualHead=document.createElement('thead'),manualHeader=document.createElement('tr');
+    for(const label of ['Local',...manualColumns.map(c=>c.label)]) {
+      const th=cell('th',label);th.scope='col';manualHeader.append(th);
+    }
+    manualHead.append(manualHeader);
+    const manualBody=document.createElement('tbody');
+    for(const location of data.rows.filter(r=>r.cells.some(c=>c.applicable&&manualColumns.some(m=>m.key===c.key)))) {
+      const row=document.createElement('tr'),name=cell('th',location.name);name.scope='row';row.append(name);
+      for(const column of manualColumns) {
+        const td=document.createElement('td');
+        if(location.cells.some(c=>c.key===column.key&&c.applicable)) {
+          const button=cell('button','Cargar archivo');button.type='button';button.className='icon-button';
+          button.dataset.uploadLocation=location.id;button.dataset.uploadField=column.key;
+          button.setAttribute('aria-label',`Cargar ${column.label} · ${location.name}`);
+          button.addEventListener('click',()=>{
+            if(inspectionState){document.getElementById('date-confirmation').showModal();return;}
+            uploadManualTarget={location:location.id,field:column.key};
+            document.getElementById('upload-overview-file').click();
+          });td.append(button);
+        } else td.textContent='No aplica';
+        row.append(td);
+      }
+      manualBody.append(row);
+    }
+    el('upload-manual-actions').replaceChildren(manualHead,manualBody);
     const table=el('upload-transaction-matrix'),head=document.createElement('thead'),header=document.createElement('tr');
     header.append(cell('th','Ubicación'),...data.columns.map(c=>cell('th',c.label)));head.append(header);
     const body=document.createElement('tbody');
@@ -11464,23 +10996,13 @@ async function loadUploadOverview() {
           td.addEventListener('keydown',event=>{if(event.target===td&&['Enter',' '].includes(event.key)){event.preventDefault();open();}});
           const view=cell('button','Ver registros');view.type='button';view.className='icon-button';view.setAttribute('aria-label',`Ver registros: ${label}`);view.addEventListener('click',event=>{event.stopPropagation();open();});td.append(view);
           td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
-          if(['mercadopago','marketing','employees'].includes(item.key)) {
-            const button=cell('button','Cargar archivo');button.type='button';button.className='icon-button';
-            button.dataset.uploadLocation=location.id;button.dataset.uploadField=item.key;
-            button.setAttribute('aria-label',`Cargar ${data.columns.find(c=>c.key===item.key).label} · ${location.name}`);
-            button.addEventListener('click',()=>{
-              if(inspectionState){document.getElementById('date-confirmation').showModal();return;}
-              uploadManualTarget={location:location.id,field:item.key};
-              document.getElementById('upload-overview-file').click();
-            });td.append(button);
-          }
         }row.append(td);
       }body.append(row);
     }table.replaceChildren(head,body);
     el('upload-refresh-schedule').replaceChildren(...data.rows.flatMap(r=>r.schedules.map(s=>cell('div',`${r.name} · ${s.label}: ${s.enabled?'cada '+s.minutes+' minutos':'automático desactivado'}`))),...Object.entries(data.schedule).map(([key,value])=>cell('div',`${key==='masters'?'Maestros compartidos':'Fuentes de inventario'}: ${value.minutes?'cada '+value.minutes+' minutos':'manual'}`)));
     if(!uploadScheduleDirty)for(const key of ['masters','inventory'])el(`upload-${key}-frequency`).value=data.schedule[key].minutes || '';
     el('refresh-upload-api').disabled=data.job.running || data.masterStatus.running || data.rows.some(r=>r.cells.some(c=>c.running));
-    el('upload-master-connection').textContent = `${data.masterStatus.connection || 'Servicios internos · sesión web'} · Última publicación: ${date(data.masterStatus.publishedAt)}${data.masterStatus.lastError ? ' · '+data.masterStatus.lastError : ''}`;
+    el('upload-master-connection').textContent = `${data.masterStatus.connection || 'Servicios internos · sesión web'} · Última lectura exitosa: ${date(data.masterStatus.observedAt)} · Último intento fallido: ${date(data.masterStatus.lastFailedAt)} · Credencial de integración pendiente de Toteat${data.masterStatus.lastError ? ' · '+data.masterStatus.lastError : ''}`;
     el('upload-refresh-methods').textContent = `Ventas, pagos, compras e inventario: API pública con token. Maestros: ${data.masterStatus.connection || 'servicios internos con sesión web'}.`;
     const job=data.job,summary=job.summary || {};
     el('upload-refresh-report').hidden=!job.steps.length;
@@ -11497,8 +11019,8 @@ async function loadUploadOverview() {
     setStatus(el('upload-overview-status'),data.job.running?'Actualización en curso…':otherRunning.length?'Hay actualizaciones independientes en curso: '+otherRunning.join(', '):data.masterStatus.running?'Maestros actualizándose desde otra vista…':data.job.finishedAt?'Último proceso finalizado: '+date(data.job.finishedAt):'');
   } catch(error){setStatus(el('upload-overview-status'),error.message,'error');}finally{uploadOverviewBusy=false;}
 }
-document.getElementById('open-previous-upload').addEventListener('click',()=>setView('uploads-previous'));
-document.getElementById('return-upload-overview').addEventListener('click',()=>setView('uploads'));
+document.getElementById('open-previous-upload')?.addEventListener('click',()=>setView('uploads-previous'));
+document.getElementById('return-upload-overview')?.addEventListener('click',()=>setView('uploads'));
 document.getElementById('refresh-upload-api').addEventListener('click',async()=>{
   const button=document.getElementById('refresh-upload-api');button.disabled=true;
   try{await apiRequest('/api/uploads/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
