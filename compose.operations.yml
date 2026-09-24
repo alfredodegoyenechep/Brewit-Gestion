@@ -1,0 +1,19 @@
+services:
+  operations-db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: brewit_operations
+      POSTGRES_USER: brewit
+      POSTGRES_PASSWORD: ${BREWIT_POSTGRES_PASSWORD:?Define BREWIT_POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - brewit-operations-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brewit -d brewit_operations"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  brewit-operations-data:

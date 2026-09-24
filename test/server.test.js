@@ -349,6 +349,12 @@ test('calculates yesterday, Monday-to-date, month-to-date, rankings, and eight-w
   assert.equal(report.statistics.equivalentDays.at(-1).variationPercent, null);
   assert.equal(report.averageTicketStatistics.basis, 'gross-plus-signed-discounts');
   assert.equal(report.averageTicketStatistics.includesVat, true);
+  assert.equal(report.orderCountStatistics.months[0].orders, 6);
+  assert.equal(report.orderCountStatistics.weeks[0].orders, 4);
+  assert.equal(report.orderCountStatistics.days[0].orders, 1);
+  assert.equal(report.orderCountStatistics.days[0].variationPercent, 0);
+  assert.equal(report.orderCountStatistics.equivalentDays[0].variationPercent, 0);
+  for (const rows of Object.values(report.orderCountStatistics)) assert.equal(rows.length, 14);
   assert.deepEqual(report.averageTicketStatistics.months[0], {
     key: '2026-08', from: '2026-08-01', to: '2026-08-13',
     grossSalesWithVat: 2261, orders: 6, averageTicketWithVat: 376.8333333333333,
@@ -1389,6 +1395,12 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   assert.equal(laterIngredient.unitCost, 9);
   assert.equal(laterIngredient.usageCost, 22.5);
   assert.equal(laterIngredient.costSourceDate, '2026-08-20');
+  assert.equal(laterIngredient.previousPurchaseCost, 6);
+  assert.equal(laterIngredient.previousPurchaseDate, '2026-08-15');
+  assert.equal(laterIngredient.costChangePercent, 50);
+  const narrowReport = await fetch(`${baseUrl}/api/ingredients?location=store-1&dateFrom=2026-08-20&dateTo=2026-08-20`).then(response => response.json());
+  assert.equal(narrowReport.items.find(item => item.code === 'I1').costChangePercent, 50,
+    'the previous purchase remains the comparison even outside the selected period');
 
   const warehouseKardex = [
     ['Código', 'Nombre', 'Unidad', '2026-08-10', '', '', '', '2026-08-11', '', '', ''],
@@ -1424,7 +1436,7 @@ test('builds ingredient costs, recipe usage, suppliers, and cost variation for a
   const storedFindings = findings.sections.flatMap(section => section.findings);
   assert.ok(storedFindings.every(finding => Number.isInteger(finding.number) && finding.number > 0));
   assert.ok(storedFindings.every(finding => finding.observations === '' && finding.closed === false));
-  assert.ok(findings.sections.find(section => section.key === 'costs').findings
+  assert.ok(!findings.sections.find(section => section.key === 'costs').findings
     .some(finding => /Costo maestro desalineado/.test(finding.title)));
   assert.ok(findings.sections.find(section => section.key === 'inventory').findings
     .some(finding => /Sin Kardex utilizable/.test(finding.title)));
@@ -3281,6 +3293,9 @@ test('audits transactions with date, amount and discount filters and complete or
   assert.equal(audit.summary.paymentReconciliation.matched, 1);
   assert.equal(audit.transactions[0].time, '10:15');
   assert.equal(audit.transactions[0].modeLabel, 'Servir en el local');
+  assert.equal(audit.transactions[0].netCost, 2100);
+  assert.equal(audit.transactions[0].margin, Math.round(9000 / 1.19 - 2100));
+  assert.ok(Math.abs(audit.transactions[0].marginPercent - (1 - 2100 / (9000 / 1.19)) * 100) < 0.0001);
   assert.equal(audit.transactions[0].lines.length, 2);
   assert.deepEqual(audit.transactions[0].lines.map(line => line.type), ['Producto', 'Extra']);
   assert.deepEqual(audit.transactions[0].lines.map(line => line.listPrice), [4500, 600]);
@@ -3427,7 +3442,8 @@ test('prioritizes comparable last purchase cost and lists catalog items needing 
   ]), 'Prod');
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
     ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base'],
-    ['I1', 'Ingrediente', 1, 10, 'UN']
+    ['I1', 'Ingrediente', 1, 10, 'UN'],
+    ['I2', 'Ingrediente sin compras', 1, 18, 'UN']
   ]), 'Ingr');
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
     ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base'],
@@ -3464,7 +3480,8 @@ test('prioritizes comparable last purchase cost and lists catalog items needing 
   assert.deepEqual([byCode.P3.effectiveSource, byCode.P3.effectiveCost, byCode.P3.status], ['master', 7, 'no-purchase']);
   assert.deepEqual([byCode.E1.type, byCode.E1.effectiveSource, byCode.E1.status], ['extra', 'missing', 'missing']);
   assert.deepEqual([byCode.I1.type, byCode.I1.effectiveSource], ['ingredient', 'purchase']);
-  assert.equal(report.summary.masterFallback, 1);
+  assert.deepEqual([byCode.I2.effectiveSource, byCode.I2.effectiveCost, byCode.I2.status], ['master', 18, 'no-purchase']);
+  assert.equal(report.summary.masterFallback, 2);
   assert.equal(report.summary.recipeFallback, 1);
   const otherStore = await fetch(`${baseUrl}/api/cost-review?location=store-2&dateTo=2026-08-20`).then(result => result.json());
   assert.equal(otherStore.items.find(item => item.code === 'P1').status, 'other-location');
@@ -3893,4 +3910,40 @@ test('shows every row and column of master previews', async t => {
   assert.equal(preview.sheets[0].totalRows, 405);
   assert.equal(preview.sheets[0].frozenRows, 2);
   assert.equal(preview.sheets[0].truncated, false);
+});
+
+test('findings preserve transaction evidence and contextualize purchase credit notes', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const sales = [
+    'ID de orden\tID de Pago\tFecha de creacion\tHora de creacion\tFecha de cierre\tHora de cierre\tPago total\tID Producto\tNombre\tCantidad\tPrecio a Pagar\tTipo de documento\tFolio',
+    'order-refund\tpayment-refund\t2026-08-10\t10:20:30\t2026-08-10\t10:21:45\t-2000\tP1\tCafé\t-1\t-2000\tNC\t123',
+    'order-missing\tpayment-missing\t2026-08-10\t11:20:30\t2026-08-10\t11:21:45\t500\t\tSin detalle\t\t500\t\t'
+  ].join('\n');
+  const purchases = [
+    'Fecha emisión\tTipo Documento\tDocumento\tProveedor/Para\tNúmero identificador fiscal\tLin\tCod\tPRODUCTO\tQ.Rec\tUm.Rec\tCosto\tMonto neto\tDescuento\tMonto total',
+    '2026-08-10\tNota de Crédito\tNC-42\tProveedor Uno\t111\t1\tI1\tIngrediente\t-2\tkg\t500\t-1000\t0\t-1000'
+  ].join('\n');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'sales', contents: sales, filename: 'refund-sales.csv' },
+    { field: 'purchases', contents: purchases, filename: 'credit-note.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+  const url = `${baseUrl}/api/findings?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(url); assert.equal(response.status, 200);
+    const findings = (await response.json()).sections.flatMap(s => s.findings);
+    const sale = findings.find(f => f.title.startsWith('Cantidad de venta no positiva'));
+    assert.equal(sale.evidence[0]['ID de Pago'], 'payment-refund');
+    assert.equal(sale.evidence[0]['Hora de cierre'], '10:21:45');
+    assert.equal(sale.evidence[0]['Fecha de cierre'], '2026-08-10');
+    assert.equal(sale.evidence[0]['Tipo de documento'], 'NC');
+    const missing = findings.find(f => f.title === 'Ventas sin código de producto');
+    assert.equal(missing.evidence[0]['ID de Pago'], 'payment-missing');
+    const purchase = findings.find(f => f.title.startsWith('Cantidad de compra no positiva'));
+    assert.equal(purchase.severity, 'low');
+    assert.match(purchase.detail, /devolución o ajuste válido/);
+    assert.equal(purchase.evidence[0].Documento, 'NC-42');
+    assert.equal(purchase.evidence[0]['Q.Rec'], -2);
+    assert.ok(purchase.evidence[0]['Archivo fuente']);
+  }
 });

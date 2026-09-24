@@ -89,6 +89,7 @@ function organizeWorkspaceNavigation() {
   if (!navigation || navigation.dataset.organized === 'true') return;
   const links = new Map([...document.querySelectorAll('.nav-link[data-view]')]
     .map(link => [link.dataset.view, link]));
+  const operationsLink = navigation.querySelector('a[href="/operaciones"]');
   const groups = [
     { label: 'Visión ejecutiva', views: ['report', 'financial-results'] },
     { label: 'Inteligencia comercial', views: ['sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients'] },
@@ -104,6 +105,7 @@ function organizeWorkspaceNavigation() {
     section.append(heading, ...group.views.map(view => links.get(view)).filter(Boolean));
     return section;
   }));
+  if (operationsLink) navigation.querySelector('.nav-group:last-child').append(operationsLink);
   navigation.dataset.organized = 'true';
 }
 
@@ -1538,7 +1540,7 @@ function buildTransactionAuditDetail(transaction) {
   const row = document.createElement('tr');
   row.className = 'transaction-audit-detail-row';
   const cell = document.createElement('td');
-  cell.colSpan = 10;
+  cell.colSpan = 14;
   const detail = document.createElement('div');
   detail.className = 'transaction-audit-detail';
   const title = document.createElement('h4');
@@ -1554,6 +1556,9 @@ function buildTransactionAuditDetail(transaction) {
     ['Descuento', `${formatClp(transaction.discountAmount)} (${Number(transaction.discountPercent || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%)`],
     ['Venta con descuentos', formatClp(transaction.saleWithDiscount)],
     ['Venta neta sin IVA', formatClp(transaction.netSale)],
+    ['Costo neto', transaction.netCost == null ? 'Sin costo completo' : formatClp(transaction.netCost)],
+    ['Margen', transaction.margin == null ? '—' : formatClp(transaction.margin)],
+    ['Margen %', transaction.marginPercent == null ? '—' : `${transaction.marginPercent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`],
     ['Total Detalle Pagos', transaction.paymentTotal === null ? 'Sin información' : formatClp(transaction.paymentTotal)],
     ['A Pagar / Due', transaction.paymentDue === null ? 'Sin información' : formatClp(transaction.paymentDue)],
     ['A Pagar parcial', transaction.paymentDuePartial ? 'Sí; revisar composición de pagos' : 'No detectado'],
@@ -1624,7 +1629,7 @@ function renderTransactionAuditTable() {
   if (!transactions.length) {
     const row = document.createElement('tr');
     const cell = transactionAuditCell('No hay transacciones que coincidan con los filtros seleccionados.', 'transaction-audit-empty');
-    cell.colSpan = 10;
+    cell.colSpan = 14;
     row.appendChild(cell);
     body.appendChild(row);
     return;
@@ -1646,6 +1651,10 @@ function renderTransactionAuditTable() {
       discount,
       transactionAuditCell(formatClp(transaction.saleWithDiscount), 'numeric-cell'),
       transactionAuditCell(formatClp(transaction.netSale), 'numeric-cell'),
+      transactionAuditCell(transaction.netCost == null ? 'Sin costo completo' : formatClp(transaction.netCost), 'numeric-cell'),
+      transactionAuditCell(transaction.margin == null ? '—' : formatClp(transaction.margin), 'numeric-cell'),
+      transactionAuditCell(transaction.marginPercent == null ? '—' : `${transaction.marginPercent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`, 'numeric-cell'),
+      transactionAuditCell(transaction.modeLabel),
       transactionAuditCell(transactionAuditReconciliationLabel(transaction.paymentReconciliation), `transaction-audit-reconciliation ${transaction.paymentReconciliation?.status || ''}`),
       transactionAuditCell(Number(transaction.units || 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }), 'numeric-cell'),
       transactionAuditCell(transaction.orderReference, 'transaction-audit-order')
@@ -2358,7 +2367,7 @@ function renderIntradayReport(intraday, includeToday = true) {
   });
 }
 
-function renderSalesStatistics(statistics, averageTicketStatistics, discountStatistics) {
+function renderSalesStatistics(statistics, averageTicketStatistics, discountStatistics, orderCountStatistics) {
   const shortDate = (value, includeWeekday = false) => {
     if (!value) return '—';
     const [year, month, day] = value.split('-').map(Number);
@@ -2431,6 +2440,7 @@ function renderSalesStatistics(statistics, averageTicketStatistics, discountStat
       labels: chronologicalRows.map(labelFor),
       series: [{ name: unit, values: chronologicalRows.map(item => item[valueKey]) }],
       formatValue,
+      ...(unit === 'Órdenes' ? { formatAxis: formatValue } : {}),
       ...(unit === 'Descuento sobre venta' ? { formatAxis: value => `${value.toFixed(0)}%` } : {})
     });
   };
@@ -2442,6 +2452,17 @@ function renderSalesStatistics(statistics, averageTicketStatistics, discountStat
   register('average-ticket-statistics-weeks', 'Ticket promedio de las últimas 14 semanas', averageTicketStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, 'averageTicketWithVat', 'Ticket promedio con IVA');
   register('average-ticket-statistics-days', 'Ticket promedio de los últimos 14 días', averageTicketStatistics.days, item => shortDate(item.date, true), 'averageTicketWithVat', 'Ticket promedio con IVA');
   register('average-ticket-statistics-equivalent-days', 'Ticket promedio de los últimos 14 días equivalentes', averageTicketStatistics.equivalentDays, item => shortDate(item.date, true), 'averageTicketWithVat', 'Ticket promedio con IVA');
+  const count = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
+  for (const [suffix, key, title, label] of [
+    ['months', 'months', 'Número de órdenes de los últimos 14 meses', item => monthLabel(item.key)],
+    ['weeks', 'weeks', 'Número de órdenes de las últimas 14 semanas', item => `${shortDate(item.from)} – ${shortDate(item.to)}`],
+    ['days', 'days', 'Número de órdenes de los últimos 14 días', item => shortDate(item.date, true)],
+    ['equivalent-days', 'equivalentDays', 'Número de órdenes de los últimos 14 días equivalentes', item => shortDate(item.date, true)]
+  ]) {
+    const id = `order-count-statistics-${suffix}`;
+    renderRows(id, orderCountStatistics[key], label, { valueKey: 'orders', formatValue: count });
+    register(id, title, orderCountStatistics[key], label, 'orders', 'Órdenes', count);
+  }
   const percent = value => `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`;
   register('discount-statistics-months', 'Descuento de los últimos 14 meses', discountStatistics.months, item => monthLabel(item.key), 'discountPercent', 'Descuento sobre venta', percent);
   register('discount-statistics-weeks', 'Descuento de las últimas 14 semanas', discountStatistics.weeks, item => `${shortDate(item.from)} – ${shortDate(item.to)}`, 'discountPercent', 'Descuento sobre venta', percent);
@@ -2498,7 +2519,7 @@ async function loadWeeklySalesReport() {
     const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(report.previousDay.date));
     document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
     renderIntradayReport(report.intraday, report.includeToday);
-    renderSalesStatistics(report.statistics, report.averageTicketStatistics, report.discountStatistics);
+    renderSalesStatistics(report.statistics, report.averageTicketStatistics, report.discountStatistics, report.orderCountStatistics);
     setReportChart('report-summary-day', {
       type: 'bar',
       title: report.includeToday ? 'Venta de hoy frente a su referencia' : 'Venta del día anterior frente a su referencia',
@@ -3162,6 +3183,38 @@ function findingsSummaryCard(label, value, className = '') {
   return card;
 }
 
+function openFindingEvidence(finding) {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'inventory-report-dialog finding-evidence-dialog';
+  dialog.setAttribute('aria-label', `Antecedentes del hallazgo ${finding.number}`);
+  const head = document.createElement('div'); head.className = 'preview-dialog-head';
+  const title = document.createElement('h2'); title.textContent = `Antecedentes · Hallazgo N.º ${finding.number}`;
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'icon-button'; close.textContent = 'Cerrar';
+  close.addEventListener('click', () => dialog.close()); head.append(title, close); dialog.append(head);
+  const note = document.createElement('p');
+  note.textContent = 'Datos disponibles en las fuentes. Los campos vacíos se muestran como no informados. Las horas de ventas del reporte están en horario de Chile; el pago original de la API conserva sus fechas UTC. Una cantidad negativa puede ser una devolución o anulación válida. Toteat puede repetir el cierre original en una reversa: no equivale a la hora de anulación. La fecha del hallazgo es distinta de la fecha de la transacción.';
+  dialog.append(note);
+  (finding.evidence || []).forEach((record, index) => {
+    const section = document.createElement('details'); section.open = index === 0;
+    const label = document.createElement('summary');
+    label.textContent = `Registro ${index + 1} · ${record['Ubicación'] || ''} · ${record['ID de Pago'] || record.Documento || record.document || ''} · ${record['Fecha de cierre'] || record['Fecha emisión'] || record.date || ''} ${record['Hora de cierre'] || ''}`;
+    section.append(label);
+    const table = document.createElement('table'); table.className = 'sales-dashboard-table';
+    const body = document.createElement('tbody');
+    const addFields = (value, prefix = '') => Object.entries(value).forEach(([key, field]) => {
+      const name = prefix ? `${prefix} · ${key}` : key;
+      if (field && typeof field === 'object' && Object.keys(field).length) { addFields(field, name); return; }
+      const row = document.createElement('tr'), heading = document.createElement('th'), cell = document.createElement('td');
+      heading.scope = 'row'; heading.textContent = name;
+      cell.textContent = field == null || field === '' ? 'No informado por la fuente' : typeof field === 'object' ? JSON.stringify(field) : String(field);
+      row.append(heading, cell); body.append(row);
+    });
+    addFields(record); table.append(body); section.append(table); dialog.append(section);
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog); dialog.showModal(); close.focus();
+}
+
 function renderFindingsView() {
   document.getElementById('print-findings').disabled = !findingsViewState;
   const summary = document.getElementById('findings-summary');
@@ -3270,6 +3323,14 @@ function renderFindingsView() {
       const detail = document.createElement('p');
       detail.textContent = finding.detail;
       copy.append(findingNumber, findingTitle, detail);
+      if (finding.evidence?.length) {
+        const evidenceButton = document.createElement('button');
+        evidenceButton.type = 'button'; evidenceButton.className = 'icon-button small';
+        evidenceButton.textContent = `Ver antecedentes (${finding.evidence.length} registros)`;
+        evidenceButton.setAttribute('aria-haspopup', 'dialog');
+        evidenceButton.addEventListener('click', () => openFindingEvidence(finding));
+        copy.append(evidenceButton);
+      }
       const metadata = [
         finding.code ? `Código: ${finding.code}` : null,
         finding.location ? `Ubicación: ${finding.location}` : null,

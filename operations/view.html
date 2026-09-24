@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Operación Brewit</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#24211a;color:#f4e7d6}body{margin:0}main{max-width:1450px;margin:auto;padding:24px}header,nav,.row,.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}header{justify-content:space-between}h1{font-size:26px;margin:8px 0}h2{font-size:21px}a{color:#e6bb92}button,input,select{font:inherit;color:inherit;background:#292620;border:1px solid #575047;border-radius:7px;padding:9px}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}button.primary,nav button[aria-selected=true]{background:#69472c}label{display:flex;flex-direction:column;gap:6px;font-size:13px}input[type=checkbox]{width:20px;height:20px}section,.card{background:#201e1a;border:1px solid #494137;border-radius:12px;padding:20px;margin:18px 0}.notice{border-left:4px solid #c98e4e;padding:12px 18px;background:#352d21}.muted{color:#b4a791;font-size:13px}#message{white-space:pre-wrap;padding:12px 0}#message[data-error=true]{color:#ff977e}table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;border-bottom:1px solid #494137;padding:10px;vertical-align:top}th{color:#d9b899;position:sticky;top:0;background:#201e1a}td input,td select{box-sizing:border-box;width:100%;min-width:90px}td.num{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow:auto;max-height:65vh}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}.small{font-size:12px;padding:5px 9px}details{margin:14px 0}summary{cursor:pointer}pre{white-space:pre-wrap;font-size:12px}form .actions{margin-top:16px}[hidden]{display:none!important}.pill{display:inline-block;background:#443522;border-radius:12px;padding:3px 8px}.danger{color:#ff977e}.form-lines{margin:14px 0}.form-lines th{position:static}.form-lines .scroll{max-height:350px}@media print{header a,nav,button,form,.notice,#message,#filters{display:none!important}body,section{background:white;color:black}.scroll{overflow:visible;max-height:none}th{position:static;background:white;color:black}td,th{border-color:#aaa}}@media(max-width:650px){main{padding:12px}.grid{grid-template-columns:1fr 1fr}}
+</style></head>
+<body><main>
+<header><div><span class="muted">CONTROL OPERATIVO</span><h1>Operación Brewit</h1></div><a href="/">Volver a análisis</a></header>
+<p class="notice"><strong>Preparación operativa.</strong> Los documentos de este espacio pertenecen al ensayo de Brewit. Todavía no reemplazan el inventario ni los reportes de la operación actual.</p>
+<section id="implementation-progress" aria-labelledby="progress-title">
+<div class="row"><h2 id="progress-title">Avance de implementación</h2><span class="pill">En preparación</span><span id="connection-status" class="muted" role="status">Conexión por verificar</span></div>
+<p>Ya existe una primera base operativa. El cambio completo a Brewit sigue pendiente; los reportes actuales continúan funcionando con sus fuentes vigentes.</p>
+<div class="scroll" style="max-height:none"><table>
+<thead><tr><th>Etapa</th><th>Estado</th><th>Qué falta</th></tr></thead>
+<tbody>
+<tr><td>Base de datos, acceso y auditoría</td><td>Base implementada y probada</td><td>Configurar el entorno de uso, usuarios y respaldos automáticos.</td></tr>
+<tr><td>Catálogo y recetas propios</td><td>Primera versión implementada</td><td>Revisión y publicación de importados disponible; completar aprobación de datos, precios, formatos y carta.</td></tr>
+<tr><td>Inventario, compras y producción</td><td>Flujos iniciales implementados</td><td>Completar conciliaciones, correcciones, cierres y documentos vinculados.</td></tr>
+<tr><td>Ventas Toteat → consumo propio</td><td>Integración pendiente</td><td>Conectar las ventas cerradas al motor propio y certificar extras, sustituciones y envases.</td></tr>
+<tr><td>Reportes y resultados</td><td>Migración pendiente</td><td>Conectar los módulos actuales a los datos propios de Brewit y conciliar sus cifras.</td></tr>
+<tr><td>Cambio de operación</td><td>No habilitado</td><td>Apertura física, ensayo de dos semanas, cierre mensual y cambio conjunto de las tres ubicaciones.</td></tr>
+</tbody></table></div>
+<p class="muted">Este cuadro resume el desarrollo entregado; no representa un proceso que avance automáticamente en segundo plano.</p>
+<details><summary>Cómo seguimos</summary><ol>
+<li>Preparar PostgreSQL y crear los accesos de Dirección y Administración con autenticador.</li>
+<li>Revisar los maestros actuales y comenzar un circuito de prueba: recepción, transferencia, producción y consumo.</li>
+<li>Completar la conexión de ventas y reportes antes de ensayar el cambio de operación.</li>
+</ol><p>La captura y aprobación se probarán con dos usuarios distintos. Las contraseñas y el autenticador se configuran localmente, sin enviarlos por chat.</p></details>
+</section>
+<div id="message" role="status" aria-live="polite"></div>
+<section id="activation-panel" hidden><h2>Activa tu acceso</h2><p id="activation-identity"></p><p>Agrega una cuenta en tu aplicación autenticadora e introduce manualmente esta clave:</p><p><code id="activation-secret" style="user-select:all;overflow-wrap:anywhere"></code></p><p class="muted">No compartas esta clave. Confirma el código de seis dígitos para completar la activación.</p><form id="activation-form"><div class="grid"><label>Nueva contraseña<input name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" required></label><label>Repetir contraseña<input name="confirmation" type="password" minlength="12" maxlength="200" autocomplete="new-password" required></label><label>Código del autenticador<input name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required></label></div><div class="actions"><button class="primary">Activar cuenta</button></div></form></section>
+<section id="setup" hidden><h2>Conexión pendiente</h2><p>La base operativa y los usuarios deben configurarse antes de comenzar el ensayo. Tus reportes actuales siguen disponibles.</p></section>
+<section id="login-panel" hidden><h2>Iniciar sesión</h2><form id="login"><div class="grid"><label>Correo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><label>Código del autenticador<input name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required></label></div><div class="actions"><button class="primary">Ingresar</button></div></form></section>
+<div id="workspace" hidden>
+<div class="row"><span id="identity"></span><button id="logout">Cerrar sesión</button></div>
+<nav aria-label="Secciones operativas" id="tabs"></nav>
+<div id="filters" class="row" style="margin-top:18px"><label>Ubicación<select id="location"><option value="">Todas las autorizadas</option></select></label><label>Buscar<input id="search" type="search" placeholder="Código, nombre o documento"></label><button id="refresh">Actualizar</button><button id="export">Exportar CSV</button><button id="print">Imprimir / PDF</button></div>
+<section><div class="row"><h2 id="title"></h2><span id="count" class="pill"></span><button id="new" class="primary" hidden>Crear</button></div><div id="content"></div><div id="pagination" class="actions"></div></section>
+<section id="editor" hidden><div class="row"><h2 id="editor-title"></h2><button id="cancel">Cerrar</button></div><form id="edit-form"></form></section>
+</div>
+<script src="/operations-view.js"></script></main></body></html>

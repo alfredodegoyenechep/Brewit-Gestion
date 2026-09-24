@@ -73,7 +73,15 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
     'uploads', 'config'
   ]);
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-summary-day"]')?.disabled);
-  assert.equal(await page.locator('#weekly-report [data-report-chart]').count(), 18);
+  assert.equal(await page.locator('#weekly-report [data-report-chart]').count(), 22);
+  for (const key of ['months', 'weeks', 'days', 'equivalent-days']) {
+    assert.equal(await page.locator(`#order-count-statistics-${key} tr`).count(), 14);
+    assert.ok(!(await page.locator(`#order-count-statistics-${key}`).innerText()).includes('$'));
+  }
+  await page.locator('[data-report-chart="order-count-statistics-days"]').click();
+  await page.locator('#report-chart-dialog').waitFor({ state: 'visible' });
+  assert.match(await page.locator('#report-chart-title').innerText(), /Número de órdenes/);
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Ver gráfico: Venta del día' }).click();
   await page.locator('#report-chart-dialog').waitFor({ state: 'visible' });
   const chartDialogLayout = await page.locator('#report-chart-dialog').evaluate(dialog => ({

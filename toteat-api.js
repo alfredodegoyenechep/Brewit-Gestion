@@ -64,6 +64,10 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     if (!stores.length && selected !== 'all') return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
     return res.json({ locations: stores.map(l => ({ ...sync.status(l.id), name: l.name })) });
   });
+  app.patch(`${base}/sales/warning-resolution`, (req, res) => {
+    try { return res.json(sync.resolveWarning(String(req.body?.location || ''), req.body?.paymentId, req.body?.resolved)); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
+  });
   app.put(`${base}/sales/settings`, (req, res) => {
     try { return res.json(sync.configure(String(req.body?.location || ''), req.body || {})); }
     catch (error) { return res.status(400).json({ error: error.message }); }

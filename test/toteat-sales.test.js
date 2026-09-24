@@ -99,6 +99,18 @@ test('synchronization publishes both files atomically, is idempotent, and preser
   await sync.synchronize('store-2'); assert.equal(sync.status('store-2').state, 'connected-empty');
 });
 
+test('warning timestamps are recovered from historical payments in Chilean time', async t => {
+  const { sync, options } = service(t, async (c, route) => ({ ok: true, data: route === 'shiftstatus'
+    ? { status: 'closed', localNumber: c.localId }
+    : [payment({ products: [], dateClosed: '2026-06-01T03:30:00Z' }), payment({ paymentId: 'p2', products: [], dateClosed: '2026-09-21T12:03:00' })] }));
+  await sync.synchronize('store-1');
+  assert.equal(sync.get('store-1').warnings[0].closedAt, undefined);
+  const restarted = createSalesSync(options);
+  assert.deepEqual(restarted.status('store-1').detailWarnings.map(w => w.closedAt), [
+    { date: '2026-05-31', time: '23:30:00' }, { date: '2026-09-21', time: '09:03:00' }
+  ]);
+});
+
 test('refresh includes an old open shift and windows stay at most 15 days', async t => {
   const queries = [];
   const { options } = service(t, async (c, route, params) => {
@@ -138,4 +150,20 @@ test('all report readers use API data without double counting an old upload', as
   assert.equal(report.warnings.length, 0);
   assert(!JSON.stringify(report).includes('99999'));
   assert.equal((await fetch(base + transactions.files.sales.latest.previewUrl)).status, 200);
+});
+
+test('warning resolutions persist across synchronization and restart and stay scoped to the store', async t => {
+  const { sync, options } = service(t, async (c, route) => ({ ok: true, data: route === 'shiftstatus'
+    ? { status: 'closed', localNumber: c.localId } : [payment({ products: [] })] }));
+  await sync.synchronize('store-1'); await sync.synchronize('store-2');
+  assert.throws(() => sync.resolveWarning('store-1', 'missing', true), /No se encontró/);
+  assert.throws(() => sync.resolveWarning('store-1', 'p1', 'true'), /inválido/);
+  sync.resolveWarning('store-1', 'p1', true);
+  await sync.synchronize('store-1');
+  const restarted = createSalesSync(options);
+  assert.equal(restarted.status('store-1').detailWarnings[0].resolved, true);
+  assert.equal(restarted.status('store-2').detailWarnings[0].resolved, false);
+  assert.equal(restarted.status('store-1').detailWarnings[0].total, 3430);
+  restarted.resolveWarning('store-1', 'p1', false);
+  assert.equal(sync.status('store-1').detailWarnings[0].resolved, false);
 });

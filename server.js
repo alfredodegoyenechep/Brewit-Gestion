@@ -1615,6 +1615,12 @@ function salesRecordParts(record) {
   return Array.isArray(record.parts) && record.parts.length ? record.parts : [record];
 }
 
+function auditSourceFields(row) {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key,
+    value instanceof Date ? (/hora|time/i.test(key) ? cellTime(value) : cellDate(value)) : value
+  ]));
+}
+
 function readSalesRows(filePath) {
   const workbook = XLSX.readFile(filePath, { cellDates: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -1910,6 +1916,14 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
       equivalentRank: rankTotals(comparableMonthTotals, referenceDate.slice(0, 7))
     },
     statistics: { months, weeks, days, equivalentDays },
+    orderCountStatistics: {
+      months: addSequentialVariation(averageTicketMonths.map(item => ({ ...item })), 'orders'),
+      weeks: addSequentialVariation(averageTicketWeeks.map(item => ({ ...item })), 'orders'),
+      days: averageTicketDays.map((item, index) => ({ ...item,
+        variationPercent: index === 13 ? null : variationPercent(item.orders, averageTicketRange(addDays(item.date, -7), addDays(item.date, -7)).orders)
+      })),
+      equivalentDays: addSequentialVariation(averageTicketEquivalentDays.map(item => ({ ...item })), 'orders')
+    },
     averageTicketStatistics: {
       basis: 'gross-plus-signed-discounts',
       includesVat: true,
@@ -4136,6 +4150,12 @@ function createApp(options = {}) {
 
   app.disable('x-powered-by');
   app.use(express.json());
+  require('./operations/routes').registerOperations(app, {
+    connectionString: options.operationsDatabaseUrl || process.env.BREWIT_DATABASE_URL,
+    authKey: options.operationsAuthKey || process.env.BREWIT_AUTH_KEY,
+    masters: () => toteatMasterSync?.sharedCurrent(),
+    protectLegacy: process.env.BREWIT_REQUIRE_AUTH === '1'
+  });
   app.use('/api', (req,res,next)=>{
     if(!synchronizedOnly || !/^\/(reports\/|sales\/|products(?:\/|$)|ingredients$|sales-by-ingredients$|financial-results$|findings$|purchase-projections$|inventory\/)/.test(req.path))return next();
     const send=res.json.bind(res);
@@ -4300,6 +4320,7 @@ function createApp(options = {}) {
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
+  app.get('/operations-session.js', (req,res)=>res.sendFile(path.join(__dirname,'operations/session-fetch.js')));
   app.get('/sales-insight-filters.js', (req,res)=>res.sendFile(path.join(__dirname,'sales-insight-filters.js')));
   app.get('/toteat-api-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-api-view.js')));
   app.get('/toteat-purchases-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-purchases-view.js')));
@@ -4615,6 +4636,7 @@ function createApp(options = {}) {
     let sourceFileCount = 0;
     for (const location of selectedLocations) {
       const auditApi = (query.auditSources || synchronizedOnly) && toteatSalesSync.purchases.get(location.type === 'warehouse' ? 'store-1' : location.id);
+      const auditDocuments = query.auditSources ? new Map((auditApi?.documents || []).map(document => [String(document.movement_id), document])) : null;
       if (location.type === 'warehouse' && !auditApi) {
         if(synchronizedOnly) continue;
         if (latestWeeklyFile(location.id, 'kardex')) {
@@ -4632,6 +4654,8 @@ function createApp(options = {}) {
           if (auditApi && !(location.type === 'warehouse' ? [1,4] : [2,3]).includes(Number(row['API Bodega Toteat']))) continue;
           const purchase = purchaseRecord(row, location, supplierNames);
           if (!purchase) continue;
+          if (query.auditSources) purchase.evidence = { 'Ubicación': location.name, 'Archivo fuente': path.basename(stored.filePath), ...auditSourceFields(row),
+            'Documento original API': auditDocuments.get(String(row['API Movimiento'])) || null };
           if (dateIsExcluded(purchase.date, stored.excludedRanges)) continue;
           const identity = purchase.document || crypto.createHash('sha256').update(JSON.stringify(row)).digest('hex');
           const key = [location.id, purchase.date, purchase.supplierKey, identity, purchase.line, purchase.code].join('|');
@@ -4762,7 +4786,7 @@ function createApp(options = {}) {
       for (const row of rows) {
         const code = String(row.code || '').trim().toUpperCase();
         if (!code || row.date > cutoffDate) continue;
-        if ((options.purchaseOnly || options.validPurchasesOnly || synchronizedOnly) && (!(row.quantity > 0) || /credito|credit note|credit_note/.test(normalizeHeader(row.documentType)))) continue;
+        if (!(row.quantity > 0) || /credito|credit note|credit_note/.test(normalizeHeader(row.documentType))) continue;
         if (requestedSet.has(locationId)) addCandidate(localByCode, code, row);
         if ((synchronizedOnly ? activeLocations : activeStores).some(location => location.id === locationId)) addCandidate(globalByCode, code, row);
       }
@@ -4796,11 +4820,14 @@ function createApp(options = {}) {
             seen.add(identity);
             return true;
           });
-        if (options.latestAcrossLocations || synchronizedOnly) candidates.sort(compareLatest);
-        for (const purchase of candidates) {
+        candidates.sort(compareLatest);
+        for (const [index, purchase] of candidates.entries()) {
           const unitCost = purchaseCostInUnit(purchase, targetUnit);
           if (unitCost === null) continue;
+          const previous = candidates.slice(index + 1).find(row => purchaseCostInUnit(row, targetUnit) !== null);
           return {
+            previousPurchaseCost: previous ? purchaseCostInUnit(previous, targetUnit) : null,
+            previousPurchaseDate: previous?.date || null,
             unitCost,
             source: 'purchase',
             sourceDate: purchase.date,
@@ -4891,7 +4918,7 @@ function createApp(options = {}) {
       if (cache.has(cacheKey)) return cache.get(cacheKey);
 
       const direct = directResolver.resolve(key, requestedUnit, catalogItem);
-      if (direct.source === 'purchase' || direct.source === 'toteat-api' || ((options.preferDirectMaster || synchronizedOnly) && direct.source === 'master')) {
+      if (direct.source === 'purchase' || direct.source === 'toteat-api' || ((options.preferDirectMaster || synchronizedOnly || catalogByCode.get(key)?.type === 'ingredient') && direct.source === 'master')) {
         cache.set(cacheKey, direct);
         return direct;
       }
@@ -6855,6 +6882,7 @@ function createApp(options = {}) {
         ...catalog.products.values(),
         ...catalog.recipeExtras.values()
       ].map(item => [String(item.code).toUpperCase(), Number(item.listPrice) || 0]) : []);
+      const auditCostResolvers = new Map();
       const allTransactions = source.orders.flatMap(order => {
         if (order.date < dateFrom || order.date > dateTo) return [];
         const reportedGross = Number(order.grossSales);
@@ -6872,6 +6900,18 @@ function createApp(options = {}) {
         const netSale = saleWithDiscount / 1.19;
         const units = order.lines.reduce((total, line) => total + Math.max(0, Number(line.quantity) || 0), 0);
         const reconciled = reconcileOrderLineSales({ ...order, netSales: netSale }, new Map());
+        if (!auditCostResolvers.has(order.locationId)) auditCostResolvers.set(order.locationId, buildHistoricalCostResolver(dateTo, [order.locationId]));
+        const resolver = auditCostResolvers.get(order.locationId);
+        let netCost = 0;
+        let costAvailable = order.lines.length > 0;
+        for (const line of order.lines) {
+          const quantity = Number(line.quantity);
+          const reference = resolver.resolve(order.date, line.code);
+          if (!line.code || !Number.isFinite(quantity) || (quantity !== 0 && reference.source === 'missing')) costAvailable = false;
+          else netCost += quantity * reference.unitCost;
+        }
+        const margin = costAvailable ? netSale - netCost : null;
+
         return [{
           id: order.orderKey,
           orderReference: order.orderReference || order.orderKey,
@@ -6884,6 +6924,10 @@ function createApp(options = {}) {
           discountPercent: Math.round(discountPercent * 10) / 10,
           saleWithDiscount: Math.round(saleWithDiscount),
           netSale: Math.round(netSale),
+          netCost: costAvailable ? Math.round(netCost) : null,
+          margin: margin === null ? null : Math.round(margin),
+          marginPercent: margin !== null && netSale !== 0 ? margin / netSale * 100 : null,
+
           units: Math.round(units * 10) / 10,
           clients: order.clients,
           mode: order.mode,
@@ -7129,7 +7173,10 @@ function createApp(options = {}) {
         latestPurchaseCost: displayCostReference.source === 'purchase' ? displayCostReference.unitCost : null,
         firstPeriodCost: firstCost,
         lastPeriodCost: lastCost,
-        costChangePercent: firstCost && lastCost ? ((lastCost / firstCost) - 1) * 100 : null,
+        previousPurchaseCost: displayCostReference.previousPurchaseCost ?? null,
+        previousPurchaseDate: displayCostReference.previousPurchaseDate ?? null,
+        costChangePercent: displayCostReference.source === 'purchase' && displayCostReference.previousPurchaseCost > 0
+          ? ((displayCostReference.unitCost / displayCostReference.previousPurchaseCost) - 1) * 100 : null,
         purchaseCount: periodHistory.length,
         usageQuantity: usage.quantity,
         usageUnit: usage.unit,
@@ -9328,7 +9375,7 @@ function createApp(options = {}) {
     const definitions = [
       ['products', 'Productos', 'Precios, costos, márgenes, jerarquías y códigos vendidos.'],
       ['recipes', 'Recetas', 'Cobertura de productos vendidos, cantidades, rendimientos e ingredientes referenciados.'],
-      ['costs', 'Costos', 'Costos maestros, costos de compra y variaciones relevantes.'],
+      ['costs', 'Costos', 'Costos de última compra y variaciones respecto de la compra anterior.'],
       ['inventory', 'Inventarios', 'Cobertura de inventario, saldos corregidos y productos consumidos sin stock.'],
       ['purchase-orders', 'Órdenes de compra', 'Estado, proveedor, cantidades, costos y consistencia de totales.'],
       ['purchases', 'Compras', 'Proveedores, códigos, unidades, conversiones y montos registrados.'],
@@ -9410,12 +9457,14 @@ function createApp(options = {}) {
     const latestSalesDate = new Map();
     const seenSalesRows = new Set();
     const seenSalesOrders = new Set();
+    const missingSalesEvidence = [], discountEvidence = [];
     let missingSalesCode = 0;
     let suspiciousDiscounts = 0;
     let salesRowsRead = 0;
     for (const location of auditedStores) {
       const apiSources = toteatSalesSync.source(location.id, 'sales');
       const apiState = toteatSalesSync.status(location.id);
+      const auditPayments = new Map((toteatSalesSync.get(location.id)?.payments || []).map(p => [String(p.paymentId), p]));
       const useApi = !!apiState.lastSuccess || apiSources.length > 0;
       sources.push({type:'Ventas · '+location.name,name:useApi?'Toteat API':'Archivos históricos',updatedAt:apiState.lastSuccess});
       if(useApi && apiState.from > dateFrom) warnings.push(`Ventas (${location.name}): la sincronización comienza el ${apiState.from}, después del inicio solicitado.`);
@@ -9437,21 +9486,27 @@ function createApp(options = {}) {
             const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
             const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code || 'Producto sin identificar';
             const quantity = numericValue(rowValue(row, ['Cantidad']));
-            if (!code) missingSalesCode += 1;
+            const paymentId = String(rowValue(row, ['ID de Pago', 'ID Pago']) ?? '');
+            const payment = auditPayments.get(paymentId);
+            const evidence = { 'Ubicación': location.name, 'Archivo fuente': path.basename(stored.filePath), 'Zona horaria del reporte': 'America/Santiago', ...auditSourceFields(row),
+              ...(payment ? { 'Pago original API (fechas en UTC)': payment } : {}) };
+            if (!code) { missingSalesCode += 1; missingSalesEvidence.push(evidence); }
             else {
               salesQuantityByCode.set(code, (salesQuantityByCode.get(code) || 0) + (quantity || 0));
               if (fullCatalog.size && !fullCatalog.has(code)) {
-                const item = unknownSales.get(code) || { code, name, rows: 0, quantity: 0 };
+                const item = unknownSales.get(code) || { code, name, rows: 0, quantity: 0, evidence: [] };
                 item.rows += 1;
                 item.quantity += quantity || 0;
+                item.evidence.push(evidence);
                 unknownSales.set(code, item);
               }
             }
             if (quantity !== null && quantity <= 0) {
               const key = code || normalizeHeader(name);
-              const item = nonPositiveSales.get(key) || { code, name, rows: 0, quantity: 0 };
+              const item = nonPositiveSales.get(key) || { code, name, rows: 0, quantity: 0, evidence: [] };
               item.rows += 1;
               item.quantity += quantity;
+              item.evidence.push(evidence);
               nonPositiveSales.set(key, item);
             }
             const orderKey = `${location.id}:${salesTransactionKey(row)}`;
@@ -9459,7 +9514,7 @@ function createApp(options = {}) {
               seenSalesOrders.add(orderKey);
               const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
               const discount = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
-              if (gross !== null && gross >= 0 && Math.abs(discount) > gross) suspiciousDiscounts += 1;
+              if (gross !== null && gross >= 0 && Math.abs(discount) > gross) { suspiciousDiscounts += 1; discountEvidence.push(evidence); }
             }
           }
         } catch {
@@ -9480,26 +9535,26 @@ function createApp(options = {}) {
       add('sales', {
         severity: 'high', title: `Código vendido fuera del catálogo: ${item.code}`,
         detail: `${item.rows} fila(s), ${item.quantity.toLocaleString('es-CL')} unidad(es), asociadas a “${item.name}”.`,
-        observed: `${item.rows} filas`, code: item.code,
+        observed: `${item.rows} filas`, code: item.code, evidence: item.evidence,
         action: 'Confirma el código en Toteat o actualiza el catálogo maestro.'
       });
     }
     for (const item of nonPositiveSales.values()) {
       add('sales', {
         severity: 'medium', title: `Cantidad de venta no positiva: ${item.name}`,
-        detail: `${item.rows} fila(s) suman ${item.quantity.toLocaleString('es-CL')} unidades.`,
-        observed: item.quantity, code: item.code || null,
+        detail: `${item.rows} fila(s) suman ${item.quantity.toLocaleString('es-CL')} unidades. Pueden corresponder a devoluciones o anulaciones; el signo por sí solo no demuestra un error.`,
+        observed: item.quantity, code: item.code || null, evidence: item.evidence,
         action: 'Confirma si corresponden a anulaciones, devoluciones o un dato incorrecto.'
       });
     }
     if (missingSalesCode) add('sales', {
       severity: 'medium', title: 'Ventas sin código de producto', detail: `${missingSalesCode} fila(s) no permiten vincular la venta con el catálogo.`,
-      observed: `${missingSalesCode} filas`, action: 'Revisa la exportación de Toteat y completa el identificador de producto.'
+      evidence: missingSalesEvidence, observed: `${missingSalesCode} filas`, action: 'Revisa los pagos originales y sus documentos. Toteat puede informar importes sin productos asociados; no se debe inventar un producto.'
     });
     if (suspiciousDiscounts) add('sales', {
       severity: 'high', title: 'Descuentos superiores al total de la venta',
       detail: `${suspiciousDiscounts} transacción(es) tienen un descuento absoluto mayor que su monto bruto.`,
-      observed: `${suspiciousDiscounts} transacciones`, action: 'Revisa descuentos, anulaciones y signos monetarios en el archivo de ventas.'
+      evidence: discountEvidence, observed: `${suspiciousDiscounts} transacciones`, action: 'Revisa descuentos, anulaciones y signos monetarios en el archivo de ventas.'
     });
 
     const productCodeCounts = new Map();
@@ -9636,55 +9691,42 @@ function createApp(options = {}) {
       }
     }
     sources.push({type:'Órdenes de compra',name:'Registros locales de Brewit'});
-    const latestPurchaseByCode = new Map();
     for (const row of purchaseRows) {
+      const evidence = [row.evidence || row];
+      const creditNote = /credito|credit[ _]note|^nc$|^61$/.test(normalizeHeader(row.documentType));
       const code = String(row.code || '').toUpperCase();
-      if (code && (!latestPurchaseByCode.has(code) || row.date >= latestPurchaseByCode.get(code).date)) latestPurchaseByCode.set(code, row);
-      if (!code) add('purchases', {
+      if (!code) add('purchases', { evidence,
         severity: 'high', title: `Compra sin código: ${row.product || 'Producto sin identificar'}`,
         detail: `${row.locationName} · documento ${row.document || 'sin número'}.`, date: row.date, location: row.locationName,
         action: 'Completa el código para vincular compra, costo e inventario.'
       });
-      if (!row.supplierKey || row.supplierKey === 'unassigned') add('purchases', {
+      if (!row.supplierKey || row.supplierKey === 'unassigned') add('purchases', { evidence,
         severity: 'medium', title: `Proveedor no identificado: ${row.product}`,
         detail: `${row.locationName} · documento ${row.document || 'sin número'}.`, date: row.date, location: row.locationName, code: row.code,
         action: 'Corrige el RUT o agrega el proveedor al maestro.'
       });
-      if (row.quantity <= 0) add('purchases', {
-        severity: 'high', title: `Cantidad de compra no positiva: ${row.product}`,
-        detail: `Cantidad ${row.quantity} ${row.unit || ''} en ${row.locationName}.`, observed: row.quantity, date: row.date, location: row.locationName, code: row.code,
-        action: 'Confirma si es una nota de crédito o corrige la cantidad.'
+      if (row.quantity <= 0) add('purchases', { evidence,
+        severity: creditNote ? 'low' : 'medium', title: `Cantidad de compra no positiva: ${row.product}`,
+        detail: `Cantidad ${row.quantity} ${row.unit || ''} en ${row.locationName}. Documento ${row.document || 'sin número'} · ${row.documentType || 'tipo no informado'}. ${creditNote ? 'Nota de crédito informada: puede corresponder a una devolución o ajuste válido.' : 'Puede corresponder a una devolución o ajuste; no se considera un error solo por su signo.'}`, observed: row.quantity, date: row.date, location: row.locationName, code: row.code,
+        action: 'Revisa el documento, su referencia y los movimientos asociados antes de decidir si requiere corrección.'
       });
-      if (row.listedUnitPrice <= 0 && row.quantity > 0) add('purchases', {
+      if (row.listedUnitPrice <= 0 && row.quantity > 0) add('purchases', { evidence,
         severity: 'high', title: `Compra sin costo unitario: ${row.product}`,
         detail: `${row.quantity} ${row.unit || ''} registradas con costo ${row.listedUnitPrice}.`, observed: row.listedUnitPrice, date: row.date, location: row.locationName, code: row.code,
         action: 'Corrige el costo del documento de compra.'
       });
-      if (row.code && row.unitsPerPurchaseUnit === null) add('purchases', {
+      if (row.code && row.unitsPerPurchaseUnit === null) add('purchases', { evidence,
         severity: 'medium', title: `Conversión de compra faltante: ${row.product}`,
         detail: `No se puede convertir ${row.purchaseUnit || row.unit || 'la unidad de compra'} a la unidad base.`, date: row.date, location: row.locationName, code: row.code,
         action: 'Agrega la conversión de unidad en el catálogo maestro.'
       });
       const variation = Number(row.unitCostChangePercent);
-      if (Number.isFinite(variation) && Math.abs(variation) >= 15) add('costs', {
+      if (Number.isFinite(variation) && Math.abs(variation) >= 15) add('costs', { evidence,
         severity: Math.abs(variation) >= 30 ? 'high' : 'medium',
         title: `${variation > 0 ? 'Aumento' : 'Disminución'} relevante de costo: ${row.product}`,
         detail: `El costo comparable cambió ${variation.toFixed(1)}% en ${row.locationName}.`, observed: `${variation.toFixed(1)}%`,
         date: row.date, location: row.locationName, code: row.code,
         action: 'Confirma el documento, la unidad de compra y la negociación con el proveedor.'
-      });
-    }
-    for (const [code, purchase] of latestPurchaseByCode) {
-      const ingredient = ingredientCatalog.get(code);
-      const convertedUnit = ingredient ? convertQuantityUnit(1,purchase.baseUnit,ingredient.unit) : null;
-      const comparablePurchaseCost = convertedUnit > 0 ? purchase.baseUnitCost / convertedUnit : null;
-      if (!ingredient || !(comparablePurchaseCost > 0) || !ingredient.unitCost) continue;
-      const difference = (comparablePurchaseCost / ingredient.unitCost - 1) * 100;
-      if (Math.abs(difference) >= 20) add('costs', {
-        severity: Math.abs(difference) >= 40 ? 'high' : 'medium', title: `Costo maestro desalineado: ${ingredient.name}`,
-        detail: `Última compra ${comparablePurchaseCost.toLocaleString('es-CL')} por ${ingredient.unit}; maestro ${ingredient.unitCost.toLocaleString('es-CL')} por ${ingredient.unit}.`,
-        observed: `${difference > 0 ? '+' : ''}${difference.toFixed(1)}%`, date: purchase.date, location: purchase.locationName, code,
-        action: 'Confirma la conversión y actualiza el costo maestro si corresponde.'
       });
     }
 
@@ -9890,6 +9932,7 @@ function createApp(options = {}) {
         severity: finding.severity,
         title: finding.title,
         detail: finding.detail,
+        evidence: finding.evidence || [],
         action: finding.action,
         date: finding.date,
         location: finding.location,
@@ -9925,7 +9968,9 @@ function createApp(options = {}) {
     const matchesScope = record => payload.scope.location === 'all'
       || record.affectedLocationId === payload.scope.location
       || (!record.affectedLocationId && ['all', payload.scope.location].includes(record.scopeLocation));
-    const records = registry.records.filter(record => record.occurrenceDate >= payload.period.from
+    // Retain obsolete findings and their notes on disk, but exclude the retired master comparison.
+    const records = registry.records.filter(record => !record.title.startsWith('Costo maestro desalineado:')
+      && record.occurrenceDate >= payload.period.from
       && record.occurrenceDate <= payload.period.to && matchesScope(record)
       && (record.sourceModel === payload.sourceModel || record.closed));
     const previousSources = registry.records.filter(record => !record.closed && record.sourceModel !== payload.sourceModel
@@ -12053,6 +12098,8 @@ function createApp(options = {}) {
 }
 
 if (require.main === module) {
+  const envFile = path.join(__dirname, '.env');
+  if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
   const port = Number(process.env.PORT) || DEFAULT_PORT;
   createApp({ enableToteatSync: true }).listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
 }

@@ -1493,6 +1493,11 @@ body {
 .finding-severity.low { background: var(--sage-soft); color: #476b3e; }
 
 .finding-copy strong { font-size: calc(13px * var(--font-scale)); }
+.inventory-report-dialog.finding-evidence-dialog { width: min(1100px, calc(100vw - 32px)); padding: 24px; }
+.finding-evidence-dialog > p, .finding-evidence-dialog details { margin: 20px 0; }
+.finding-evidence-dialog summary { cursor: pointer; padding: 12px 0; }
+.finding-evidence-dialog table { width: 100%; table-layout: fixed; }
+.finding-evidence-dialog th, .finding-evidence-dialog td { white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }
 
 .finding-number {
   display: block;
@@ -1990,6 +1995,26 @@ body {
   border-radius: 14px;
   background: var(--coffee-soft-2);
 }
+
+.sales-load-trigger {
+  display: block;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sales-load-trigger:hover { text-decoration: underline; }
+.sales-load-trigger:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.inventory-report-dialog.sales-load-dialog { width: min(980px, calc(100vw - 32px)); padding: 24px; }
+.sales-load-summary { display: grid; grid-template-columns: minmax(130px, 1fr) 2fr; gap: 10px 20px; margin: 24px 0; }
+.sales-load-summary dt { color: var(--text-muted); }
+.sales-load-summary dd { margin: 0; overflow-wrap: anywhere; }
+.sales-load-content > p { margin: 16px 0; }
+.sales-load-content h3 { margin-top: 24px; }
+.sales-load-content td { white-space: normal; overflow-wrap: anywhere; }
 
 .inventory-report-dialog {
   width: min(1600px, calc(100vw - 32px));

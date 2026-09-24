@@ -133,13 +133,37 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
   };
   function status(location) {
     const s = get(location), config = settings()[location];
+    const resolutions = readJson(path.join(root, 'warning-resolutions.json'), {});
+    // Resolve dates from saved payments so historical loads also expose their timestamps.
+    const warningIds = new Set((s?.warnings || []).map(w => w.paymentId));
+    const warningPayments = new Map((s?.payments || []).filter(p => warningIds.has(normalizeId(p.paymentId))).map(p => [normalizeId(p.paymentId), p]));
+    const detailWarnings = (s?.warnings || []).map(warning => {
+      const dateClosed = warningPayments.get(warning.paymentId)?.dateClosed;
+      let closedAt = null;
+      if (dateClosed) {
+        try { closedAt = localTimestamp(dateClosed); } catch { /* Preserve the warning if its date is unavailable. */ }
+      }
+      return { ...warning, closedAt, resolved: resolutions[location]?.[warning.paymentId]?.resolved === true };
+    });
     return { location, configured: !!credentials()[location], enabled: config?.enabled || false,
-      from: config?.from || null, intervalMinutes: config?.intervalMinutes || 5, running: running.has(location),
+      from: config?.from || null, through: s?.through || null, openShift: s?.openShift || null,
+      intervalMinutes: config?.intervalMinutes || 5, running: running.has(location),
       lastSuccess: s?.syncedAt || null, paymentCount: s?.payments.length || 0, orderCount: s?.orderCount || 0,
       completedWindows: Object.keys(s?.batches || {}).length, lastError: config?.lastError || null,
-      detailWarnings: s?.warnings || [],
+      detailWarnings,
       state: running.has(location) ? 'syncing' : config?.lastError ? 'error' : !s ? 'not-synced' : s.payments.length ? 'connected' : 'connected-empty',
       progress: running.get(location)?.progress || null };
+  }
+  function resolveWarning(location, paymentId, resolved) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(location) || activeLocation(location)?.type !== 'store') throw new Error('Cafetería inválida.');
+    if (typeof resolved !== 'boolean') throw new Error('Estado de resolución inválido.');
+    const id = normalizeId(paymentId);
+    if (!get(location)?.warnings?.some(w => w.paymentId === id)) throw new Error('No se encontró el pago en las advertencias de esta cafetería.');
+    const file = path.join(root, 'warning-resolutions.json');
+    const records = readJson(file, {});
+    records[location] = { ...records[location], [id]: { resolved, updatedAt: new Date().toISOString() } };
+    atomicJson(file, records);
+    return { location, paymentId: id, resolved };
   }
   function configure(location, body) {
     if (running.has(location)) throw new Error('Espera a que termine la actualización antes de cambiar la configuración.');
@@ -252,6 +276,6 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     } };
     timer = setInterval(tick, 30000); timer.unref(); tick();
   }
-  return { configure, synchronize, status, source, filterLegacy, get, start, stop: () => { clearInterval(timer); timer = null; } };
+  return { configure, synchronize, status, resolveWarning, source, filterLegacy, get, start, stop: () => { clearInterval(timer); timer = null; } };
 }
 module.exports = { createSalesSync, salesRows, windows, localTimestamp, atomicJson };
