@@ -1341,12 +1341,60 @@ function renderFinancialResults(data) {
   } else document.getElementById('financial-missing-costs-body').replaceChildren();
   const warnings = document.getElementById('financial-warnings');
   const warningList = document.getElementById('financial-warnings-list');
-  warningList.replaceChildren(...data.warnings.map(message => {
+  warningList.replaceChildren(...data.warnings.map((message, index) => {
     const item = document.createElement('li');
-    item.textContent = message;
-    return item;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'financial-warning-detail-button';
+    button.textContent = message; button.setAttribute('aria-haspopup', 'dialog');
+    button.addEventListener('click', () => openFinancialWarningDetail(data.warningDetails?.[index] || {
+      message, explanation: message, action: 'Actualiza el reporte para obtener los antecedentes de esta advertencia.', rows: []
+    }, data.period));
+    item.append(button); return item;
   }));
   warnings.hidden = !data.warnings.length;
+}
+
+function openFinancialWarningDetail(detail, period) {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'inventory-report-dialog finding-evidence-dialog financial-warning-dialog';
+  dialog.setAttribute('aria-labelledby', 'financial-warning-dialog-title');
+  const head = document.createElement('div'); head.className = 'preview-dialog-head';
+  const title = document.createElement('h2'); title.id = 'financial-warning-dialog-title'; title.textContent = 'Datos que requieren revisión';
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'icon-button'; close.textContent = 'Cerrar';
+  close.addEventListener('click', () => dialog.close()); head.append(title, close); dialog.append(head);
+  const paragraph = (text, className = '') => { const p = document.createElement('p'); p.textContent = text; p.className = className; dialog.append(p); };
+  paragraph(detail.message, 'financial-warning-message');
+  if (period) paragraph(`Período revisado: ${formatReportDate(period.from)} – ${formatReportDate(period.to)}`);
+  paragraph(detail.explanation);
+  const actionTitle = document.createElement('h3'); actionTitle.textContent = 'Qué revisar y corregir'; dialog.append(actionTitle);
+  paragraph(detail.action, 'financial-warning-action');
+  const rows = detail.rows || [];
+  if (rows.length) {
+    const heading = document.createElement('h3'); heading.textContent = `Antecedentes · ${rows.length} registro(s)`; dialog.append(heading);
+    const wrap = document.createElement('div'); wrap.className = 'financial-warning-evidence'; wrap.tabIndex = 0;
+    wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Antecedentes de la advertencia, tabla desplazable');
+    const table = document.createElement('table'); table.className = 'sales-dashboard-table';
+    const columns = [...new Set(rows.flatMap(row => Object.keys(row)))];
+    const headRow = table.createTHead().insertRow();
+    columns.forEach(key => { const th = document.createElement('th'); th.scope = 'col'; th.textContent = key; headRow.append(th); });
+    const body = table.createTBody();
+    const sourceLabels = { master: 'Maestro', recipe: 'Receta', purchase: 'Compra', 'sales-export': 'Archivo de ventas', missing: 'Sin costo' };
+    rows.forEach(record => {
+      const row = body.insertRow();
+      columns.forEach(key => {
+        const value = record[key]; const cell = row.insertCell();
+        cell.textContent = value == null || value === '' ? 'No disponible'
+          : key === 'Fuente' ? sourceLabels[value] || value
+          : typeof value === 'number' ? /costo|subtotal|venta neta/i.test(key) ? formatClp(value) : value.toLocaleString('es-CL', { maximumFractionDigits: 4 })
+          : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      });
+    });
+    wrap.append(table); dialog.append(wrap);
+  }
+  if (detail.note) paragraph(detail.note);
+  paragraph('Después de corregir las fuentes, vuelve a procesar Estado de resultados para comprobar si la advertencia se resuelve.');
+  const previousFocus = document.activeElement;
+  dialog.addEventListener('close', () => { dialog.remove(); previousFocus?.focus(); });
+  document.body.append(dialog); dialog.showModal(); close.focus();
 }
 
 async function loadFinancialResults() {
@@ -11372,12 +11420,14 @@ async function loadWeeklyFinancialResults() {
     const context = document.createElement('p');
     context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Semanas de lunes a domingo`;
     container.append(context);
-    const fillCell = (cell, value) => {
+    const fillCell = (cell, value, showPercent = true) => {
       const amount = document.createElement('span'); amount.className = 'weekly-amount';
       amount.textContent = formatClp(value?.amount ?? 0);
+      cell.append(amount);
+      if (!showPercent) return;
       const percent = document.createElement('span'); percent.className = 'weekly-percent';
       percent.textContent = `${(value?.percent ?? 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
-      cell.append(amount, ' · ', percent);
+      cell.append(' · ', percent);
     };
     {
       const wrap = document.createElement('div'); wrap.className = 'financial-weekly-table-wrap';
@@ -11394,8 +11444,8 @@ async function loadWeeklyFinancialResults() {
           const note = document.createElement('span'); note.className = 'weekly-net-sales-note';
           note.textContent = '(descuentos considerados)'; th.append(' ', note);
         }
-        data.weeks.forEach(week => fillCell(row.insertCell(), week?.values[key]));
-        fillCell(row.insertCell(), data.total[key]);
+        data.weeks.forEach(week => fillCell(row.insertCell(), week?.values[key], key !== 'netSales'));
+        fillCell(row.insertCell(), data.total[key], key !== 'netSales');
       });
       wrap.append(table); container.append(wrap);
     }

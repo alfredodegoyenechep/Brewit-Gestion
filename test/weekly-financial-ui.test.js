@@ -39,11 +39,14 @@ test('weekly tab follows statement and uses selected filters with five weeks and
   assert.doesNotMatch(await page.locator('.financial-weekly-table').innerText(), /parcial/);
   const percentages = await page.locator('.weekly-percent').allTextContents();
   assert.ok(percentages.every(value => /^-?[\d.]+,\d%$/.test(value)));
-  const percentSizes = await page.locator('.financial-weekly-table tbody').evaluate(body => [...body.rows].map(row => {
+  assert.equal(await page.locator('.weekly-net-sales .weekly-percent').count(), 0);
+  assert.doesNotMatch(await page.locator('.weekly-net-sales').innerText(), /%|·/);
+  const percentSizes = await page.locator('.financial-weekly-table tbody').evaluate(body => [...body.rows].slice(1).map(row => {
     const cell = row.cells[1];
     return parseFloat(getComputedStyle(cell.querySelector('.weekly-percent')).fontSize) - parseFloat(getComputedStyle(cell.querySelector('.weekly-amount')).fontSize);
   }));
-  assert.ok(percentSizes.every(difference => difference === 2));
+  assert.equal(percentSizes[0], 2);
+  assert.ok(percentSizes.slice(1).every(difference => difference === 3));
   const sizes = await page.locator('.financial-weekly-table tbody').evaluate(body => [...body.rows].slice(0, 2).map(row => parseFloat(getComputedStyle(row.cells[1]).fontSize)));
   assert.equal(sizes[0] - sizes[1], 3);
   assert.match(await page.locator('.financial-weekly-table').innerText(), /Otros Consumibles/);

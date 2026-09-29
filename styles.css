@@ -8846,6 +8846,8 @@ button:disabled {
 #financial-weekly-progress { width: min(100%, 640px); height: 18px; margin-top: 16px; accent-color: var(--accent); }
 #financial-weekly-form { flex-wrap: wrap; margin-bottom: 14px; }
 
+.financial-weekly-table .weekly-net-sales th,
+.financial-weekly-table .weekly-net-sales td { font-size: calc(1em + 1px); }
 .financial-weekly-table .weekly-net-sales td { color: #4c9aff; }
 .financial-weekly-table .weekly-expense td { color: var(--red); font-size: calc(1em - 3px); }
 
@@ -8870,4 +8872,24 @@ button:disabled {
 
 .financial-weekly-table .weekly-net-sales-note { font-size: calc(1em - 2px); }
 .financial-weekly-table .weekly-discounts th,
-.financial-weekly-table .weekly-discounts td { color: #808080; }
+.financial-weekly-table .weekly-discounts td { color: #8ec5ff; }
+
+.financial-weekly-table .weekly-expense:not(.weekly-discounts) td {
+  color: #808080;
+  font-style: italic;
+}
+.financial-weekly-table .weekly-expense:not(.weekly-discounts) .weekly-percent {
+  color: var(--red);
+  font-size: calc(1em + 3px);
+}
+
+.financial-warning-detail-button { color: inherit; font: inherit; text-align: left; background: transparent; border: 0; padding: 5px 0; width: 100%; cursor: pointer; line-height: 1.5; }
+.financial-warning-detail-button:hover { text-decoration: underline; }
+.financial-warning-detail-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.financial-warning-dialog p { line-height: 1.6; }
+.financial-warning-message { font-weight: 700; }
+.financial-warning-action { padding: 14px; background: var(--bg-soft); border-left: 3px solid var(--accent); }
+.financial-warning-evidence { max-height: 55vh; overflow: auto; margin: 16px 0; }
+.financial-warning-evidence table { min-width: 850px; }
+.financial-warning-evidence th { position: sticky; top: 0; background: var(--panel); }
+.financial-warning-evidence td { vertical-align: top; }

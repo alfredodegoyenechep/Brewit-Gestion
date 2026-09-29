@@ -3058,6 +3058,7 @@ function createApp(options = {}) {
         payload.sourcePolicy.coverageWarnings=coverageWarnings;
         if(Array.isArray(payload.warnings))payload.warnings.push(...coverageWarnings);
       }
+      if (req.path.endsWith('/financial-results') && Array.isArray(payload?.warnings)) payload.warningDetails = payload.warnings.map(message => require('./financial-warning-details').warningDetails(message, payload));
       return send(payload);
     };
     next();
@@ -6417,7 +6418,8 @@ function createApp(options = {}) {
       calibrations: { amount: 0, available: false },
       waste: { amount: 0, available: false },
       inventoryDifference: { amount: 0, available: false },
-      warnings: []
+      warnings: [],
+      reviewDetails: []
     };
     let parsed;
     let kardexReadFailed = false;
@@ -6458,7 +6460,17 @@ function createApp(options = {}) {
         const ingredients = buildIngredientConsumption(products.products, recipes, inventoryCatalog, costResolver);
         consumption[field] = { available: true, products, ingredients };
         result[field] = { amount: products.totalCost, available: true, partial: !!products.productsWithoutMasterCost?.length };
-        if(products.productsWithoutMasterCost?.length) result.warnings.push(`Consumo de ${label.toLowerCase()}: subtotal parcial; ${products.productsWithoutMasterCost.length} productos sin costo de última compra completo.`);
+        if (products.productsWithoutMasterCost?.length) {
+          const message = `Consumo de ${label.toLowerCase()}: subtotal parcial; ${products.productsWithoutMasterCost.length} productos sin costo de última compra completo.`;
+          result.warnings.push(message);
+          result.reviewDetails.push({ message, rows: products.products.filter(item => item.costIncomplete).map(item => ({
+            Ubicación: location.name, Consumo: label, Código: item.code, Producto: item.name,
+            Cantidad: item.quantity, Unidad: item.unit, Fuente: item.costSource, 'Fecha del costo': item.costSourceDate,
+            'Costo unitario conocido': item.costSource === 'missing' ? null : item.unitCost,
+            'Subtotal conocido': item.costSource === 'missing' ? null : item.totalCost,
+            Estado: 'Costo incompleto', Desde: dateFrom, Hasta: dateTo
+          })) });
+        }
       } catch (error) {
         consumption[field] = { available: false, error: error.message };
         result.warnings.push(`Consumo de ${label.toLowerCase()} no disponible para ${location.name}: ${error.message}.`);
@@ -6971,6 +6983,7 @@ function createApp(options = {}) {
         linesWithCost: facts.filter(fact => fact.costAvailable).length,
         linesWithNetFieldConsistentCost: facts.filter(fact => fact.costAvailable && fact.costBasisEvidence === 'net-field-consistent').length,
         linesWithUnverifiedCost: unverifiedCostLines,
+        unverifiedCostProducts: require('./financial-warning-details').unverifiedProducts(facts),
         costValuationDate: costValuation === 'historical' ? 'sale-date' : 'period-end',
         costSources: Object.fromEntries(['recipe', 'purchase', 'master', 'sales-export', 'missing']
           .map(source => [source, facts.filter(fact => fact.costSource === source).length])),
@@ -7054,7 +7067,9 @@ function createApp(options = {}) {
 
   app.get('/api/financial-results', (req, res) => {
     try {
-      return res.json(buildFinancialResultsPayload(req.query));
+      const payload = buildFinancialResultsPayload(req.query);
+      payload.warningDetails = payload.warnings.map(message => require('./financial-warning-details').warningDetails(message, payload));
+      return res.json(payload);
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el estado de resultados.' });
     }
