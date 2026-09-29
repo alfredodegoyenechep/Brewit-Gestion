@@ -28,3 +28,19 @@ test('rejects wrong locations and paginated incomplete masters',async t=>{
 test('does not invent a positive conversion for a zero factor present in Toteat',()=>{
   const item=legacyItems([{...product,conversions:[{base_unit:'UN',conversion_unit:'UN',numerator:0,denominator:1}]}])[0];assert.equal(item.det.conv[0].cnum,0);
 });
+
+test('connection presence never claims active authentication and expired JWT is rejected before network access', async t => {
+  const { connectionStatus } = require('../toteat-direct-masters');
+  const root = fixture(t);
+  assert.equal(connectionStatus(root).state, 'unverified');
+  const file = connectionPath(root), connection = JSON.parse(fs.readFileSync(file));
+  connection.requests.products.headers.authorization = 'Bearer header.' + Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url') + '.signature';
+  fs.writeFileSync(file, JSON.stringify(connection));
+  const status = connectionStatus(root);
+  assert.equal(status.state, 'expired'); assert.match(status.label, /vencida/);
+  assert.equal(status.expiresAt, '1970-01-01T00:00:01.000Z');
+  let calls = 0;
+  await assert.rejects(readDirectMasters(root, { restaurantId: '1', localId: '2' }, { fetchImpl: async () => { calls++; return respond(new URL('https://api.toteat.com')); } }), /autenticación/);
+  assert.equal(calls, 0);
+  assert.doesNotMatch(JSON.stringify(status), /Bearer|signature/);
+});

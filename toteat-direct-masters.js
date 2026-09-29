@@ -6,6 +6,27 @@ function failure(message) { const error = new Error(message); error.safeMasterMe
 function connectionPath(uploadsRoot) { return path.join(uploadsRoot, '.integrations', 'toteat', 'direct-masters', 'connection.json'); }
 function configured(uploadsRoot) { return Boolean(uploadsRoot) && fs.existsSync(connectionPath(uploadsRoot)); }
 
+// Presence of a connection is not evidence that its credentials remain valid.
+// Decode only the expiry claim for status; this does not validate a signature.
+function connectionStatus(uploadsRoot, now = Date.now()) {
+  if (!configured(uploadsRoot)) return { state: 'not-configured', label: 'Servicios internos · sesión web (vigencia no comprobada)', expiresAt: null };
+  try {
+    const connection = JSON.parse(fs.readFileSync(connectionPath(uploadsRoot), 'utf8'));
+    const expiries = Object.values(connection.requests || {}).flatMap(request => {
+      try {
+        const token = (request.headers?.authorization || '').split(' ').at(-1);
+        const exp = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).exp;
+        return Number.isFinite(exp) ? [exp * 1000] : [];
+      } catch { return []; }
+    });
+    const expiry = expiries.length ? Math.min(...expiries) : null;
+    const expired = expiry !== null && expiry <= Number(now);
+    return { state: expired ? 'expired' : 'unverified',
+      label: expired ? 'API interna directa · credencial vencida' : 'API interna directa · credencial guardada (vigencia por comprobar)',
+      expiresAt: expiry === null ? null : new Date(expiry).toISOString() };
+  } catch { return { state: 'invalid', label: 'API interna directa · conexión inválida', expiresAt: null }; }
+}
+
 // Adapt the complete product API to the existing master publisher. No old data
 // is merged into a new response and no prices are substituted for costs.
 function legacyItems(products) {
@@ -27,6 +48,7 @@ async function readDirectMasters(uploadsRoot, restaurant, { fetchImpl = fetch } 
   let connection;
   try { connection = JSON.parse(fs.readFileSync(connectionPath(uploadsRoot), 'utf8')); }
   catch { throw failure('No hay una conexión directa autorizada de maestros.'); }
+  if (connectionStatus(uploadsRoot).state === 'expired') throw failure(AUTH_ERROR);
   const { localRef, requests } = connection;
   if (connection.restaurantId !== String(restaurant.restaurantId) || connection.localId !== String(restaurant.localId)
     || !/^[a-f0-9]{24}$/.test(localRef || '')) throw failure('La conexión de maestros no corresponde al local solicitado.');
@@ -68,4 +90,4 @@ async function readDirectMasters(uploadsRoot, restaurant, { fetchImpl = fetch } 
     products, items: legacyItems(products), warehouses, suppliers, hierarchies,
     capturedAt: new Date().toISOString(), source: 'toteat-internal-direct-api', historicalValidity: 'observed-at-capture' };
 }
-module.exports = { readDirectMasters, legacyItems, configured, connectionPath };
+module.exports = { readDirectMasters, legacyItems, configured, connectionPath, connectionStatus };

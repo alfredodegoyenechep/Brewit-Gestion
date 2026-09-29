@@ -132,7 +132,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   function status(location) {
     const s = current(location);
     return { location, running: running.has(location), lastError: errors.get(location) || null, observedAt: s?.observedAt || null,
-      source: require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa · autenticación autorizada' : 'Sesión web de Toteat', counts: s ? {
+      source: require('./toteat-direct-masters').connectionStatus(uploadsRoot).label, counts: s ? {
         products: s.products.filter(p => p.types.includes('PRODUCT')).length,
         ingredients: s.products.filter(p => p.types.includes('INGREDIENT')).length,
         extras: s.products.filter(p => p.types.includes('EXTRA')).length,
@@ -196,8 +196,9 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   }
   function sharedStatus() {
     const record = sharedRecord();
-    return { location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError, lastFailedAt, authentication: 'session-dependent',
-      connection: require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa · autenticación autorizada' : 'Servicios internos · sesión web',
+    return { location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError, lastFailedAt, authentication: require('./toteat-direct-masters').connectionStatus(uploadsRoot).state,
+      credentialExpiresAt: require('./toteat-direct-masters').connectionStatus(uploadsRoot).expiresAt,
+      connection: require('./toteat-direct-masters').connectionStatus(uploadsRoot).label,
       observedAt: record?.observedAt || null, publishedAt: record?.savedAt || null, counts: record?.counts || null, warnings: [], shared: true };
   }
   function synchronizeShared() {

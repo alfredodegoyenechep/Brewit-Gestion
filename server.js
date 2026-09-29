@@ -3233,7 +3233,7 @@ function createApp(options = {}) {
   app.get('/api/source-policy', (req,res) => res.json({mode:synchronizedOnly?'synchronized':'legacy',
     message:synchronizedOnly?'Fuentes Toteat sincronizadas. Las descargas históricas no alimentan los cálculos.':'Fuentes históricas habilitadas.',
     manual:['MercadoPago','Marketing','Colaboradores','Calibraciones y bebidas desechadas','Órdenes de compra y gastos de Brewit'],
-    masterNote:`Maestros compartidos desde La Concepción mediante ${require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa con autenticación autorizada' : 'servicios internos con sesión web'}. Para períodos anteriores a su primera lectura se usa el maestro observado disponible, sin certificar una versión histórica.`,
+    masterNote:`Maestros compartidos desde La Concepción mediante ${require('./toteat-direct-masters').connectionStatus(uploadsRoot).label}. Para períodos anteriores a su primera lectura se usa el maestro observado disponible, sin certificar una versión histórica.`,
     locations:readLocations().locations.filter(l=>l.status==='active').map(l=>{const id=l.type==='warehouse'?'store-1':l.id;const stock=stockSync.current(l.id);return {id:l.id,name:l.name,sales:l.type==='store'?toteatSalesSync.status(id):null,purchases:toteatSalesSync.purchases.status(id),inventory:stock?{range:stock.range,updatedAt:stock.sourceCapturedAt}:null};})}));
 
   app.get('/api/locations', (req, res) => {
