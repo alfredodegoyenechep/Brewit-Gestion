@@ -1329,6 +1329,7 @@
           <button id="refresh-purchases" class="icon-button" type="button">Actualizar</button>
           <button class="primary" type="button" data-toteat-purchases-sync="report">Actualizar compras por API</button>
           <div class="purchases-report-actions">
+            <button id="open-purchase-master" class="icon-button" type="button">Reporte maestro de compras</button>
             <button id="open-purchase-cost-variations" class="icon-button" type="button">Variaciones de costo 30 días</button>
             <button id="print-purchases-report" class="icon-button" type="button" disabled>Imprimir / PDF</button>
             <button id="export-purchases-report" class="icon-button" type="button" disabled>Exportar Excel</button>
@@ -1338,6 +1339,26 @@
       <div id="purchases-status" class="form-status" aria-live="polite"></div>
       <div id="purchases-summary" class="products-summary"></div>
       <div id="purchases-groups" class="purchases-groups"></div>
+
+      <dialog id="purchase-master-dialog" class="inventory-report-dialog purchase-cost-variation-dialog" aria-labelledby="purchase-master-title">
+        <div class="inventory-results-head">
+          <h3 id="purchase-master-title">Reporte maestro de compras</h3>
+          <button id="close-purchase-master" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <form id="purchase-master-form" class="purchases-controls">
+          <label>Fecha inicial <input name="from" type="date" required></label>
+          <label>Fecha final <input name="to" type="date" required></label>
+          <label><input name="products" type="checkbox"> Incluir productos recibidos</label>
+          <button class="primary" type="submit">Generar reporte</button>
+        </form>
+        <p class="panel-description">Todas las cafeterías y Bodega Principal · Todos los proveedores</p>
+        <div id="purchase-master-status" class="form-status" aria-live="polite"></div>
+        <div class="inventory-source-actions">
+          <button id="print-purchase-master" class="icon-button" type="button" disabled>Imprimir / Guardar PDF</button>
+          <button id="export-purchase-master" class="icon-button" type="button" disabled>Descargar XLSX</button>
+        </div>
+        <div id="purchase-master-results"></div>
+      </dialog>
 
       <dialog id="purchase-cost-variation-dialog" class="inventory-report-dialog purchase-cost-variation-dialog" aria-labelledby="purchase-cost-variation-title">
         <div class="inventory-results-head">
@@ -1628,6 +1649,18 @@
         </form>
       </section>
 
+      <section class="panel financial-weekly-panel">
+        <h3>Resultados Semanales</h3>
+        <form id="financial-weekly-form" class="financial-results-filters">
+          <button class="primary" type="submit">Procesar vista</button>
+        </form>
+        <p class="panel-description">Semana actual y cuatro semanas anteriores, de lunes a domingo, para la ubicación seleccionada. Montos y porcentajes sobre la venta neta de cada semana; descuentos sin IVA.</p>
+        <progress id="financial-weekly-progress" max="100" value="0" aria-label="Avance del reporte semanal" hidden></progress>
+        <p class="panel-description">Inventario: cálculo de Kardex Propio con fuentes originales para cada semana. Los datos no disponibles se muestran como 0. La semana actual incluye los datos disponibles hasta hoy.</p>
+        <div id="financial-weekly-status" class="form-status" aria-live="polite"></div>
+        <div id="financial-weekly-results"></div>
+      </section>
+
       <section class="panel financial-statement-panel">
         <div class="panel-head financial-panel-head">
           <div>
@@ -1711,7 +1744,7 @@
       <div id="inventory-source-list" class="inventory-source-list"></div>
       <div class="inventory-report-actions">
         <button id="inventory-upload-files" class="icon-button" type="button">Datos y sincronización actualizados</button>
-        <button id="process-original-inventory-report" class="primary" type="button" disabled>Procesar inventario desde API Toteat</button>
+        <button id="process-original-inventory-report" class="primary" type="button" disabled>Procesar Kardex propio</button>
         <button id="current-inventory-report" class="primary" type="button" disabled>Inventario teórico al día</button>
       </div>
       <p id="inventory-process-note" class="panel-description">Primero deben estar disponibles las fuentes sincronizadas requeridas.</p>
@@ -1906,6 +1939,13 @@
         <div class="inventory-results-table-wrap inventory-kardex-scroll" tabindex="0" role="region" aria-label="Consolidado del Kardex, tabla desplazable">
           <table id="inventory-results-table" class="inventory-results-table"></table>
         </div>
+        <section id="inventory-other-consumables" class="consumption-report-card" hidden>
+          <h4>Otros Consumibles</h4>
+          <p id="inventory-other-consumables-summary" class="panel-description"></p>
+          <div class="inventory-results-table-wrap inventory-kardex-scroll" tabindex="0" role="region" aria-label="Otros Consumibles, tabla desplazable">
+            <table id="inventory-other-consumables-table" class="inventory-results-table"></table>
+          </div>
+        </section>
         <section id="inventory-lac001-substitution-report" class="consumption-report-card" hidden>
           <h4>Sustitución de LAC001 por extras</h4>
           <p id="inventory-lac001-substitution-period" class="panel-description"></p>
@@ -2029,10 +2069,10 @@
       <div id="upload-master-list" class="upload-master-list"></div>
       <h3>Fuentes sincronizadas</h3>
       <div class="inventory-results-table-wrap"><table id="upload-transaction-matrix" class="inventory-results-table"></table></div>
-      <h3 id="manual-uploads-title">Cargas manuales</h3><div class="inventory-results-table-wrap"><table id="upload-manual-actions" class="inventory-results-table" aria-labelledby="manual-uploads-title"></table></div><p class="panel-description">Carga MercadoPago, marketing y colaboradores con los botones de esta sección. Las fuentes de la Bodega Principal se consultan en La Concepción.</p>
+      <h3 id="manual-uploads-title">Cargas manuales</h3><div class="inventory-results-table-wrap"><table id="upload-manual-actions" class="inventory-results-table" aria-labelledby="manual-uploads-title"></table></div><p class="panel-description">Carga MercadoPago, marketing, colaboradores y calibraciones y bebidas desechadas con los botones de esta sección. Las fuentes de la Bodega Principal se consultan en La Concepción.</p>
 <section class="panel" id="inventory-sync-panel"><h3>Inventario por API</h3><label>Ubicación <select id="location-select"><option value="store-1">La Concepción</option></select></label><section class="inventory-sources" aria-labelledby="stock-title">
             <h3 id="stock-title">Inventario sincronizado</h3>
-            <p>Actualiza saldos, tomas, compras, consumos, transformaciones y transferencias diarios desde la API pública de Toteat. El informe usa el costo de última compra recibido por API.</p>
+            <p>Reconstruye el inventario desde tomas físicas, compras recibidas, transferencias, transformaciones y consumos de recetas. Los reportes incorporan los consumos internos y compensaciones configuradas. La valoración usa compras y maestros.</p>
             <div class="upload-context-grid">
               <label>Desde <input id="stock-from" type="date" value="2026-08-23"></label>
               <label>Hasta <input id="stock-to" type="date"></label>
@@ -2055,10 +2095,10 @@
           </section></section>
       <section id="upload-refresh-report" hidden aria-label="Estado de actualización">
         <h3>Proceso de actualización</h3>
-        <p id="upload-refresh-methods" class="panel-description">Ventas, pagos, compras e inventario: API pública con token. La conexión de maestros se indica en su estado.</p>
+        <p id="upload-refresh-methods" class="panel-description">Ventas, pagos y compras: API pública con token. Tomas, transformaciones y transferencias: documentos originales con sesión autorizada. La conexión de maestros se indica en su estado.</p>
         <div id="upload-refresh-progress" class="form-status" aria-live="polite"></div>
         <div class="inventory-results-table-wrap"><table id="upload-refresh-steps" class="inventory-results-table"></table></div>
-        <p class="panel-description">Fuera de este proceso: MercadoPago, Marketing y Colaboradores (carga manual).</p>
+        <p class="panel-description">Fuera de este proceso: MercadoPago, Marketing, Colaboradores y Calibraciones y bebidas desechadas (carga manual).</p>
       </section>
     </section>
 

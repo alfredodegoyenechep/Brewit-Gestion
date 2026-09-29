@@ -19,7 +19,7 @@ test('normal UI exposes API sources and only supported manual uploads', { skip: 
   assert.deepEqual(errors,[]);
   assert.equal(await page.locator('#file-loader, #report-download-toteat-sales, #process-inventory-report, [data-toteat-inventory-pilot]').count(),0);
   const fields=await page.locator('[data-upload-field]').evaluateAll(nodes=>[...new Set(nodes.map(n=>n.dataset.uploadField))].sort());
-  assert.deepEqual(fields,['employees','marketing','mercadopago']);
+  assert.deepEqual(fields,['calibrations','employees','marketing','mercadopago']);
   for(const route of ['/api/integrations/toteat/connect','/api/integrations/toteat/master-downloads/connect','/api/integrations/toteat/transactional-downloads/connect','/api/integrations/toteat/download-sales','/api/integrations/toteat/download-payment-details','/upload/master','/api/uploads/weekly/inspect','/api/uploads/weekly/confirm',
     ...['suppliers','products','recipes','finalize','product-hierarchy','ingredient-hierarchy','extras-hierarchy'].map(part=>'/api/integrations/toteat/master-downloads/'+part),
     ...['sales','select-location','payment-details','purchases','kardex-stock','kardex-waste'].map(part=>'/api/integrations/toteat/transactional-downloads/'+part)]){

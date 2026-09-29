@@ -1,6 +1,6 @@
 // Read-only, paginated consultation of already synchronized/uploaded records.
 function registerUploadRecords(app,{location,load,today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Santiago'}).format(new Date())}) {
- const fields=new Set(['sales','payment-details','mercadopago','marketing','employees','purchases','counts','transformations','transfers']);
+ const fields=new Set(['sales','payment-details','mercadopago','marketing','employees','calibrations','purchases','counts','transformations','transfers']);
  const valid=d=>/^\d{4}-\d{2}-\d{2}$/.test(d||'')&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
  app.get('/api/uploads/records',(req,res)=>{
   try {

@@ -75,5 +75,14 @@ test('purchase reports use the API source once and expose a preview and protecte
   assert(!r.error, JSON.stringify(r)); assert(!JSON.stringify(r).includes('99999'));
   assert.equal(r.summary.totalAmount, 1001); assert.equal(r.rows.length, 1);
   assert.equal(r.rows[0].discount, null); assert.equal(r.rows[0].netAmount, null);
+  const master = await (await fetch(base + '/api/purchase-master-report?dateFrom=2026-09-07&dateTo=2026-09-21&includeProducts=true')).json();
+  assert(!master.error, JSON.stringify(master));
+  assert.equal(master.invoiceCount, 1); assert.equal(master.recorded, 1001);
+  assert.equal(master.net, null); assert.equal(master.gross, null);
+  assert.equal(master.locations.at(-1).type, 'warehouse');
+  const detail = master.locations.flatMap(l => l.suppliers).flatMap(s => s.documents).flatMap(d => d.products);
+  assert.equal(detail[0].quantity, 2); assert.equal(detail[0].unit, 'KG');
+  assert.equal((await fetch(base + '/api/purchase-master-report?dateFrom=2026-09-22&dateTo=2026-09-01')).status, 400);
+
   assert.equal((await fetch(base + '/api/transactions/store-1/purchases?source=toteat-api:store-1:purchases', { method: 'DELETE' })).status, 409);
 });

@@ -3,7 +3,7 @@ const {countBoundaryReport,advance}=require('./inventory-boundaries');
 function projectionInventory(state,location,today,correction=()=>0,periodFrom=advance(today,-29)) {
  const requestedFrom=periodFrom,requestedDays=Math.round((Date.parse(today)-Date.parse(periodFrom))/86400000)+1,through=state.range.to<today?state.range.to:today;
  const from=state.range.from>requestedFrom?state.range.from:requestedFrom;
- const base={source:'toteat-api',from,to:through,requestedFrom,days:Math.max(0,Math.round((Date.parse(through)-Date.parse(from))/86400000)+1),items:[],excluded:[],warnings:[]};
+ const base={source:state.sourceKind==='native-documents'?'brewit-ledger':'toteat-api',from,to:through,requestedFrom,days:Math.max(0,Math.round((Date.parse(through)-Date.parse(from))/86400000)+1),items:[],excluded:[],warnings:[]};
  if(from>through){base.warnings.push('La fuente no cubre el período solicitado.');return base;}
  if(base.days<requestedDays)base.warnings.push(`Cobertura parcial: promedio calculado sobre ${base.days} días sincronizados, no sobre ${requestedDays}.`);
  if(through<today)base.warnings.push(`Inventario disponible hasta ${through}; actualiza las fuentes para incluir movimientos posteriores.`);

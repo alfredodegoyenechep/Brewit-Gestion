@@ -263,9 +263,9 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
   const browser=await chromium.launch({executablePath:CHROME_PATH,headless:true});t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));fs.rmSync(uploadsRoot,{recursive:true,force:true});});
   const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();
   await page.locator('[data-upload-location="store-1"][data-upload-field="marketing"]').waitFor();
-  assert.equal(await page.locator('[data-upload-field]').count(),6);
+  assert.equal(await page.locator('[data-upload-field]').count(),8);
   assert.equal(await page.locator('[data-upload-location="main-warehouse"]').count(),0);
-  for(const field of ['marketing','employees','mercadopago']) {
+  for(const field of ['marketing','employees','calibrations','mercadopago']) {
     const chooser=page.waitForEvent('filechooser');await page.locator(`[data-upload-location="store-1"][data-upload-field="${field}"]`).click();
     await (await chooser).setFiles({name:field+'.csv',mimeType:'text/csv',buffer:Buffer.from(field==='mercadopago'?'TRANSACTION_DATE\tSOURCE_ID\tTRANSACTION_TYPE\tTRANSACTION_AMOUNT\tFEE_AMOUNT\n2026-08-05T10:00:00.000-04:00\tmp-ui-1\tSETTLEMENT\t1190\t-20':'ID Producto **\tNombre Producto *\t2026-08-05\nP1\tProducto Uno\t1')});
     await page.locator('#date-confirmation').waitFor({state:'visible',timeout:5000}).catch(async error=>{throw Error(await page.locator('#upload-manual-status').innerText()+' | '+error.message);});

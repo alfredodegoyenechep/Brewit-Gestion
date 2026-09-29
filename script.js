@@ -8,7 +8,7 @@ const FIELD_LABELS = {
   kardex: 'Kardex / inventario',
   waste: 'Merma',
   marketing: 'Consumo de marketing',
-  employees: 'Consumo de colaboradores',
+  calibrations: 'Calibraciones y bebidas desechadas', employees: 'Consumo de colaboradores',
   purchases: 'Compras',
   sales: 'Ventas',
   'payment-details': 'Detalle Pagos',
@@ -767,7 +767,7 @@ function updateLocationFields() {
     ? 'Crea o recupera una ubicación en Configuración para cargar archivos.'
     : isWarehouse
       ? 'Esta bodega recibe su Kardex de inventario y el Kardex de Merma Central.'
-      : 'Esta cafetería recibe Kardex, merma, consumos de marketing y colaboradores, compras, ventas, Detalle Pagos y transacciones MercadoPago.';
+      : 'Esta cafetería recibe Kardex, merma, consumos de marketing, colaboradores y calibraciones, compras, ventas, Detalle Pagos y transacciones MercadoPago.';
   currentWeekFiles = {};
   clearWeeklySelections();
   clearInspection(true);
@@ -1350,6 +1350,10 @@ function renderFinancialResults(data) {
 }
 
 async function loadFinancialResults() {
+  if (!document.getElementById('financial-results-workspace-panel-weekly')?.hidden) {
+    document.querySelector('#financial-weekly-form button').focus();
+    return;
+  }
   const status = document.getElementById('financial-results-status');
   const form = document.getElementById('financial-results-filters');
   const button = form.querySelector('button[type="submit"]');
@@ -4700,9 +4704,9 @@ function costSourceDescription(item) {
 
 function costSourceShort(item) {
   if (item?.costSource === 'toteat-api') return 'API Toteat';
-  if (item?.costSource === 'recipe') return 'Receta calculada';
+  if (item?.costSource === 'recipe') return item.costIncomplete ? 'Receta (costo parcial)' : 'Receta calculada';
   if (item?.costSource === 'purchase') return `Compra${item.costSourceDate ? ` ${formatReportDate(item.costSourceDate)}` : ''}`;
-  if (item?.costSource === 'master') return 'Maestro';
+  if (item?.costSource === 'master') return 'Maestro (respaldo)';
   return 'Sin costo';
 }
 
@@ -6438,6 +6442,11 @@ async function loadPurchasesView() {
   const location = document.getElementById('purchases-location-filter').value || 'all';
   const supplier = document.getElementById('purchases-supplier-filter').value || 'all';
   const product = document.getElementById('purchases-product-filter').value.trim();
+  const today = browserIsoToday();
+  const weekAgo = new Date(`${today}T12:00:00Z`);
+  weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+  if (!document.getElementById('purchases-date-from').value) document.getElementById('purchases-date-from').value = weekAgo.toISOString().slice(0, 10);
+  if (!document.getElementById('purchases-date-to').value) document.getElementById('purchases-date-to').value = today;
   const dateFrom = document.getElementById('purchases-date-from').value;
   const dateTo = document.getElementById('purchases-date-to').value;
   const params = new URLSearchParams({ location, supplier });
@@ -6469,8 +6478,7 @@ async function loadPurchasesView() {
     const toInput = document.getElementById('purchases-date-to');
     fromInput.value = data.filters.dateFrom || '';
     toInput.value = data.filters.dateTo || '';
-    fromInput.min = toInput.min = data.availablePeriod?.from || '';
-    fromInput.max = toInput.max = data.availablePeriod?.to || '';
+    fromInput.max = toInput.max = today;
     renderPurchasesView();
     setStatus(status, data.sourceFileCount
       ? data.scope.type === 'warehouse'
@@ -8195,14 +8203,14 @@ async function loadInventorySources() {
       const actions = document.createElement('div');
       actions.className = 'inventory-source-actions';
       if (source.file) {
-        if (['waste', 'marketing', 'employees'].includes(source.field) && source.applicable) {
+        if (['waste', 'marketing', 'employees', 'calibrations'].includes(source.field) && source.applicable) {
           const summary = document.createElement('button');
           summary.type = 'button';
           summary.className = 'primary small';
           const summaryNames = {
             waste: 'Ver resumen merma',
             marketing: 'Ver resumen marketing',
-            employees: 'Ver resumen colaboradores'
+            employees: 'Ver resumen colaboradores', calibrations: 'Ver resumen calibraciones y bebidas desechadas'
           };
           summary.textContent = summaryNames[source.field];
           summary.addEventListener('click', () => openSourceSummaryDialog(source.field));
@@ -8351,7 +8359,7 @@ function openSourceSummaryDialog(field) {
   const titles = {
     waste: 'Resumen de Merma',
     marketing: 'Resumen de Consumo de Marketing',
-    employees: 'Resumen de Consumo de Colaboradores'
+    employees: 'Resumen de Consumo de Colaboradores', calibrations: 'Resumen de Calibraciones y bebidas desechadas'
   };
   document.getElementById('source-summary-dialog-title').textContent = titles[field] || 'Ver resumen';
   setStatus(document.getElementById('source-summary-dialog-status'), '');
@@ -8537,7 +8545,7 @@ async function generateSourceSummary() {
       const data = await apiRequest(`/api/inventory/consumption-summary?location=${encodeURIComponent(location)}&field=${encodeURIComponent(field)}&dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`);
       const titles = {
         marketing: 'Consumo de marketing',
-        employees: 'Consumo de colaboradores'
+        calibrations: 'Calibraciones y bebidas desechadas', employees: 'Consumo de colaboradores'
       };
       document.getElementById('consumption-summary-title').textContent = titles[field];
       document.getElementById('consumption-summary-period').textContent =
@@ -8605,27 +8613,33 @@ function buildConsumptionTable(columns, rows, totals = null) {
 function renderCostReconciliation(data) {
   const productCost = Number(data.products.totalCost) || 0;
   const ingredientCost = Number(data.ingredients.totalCost) || 0;
-  const difference = productCost - ingredientCost;
+  const stockedCost = (data.ingredients.stockedProducts || []).reduce((sum, item) => sum + (item.totalCost || 0), 0);
+  const stockConsumptionCost = ingredientCost + stockedCost;
+  const difference = productCost - stockConsumptionCost;
+  const unexplainedDifference = difference;
   const percentage = productCost ? Math.abs(difference) / productCost * 100 : 0;
   const box = document.createElement('aside');
-  box.className = `cost-reconciliation ${Math.abs(difference) < 1 ? 'is-balanced' : 'has-difference'}`;
+  box.className = `cost-reconciliation ${Math.abs(unexplainedDifference) < 1 ? 'is-balanced' : 'has-difference'}`;
 
   const title = document.createElement('strong');
-  title.textContent = Math.abs(difference) < 1 ? 'Costos conciliados' : 'Explicación de la diferencia de costos';
+  title.textContent = Math.abs(unexplainedDifference) < 1
+    ? (data.products.productsWithoutMasterCost?.length || data.ingredients.ingredientsWithoutCost?.length ? 'Subtotales conciliados · costos pendientes' : 'Costos conciliados')
+    : 'Explicación de la diferencia de costos';
   const comparison = document.createElement('p');
-  comparison.textContent = `Productos: ${formatClp(productCost)} · Ingredientes: ${formatClp(ingredientCost)} · Diferencia: ${formatClp(difference)} (${percentage.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%).`;
+  comparison.textContent = `Productos: ${formatClp(productCost)} · Insumos consumidos (ingredientes y productos terminados): ${formatClp(stockConsumptionCost)} · Diferencia: ${formatClp(difference)} (${percentage.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%).`;
   const method = document.createElement('p');
-  method.textContent = 'El costo de cada producto se calcula desde su receta con las cantidades, rendimientos y conversiones de unidad. Cada ingrediente usa su última compra disponible y, sólo si no existe, el costo directo del maestro. El costo directo del producto se usa únicamente cuando no hay receta.';
+  method.textContent = 'El costo de cada producto preparado se calcula desde su receta con las cantidades, rendimientos y conversiones de unidad. Cada ingrediente usa su última compra compatible disponible al corte. Los productos preparados suman esos mismos costos mediante su receta. Se buscan compras de todo el historial hasta el corte, incluso anteriores al período. Solo sin compra compatible se usa el maestro de ingredientes como respaldo; nunca el costo fijo del producto preparado. Si faltan ambas referencias, el costo queda pendiente.';
   box.append(title, comparison, method);
 
   const reasons = [];
+  if (data.ingredients.stockedProducts?.length) reasons.push(`Productos terminados con stock: ${data.ingredients.stockedProducts.map(p => p.code).join(', ')}; costo ${formatClp(stockedCost)}. Se consumen como producto y no se vuelven a descontar sus ingredientes. Conciliación: ingredientes ${formatClp(ingredientCost)} + productos terminados ${formatClp(stockedCost)} = ${formatClp(ingredientCost + stockedCost)}. No es una diferencia de base de costo.`);
   const withoutRecipe = data.ingredients.productsWithoutRecipe || [];
   const withoutCost = data.ingredients.ingredientsWithoutCost || [];
   const withoutConversion = data.ingredients.ingredientsWithoutConversion || [];
   if (withoutRecipe.length) reasons.push(`Productos sin receta: ${withoutRecipe.join(', ')}. Su costo aparece en productos, pero no puede descomponerse en ingredientes.`);
-  if (withoutCost.length) reasons.push(`Ingredientes sin costo de compra o maestro: ${withoutCost.join(', ')}.`);
+  if (withoutCost.length) reasons.push(`Ingredientes sin costo completo de compra ni respaldo compatible del maestro: ${withoutCost.join(', ')}.`);
   if (withoutConversion.length) reasons.push(`Ingredientes con unidades incompatibles: ${withoutConversion.join(', ')}.`);
-  if (Math.abs(difference) >= 1 && !withoutRecipe.length && !withoutCost.length && !withoutConversion.length) reasons.push('Hay una diferencia no conciliada que debe revisarse; los productos con receta completa deberían coincidir con sus ingredientes valorizados.');
+  if (Math.abs(unexplainedDifference) >= 1 && !withoutRecipe.length && !withoutCost.length && !withoutConversion.length) reasons.push('Hay una diferencia no conciliada que debe revisarse; los productos con receta completa deberían coincidir con sus ingredientes valorizados.');
   if (reasons.length) {
     const list = document.createElement('ul');
     for (const reason of reasons) {
@@ -8655,7 +8669,7 @@ function quantitiesByUnit(rows) {
 
 function renderConsumptionReports(
   consumption,
-  fields = ['marketing', 'employees'],
+  fields = ['marketing', 'employees', 'calibrations'],
   container = document.getElementById('inventory-consumption-reports')
 ) {
   container.replaceChildren(...fields.map(field => {
@@ -8677,8 +8691,8 @@ function renderConsumptionReports(
     for (const text of [
       `Hoja: ${data.products.sheetName}`,
       `${data.products.products.length} productos consumidos`,
-      `Costo productos: ${formatClp(data.products.totalCost)}`,
-      `Costo ingredientes: ${formatClp(data.ingredients.totalCost)}`
+      `Costo productos${data.products.productsWithoutMasterCost?.length ? ' (parcial)' : ''}: ${formatClp(data.products.totalCost)}`,
+      `Costo insumos${data.ingredients.ingredientsWithoutCost?.length || data.ingredients.stockedProducts?.some(p => p.costIncomplete) ? ' (parcial)' : ''}: ${formatClp((data.ingredients.totalCost || 0) + sumConsumptionRows(data.ingredients.stockedProducts || [], 'totalCost'))}`
     ]) {
       const badge = document.createElement('span');
       badge.className = 'chip neutral';
@@ -8696,19 +8710,19 @@ function renderConsumptionReports(
     productPart.append(productTitle, buildConsumptionTable([
       { key: 'code', label: 'Código', value: item => item.code, maxChars: 18 },
       { key: 'name', label: 'Producto', value: item => item.name, maxChars: 50 },
-      { key: 'quantity', label: 'Cantidad', value: item => formatInventoryQuantity(item.quantity) },
-      { key: 'unitCost', label: 'Costo unit.', value: item => formatClp(item.unitCost) },
+      { key: 'quantity', label: 'Cantidad', value: item => `${formatInventoryQuantity(item.quantity)} ${item.unitNeedsConfirmation ? '(unidad por confirmar)' : item.unit || ''}` },
+      { key: 'unitCost', label: 'Costo unit.', value: item => item.costSource === 'missing' ? 'Pendiente' : formatClp(item.unitCost) },
       { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item) },
-      { key: 'totalCost', label: 'Costo total', value: item => formatClp(item.totalCost) }
+      { key: 'totalCost', label: 'Costo total', value: item => item.costSource === 'missing' ? 'Pendiente' : formatClp(item.totalCost) }
     ], productRows, {
       code: 'TOTAL',
-      quantity: formatInventoryQuantity(sumConsumptionRows(productRows, 'quantity')),
+      quantity: quantitiesByUnit(productRows),
       totalCost: formatClp(sumConsumptionRows(productRows, 'totalCost'))
     }));
     if (data.products.productsWithoutMasterCost?.length) {
       const warning = document.createElement('p');
       warning.className = 'form-status muted';
-      warning.textContent = `${data.products.productsWithoutMasterCost.length} producto(s) sin costo de compra o maestro compatible.`;
+      warning.textContent = `${data.products.productsWithoutMasterCost.length} producto(s) sin costo completo de compra ni respaldo compatible; total parcial.`;
       productPart.appendChild(warning);
     }
     card.appendChild(productPart);
@@ -8716,7 +8730,7 @@ function renderConsumptionReports(
     const ingredientPart = document.createElement('section');
     ingredientPart.className = 'consumption-report-part';
     const ingredientTitle = document.createElement('h5');
-    ingredientTitle.textContent = '2. Resumen de ingredientes consumidos';
+    ingredientTitle.textContent = '2. Insumos consumidos: ingredientes y productos terminados';
     ingredientPart.appendChild(ingredientTitle);
     if (data.ingredients.error) {
       const error = document.createElement('p');
@@ -8724,12 +8738,13 @@ function renderConsumptionReports(
       error.textContent = data.ingredients.error;
       ingredientPart.appendChild(error);
     } else {
-      const ingredientRows = data.ingredients.items;
+      const ingredientRows = [...data.ingredients.items.map(item => ({...item, consumptionType: 'Ingrediente de receta'})), ...(data.ingredients.stockedProducts || []).map(item => ({...item, consumptionType: 'Producto terminado'}))];
       ingredientPart.appendChild(buildConsumptionTable([
         { key: 'code', label: 'Código', value: item => item.code, maxChars: 18 },
         { key: 'name', label: 'Ingrediente', value: item => item.name, maxChars: 50 },
         { key: 'quantity', label: 'Cantidad', value: item => formatInventoryQuantity(item.quantity) },
         { key: 'unit', label: 'Unidad', value: item => item.unit },
+        { key: 'consumptionType', label: 'Tipo de insumo', value: item => item.consumptionType },
         { key: 'unitCost', label: 'Costo unit.', value: item => formatClp(item.unitCost) },
         { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item) },
         { key: 'totalCost', label: 'Costo total', value: item => formatClp(item.totalCost) }
@@ -9205,15 +9220,23 @@ function renderInventoryExecutiveSummary(summary) {
       context: `${formatInventoryQuantity(metrics.employeeConsumption.quantity)} unidad(es) de producto consumida(s). Se presenta en rojo porque corresponde a consumo interno.`
     },
     {
+      label: 'Calibraciones y bebidas desechadas', metric: metrics.calibrationConsumption, tone: 'executive-negative-concept',
+      context: `${formatInventoryQuantity(metrics.calibrationConsumption.quantity)} unidad(es) de producto consumida(s).`
+    },
+    {
       label: 'Costo de merma', metric: metrics.waste, tone: 'executive-negative-concept',
       context: `${metrics.waste.itemCount} ítem(s) con adiciones. Se presenta en rojo porque representa pérdida o merma.`
     },
+    ...(metrics.otherConsumables ? [{label:'Otros Consumibles',metric:metrics.otherConsumables,tone:'executive-negative-concept',context:`${metrics.otherConsumables.coveredItemCount} de ${metrics.otherConsumables.itemCount} ítems con diferencia valorizada. Separados del costo Kardex ajustado.${metrics.otherConsumables.partial ? ' Subtotal parcial: faltan costos o tomas físicas.' : ''}`}]:[]),
     {
       label: 'Costo Total Kardex ajustado por sustit. y vasos no ut.', metric: adjustedKardex,
       tone: inventoryExecutiveResultTone(adjustedKardex),
       alwaysShowContext: true,
       context: [
-        adjustedKardex.available
+        adjustedKardex.coveredItemCount !== undefined ? `${adjustedKardex.partial ? 'Subtotal verificable' : 'Cobertura completa'}: ${adjustedKardex.coveredItemCount} de ${adjustedKardex.totalItemCount} productos. Sin toma final: ${adjustedKardex.missingPhysicalCodes?.length || 0}; sin costo verificable: ${adjustedKardex.missingCostCodes?.length || 0}. Además, ${adjustedKardex.excludedOpeningCodes?.length || 0} excluidos por apertura o identidad. Ver detalle del inventario.` : '',
+        adjustedKardex.available && adjustedKardex.coveredItemCount !== undefined
+          ? `Costo Kardex de los productos cubiertos ${formatKardexCost(adjustedKardex.kardexTotalCost)} − sustituciones y envases no utilizados de esos productos ${formatKardexCost(adjustedKardex.totalAdjustmentCost)} = ${formatKardexCost(adjustedKardex.amount)}.`
+          : adjustedKardex.available
           ? `Costo Total del Kardex ${formatKardexCost(adjustedKardex.kardexTotalCost)} − sustituciones de syrup y salsas ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} − vasos y tapas no utilizados ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.amount)}.`
           : 'Costo ajustado no disponible para esta fuente o período.',
         inventoryContext('Valor Inventario Final Teórico', metrics.theoreticalFinalInventoryValue),
@@ -9240,7 +9263,7 @@ function renderInventoryExecutiveSummary(summary) {
     row.className = tone;
     const amount = metric.available ? displayedAmount(metric) : null;
     [
-      label,
+      label + (metric.partial ? ' (parcial)' : ''),
       metric.available ? formatKardexCost(amount) : 'No disponible',
       metric.available ? formatInventoryExecutivePercent(percent(amount)) : '—',
       metric.available || alwaysShowContext ? context : 'No disponible para esta fuente o período.'
@@ -9255,7 +9278,7 @@ function renderInventoryExecutiveSummary(summary) {
   const foot = document.createElement('tfoot');
   const totalRow = document.createElement('tr');
   const total = availableRows.reduce((sum, { metric }) => sum + displayedAmount(metric), 0);
-  const complete = availableRows.length === rows.length;
+  const complete = availableRows.length === rows.length && !availableRows.some(({metric}) => metric.partial);
   [
     complete ? 'TOTAL' : 'TOTAL DISPONIBLE',
     availableRows.length ? formatKardexCost(total) : 'No disponible',
@@ -9334,6 +9357,7 @@ function renderInventoryResults(data) {
       value: item => formatKardexTableQuantity(signedKardexMovement(item, definition)),
       sortValue: item => signedKardexMovement(item, definition)
     })),
+    { label: 'Calibraciones y bebidas desechadas', value: item => formatKardexTableQuantity(-(Number(item.calibrationConsumption) || 0)), sortValue: item => -(Number(item.calibrationConsumption) || 0) },
     { label: 'Consumo Colaboradores', value: item => formatKardexTableQuantity(-(Number(item.employeeConsumption) || 0)), sortValue: item => -(Number(item.employeeConsumption) || 0) },
     { label: 'Consumo Marketing', value: item => formatKardexTableQuantity(-(Number(item.marketingConsumption) || 0)), sortValue: item => -(Number(item.marketingConsumption) || 0) },
     ...(report.boundaryMode ? [{
@@ -9388,10 +9412,35 @@ function renderInventoryResults(data) {
   document.getElementById('inventory-kardex-cost-max').value = '';
   inventoryKardexTableState = { report, columns, sortIndex: 0, direction: 'asc' };
   renderInventoryKardexTable();
+  renderOtherConsumables(data.otherConsumables, columns, data.executiveSummary?.metrics.otherConsumables);
   renderLac001SubstitutionReport(data.lac001Substitutions);
   renderSyrupSauceSubstitutionReport(data.syrupSauceSubstitutions);
   renderInventoryAvoidedPackagingReport(data.avoidedPackaging);
   document.getElementById('inventory-report-results').showModal();
+}
+
+function renderOtherConsumables(report, columns, metric) {
+  const section = document.getElementById('inventory-other-consumables');
+  section.hidden = !report?.items?.length;
+  if (section.hidden) return;
+  document.getElementById('inventory-other-consumables-summary').textContent = `${report.itemCount} ítems separados del Consolidado del Kardex. ${metric?.partial ? 'Subtotal parcial; los registros sin costo o toma física permanecen pendientes.' : 'Importe incluido por separado en el resumen ejecutivo.'}`;
+  const table = document.getElementById('inventory-other-consumables-table');
+  const head = document.createElement('thead'), header = document.createElement('tr');
+  for (const column of columns) { const th=document.createElement('th'); th.textContent=column.label; header.appendChild(th); }
+  head.appendChild(header);
+  const body=document.createElement('tbody');
+  for (const item of [...report.items].sort((a,b)=>a.code.localeCompare(b.code))) {
+    const row=document.createElement('tr');
+    for (const column of columns) {const td=document.createElement('td');td.textContent=column.value(item);row.appendChild(td);}
+    body.appendChild(row);
+  }
+  const foot=document.createElement('tfoot'), total=document.createElement('tr');
+  for (const [index,column] of columns.entries()) {
+    const td=document.createElement('td');
+    td.textContent=index===0?(metric?.partial?'TOTAL DISPONIBLE':'TOTAL'):column.label==='Costo Total'?(metric?.available?formatKardexCost(metric.amount):'No disponible'):column.totalValue?column.totalValue(report.items):'';
+    total.appendChild(td);
+  }
+  foot.appendChild(total);table.replaceChildren(head,body,foot);
 }
 
 function currentInventoryColumns() {
@@ -10114,6 +10163,7 @@ function printInventoryReport(sectionId) {
 }
 
 function excelSheetLabel(table, index) {
+  if (table.id === 'inventory-other-consumables-table') return 'Otros Consumibles';
   if (table.id === 'inventory-executive-summary-table') return 'Resumen ejecutivo';
   if (table.id === 'inventory-results-table') return 'Kardex consolidado';
   if (table.id === 'current-inventory-table') return 'Inventario valorizado';
@@ -10600,8 +10650,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     purchaseCostVariationState = null;
     document.getElementById('purchases-supplier-filter').value = 'all';
     document.getElementById('purchases-product-filter').value = '';
-    document.getElementById('purchases-date-from').value = '';
-    document.getElementById('purchases-date-to').value = '';
     loadPurchasesView();
   });
   document.getElementById('purchases-supplier-filter').addEventListener('change', loadPurchasesView);
@@ -10957,7 +11005,7 @@ async function loadUploadOverview() {
       item.append(cell('strong',m.label),cell('span',date(m.updatedAt)));
       item.addEventListener('click',()=>openLatestMasterPreview(m.key,m.label));return item;
     }));
-    const manualColumns=data.columns.filter(c=>['mercadopago','marketing','employees'].includes(c.key));
+    const manualColumns=data.columns.filter(c=>['mercadopago','marketing','employees','calibrations'].includes(c.key));
     const manualHead=document.createElement('thead'),manualHeader=document.createElement('tr');
     for(const label of ['Local',...manualColumns.map(c=>c.label)]) {
       const th=cell('th',label);th.scope='col';manualHeader.append(th);
@@ -11003,10 +11051,10 @@ async function loadUploadOverview() {
     if(!uploadScheduleDirty)for(const key of ['masters','inventory'])el(`upload-${key}-frequency`).value=data.schedule[key].minutes || '';
     el('refresh-upload-api').disabled=data.job.running || data.masterStatus.running || data.rows.some(r=>r.cells.some(c=>c.running));
     el('upload-master-connection').textContent = `${data.masterStatus.connection || 'Servicios internos · sesión web'} · Última lectura exitosa: ${date(data.masterStatus.observedAt)} · Último intento fallido: ${date(data.masterStatus.lastFailedAt)} · Credencial de integración pendiente de Toteat${data.masterStatus.lastError ? ' · '+data.masterStatus.lastError : ''}`;
-    el('upload-refresh-methods').textContent = `Ventas, pagos, compras e inventario: API pública con token. Maestros: ${data.masterStatus.connection || 'servicios internos con sesión web'}.`;
+    el('upload-refresh-methods').textContent = `Ventas, pagos y compras: API pública con token. Tomas, transformaciones y transferencias originales: API interna con sesión autorizada. Maestros: ${data.masterStatus.connection || 'servicios internos con sesión web'}.`;
     const job=data.job,summary=job.summary || {};
     el('upload-refresh-report').hidden=!job.steps.length;
-    el('upload-refresh-progress').textContent=`${job.running?'En curso':'Finalizado'} · ${summary.complete||0} grupos actualizados · ${summary.error||0} con problemas · ${summary.skipped||0} omitidos · ${(summary.pending||0)+(summary.running||0)} pendientes. Inicio: ${date(job.startedAt)}${job.finishedAt?' · Fin: '+date(job.finishedAt):''}`;
+    el('upload-refresh-progress').textContent=`${job.running?'En curso':'Finalizado'} · ${summary.complete||0} grupos actualizados · ${summary.error||0} con problemas · ${summary.skipped||0} omitidos · ${(summary.pending||0)+(summary.running||0)} pendientes. Inicio: ${date(job.startedAt)}${job.finishedAt?' · Fin: '+date(job.finishedAt):''}${job.recoveredCount ? ` · ${job.recoveredCount} problema(s) resuelto(s) después de este proceso` : ''}`;
     const progressHead=document.createElement('thead'),progressHeader=document.createElement('tr');
     progressHeader.append(...['Local / grupo','Fuentes previstas','Conexión','Estado','Resultado','Último cambio'].map(label=>cell('th',label)));progressHead.append(progressHeader);
     const progressBody=document.createElement('tbody');
@@ -11125,6 +11173,7 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
 ]);
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
   ['statement', 'Estado de resultados', ['#financial-results-summary', '.financial-statement-panel']],
+  ['weekly', 'Resultados Semanales', ['.financial-weekly-panel']],
   ['expenses', 'Gastos generales', ['.financial-general-expenses-panel']],
   ['breakdowns', 'Participación', ['.financial-breakdowns-grid']],
   ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
@@ -11137,3 +11186,247 @@ installWorkspaceTabs('demand-analysis-workspace', '.demand-heading', [
   ['actions', 'Acciones', ['#demand-report > .demand-section:nth-child(4)']],
   ['advanced', 'Análisis avanzado', ['#demand-report > .demand-section:nth-child(5)']]
 ]);
+
+// The screen, print view and workbook share the same report rows.
+(() => {
+  const dialog = document.getElementById('purchase-master-dialog');
+  const form = document.getElementById('purchase-master-form');
+  const result = document.getElementById('purchase-master-results');
+  const status = document.getElementById('purchase-master-status');
+  const print = document.getElementById('print-purchase-master');
+  const excel = document.getElementById('export-purchase-master');
+  let report = null, sections = [], generation = 0;
+  const money = value => value === null ? 'N/D' : formatClp(value);
+  const amounts = item => [item.recorded];
+  let target = result;
+  function table(headers, rows, monetaryColumns, kind = '') {
+    const wrap = document.createElement('div'); wrap.className = 'purchases-table-wrap';
+    const table = document.createElement('table'); table.className = `purchase-master-table ${kind}`;
+    const head = table.createTHead().insertRow();
+    headers.forEach((label, index) => {
+      const th = document.createElement('th'); th.scope = 'col'; th.textContent = label;
+      if (monetaryColumns.includes(index)) th.className = 'master-amount';
+      head.append(th);
+    });
+    const body = table.createTBody();
+    rows.forEach(values => {
+      const row = body.insertRow();
+      if (!values.length) {
+        row.className = 'master-group-gap'; row.setAttribute('aria-hidden', 'true');
+        row.insertCell().colSpan = headers.length;
+        return;
+      }
+      if (values.includes('Total proveedor')) row.className = 'master-subtotal';
+      if (values[0] === 'Total general' || kind === 'master-location-total') row.className = 'master-grand-total';
+      values.forEach((value, index) => {
+        const cell = row.insertCell(); cell.textContent = monetaryColumns.includes(index) ? money(value) : value ?? 'N/D';
+        if (monetaryColumns.includes(index)) cell.className = 'master-amount';
+      });
+    });
+    wrap.append(table); target.append(wrap);
+    sections.push([headers, ...rows.map(row => row.map(value => value ?? 'N/D'))]);
+  }
+  function heading(text, tag = 'h4', className = '') {
+    const element = document.createElement(tag); element.textContent = text; element.className = className;
+    target.append(element); sections.push([[text]]);
+  }
+  function render() {
+    result.replaceChildren(); sections = []; target = result;
+    const header = document.createElement('header'); header.className = 'master-report-header'; result.append(header); target = header;
+    heading('Reporte maestro de compras', 'h2');
+    heading(`${formatReportDate(report.period.from)} – ${formatReportDate(report.period.to)}`, 'p', 'master-period');
+    heading(report.note, 'p', 'master-note');
+    const overview = document.createElement('div'); overview.className = 'master-overview'; header.append(overview);
+    for (const [label, value] of [['Importe Neto', money(report.recorded)], ['Proveedores', report.suppliers.length], ['Facturas por local', report.invoiceCount], ['Documentos por local', report.documentCount]]) {
+      const card = document.createElement('div'); const caption = document.createElement('span'); caption.textContent = label;
+      const amount = document.createElement('strong'); amount.textContent = value; card.append(caption, amount); overview.append(card);
+    }
+    report.locations.forEach(location => {
+      const section = document.createElement('section'); section.className = 'master-location'; result.append(section); target = section;
+      heading(location.name, 'h3', 'master-location-heading');
+      if (!location.suppliers.length) heading('Sin compras registradas en el período.', 'p');
+      location.suppliers.forEach(supplier => {
+        const group = document.createElement('section'); group.className = 'master-supplier'; section.append(group); target = group;
+        heading(supplier.name, 'h4');
+        if (supplier.taxId) heading(`RUT ${supplier.taxId}`, 'p', 'master-supplier-rut');
+        const rows = supplier.documents.map(document => [formatReportDate(document.date), document.type, document.number, ...amounts(document)]);
+        rows.push(['', 'Total proveedor', `${supplier.invoiceCount} factura(s) · ${supplier.documentCount} documento(s)`, ...amounts(supplier)]);
+        table(['Fecha emisión', 'Tipo documento', 'Documento', 'Importe Neto'], rows, [3], 'master-documents');
+        if (report.includeProducts) supplier.documents.forEach(document => {
+          heading(`Productos recibidos · ${document.type} ${document.number}`, 'p', 'master-products-heading');
+          table(['Código', 'Producto', 'Cantidad recibida', 'Unidad recibida', 'Importe Neto'],
+            document.products.map(product => [product.code, product.product, product.quantity, product.unit, product.recorded]), [4]);
+        });
+      });
+      target = section;
+      table(['Total local', 'Facturas', 'Documentos', 'Importe Neto'],
+        [[location.name, location.invoiceCount, location.documentCount, ...amounts(location)]], [3], 'master-location-total');
+    });
+    const summarySection = document.createElement('section'); summarySection.className = 'master-summary'; result.append(summarySection); target = summarySection;
+    heading('Resumen general por proveedor y localidad', 'h3');
+    const summary = [];
+    report.suppliers.forEach(supplier => {
+      supplier.locations.forEach((location, index) => summary.push([index === 0 ? supplier.name : '', index === 0 ? supplier.taxId : '', location.name, location.invoiceCount, location.documentCount, ...amounts(location)]));
+      summary.push(['', '', 'Total proveedor', supplier.invoiceCount, supplier.documentCount, ...amounts(supplier)]);
+      summary.push([]);
+    });
+    summary.push(['Total general', '', 'Todas las ubicaciones', report.invoiceCount, report.documentCount, ...amounts(report)]);
+    table(['Proveedor', 'RUT', 'Localidad', 'Facturas por local', 'Documentos por local', 'Importe Neto'], summary, [5]);
+    print.disabled = excel.disabled = false;
+  }
+  function invalidate() {
+    generation++; report = null; result.replaceChildren(); print.disabled = excel.disabled = true;
+  }
+  async function generate(event) {
+    event?.preventDefault();
+    if (!form.reportValidity()) return;
+    invalidate(); const current = generation;
+    const from = form.elements.from.value, to = form.elements.to.value;
+    if (from > to) return setStatus(status, 'La fecha inicial debe ser anterior o igual a la final.', 'error');
+    setStatus(status, 'Generando reporte maestro…');
+    try {
+      const params = new URLSearchParams({ dateFrom: from, dateTo: to, includeProducts: form.elements.products.checked });
+      const data = await apiRequest(`/api/purchase-master-report?${params}`);
+      if (current !== generation) return;
+      report = data; render(); setStatus(status, report.documentCount ? 'Reporte generado.' : 'No hay compras registradas en el período.', 'success');
+    } catch (error) { if (current === generation) setStatus(status, error.message, 'error'); }
+  }
+  document.getElementById('open-purchase-master').addEventListener('click', () => {
+    invalidate(); setStatus(status, 'Selecciona el período y genera el reporte.');
+    form.elements.from.value = document.getElementById('purchases-date-from').value;
+    form.elements.to.value = document.getElementById('purchases-date-to').value;
+    dialog.showModal();
+    if (form.elements.from.value && form.elements.to.value) generate();
+  });
+  document.getElementById('close-purchase-master').addEventListener('click', () => dialog.close());
+  form.addEventListener('submit', generate);
+  form.addEventListener('input', () => { invalidate(); setStatus(status, 'Genera el reporte para aplicar los cambios.'); });
+  excel.addEventListener('click', () => {
+    if (!report) return;
+    try {
+      if (!window.XLSX) throw new Error('No fue posible cargar el generador Excel.');
+      const workbook = XLSX.utils.book_new();
+      const sheet = XLSX.utils.aoa_to_sheet(sections.flatMap(section => [...section, []]));
+      sheet['!cols'] = [28, 32, 40, 24, 22, 24].map(wch => ({ wch }));
+      XLSX.utils.book_append_sheet(workbook, sheet, 'Reporte maestro');
+      writeConfiguredExcelWorkbook(workbook, `reporte-maestro-compras-${report.period.from}-${report.period.to}.xlsx`);
+      setStatus(status, 'Reporte exportado a Excel.', 'success');
+    } catch (error) { setStatus(status, error.message, 'error'); }
+  });
+  print.addEventListener('click', () => {
+    if (!report) return;
+    const title = document.title;
+    document.title = `Reporte maestro de compras ${report.period.from} al ${report.period.to}`;
+    document.body.classList.add('printing-purchase-master');
+    try { window.print(); } finally { document.body.classList.remove('printing-purchase-master'); document.title = title; }
+  });
+})();
+
+let weeklyFinancialRequest = 0;
+let weeklyFinancialController = null;
+async function loadWeeklyFinancialResults() {
+  const form = document.getElementById('financial-weekly-form');
+  if (!form.reportValidity()) return;
+  weeklyFinancialController?.abort();
+  const controller = new AbortController(); weeklyFinancialController = controller;
+  const request = ++weeklyFinancialRequest;
+  const progress = document.getElementById('financial-weekly-progress');
+  progress.hidden = false; progress.value = 0;
+  [...form.elements].forEach(element => { element.disabled = true; });
+  form.setAttribute('aria-busy', 'true');
+  const status = document.getElementById('financial-weekly-status');
+  const container = document.getElementById('financial-weekly-results');
+  container.replaceChildren();
+  const params = new URLSearchParams({
+    location: document.getElementById('financial-results-location').value || 'all',
+    costValuation: document.getElementById('financial-cost-valuation').value
+  });
+  setStatus(status, 'Calculando resultados semanales…');
+  try {
+    const response = await fetch(`/api/financial-results/weekly/stream?${params}`, { signal: controller.signal });
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      throw new Error(failure.error || `La solicitud falló (${response.status}).`);
+    }
+    const reader = response.body.getReader(), decoder = new TextDecoder();
+    let pending = '', data = null;
+    const receive = line => {
+      if (!line.trim() || request !== weeklyFinancialRequest) return;
+      const event = JSON.parse(line);
+      if (event.type === 'error') throw new Error(event.error);
+      if (event.type === 'progress') {
+        progress.value = event.completed / event.total * 100;
+        setStatus(status, `${Math.round(progress.value)}% · ${event.completed} de ${event.total} semanas calculadas · Semana ${event.week} (${formatReportDate(event.period.from)} – ${formatReportDate(event.period.to)})${event.completed === event.total ? ' · Preparando reporte…' : ' · Procesando…'}`);
+      }
+      if (event.type === 'result') data = event.data;
+    };
+    while (true) {
+      const chunk = await reader.read();
+      pending += decoder.decode(chunk.value, { stream: !chunk.done });
+      const lines = pending.split('\n'); pending = lines.pop(); lines.forEach(receive);
+      if (chunk.done) break;
+    }
+    if (pending.trim()) receive(pending);
+    if (!data) throw new Error('Se interrumpió el procesamiento. Vuelve a pulsar Procesar vista.');
+    if (request !== weeklyFinancialRequest) return;
+    const context = document.createElement('p');
+    context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Semanas de lunes a domingo`;
+    container.append(context);
+    const fillCell = (cell, value) => {
+      const amount = document.createElement('span'); amount.className = 'weekly-amount';
+      amount.textContent = formatClp(value?.amount ?? 0);
+      const percent = document.createElement('span'); percent.className = 'weekly-percent';
+      percent.textContent = `${(value?.percent ?? 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+      cell.append(amount, ' · ', percent);
+    };
+    {
+      const wrap = document.createElement('div'); wrap.className = 'financial-weekly-table-wrap';
+      const table = document.createElement('table'); table.className = 'financial-weekly-table';
+      const head = table.createTHead().insertRow();
+      ['Concepto', ...data.weeks.map((week, index) => `${index === 4 ? 'Semana actual' : `Hace ${4 - index} semana${index === 3 ? '' : 's'}`}${week ? ` · ${formatReportDate(week.period.from)} – ${formatReportDate(week.period.to)}` : ' · Fuera del rango'}`), 'Total'].forEach(label => {
+        const th = document.createElement('th'); th.textContent = label; head.append(th);
+      });
+      const body = table.createTBody();
+      data.metrics.forEach(([key, label]) => {
+        const row = body.insertRow(); const th = document.createElement('th'); th.scope = 'row'; th.textContent = label; row.append(th);
+        row.className = key === 'netSales' ? 'weekly-net-sales' : key === 'discounts' ? 'weekly-expense weekly-discounts' : 'weekly-expense';
+        if (key === 'netSales') {
+          const note = document.createElement('span'); note.className = 'weekly-net-sales-note';
+          note.textContent = '(descuentos considerados)'; th.append(' ', note);
+        }
+        data.weeks.forEach(week => fillCell(row.insertCell(), week?.values[key]));
+        fillCell(row.insertCell(), data.total[key]);
+      });
+      wrap.append(table); container.append(wrap);
+    }
+    if (data.warnings.length) {
+      const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'Cobertura y criterios de cálculo'; details.append(summary);
+      data.warnings.forEach(message => { const p = document.createElement('p'); p.textContent = message; details.append(p); }); container.append(details);
+    }
+    progress.value = 100;
+    setStatus(status, 'Resultados semanales actualizados.', 'success');
+  } catch (error) {
+    controller.abort();
+    if (request === weeklyFinancialRequest && error.name !== 'AbortError') setStatus(status, error.message, 'error');
+  } finally {
+    if (request === weeklyFinancialRequest) {
+      [...form.elements].forEach(element => { element.disabled = false; });
+      form.setAttribute('aria-busy', 'false'); weeklyFinancialController = null;
+    }
+  }
+}
+
+document.getElementById('financial-weekly-form').addEventListener('submit', event => {
+  event.preventDefault(); loadWeeklyFinancialResults();
+});
+function invalidateWeeklyFinancialResults() {
+  weeklyFinancialController?.abort(); weeklyFinancialController = null; weeklyFinancialRequest++;
+  const form = document.getElementById('financial-weekly-form');
+  [...form.elements].forEach(element => { element.disabled = false; }); form.setAttribute('aria-busy', 'false');
+  document.getElementById('financial-weekly-progress').hidden = true;
+  document.getElementById('financial-weekly-results').replaceChildren();
+  setStatus(document.getElementById('financial-weekly-status'), 'Pulsa Procesar vista para ver la semana actual y las cuatro anteriores.');
+}
+document.getElementById('financial-weekly-form').addEventListener('change', invalidateWeeklyFinancialResults);
+for (const id of ['financial-results-location', 'financial-cost-valuation']) document.getElementById(id).addEventListener('change', invalidateWeeklyFinancialResults);
+invalidateWeeklyFinancialResults();

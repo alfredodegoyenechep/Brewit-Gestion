@@ -8775,3 +8775,99 @@ button:disabled {
 .workspace-tabs [role="tab"]:focus-visible { outline: 2px solid #d8a477; outline-offset: 2px; }
 .workspace-tab-panel[hidden] { display: none !important; }
 .workspace-tab-panel > .panel { margin-bottom: 18px; }
+
+#purchase-master-results {
+  box-sizing: border-box;
+  width: calc(100% - 2cm);
+  max-width: 1120px;
+  margin-left: 2cm;
+  padding: 12px 4px;
+  font-size: calc(1em + 4px);
+}
+.master-report-header { padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.master-report-header h2 { margin: 0 0 8px; font-size: 30px; letter-spacing: -.5px; }
+#purchase-master-results p { line-height: 1.6; }
+.master-period { margin: 0 0 12px; color: var(--text-soft); }
+.master-note { max-width: 1050px; margin: 0; font-size: 17px; color: var(--text-soft); }
+.master-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 22px; }
+.master-overview > div { padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-soft); }
+.master-overview span { display: block; margin-bottom: 8px; font-size: 16px; color: var(--text-soft); }
+.master-overview strong { font-size: 27px; font-variant-numeric: tabular-nums; }
+.master-location, .master-summary { margin-top: 30px; }
+#purchase-master-results h3 { margin: 0 0 18px; font-size: 25px; }
+.master-location-heading { padding-left: 12px; border-left: 4px solid var(--accent); }
+.master-supplier { margin-bottom: 18px; padding: 18px 20px 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-soft); }
+.master-supplier h4 { margin: 0; font-size: 20px; }
+.master-supplier-rut { margin: 4px 0 12px; font-size: 16px; color: var(--text-soft); }
+.purchase-master-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 17px; }
+.purchase-master-table th, .purchase-master-table td { text-align: left; padding: 12px 8px; border-bottom: 1px solid var(--border); }
+.purchase-master-table th { color: var(--text-soft); font-size: 15px; letter-spacing: .3px; background: color-mix(in srgb, var(--text) 4%, transparent); }
+.purchase-master-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--text) 2%, transparent); }
+.purchase-master-table .master-amount { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.purchase-master-table td.master-amount { font-weight: 600; }
+.master-documents { table-layout: fixed; min-width: 620px; }
+.master-documents th:nth-child(1) { width: 18%; }
+.master-documents th:nth-child(2) { width: 25%; }
+.master-documents th:nth-child(3) { width: 35%; }
+.purchase-master-table .master-subtotal { background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 700; }
+.purchase-master-table .master-grand-total { background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 800; }
+.master-grand-total td { padding-top: 16px; padding-bottom: 16px; border-top: 2px solid var(--border); }
+.master-products-heading { font-size: 16px; color: var(--text-soft); margin: 20px 0 0; }
+@media (max-width: 700px) {
+  .master-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .master-overview strong { font-size: 23px; }
+  .master-supplier { padding: 14px 10px 4px; }
+}
+@media print {
+  body.printing-purchase-master { display: block; background: white; }
+  body.printing-purchase-master .sidebar,
+  body.printing-purchase-master .main-content > section:not(#purchases-workspace),
+  body.printing-purchase-master #purchases-workspace > *:not(#purchase-master-dialog),
+  body.printing-purchase-master #purchase-master-dialog > *:not(#purchase-master-results) { display: none !important; }
+  body.printing-purchase-master .main-content,
+  body.printing-purchase-master #purchases-workspace,
+  body.printing-purchase-master #purchase-master-dialog { position: static !important; display: block !important; width: 100% !important; max-width: none !important; height: auto !important; max-height: none !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; background: white !important; }
+  body.printing-purchase-master #purchase-master-dialog::backdrop { display: none; }
+  body.printing-purchase-master #purchase-master-results * { color: black !important; background: white !important; }
+  body.printing-purchase-master .purchases-table-wrap { overflow: visible !important; }
+  body.printing-purchase-master .purchase-master-table { font-size: 13px; table-layout: auto; min-width: 0; }
+  body.printing-purchase-master .purchase-master-table td,
+  body.printing-purchase-master .purchase-master-table th { white-space: normal; padding: 4px; border-bottom: 1px solid #ccc; }
+  body.printing-purchase-master tr { break-inside: avoid; }
+  body.printing-purchase-master h3, body.printing-purchase-master h4 { break-after: avoid; }
+}
+
+.financial-weekly-table-wrap { overflow-x: auto; }
+.financial-weekly-table { width: 100%; min-width: 1050px; border-collapse: collapse; }
+.financial-weekly-table th, .financial-weekly-table td { padding: 14px 10px; border-bottom: 1px solid var(--border); text-align: right; }
+.financial-weekly-table th:first-child { text-align: left; min-width: 180px; }
+.financial-weekly-table thead th { font-size: 12px; }
+.financial-weekly-table tbody tr:last-child, .financial-weekly-table td:last-child { font-weight: 800; background: var(--bg-soft); }
+#financial-weekly-progress { width: min(100%, 640px); height: 18px; margin-top: 16px; accent-color: var(--accent); }
+#financial-weekly-form { flex-wrap: wrap; margin-bottom: 14px; }
+
+.financial-weekly-table .weekly-net-sales td { color: #4c9aff; }
+.financial-weekly-table .weekly-expense td { color: var(--red); font-size: calc(1em - 3px); }
+
+/* Separate supplier groups in the consolidated purchase summary, including PDF. */
+.master-summary .purchase-master-table .master-subtotal td {
+  border-bottom: 3px solid var(--border);
+}
+.master-summary .purchase-master-table .master-group-gap {
+  background: transparent;
+}
+.master-summary .purchase-master-table .master-group-gap td {
+  height: 16px;
+  padding: 0;
+  border: 0;
+}
+@media print {
+  body.printing-purchase-master .master-summary .master-subtotal td { border-bottom: 3px solid #ccc; }
+  body.printing-purchase-master .master-summary .master-group-gap td { height: 12px; padding: 0; border: 0; }
+}
+
+.financial-weekly-table .weekly-percent { font-size: calc(1em + 2px); }
+
+.financial-weekly-table .weekly-net-sales-note { font-size: calc(1em - 2px); }
+.financial-weekly-table .weekly-discounts th,
+.financial-weekly-table .weekly-discounts td { color: #808080; }

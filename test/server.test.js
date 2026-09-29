@@ -81,7 +81,7 @@ test('serves the app and exposes the three upload locations', async t => {
   assert.match(await page.text(), /Datos y sincronización/);
   assert.deepEqual(Object.keys(locations), ['store-1', 'store-2', 'main-warehouse']);
   assert.deepEqual(locations['store-1'].fields, [
-    'kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'
+    'kardex', 'waste', 'marketing', 'employees', 'calibrations', 'purchases', 'sales', 'payment-details', 'mercadopago'
   ]);
   assert.deepEqual(locations['main-warehouse'].fields, ['kardex', 'waste']);
   assert.match(await (await fetch(`${baseUrl}/`)).text(), /Detalle Pagos/);
@@ -1714,6 +1714,16 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   const differences=manualReport.statement.expenses.filter(item=>item.key==='inventoryDifference');
   assert.equal(differences.length,1);assert.equal(differences[0].amount,-15000);assert.equal(differences[0].available,true);
   assert.equal(manualReport.statement.expenses.some(item=>item.key==='general:inventoryDifference'),false);
+  const weeklyResponse = await fetch(`${baseUrl}/api/financial-results/weekly?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`);
+  assert.equal(weeklyResponse.status, 200);
+  const weekly = await weeklyResponse.json();
+  assert.equal(weekly.weeks.length, 5);
+  assert.deepEqual(weekly.weeks[4].period, { from: '2026-08-10', to: '2026-08-16' });
+  assert.equal(weekly.total.inventoryDifference, undefined);
+  assert.ok(weekly.metrics.some(([key]) => key === 'otherConsumables'));
+  assert.ok(weekly.metrics.some(([key]) => key === 'adjustedKardexTotalCost'));
+  assert.equal(Math.round(weekly.total.netSales.amount), Math.round(manualReport.statement.netSales));
+
 
 });
 
@@ -2286,9 +2296,9 @@ test('selects the most recent inventory source files for an active location', as
   assert.equal((await confirm(baseUrl, latestInspection)).status, 200);
 
   const inventory = await fetch(`${baseUrl}/api/inventory/sources?location=store-1`).then(response => response.json());
-  assert.equal(inventory.ready, true);
-  assert.equal(inventory.sources.length, 4);
-  assert.deepEqual(inventory.sources.map(source => source.field), ['kardex', 'waste', 'marketing', 'employees']);
+  assert.equal(inventory.ready, false);
+  assert.equal(inventory.sources.length, 5);
+  assert.deepEqual(inventory.sources.map(source => source.field), ['kardex', 'waste', 'marketing', 'employees', 'calibrations']);
   assert.equal(inventory.sources.find(source => source.field === 'kardex').file.originalName, 'kardex-nuevo.csv');
   assert.equal(inventory.sources.find(source => source.field === 'kardex').file.dataThrough, '2026-08-13');
   assert.deepEqual(inventory.kardexPeriod, {
@@ -2879,6 +2889,28 @@ test('processes marketing and employee consumption into product and recipe ingre
   assert.equal(financialExpenses.inventoryDifference.amount, -24.75, JSON.stringify(financial.inventoryByLocation));
   assert.equal(financialExpenses.inventoryDifference.locations[0].openingDate, '2026-08-04');
   assert.equal(financialExpenses.inventoryDifference.locations[0].closingDate, '2026-08-06');
+  const calibrationInspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'calibrations', contents: consumptionWorkbook('Calibraciones Agosto', employeeRows), filename: 'calibraciones.xlsx' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, calibrationInspection, 'keep', { from: '2026-08-04', to: '2026-08-05' })).status, 200);
+  const calibrationSummary = await fetch(`${baseUrl}/api/inventory/consumption-summary?location=store-1&field=calibrations&dateFrom=2026-08-04&dateTo=2026-08-06`).then(r => r.json());
+  assert.equal(calibrationSummary.error, undefined, JSON.stringify(calibrationSummary));
+  assert.equal(calibrationSummary.summary.products.totalQuantity, 2);
+  assert.equal(calibrationSummary.summary.ingredients.totalCost, 7.5);
+  const calibrated = await fetch(`${baseUrl}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1', dateFrom: '2026-08-04', dateTo: '2026-08-05' }) }).then(r => r.json());
+  assert.equal(calibrated.report.items[0].calibrationConsumption, 1.25);
+  assert.equal(calibrated.report.items[0].employeeConsumption, 1.25);
+  assert.equal(calibrated.report.items[0].theoreticalFinal, 11.625);
+  assert.equal(calibrated.executiveSummary.metrics.calibrationConsumption.amount, 7.5);
+  const calibratedFinancial = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-04&dateTo=2026-08-05`).then(r => r.json());
+  const calibratedExpenses = Object.fromEntries(calibratedFinancial.statement.expenses.map(item => [item.key, item]));
+  assert.equal(calibratedExpenses.calibrations.amount, 7.5);
+  assert.equal(calibratedExpenses.inventoryDifference.amount, -32.25);
+  // Reclassifying a declared consumption must not double count the inventory loss.
+  assert.equal(calibratedExpenses.calibrations.amount + calibratedExpenses.inventoryDifference.amount, financialExpenses.inventoryDifference.amount);
+  const overview = await fetch(`${baseUrl}/api/uploads/overview`).then(r => r.json());
+  assert(overview.columns.some(column => column.key === 'calibrations'));
+
 });
 
 test('creates, renames, trashes, and restores locations with their weekly data', async t => {

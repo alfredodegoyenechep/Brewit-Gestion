@@ -1,0 +1,36 @@
+{
+  "checkedAt": "2026-09-28T19:18:33.792Z",
+  "range": {
+    "from": "2026-09-04",
+    "to": "2026-09-04"
+  },
+  "rows": [
+    {
+      "code": "CCB001",
+      "unit": "KG",
+      "warehouse": 2,
+      "date": "20260904",
+      "purchase": 3.4,
+      "opening": 2.5000000000000004,
+      "closing": 5.7250000000000005
+    },
+    {
+      "code": "CCB001",
+      "unit": "KG",
+      "warehouse": 3,
+      "date": "20260904",
+      "purchase": 0,
+      "opening": 0,
+      "closing": 0.175
+    },
+    {
+      "code": "CCB006",
+      "unit": "KG",
+      "warehouse": 2,
+      "date": "20260904",
+      "purchase": 3.4,
+      "opening": 0,
+      "closing": 3.4
+    }
+  ]
+}

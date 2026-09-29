@@ -32,7 +32,7 @@ const DEFAULT_LOCATIONS = [
   { id: 'main-warehouse', name: 'Bodega principal', type: 'warehouse' }
 ];
 const HEAD_OFFICE_UNIT = { id: 'head-office', name: 'Casa Matriz', label: 'Casa Matriz', type: 'head-office', status: 'active' };
-const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago']
+const WEEK_FIELDS = ['kardex', 'waste', 'marketing', 'employees', 'calibrations', 'purchases', 'sales', 'payment-details', 'mercadopago']
   .map(name => ({ name, maxCount: 1 }));
 const MASTER_FIELDS = [
   { name: 'master-catalog', maxCount: 1 },
@@ -169,7 +169,7 @@ function migrateLegacySundayWeeks(weeksRoot) {
 function fieldsForLocation(type) {
   return type === 'warehouse'
     ? ['kardex', 'waste']
-    : ['kardex', 'waste', 'marketing', 'employees', 'purchases', 'sales', 'payment-details', 'mercadopago'];
+    : ['kardex', 'waste', 'marketing', 'employees', 'calibrations', 'purchases', 'sales', 'payment-details', 'mercadopago'];
 }
 
 function safeFilename(file) {
@@ -299,7 +299,7 @@ const UPLOAD_STRUCTURE_LABELS = {
   kardex: 'Kardex / tarjeta de inventario',
   waste: 'Merma',
   marketing: 'Consumo de marketing',
-  employees: 'Consumo de colaboradores',
+  calibrations: 'Calibraciones y bebidas desechadas', employees: 'Consumo de colaboradores',
   purchases: 'Compras',
   sales: 'Transacciones de venta',
   'payment-details': 'Detalle Pagos',
@@ -414,6 +414,7 @@ function detectUploadStructure(file) {
   });
   if (consumptionSheet) {
     const hint = normalizeHeader(`${file.originalname} ${sheets.map(sheet => sheet.name).join(' ')}`);
+    if (/calibraci|bebidas.*desech/.test(hint)) return { field: 'calibrations', family: 'consumption', reason: 'Planilla de consumos con referencias a calibraciones o bebidas desechadas.' };
     if (/beneficio|colaborador|empleado|equipo/.test(hint)) {
       return { field: 'employees', family: 'consumption', reason: 'La planilla contiene fechas por producto y referencias a colaboradores/equipo.' };
     }
@@ -474,7 +475,7 @@ function validateUploadStructure(file) {
       reason: `Kardex y Merma comparten la misma estructura. Confirma que “${file.originalname}” es el archivo correcto para cargar como ${UPLOAD_STRUCTURE_LABELS[expected]}.`
     };
   }
-  const sharedConsumption = ['marketing', 'employees'].includes(expected) && detected.field === 'consumption';
+  const sharedConsumption = ['marketing', 'employees', 'calibrations'].includes(expected) && detected.field === 'consumption';
   if (detected.field === expected || sharedConsumption) {
     return { ok: true, expected, detected: detected.field, reason: detected.reason };
   }
@@ -510,7 +511,7 @@ function filterPreviewRowsByDate(allRows, field, dateFrom, dateTo) {
     const selected = [...keepColumns].sort((left, right) => left - right);
     return allRows.map(row => selected.map(column => row[column] ?? ''));
   }
-  if (['marketing', 'employees'].includes(field)) {
+  if (['marketing', 'employees', 'calibrations'].includes(field)) {
     const width = Math.max(...allRows.map(row => row.length));
     const columnDates = Array.from({ length: width }, (_, column) => {
       for (const row of allRows.slice(0, 5)) {
@@ -776,7 +777,7 @@ function buildCurrentTheoreticalInventoryReport(parsed, referenceDate, catalog, 
       unitCost,
       costSource: costReference.source,
       costSourceDate: costReference.sourceDate,
-      costAvailable: costReference.source !== 'missing',
+      costAvailable: costReference.source !== 'missing' && !costReference.costIncomplete,
       valuation: quantity * unitCost
     };
   }).sort((left, right) => left.hierarchyPath.join('\u001f').localeCompare(right.hierarchyPath.join('\u001f'), 'es', { sensitivity: 'base' })
@@ -868,7 +869,8 @@ function consumptionProductSheets(workbook) {
     if (codeColumn < 0 || nameColumn < 0) continue;
     const dateColumns = (rows[0] || []).map((value, column) => ({ date: cellDate(value), column }))
       .filter(item => item.date);
-    candidates.push({ sheetName, rows, codeColumn, nameColumn, costColumn, dateColumns });
+    const unitColumn = findHeaderColumn(headers, ['Unidad', 'Unidad Medida', 'Unidad de medida']);
+    candidates.push({ sheetName, rows, codeColumn, nameColumn, costColumn, unitColumn, dateColumns });
   }
   return candidates;
 }
@@ -885,10 +887,9 @@ function parseConsumptionProductsFromSheets(candidates, dateFrom, dateTo) {
     const code = String(row[selected.codeColumn] ?? '').trim();
     const name = String(row[selected.nameColumn] ?? '').trim();
     if (!code && !name) return [];
-    const quantity = selected.dateColumns.reduce((sum, item) => sum + leadingQuantity(row[item.column]), 0);
-    if (!quantity) return [];
+    const quantities = require('./consumption-quantities').consumptionQuantities(selected.dateColumns.map(item => row[item.column]), selected.unitColumn >= 0 ? row[selected.unitColumn] : 'UN');
     const unitCost = selected.costColumn >= 0 ? numericValue(row[selected.costColumn]) || 0 : 0;
-    return [{ code, name, unit: 'UN', quantity, unitCost, totalCost: quantity * unitCost }];
+    return quantities.map(({unit,quantity}) => ({ code, name, unit, quantity, unitCost, totalCost: quantity * unitCost }));
   });
   return {
     sheetName: selected.sheetName,
@@ -1027,13 +1028,15 @@ function applyCatalogProductCosts(result, catalog, costResolver = null) {
     const catalogItem = catalog.get(product.code);
     const costReference = costResolver?.resolve(product.code, product.unit, catalogItem)
       || { unitCost: unitCostForRecipeUnit(catalogItem, product.unit) ?? product.unitCost, source: 'master', sourceDate: null };
-    if (costReference.source === 'missing') productsWithoutMasterCost.push(product.code || product.name);
+    if (costReference.source === 'missing' || costReference.costIncomplete) productsWithoutMasterCost.push(product.code || product.name);
     const unitCost = costReference.unitCost;
     return {
       ...product,
       unitCost,
       costSource: costReference.source,
       costSourceDate: costReference.sourceDate,
+      costIncomplete: !!costReference.costIncomplete || costReference.source === 'missing',
+      unitNeedsConfirmation: !catalogItem && product.unit === 'UN',
       totalCost: product.quantity * unitCost
     };
   });
@@ -1101,18 +1104,20 @@ function enrichKardexReport(report, consumption, catalog, costResolver = null) {
   const items = report.items.map(item => {
     const employeeConsumption = consumptionQuantityForKardex(consumption.employees, item.code, item.unit);
     const marketingConsumption = consumptionQuantityForKardex(consumption.marketing, item.code, item.unit);
+    const calibrationConsumption = consumptionQuantityForKardex(consumption.calibrations, item.code, item.unit);
     const baseTheoreticalFinal = Number(item.theoreticalFinal) || 0;
-    const theoreticalFinal = baseTheoreticalFinal - employeeConsumption - marketingConsumption;
+    const theoreticalFinal = baseTheoreticalFinal - employeeConsumption - marketingConsumption - calibrationConsumption;
     const finalInventory = report.boundaryMode && !item.finalIsPhysical ? null : report.selection ? Number(item.finalInventory) || 0 : Number(item.physicalFinal) || 0;
     const difference = finalInventory === null ? null : finalInventory - theoreticalFinal;
     const catalogItem = catalog?.get(item.code) || catalog?.get(String(item.code || '').toUpperCase());
     const costReference = costResolver?.resolve(item.code, item.unit, catalogItem)
       || { unitCost: unitCostForRecipeUnit(catalogItem, item.unit) ?? 0, source: 'master', sourceDate: null };
-    if (costReference.source === 'missing') itemsWithoutCost.add(item.code || item.name);
+    if (costReference.source === 'missing' || costReference.costIncomplete) itemsWithoutCost.add(item.code || item.name);
     const unitCost = costReference.unitCost;
     return {
       ...item,
       employeeConsumption,
+      calibrationConsumption,
       marketingConsumption,
       baseTheoreticalFinal,
       theoreticalFinal,
@@ -1120,7 +1125,7 @@ function enrichKardexReport(report, consumption, catalog, costResolver = null) {
       unitCost,
       costSource: costReference.source,
       costSourceDate: costReference.sourceDate,
-      costAvailable: costReference.source !== 'missing',
+      costAvailable: costReference.source !== 'missing' && !costReference.costIncomplete,
       totalCost: difference === null ? null : difference * unitCost
     };
   });
@@ -1157,7 +1162,7 @@ function buildInventoryExecutiveSummary({
   const consumptionMetric = entry => metric(
     entry?.products?.totalCost ?? entry?.ingredients?.totalCost ?? 0,
     entry?.available === true && !entry?.error,
-    { quantity: Number(entry?.products?.totalQuantity) || 0 }
+    { quantity: Number(entry?.products?.totalQuantity) || 0, partial: !!entry?.products?.productsWithoutMasterCost?.length, missingCostCodes: entry?.products?.productsWithoutMasterCost || [] }
   );
   const physicalQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
   const inventoryValue = quantityField => report.items.reduce((sum, item) =>
@@ -1205,6 +1210,7 @@ function buildInventoryExecutiveSummary({
     metrics: {
       marketingConsumption: consumptionMetric(consumption?.marketing),
       employeeConsumption: consumptionMetric(consumption?.employees),
+      calibrationConsumption: consumptionMetric(consumption?.calibrations),
       waste: metric(waste?.report?.totalCost || 0, waste?.available === true && !waste?.error, {
         itemCount: Number(waste?.report?.itemCount) || 0
       }),
@@ -1261,12 +1267,13 @@ function buildInventoryExecutiveSummary({
 function buildIngredientConsumption(products, recipes, catalog, costResolver = null) {
   const ingredients = new Map();
   const productsWithoutRecipe = new Set();
+  const stockedProducts = [];
   const ingredientsWithoutCost = new Set();
   const ingredientsWithoutConversion = new Set();
   for (const product of products) {
     // Stocked finished goods are already counted in the product consumption
     // rows. Their ingredients belong to production, not to this consumption.
-    if (catalog.get(product.code)?.stockManaged === true) continue;
+    if (catalog.get(product.code)?.stockManaged === true) { stockedProducts.push({...product}); continue; }
     const productRecipe = recipes.get(product.code);
     if (!productRecipe?.length) {
       productsWithoutRecipe.add(product.code || product.name);
@@ -1280,7 +1287,7 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
       const costReference = costResolver?.resolve(recipe.ingredientId, canonical.unit, catalogItem)
         || { unitCost: unitCostForRecipeUnit(catalogItem, canonical.unit) ?? 0, source: catalogItem?.unitCost ? 'master' : 'missing', sourceDate: null };
       const unitCost = costReference.unitCost;
-      if (costReference.source === 'missing') ingredientsWithoutCost.add(recipe.ingredientId);
+      if (costReference.source === 'missing' || costReference.costIncomplete) ingredientsWithoutCost.add(recipe.ingredientId);
       else if (!Number.isFinite(unitCost)) ingredientsWithoutConversion.add(recipe.ingredientId);
       const key = `${recipe.ingredientId}:${canonical.unit}`;
       const current = ingredients.get(key) || {
@@ -1291,6 +1298,7 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
         unitCost: unitCost || 0,
         costSource: costReference.source,
         costSourceDate: costReference.sourceDate,
+        costIncomplete: !!costReference.costIncomplete || costReference.source === 'missing',
         totalCost: 0
       };
       current.quantity += quantity;
@@ -1302,6 +1310,7 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
   return {
     items,
     totalCost: items.reduce((sum, ingredient) => sum + ingredient.totalCost, 0),
+    stockedProducts,
     productsWithoutRecipe: [...productsWithoutRecipe],
     ingredientsWithoutCost: [...ingredientsWithoutCost],
     ingredientsWithoutConversion: [...ingredientsWithoutConversion]
@@ -1695,6 +1704,10 @@ function purchaseRecord(row, location, supplierNames) {
     effectiveUnitPrice,
     costBasisEvidence,
     netAmount,
+    receivedQuantity,
+    receivedUnit: String(rowValue(row, ['Um.Rec', 'Unidad recibida']) || ''),
+    reportNet: costBasisEvidence === 'net-field-consistent' ? totalAmount : null,
+    reportGross: numericValue(rowValue(row, ['Monto bruto', 'Gross amount'])),
     discount,
     totalAmount
   };
@@ -2079,7 +2092,7 @@ function createApp(options = {}) {
   }
   function synchronizedStock(locationId) {
     const state=stockSync.current(locationId);
-    if(!state || state.sourceKind !== 'public-inventory') throw Error('No hay inventario API sincronizado para esta ubicación. Actualiza las fuentes; no se utilizará un Kardex descargado.');
+    if(!state || state.sourceKind !== 'native-documents') throw Error('Actualiza las fuentes originales de inventario para construir el Kardex propio. No se utilizarán saldos del Kardex de Toteat.');
     return state;
   }
   const productAnalyticsSourceCache = new Map();
@@ -2642,7 +2655,7 @@ function createApp(options = {}) {
           sheetName ||= parsed.sheetName;
           datesProcessed.add(date);
           parsed.products.forEach(product => {
-            const key = `${date}|${product.code || normalizeHeader(product.name)}`;
+            const key = `${date}|${product.code || normalizeHeader(product.name)}|${product.unit}`;
             if (!dailyProducts.has(key)) dailyProducts.set(key, product);
           });
         } catch {
@@ -2653,7 +2666,7 @@ function createApp(options = {}) {
     if (!dailyProducts.size) throw new Error(`No product sheet contains dates between ${dateFrom} and ${dateTo}.`);
     const products = new Map();
     dailyProducts.forEach(product => {
-      const key = product.code || normalizeHeader(product.name);
+      const key = `${product.code || normalizeHeader(product.name)}|${product.unit}`;
       const current = products.get(key) || { ...product, quantity: 0, totalCost: 0 };
       current.quantity += product.quantity;
       current.totalCost += product.totalCost;
@@ -2672,8 +2685,8 @@ function createApp(options = {}) {
   function latestWeeklyFile(locationId, field) {
     if(synchronizedOnly && INVENTORY_FIELDS.has(field)) {
       const state=stockSync.current(locationId);
-      if(state?.sourceKind!=='public-inventory')return null;
-      return {originalName:field==='waste'?'Merma · Toteat API':'Inventario · Toteat API',source:'toteat-api',dataThrough:state.range.to,confirmedRange:state.range,detectedRange:state.range,savedAt:state.sourceCapturedAt,previewUrl:`/api/inventory/synchronized-preview?location=${encodeURIComponent(locationId)}&field=${field}`,url:`/api/integrations/toteat/stock/export?location=${encodeURIComponent(locationId)}`};
+      if(state?.sourceKind!=='native-documents')return null;
+      return {originalName:field==='waste'?'Merma · movimientos originales':'Inventario propio · documentos originales',source:'brewit-ledger',dataThrough:state.range.to,confirmedRange:state.range,detectedRange:state.range,savedAt:state.sourceCapturedAt,previewUrl:`/api/inventory/synchronized-preview?location=${encodeURIComponent(locationId)}&field=${field}`,url:`/api/integrations/toteat/stock/export?location=${encodeURIComponent(locationId)}`};
     }
     const candidates = storedWeeklyFiles(locationId, field).map(stored => ({
       ...stored.record,
@@ -3023,12 +3036,12 @@ function createApp(options = {}) {
     protectLegacy: process.env.BREWIT_REQUIRE_AUTH === '1'
   });
   app.use('/api', (req,res,next)=>{
-    if(!synchronizedOnly || !/^\/(reports\/|sales\/|products(?:\/|$)|ingredients$|sales-by-ingredients$|financial-results$|findings$|purchase-projections$|inventory\/)/.test(req.path))return next();
+    if(!synchronizedOnly || !/^\/(reports\/|sales\/|products(?:\/|$)|ingredients$|sales-by-ingredients$|financial-results(?:\/weekly)?$|findings$|purchase-projections$|inventory\/)/.test(req.path))return next();
     const send=res.json.bind(res);
     res.json=payload=>{
       if(payload && !Array.isArray(payload) && typeof payload==='object' && req.path !== '/masters') payload.sourcePolicy={mode:'synchronized',legacyFallback:false,
         masterHistory:'Se usa un maestro compartido observado; no se certifican recetas ni costos maestros históricos anteriores a la sincronización.',
-        manualSources:['MercadoPago','Marketing','Colaboradores','Órdenes y gastos de Brewit']};
+        manualSources:['MercadoPago','Marketing','Colaboradores','Calibraciones y bebidas desechadas','Órdenes y gastos de Brewit']};
       if(payload?.sourcePolicy) {
         const from=payload.period?.from || req.query.dateFrom || req.body?.initialInventoryDate;
         const scope=payload.scope?.location || req.query.location || req.body?.location || 'all';
@@ -3063,17 +3076,34 @@ function createApp(options = {}) {
   const stockSync = createStockSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {}),
     masters: () => toteatMasterSync.sharedCurrent(),
-    publicReader: (config, range, warehouses) => toteatSalesSync.requestInventory(config, range, warehouses),
     reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
   app.locals.toteatStockSync = stockSync;
-  require('./upload-overview').registerUploadOverview(app, { uploadsRoot, enableSync: options.enableToteatSync, locations: () => readLocations().locations, sales: toteatSalesSync, masters: toteatMasterSync, stock: stockSync, files: (id, field) => storedFieldFiles(id, field).map(item => item.record), masterFiles: field => masterFiles(field) });
+  const countSync = require('./toteat-counts').createCountSync({ uploadsRoot, activeLocation,
+    credentials: () => readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {}),
+    reader: (restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, readOptions) });
+  app.locals.toteatCountSync = countSync;
+  app.post('/api/integrations/toteat/counts/sync', (req, res) => {
+    try { countSync.synchronize(req.body.location || 'store-1', req.body).catch(() => {}); res.status(202).json({ started: true }); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.get('/api/integrations/toteat/counts/status', (req, res) => {
+    try { res.set('Cache-Control', 'no-store').json(countSync.status(req.query.location || 'store-1')); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+
+  require('./upload-overview').registerUploadOverview(app, { uploadsRoot, enableSync: options.enableToteatSync, locations: () => readLocations().locations, sales: toteatSalesSync, masters: toteatMasterSync, stock: stockSync, counts: countSync, files: (id, field) => storedFieldFiles(id, field).map(item => item.record), masterFiles: field => masterFiles(field) });
   require('./upload-records').registerUploadRecords(app, {location:activeLocation,load(location,field,from,to) {
     const central=location.id==='main-warehouse',id=central?'store-1':location.id;
     const within=d=>d&&d>=from&&d<=to;
-    if(['counts','transformations','transfers'].includes(field)) {
+    if(field === 'counts') return countSync.records(location.id, from, to);
+    if(['transformations','transfers'].includes(field)) {
       const state=stockSync.current(id);
       if(!state)return {rows:[],note:'Esta ubicación aún no tiene inventario sincronizado.'};
       const warehouses=new Map(state.warehouses.filter(w=>central?[1,4].includes(Number(w.custom_id)):[2,3].includes(Number(w.custom_id))).map(w=>[w.id,w.name]));
+      if(state.sourceKind==='native-documents') {
+        const documents=new Map(state.documents.map(d=>[d.key,d]));
+        return {rows:state.operationLines.filter(r=>r.source===field&&warehouses.has(r.warehouse)&&within(r.date)).map(r=>({Fecha:r.date,Documento:documents.get(r.document)?.id,Estado:r.status,Bodega:warehouses.get(r.warehouse),Código:r.code,Producto:r.name,Unidad:r.unit,Cantidad:r.quantity,Movimiento:r.column,'Afecta inventario':r.active?'Sí':'No'})),updatedAt:state.sourceCapturedAt,coverage:state.range,note:'Documentos originales de Toteat; solo movimientos aprobados se contabilizan.'};
+      }
       const rows=state.daily.filter(r=>warehouses.has(r.warehouse)&&within(r.date)&&!r.carriedForward).flatMap(r=>{
         const base={Fecha:r.date,Bodega:warehouses.get(r.warehouse),Código:r.code,Producto:r.name,Unidad:r.unit};
         if(field==='counts')return r.physicalCount?[{...base,'Cantidad toma':r.opening}]:[];
@@ -3082,7 +3112,7 @@ function createApp(options = {}) {
       });
       return {rows,note:'Registros diarios por producto y bodega; no documentos individuales. Incluye la bodega de merma correspondiente.',updatedAt:state.sourceCapturedAt,coverage:state.range};
     }
-    if(['marketing','employees'].includes(field)) {
+    if(['marketing','employees','calibrations'].includes(field)) {
       const sources=chronologicalSources(id,field),seen=new Set(),rows=[];let unreadable=0;
       for(const source of sources) {
         let sheets;try{sheets=consumptionProductSheets(XLSX.readFile(source.filePath,{cellDates:true}));}catch{unreadable++;continue;}
@@ -3125,11 +3155,11 @@ function createApp(options = {}) {
     return {rows,note:`${api.length?'Datos sincronizados desde Toteat API.':'Datos de los archivos cargados.'}${unreadable?' Hay archivos que no pudieron leerse.':''}`};
   }});
   app.get('/api/integrations/toteat/stock/status', (req, res) => {
-    try { res.set('Cache-Control', 'no-store').json(stockSync.status(req.query.location || 'store-1')); }
+    try { res.set('Cache-Control', 'no-store').json({ ...stockSync.status(req.query.location || 'store-1'), originalCounts: countSync.status(req.query.location || 'store-1') }); }
     catch (e) { res.status(400).json({ error: e.message }); }
   });
   app.post('/api/integrations/toteat/stock/sync', (req, res) => {
-    try { stockSync.synchronize(req.body.location, req.body).catch(() => {}); res.status(202).json({ started: true }); }
+    try { stockSync.synchronize(req.body.location, req.body).catch(() => {}); countSync.synchronize(req.body.location, req.body).catch(() => {}); res.status(202).json({ started: true }); }
     catch (e) { res.status(400).json({ error: e.message }); }
   });
   app.get('/api/integrations/toteat/stock/current', (req, res) => {
@@ -3201,7 +3231,7 @@ function createApp(options = {}) {
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.get('/api/source-policy', (req,res) => res.json({mode:synchronizedOnly?'synchronized':'legacy',
     message:synchronizedOnly?'Fuentes Toteat sincronizadas. Las descargas históricas no alimentan los cálculos.':'Fuentes históricas habilitadas.',
-    manual:['MercadoPago','Marketing','Colaboradores','Órdenes de compra y gastos de Brewit'],
+    manual:['MercadoPago','Marketing','Colaboradores','Calibraciones y bebidas desechadas','Órdenes de compra y gastos de Brewit'],
     masterNote:`Maestros compartidos desde La Concepción mediante ${require('./toteat-direct-masters').configured(uploadsRoot) ? 'API interna directa con autenticación autorizada' : 'servicios internos con sesión web'}. Para períodos anteriores a su primera lectura se usa el maestro observado disponible, sin certificar una versión histórica.`,
     locations:readLocations().locations.filter(l=>l.status==='active').map(l=>{const id=l.type==='warehouse'?'store-1':l.id;const stock=stockSync.current(l.id);return {id:l.id,name:l.name,sales:l.type==='store'?toteatSalesSync.status(id):null,purchases:toteatSalesSync.purchases.status(id),inventory:stock?{range:stock.range,updatedAt:stock.sourceCapturedAt}:null};})}));
 
@@ -3503,7 +3533,7 @@ function createApp(options = {}) {
     const unique = new Map();
     let sourceFileCount = 0;
     for (const location of selectedLocations) {
-      const auditApi = (query.auditSources || synchronizedOnly) && toteatSalesSync.purchases.get(location.type === 'warehouse' ? 'store-1' : location.id);
+      const auditApi = (query.masterReport || query.auditSources || synchronizedOnly) && toteatSalesSync.purchases.get(location.type === 'warehouse' ? 'store-1' : location.id);
       const auditDocuments = query.auditSources ? new Map((auditApi?.documents || []).map(document => [String(document.movement_id), document])) : null;
       if (location.type === 'warehouse' && !auditApi) {
         if(synchronizedOnly) continue;
@@ -3526,7 +3556,7 @@ function createApp(options = {}) {
             'Documento original API': auditDocuments.get(String(row['API Movimiento'])) || null };
           if (dateIsExcluded(purchase.date, stored.excludedRanges)) continue;
           const identity = purchase.document || crypto.createHash('sha256').update(JSON.stringify(row)).digest('hex');
-          const key = [location.id, purchase.date, purchase.supplierKey, identity, purchase.line, purchase.code].join('|');
+          const key = [location.id, purchase.date, purchase.supplierKey, purchase.documentType, identity, purchase.line, purchase.code].join('|');
           if (!unique.has(key)) unique.set(key, purchase);
         }
       }
@@ -3740,20 +3770,17 @@ function createApp(options = {}) {
     // La Concepción's purchase feed includes Central; search all stores by date,
     // not by warehouse, since receiving transfers does not establish a purchase price.
     const purchases=buildDirectCostResolver(dateTo, [location.type==='warehouse'?'store-1':location.id], {purchaseOnly:true,latestAcrossLocations:true});
-    const api=require('./toteat-public-inventory').publicInventoryCostResolver(state,location.type==='warehouse'?(waste?4:1):(waste?3:2),dateTo,convertQuantityUnit,{positiveOnly:true});
     const directResolver={dateTo,resolve(code,unit,item) {
       const purchase=purchases.resolve(code,unit,item);
       if(purchase.source==='purchase')return purchase;
-      const masterCost=unitCostForRecipeUnit(item,unit);
-      if(masterCost>0)return {unitCost:masterCost,source:'master',sourceDate:state.masterObservedAt?.slice(0,10)||null,fallback:true};
-      const reference=api.resolve(code,unit);
-      return reference.unitCost>0?reference:{unitCost:0,source:'missing',sourceDate:null};
+      return {unitCost:0,source:'missing',sourceDate:null};
     }};
-    return buildCostResolver(dateTo,[],{catalog,recipes,directResolver,preferDirectMaster:true});
+    return buildCostResolver(dateTo,[],{catalog,recipes,directResolver,strictPurchase:true});
   }
 
   function buildCostResolver(dateTo, locationIds = [], options = {}) {
-    const directResolver = options.directResolver || buildDirectCostResolver(dateTo, locationIds, options);
+    const strictPurchase = options.strictPurchase === true || synchronizedOnly;
+    const directResolver = options.directResolver || buildDirectCostResolver(dateTo, locationIds, {...options, purchaseOnly: strictPurchase || options.purchaseOnly});
     const cutoffDate = directResolver.dateTo;
     let catalog = options.catalog || null;
     let recipes = options.recipes || null;
@@ -3785,12 +3812,18 @@ function createApp(options = {}) {
       const cacheKey = `${key}|${normalizedUnit(requestedUnit)}`;
       if (cache.has(cacheKey)) return cache.get(cacheKey);
 
-      const direct = directResolver.resolve(key, requestedUnit, catalogItem);
-      if (direct.source === 'purchase' || direct.source === 'toteat-api' || ((options.preferDirectMaster || synchronizedOnly || catalogByCode.get(key)?.type === 'ingredient') && direct.source === 'master')) {
+      let direct = directResolver.resolve(key, requestedUnit, catalogItem);
+      // The ingredient master is an exceptional fallback, never a product recipe replacement.
+      if (strictPurchase && direct.source === 'missing' && catalogItem?.type === 'ingredient') {
+        const masterCost = unitCostForRecipeUnit(catalogItem, requestedUnit);
+        if (masterCost > 0) direct = {unitCost:masterCost,source:'master',sourceDate:options.masterEffectiveDate || null,fallback:true,reason:'no-compatible-purchase'};
+      }
+      const recipe = recipesByCode.get(key);
+      const preparedProduct = recipe?.length && catalogItem?.type !== 'ingredient' && catalogItem?.stockManaged !== true;
+      if (((!strictPurchase || !preparedProduct) && direct.source === 'purchase') || (strictPurchase && catalogItem?.type === 'ingredient' && direct.source === 'master') || (!strictPurchase && (options.preferDirectMaster || catalogItem?.type === 'ingredient' || !recipe?.length) && direct.source === 'master')) {
         cache.set(cacheKey, direct);
         return direct;
       }
-      const recipe = recipesByCode.get(key);
       if (!recipe?.length) {
         cache.set(cacheKey, direct);
         return direct;
@@ -3809,6 +3842,7 @@ function createApp(options = {}) {
       nextAncestors.add(key);
       const components = [];
       let recipeCost = 0;
+      let costIncomplete = false;
       for (const line of recipe) {
         const ingredientKey = String(line.ingredientId || '').trim().toUpperCase();
         const ingredient = catalogByCode.get(ingredientKey) || null;
@@ -3825,9 +3859,12 @@ function createApp(options = {}) {
             reason: component.reason || 'recipe-component-missing',
             missingComponent: ingredientKey || line.ingredientId || null
           };
-          cache.set(cacheKey, missing);
-          return missing;
+          if (!strictPurchase) { cache.set(cacheKey, missing); return missing; }
+          costIncomplete = true;
+          components.push({code:ingredientKey, costSource:'missing', totalCost:0});
+          continue;
         }
+        if (component.costIncomplete) costIncomplete = true;
         const effectiveQuantity = quantity / yieldFactor;
         const lineCost = effectiveQuantity * component.unitCost;
         recipeCost += lineCost;
@@ -3866,6 +3903,7 @@ function createApp(options = {}) {
         sourceDate: sourceDates.at(-1) || null,
         fallback: false,
         recipeCode: key,
+        costIncomplete,
         components
       };
       cache.set(cacheKey, calculated);
@@ -4055,6 +4093,20 @@ function createApp(options = {}) {
       groups
     };
   }
+
+  app.get('/api/purchase-master-report', (req, res) => {
+    const { dateFrom, dateTo } = req.query;
+    if (!isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo) {
+      return res.status(400).json({ error: 'Selecciona una fecha inicial y final válidas.' });
+    }
+    try {
+      const locations = readLocations().locations.filter(location => location.status === 'active');
+      const payloads = locations.map(location => buildPurchasesPayload({ location: location.id, dateFrom, dateTo, masterReport: true }));
+      return res.json(require('./purchase-master-report').buildMasterReport(payloads, { from: dateFrom, to: dateTo }, req.query.includeProducts === 'true'));
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo generar el reporte maestro.' });
+    }
+  });
 
   app.get('/api/purchases', (req, res) => {
     try {
@@ -4300,7 +4352,7 @@ function createApp(options = {}) {
             const syrup=syrupSauceSubstitutionSummary(sales,from,to,recipes,ingredientCatalog,catalogAssignments,costResolver);
             const packaging=inventoryAvoidedPackagingSummary(location,sales,from,to,recipes,ingredientCatalog,costResolver);
             const internal=[];
-            for(const field of ['marketing','employees']) {
+            for(const field of ['marketing','employees','calibrations']) {
               if(!latestWeeklyFile(location.id,field))continue;
               let products;try{products=mergedConsumptionProducts(location.id,field,from,to);}catch(e){if(/No product sheet contains dates/.test(e.message))continue;throw e;}
               const ingredients=recipes&&ingredientCatalog?buildIngredientConsumption(products.products,recipes,ingredientCatalog,costResolver):{items:[]};
@@ -4316,7 +4368,7 @@ function createApp(options = {}) {
 
   function apiProjectionBasis(location,today,state,periodFrom) {
     const master=latestMasterFile('master-catalog',state.masterObservedAt?.slice(0,10)||today,location.id);
-    if(!master)throw Error('Actualiza los maestros compartidos para calcular el inventario API.');
+    if(!master)throw Error('Actualiza los maestros compartidos para calcular el inventario propio.');
     const catalog=parseIngredientCatalog(master.filePath),assignments=parseInventoryHierarchyAssignments(master.filePath);
     const recipes=resolveRecipes(state.masterObservedAt?.slice(0,10)||today,location.id).recipes;
     const cost=buildInventoryPurchaseCostResolver(today,location,state,{catalog,recipes});
@@ -4333,7 +4385,7 @@ function createApp(options = {}) {
     }
     const today = projectionToday();
     const state=synchronizedOnly?synchronizedStock(location.id):stockSync.current(location.id);
-    const apiProjection=state?.sourceKind==='public-inventory'?apiProjectionBasis(location,today,state):null;
+    const apiProjection=state?.sourceKind==='native-documents'?apiProjectionBasis(location,today,state):null;
     const apiItems=new Map((apiProjection?.items||[]).map(r=>[r.code+'|'+r.unit,r]));
     const parsed = apiProjection?{products:apiProjection.items,groups:[{date:apiProjection.to,metrics:[]}]}:mergedKardexData(location.id, 'kardex');
     if (!parsed?.groups.length) {
@@ -6362,6 +6414,7 @@ function createApp(options = {}) {
       location: publicLocation(location),
       marketing: { amount: 0, available: false },
       employees: { amount: 0, available: false },
+      calibrations: { amount: 0, available: false },
       waste: { amount: 0, available: false },
       inventoryDifference: { amount: 0, available: false },
       warnings: []
@@ -6393,7 +6446,7 @@ function createApp(options = {}) {
     }
     const costResolver = buildCostResolver(balanceDate, [location.id]);
     const consumption = {};
-    for (const [field, label] of [['marketing', 'Marketing'], ['employees', 'Colaboradores']]) {
+    for (const [field, label] of [['marketing', 'Marketing'], ['employees', 'Colaboradores'], ['calibrations', 'Calibraciones y bebidas desechadas']]) {
       try {
         if (!chronologicalSources(location.id, field).length) throw new Error('no hay archivo cargado');
         const mergedProducts = mergedConsumptionProducts(location.id, field, dateFrom, dateTo);
@@ -6404,7 +6457,8 @@ function createApp(options = {}) {
         );
         const ingredients = buildIngredientConsumption(products.products, recipes, inventoryCatalog, costResolver);
         consumption[field] = { available: true, products, ingredients };
-        result[field] = { amount: products.totalCost, available: true };
+        result[field] = { amount: products.totalCost, available: true, partial: !!products.productsWithoutMasterCost?.length };
+        if(products.productsWithoutMasterCost?.length) result.warnings.push(`Consumo de ${label.toLowerCase()}: subtotal parcial; ${products.productsWithoutMasterCost.length} productos sin costo de última compra completo.`);
       } catch (error) {
         consumption[field] = { available: false, error: error.message };
         result.warnings.push(`Consumo de ${label.toLowerCase()} no disponible para ${location.name}: ${error.message}.`);
@@ -6431,7 +6485,7 @@ function createApp(options = {}) {
           if(reference.source==='missing')throw Error(`Sin costo verificable para ${item.code}.`);
           adjustedDifferenceValue+=(item.finalInventory-item.theoreticalFinal-correction(item.code,item.unit,dateFrom,dateTo))*reference.unitCost;
         }
-        result.inventoryDifference={amount:-adjustedDifferenceValue,available:true,adjustedDifferenceValue,openingDate:dateFrom,closingDate:addDays(dateTo,1),closingBasis:'physical',source:'toteat-api'};
+        result.inventoryDifference={amount:-adjustedDifferenceValue,available:true,adjustedDifferenceValue,openingDate:dateFrom,closingDate:addDays(dateTo,1),closingBasis:'physical',source:'brewit-ledger'};
       } catch(error) { result.warnings.push(`Diferencia de inventario no disponible para ${location.name}: ${error.message}`); }
       return result;
     }
@@ -6650,6 +6704,8 @@ function createApp(options = {}) {
     const selectedStores = selectedStore ? [selectedStore] : stores;
     const costValuation = query.costValuation === 'historical' ? 'historical' : 'period-end';
     const warnings = [];
+    const weeklyOrderDiscounts = new Map();
+    const weeklyLineDiscounts = new Map();
     const catalogMaster = latestMasterFile('master-catalog', dateTo);
     const productHierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
     const extrasHierarchyMaster = latestMasterFile('extras-hierarchy', dateTo);
@@ -6708,6 +6764,9 @@ function createApp(options = {}) {
             const discount = numericValue(rowValue(row, ['Descuento'])) || 0;
             const grossLine = paidLine !== null ? paidLine : listLine + discount;
             const orderKey = `${location.id}:${salesTransactionKey(row)}`;
+            const reportedOrderDiscount = numericValue(rowValue(row, ['Descuentos']));
+            if (reportedOrderDiscount !== null) weeklyOrderDiscounts.set(orderKey, -reportedOrderDiscount / 1.19);
+            weeklyLineDiscounts.set(orderKey, (weeklyLineDiscounts.get(orderKey) || 0) - discount / 1.19);
             if (!orderTargets.has(orderKey)) {
               const orderGross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
               if (orderGross !== null) {
@@ -6848,7 +6907,7 @@ function createApp(options = {}) {
     }).sort((left, right) => right.netSales - left.netSales || left.label.localeCompare(right.label, 'es'));
     const revenueMetric = financialLineMetric(facts);
     revenueMetric.salesSharePercent = totalRevenue ? 100 : 0;
-    const inventoryByLocation = selectedStores.map(location => financialInventoryForLocation(location, dateFrom, dateTo, costCatalog, recipes));
+    const inventoryByLocation = query.skipInventory ? [] : selectedStores.map(location => financialInventoryForLocation(location, dateFrom, dateTo, costCatalog, recipes));
     inventoryByLocation.forEach(item => warnings.push(...item.warnings));
     const expenseFromInventory = (key, label) => {
       const entries = inventoryByLocation.map(item => ({ location: item.location, ...item[key] }));
@@ -6873,6 +6932,7 @@ function createApp(options = {}) {
     const expenses = [
       expenseFromInventory('marketing', 'Consumo de Marketing'),
       expenseFromInventory('employees', 'Consumo de Colaboradores'),
+      expenseFromInventory('calibrations', 'Calibraciones y bebidas desechadas'),
       expenseFromInventory('waste', 'Merma'),
       expenseFromInventory('inventoryDifference', 'Diferencia de Inventario ajustada'),
       {
@@ -6902,6 +6962,7 @@ function createApp(options = {}) {
       locations: stores.map(publicLocation),
       revenue: {
         total: revenueMetric,
+        discountsNet: [...weeklyLineDiscounts].reduce((sum, [key, amount]) => sum + (weeklyOrderDiscounts.get(key) ?? amount), 0),
         bars: financialGroupedMetrics(facts, 'barType', barLabels),
         ingredients: financialGroupedMetrics(facts, 'ingredientType', ingredientLabels),
         hierarchies,
@@ -6949,6 +7010,47 @@ function createApp(options = {}) {
       warnings: [...new Set(warnings)]
     };
   }
+
+  function buildWeeklyFinancialPayload(query) {
+    const payload = buildFinancialResultsPayload({ ...query, skipInventory: true });
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store'
+      && (!query.location || query.location === 'all' || query.location === location.id));
+    payload.inventorySummaries = stores.map(location => {
+      try {
+        // Use the same original sources and count boundaries as Procesar Kardex Propio.
+        // The next day's opening is the inclusive week's closing balance.
+        return buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
+          initialInventoryDate: query.dateFrom, finalInventoryDate: addDays(query.dateTo, 1) }).executiveSummary;
+      } catch (error) {
+        payload.warnings.push(`${location.name}: ${error.message}`);
+        return null;
+      }
+    });
+    return payload;
+  }
+
+  app.get('/api/financial-results/weekly/stream', async (req, res) => {
+    const location = String(req.query.location || 'all');
+    if (location !== 'all' && !readLocations().locations.some(item => item.id === location && item.status === 'active' && item.type === 'store')) {
+      return res.status(400).json({ error: 'Selecciona una cafetería válida.' });
+    }
+    const query = { ...req.query, today: projectionToday() };
+    res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
+    try {
+      const data = await require('./weekly-financial-results').buildWeeklyResultsWithProgress(query, buildWeeklyFinancialPayload,
+        progress => send({ type: 'progress', ...progress }), () => res.destroyed);
+      if (data) send({ type: 'result', data });
+    } catch (error) { send({ type: 'error', error: error.message || 'No se pudo procesar la vista.' }); }
+    finally { res.end(); }
+  });
+
+  app.get('/api/financial-results/weekly', (req, res) => {
+    try {
+      return res.json(require('./weekly-financial-results').buildWeeklyResults({ ...req.query, today: projectionToday() }, buildWeeklyFinancialPayload));
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+  });
 
   app.get('/api/financial-results', (req, res) => {
     try {
@@ -7062,7 +7164,8 @@ function createApp(options = {}) {
       { field: 'kardex', label: 'Kardex / tarjeta de inventario', applicable: true },
       { field: 'waste', label: 'Merma', applicable: true },
       { field: 'marketing', label: 'Consumo de marketing', applicable: location.type === 'store' },
-      { field: 'employees', label: 'Consumo de colaboradores', applicable: location.type === 'store' }
+      { field: 'employees', label: 'Consumo de colaboradores', applicable: location.type === 'store' },
+      { field: 'calibrations', label: 'Calibraciones y bebidas desechadas', applicable: location.type === 'store' }
     ];
     try {
       const sources = definitions.map(definition => {
@@ -7106,19 +7209,19 @@ function createApp(options = {}) {
     const location = activeLocation(req.query.location);
     if (!location) return res.status(400).json({ error: 'Selecciona una ubicación activa válida.' });
     const apiStock = stockSync.current(location.id);
-    const publicInventory = apiStock?.sourceKind === 'public-inventory';
-    const kardex = publicInventory ? {originalName:'Inventario API pública Toteat',source:'toteat-api'} : latestWeeklyFile(location.id, 'kardex');
+    const independentInventory = apiStock?.sourceKind === 'native-documents';
+    const kardex = independentInventory ? {originalName:'Inventario propio · documentos originales',source:'brewit-ledger'} : latestWeeklyFile(location.id, 'kardex');
     if (!kardex) return res.status(404).json({ error: 'No hay un archivo de Kardex disponible para esta ubicación.' });
     try {
       const today = projectionToday();
       const referenceDate = String(req.query.date || today);
       if (!isValidDate(referenceDate)) throw new Error('Selecciona una fecha de referencia válida.');
       if (referenceDate > today) throw new Error('La fecha de referencia no puede ser posterior a hoy.');
-      const apiDate = publicInventory ? (referenceDate < apiStock.range.to ? referenceDate : apiStock.range.to) : null;
-      const parsed = publicInventory ? require('./inventory-original-report').originalReportData(apiStock, location, {initialDate:apiDate,finalDate:apiDate,initialBasis:'initial',finalBasis:'final'}, apiDate, apiDate).parsed : mergedKardexData(location.id, 'kardex');
+      const apiDate = independentInventory ? (referenceDate < apiStock.range.to ? referenceDate : apiStock.range.to) : null;
+      const parsed = independentInventory ? require('./inventory-original-report').originalReportData(apiStock, location, {initialDate:apiDate,finalDate:apiDate,initialBasis:'initial',finalBasis:'final'}, apiDate, apiDate).parsed : mergedKardexData(location.id, 'kardex');
       const balanceDate = parsed.groups.filter(group => group.date <= referenceDate).at(-1)?.date;
       if (!balanceDate) throw new Error(`No hay un saldo de Kardex disponible al ${referenceDate} o en una fecha anterior.`);
-      const warnings = publicInventory ? ['Saldos de API Toteat valorizados a última compra disponible al corte (respaldo: maestro de ingredientes/productos, luego costo API positivo o receta); esta vista muestra el saldo informado por Toteat. Las compensaciones e internos de Brewit se calculan en el informe consolidado.', ...apiStock.issues.filter(i=>i.kind==='api-balance-discrepancy').map(i=>`${i.code} ${i.date}: ${i.message}`)] : [];
+      const warnings = independentInventory ? ['Saldos reconstruidos por Brewit desde tomas y movimientos originales. Valorización por compras o maestros. Incluye las compensaciones y consumos internos desde la última toma conocida.', ...new Set(apiStock.issues.map(i=>i.message))] : [];
       const catalogMaster = latestMasterFile('master-catalog', balanceDate, location.id);
       let catalog = null;
       let assignments = new Map();
@@ -7149,6 +7252,13 @@ function createApp(options = {}) {
           warnings.push(`${label}: ${error.message}`);
         }
       });
+      if(independentInventory) {
+        const basis=apiProjectionBasis(location,referenceDate,apiStock);
+        const quantities=new Map(basis.items.map(item=>[item.code+'|'+item.unit,item.currentInventory]));
+        const finalMetric=parsed.groups.find(group=>group.date===balanceDate)?.metrics.find(metric=>metric.field==='closing');
+        if(finalMetric)for(const product of parsed.products)if(quantities.has(product.code+'|'+product.unit))product.row[finalMetric.column]=quantities.get(product.code+'|'+product.unit);
+        warnings.push(...basis.warnings);
+      }
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       const { filePath, ...source } = kardex;
       return res.json({
@@ -7168,7 +7278,7 @@ function createApp(options = {}) {
           catalog,
           assignments,
           hierarchyLookups,
-          publicInventory ? buildInventoryPurchaseCostResolver(balanceDate, location, apiStock, {catalog}) : buildCostResolver(balanceDate, [location.id])
+          independentInventory ? buildInventoryPurchaseCostResolver(balanceDate, location, apiStock, {catalog}) : buildCostResolver(balanceDate, [location.id])
         )
       });
     } catch (error) {
@@ -7206,7 +7316,7 @@ function createApp(options = {}) {
   app.get('/api/inventory/consumption-summary', (req, res) => {
     const location = activeLocation(req.query.location);
     const field = String(req.query.field || '');
-    const labels = { marketing: 'Consumo de marketing', employees: 'Consumo de colaboradores' };
+    const labels = { marketing: 'Consumo de marketing', calibrations: 'Calibraciones y bebidas desechadas', employees: 'Consumo de colaboradores' };
     if (!location || location.type !== 'store') return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
     if (!Object.hasOwn(labels, field)) return res.status(400).json({ error: 'Selecciona un tipo de consumo válido.' });
     const stored = latestWeeklyFile(location.id, field);
@@ -7252,23 +7362,23 @@ function createApp(options = {}) {
     }catch(error){res.status(400).json({error:error.message});}
   });
 
-  app.post('/api/inventory/process', (req, res) => {
-    const location = activeLocation(req.body?.location);
-    if (!location) return res.status(400).json({ error: 'Select a valid active location.' });
-    const originalMode = synchronizedOnly || req.body?.source === 'originals';
-    if (req.body?.source && !['files', 'originals'].includes(req.body.source)) return res.status(400).json({ error: 'Fuente de inventario inválida.' });
+  function buildInventoryProcessPayload(body = {}) {
+    const location = activeLocation(body?.location);
+    if (!location) throw new Error('Select a valid active location.');
+    const originalMode = synchronizedOnly || body?.source === 'originals';
+    if (body?.source && !['files', 'originals'].includes(body.source)) throw new Error('Fuente de inventario inválida.');
     const kardex = originalMode ? { originalName: 'Fuentes originales Toteat', source: 'toteat-originals' } : latestWeeklyFile(location.id, 'kardex');
-    if (!kardex) return res.status(404).json({ error: 'No Kardex file is available for this location.' });
+    if (!kardex) throw Object.assign(new Error('No Kardex file is available for this location.'), { status: 404 });
     try {
-      const boundaryMode=synchronizedOnly || req.body?.criteriaMode==='count-boundaries';
-      const movementDateFrom = boundaryMode?req.body.initialInventoryDate:req.body?.movementDateFrom || req.body?.dateFrom;
-      const movementDateTo = boundaryMode?require('./inventory-boundaries').advance(req.body.finalInventoryDate,-1):req.body?.movementDateTo || req.body?.dateTo;
-      const hasCustomSelection = req.body?.initialInventoryDate || req.body?.finalInventoryDate;
+      const boundaryMode=synchronizedOnly || body?.criteriaMode==='count-boundaries';
+      const movementDateFrom = boundaryMode?body.initialInventoryDate:body?.movementDateFrom || body?.dateFrom;
+      const movementDateTo = boundaryMode?require('./inventory-boundaries').advance(body.finalInventoryDate,-1):body?.movementDateTo || body?.dateTo;
+      const hasCustomSelection = body?.initialInventoryDate || body?.finalInventoryDate;
       const selection = hasCustomSelection ? {
-        initialDate: req.body?.initialInventoryDate,
-        initialBasis: boundaryMode?'initial':req.body?.initialInventoryBasis,
-        finalDate: req.body?.finalInventoryDate,
-        finalBasis: boundaryMode?'initial':req.body?.finalInventoryBasis
+        initialDate: body?.initialInventoryDate,
+        initialBasis: boundaryMode?'initial':body?.initialInventoryBasis,
+        finalDate: body?.finalInventoryDate,
+        finalBasis: boundaryMode?'initial':body?.finalInventoryBasis
       } : null;
       const stock = originalMode ? (synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null;
       const original = originalMode ? (boundaryMode ? { parsed:null, excluded:[],physicalFinalItems:0 } : require('./inventory-original-report').originalReportData(stock, location, selection, movementDateFrom, movementDateTo)) : null;
@@ -7298,11 +7408,11 @@ function createApp(options = {}) {
         masterErrors.push(error.message);
       }
       const masterError = masterErrors.join(' ');
-      const costResolver = originalMode && stock.sourceKind === 'public-inventory'
+      const costResolver = originalMode
         ? buildInventoryPurchaseCostResolver(balanceDate, location, stock, {catalog:ingredientCatalog,recipes})
         : buildCostResolver(balanceDate, [originalMode && location.type === 'warehouse' ? 'store-1' : location.id], originalMode ? { catalog: ingredientCatalog, recipes } : {});
       const consumption = {};
-      for (const [field, label] of [['marketing', 'Consumo de marketing'], ['employees', 'Consumo de colaboradores']]) {
+      for (const [field, label] of [['marketing', 'Consumo de marketing'], ['employees', 'Consumo de colaboradores'], ['calibrations', 'Calibraciones y bebidas desechadas']]) {
         const stored = latestWeeklyFile(location.id, field);
         if (!stored) {
           consumption[field] = { label, available: false, error: 'No hay un archivo disponible.' };
@@ -7326,7 +7436,7 @@ function createApp(options = {}) {
       if (originalMode) {
         try {
           const originalWaste = require('./inventory-original-report').originalReportData(stock, location, boundaryMode ? {...selection,finalDate:movementDateTo} : selection, movementDateFrom, movementDateTo, { waste: true });
-          waste = { label: 'Merma', available: true, source: { originalName: 'Movimientos originales de bodega de merma' }, report: buildWasteSummary(originalWaste.parsed, movementDateFrom, movementDateTo, ingredientCatalog, stock.sourceKind === 'public-inventory' ? buildInventoryPurchaseCostResolver(balanceDate, location, stock, {catalog:ingredientCatalog,recipes,waste:true}) : costResolver) };
+          waste = { label: 'Merma', available: true, source: { originalName: 'Movimientos originales de bodega de merma' }, report: buildWasteSummary(originalWaste.parsed, movementDateFrom, movementDateTo, ingredientCatalog, originalMode ? buildInventoryPurchaseCostResolver(balanceDate, location, stock, {catalog:ingredientCatalog,recipes,waste:true}) : costResolver) };
         } catch (error) { waste = { label: 'Merma', available: false, error: error.message }; }
       } else if (storedWaste) {
         try {
@@ -7437,18 +7547,21 @@ function createApp(options = {}) {
         }
         report.totalCost = report.items.some(item => item.totalCost === null)
           ? null : report.items.reduce((sum, item) => sum + item.totalCost, 0);
+        require('./inventory-cost-summary').applyBoundaryCostSummary(executiveSummary, report, !!salesData.filesRead);
       }
+      const otherConsumables = require('./other-consumables').separateOtherConsumables(report, executiveSummary, !!salesData.filesRead);
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
-      return res.json({
+      return {
         location: publicLocation(location),
         source,
+        otherConsumables,
         provenance: originalMode ? {
-          mode: 'originals', label: stock.sourceKind === 'public-inventory' ? 'Inventario API pública Toteat' : 'Fuentes originales Toteat · informe provisional', capturedAt: stock.sourceCapturedAt,
+          mode: 'originals', label: 'Kardex propio Brewit · documentos originales', capturedAt: stock.sourceCapturedAt,
           range: stock.range, masterObservedAt: stock.masterObservedAt, dependencies: stock.dependencies,
           excluded: original.excluded, issues: stock.issues, assumptions: stock.assumptions,
           physicalFinalItems: original.physicalFinalItems,
-          note: stock.sourceKind === 'public-inventory' ? 'Cantidades desde la API pública Toteat. Valorización por última compra disponible hasta la fecha de corte, incluidas compras centrales; sin compra comparable, costo del maestro de ingredientes o productos; después, costo API positivo o receta calculada con costos disponibles. Sin antecedente verificable se indica Sin costo. Marketing y colaboradores usan sus archivos disponibles. Compensaciones aplicadas una sola vez. Los días sin cobertura no se consideran inventario cero; las incidencias se detallan en las fuentes. El saldo final es teórico cuando no hay toma física.' : 'Inventario y merma calculados desde fuentes originales. Marketing y colaboradores usan sus archivos disponibles. Consumo de ventas provisional; productos sin apertura conocida excluidos. Valoración estimada con el resolver de compras/maestros del informe, no costo histórico certificado de Toteat. El saldo final puede ser calculado cuando no existe toma física. El consumo base incluye productos y extras. Las sustituciones de leche, syrup/salsas y envases no usados se compensan una sola vez en el resumen ajustado, únicamente para las órdenes incorporadas al cálculo.'
+          note: 'Inventario y merma calculados desde fuentes originales. Marketing, colaboradores y calibraciones usan sus archivos disponibles. Consumo de ventas provisional; productos sin apertura conocida excluidos. Valoración a última compra compatible al corte; productos preparados mediante sus recetas con esa misma base. Solo sin compra compatible se usa el maestro de ingredientes como respaldo identificado. Sin ninguna de esas referencias se informa costo pendiente y subtotal parcial. El saldo final puede ser calculado cuando no existe toma física. El consumo base incluye productos y extras. Las sustituciones de leche, syrup/salsas y envases no usados se compensan una sola vez en el resumen ajustado, únicamente para las órdenes incorporadas al cálculo.'
         } : { mode: 'files', label: 'Archivos Kardex y Merma de Toteat' },
         waste,
         consumption,
@@ -7458,10 +7571,15 @@ function createApp(options = {}) {
         executiveSummary,
         masterSources: { recipes: publicMaster(recipeMaster), catalog: publicMaster(catalogMaster), error: masterError },
         report
-      });
+      };
     } catch (error) {
-      return res.status(400).json({ error: error.message || 'Could not process the Kardex.' });
+      throw error;
     }
+  }
+
+  app.post('/api/inventory/process', (req, res) => {
+    try { return res.json(buildInventoryProcessPayload(req.body)); }
+    catch (error) { return res.status(error.status || 400).json({ error: error.message || 'Could not process the Kardex.' }); }
   });
 
   function previousMonthPeriod(todayKey) {
@@ -7959,7 +8077,7 @@ function createApp(options = {}) {
               unitCost: costReference.unitCost,
               costSource: costReference.source,
               costSourceDate: costReference.sourceDate,
-              costAvailable: costReference.source !== 'missing',
+              costAvailable: costReference.source !== 'missing' && !costReference.costIncomplete,
               hierarchy,
               hierarchyPath: resolvedHierarchyPath
             });
@@ -8553,7 +8671,7 @@ function createApp(options = {}) {
         if(unknown) warnings.push(`Compras (${location.name}): ${unknown} líneas sin bodega reconocida no se asignaron a esta ubicación.`);
       }
       if(status.lastError) warnings.push(`Compras (${location.name}): la última sincronización tuvo problemas; se usa la última lectura guardada.`);
-      for(const [field,label] of [['marketing','Marketing'],['employees','Colaboradores']]) {
+      for(const [field,label] of [['marketing','Marketing'],['employees','Colaboradores'],['calibrations','Calibraciones y bebidas desechadas']]) {
         const file=latestWeeklyFile(location.id,field);
         if(file)sources.push({type:label+' · '+location.name,name:file.record?.originalName || 'Archivos cargados',updatedAt:file.record?.savedAt});
       }
@@ -8600,8 +8718,8 @@ function createApp(options = {}) {
 
     for (const location of auditedLocations) {
       const state = stockSync.current(location.id);
-      if (state?.sourceKind === 'public-inventory') {
-        sources.push({type:'Inventario · '+location.name,name:'Toteat API pública · saldos con compensaciones y consumos internos',updatedAt:state.sourceCapturedAt,range:state.range});
+      if (state?.sourceKind === 'native-documents') {
+        sources.push({type:'Inventario · '+location.name,name:'Kardex propio · documentos originales, compensaciones y consumos internos',updatedAt:state.sourceCapturedAt,range:state.range});
         try {
           const basis=apiProjectionBasis(location,dateTo,state,dateFrom);
           warnings.push(...basis.warnings.map(message=>`${location.name}: ${message}`));
@@ -8623,12 +8741,12 @@ function createApp(options = {}) {
             });
           }
         } catch(error) {
-          warnings.push(`Inventario API (${location.name}): ${error.message}`);
-          add('inventory',{title:`Inventario API no calculable: ${location.name}`,location:location.name,detail:error.message,action:'Actualiza las fuentes de inventario y los maestros compartidos.'});
+          warnings.push(`Inventario propio (${location.name}): ${error.message}`);
+          add('inventory',{title:`Inventario propio no calculable: ${location.name}`,location:location.name,detail:error.message,action:'Actualiza las fuentes de inventario y los maestros compartidos.'});
         }
         continue;
       }
-      sources.push({type:'Inventario · '+location.name,name:'Kardex histórico (sin inventario API sincronizado)'});
+      sources.push({type:'Inventario · '+location.name,name:'Kardex histórico (sin documentos originales sincronizados)'});
       let kardex;
       try { kardex = mergedKardexData(location.id, 'kardex'); } catch (error) {
         warnings.push(`Kardex (${location.name}): ${error.message}`);

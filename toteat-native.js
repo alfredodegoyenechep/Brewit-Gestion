@@ -1,6 +1,6 @@
 // Read-only adapter for Toteat's authenticated web application. This is not
 // the public token API. Authorization headers live only in this function.
-async function readNative(page, restaurant, { from, to, includeSuppliers = false, includeOperations = false, onProgress = () => {} } = {}) {
+async function readNative(page, restaurant, { from, to, includeSuppliers = false, includeOperations = false, operationKinds = ['counts', 'transfers', 'transformations'], onProgress = () => {} } = {}) {
   const pending = [], captured = {};
   let inventoryHeaders, masterHeaders;
   const observe = response => {
@@ -72,7 +72,8 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
     if (from && to && includeOperations) {
       result.range = { from, to, timezone: 'America/Santiago' };
       result.operations = {};
-      for (const [kind, route] of [['counts', 'take-inventory'], ['transfers', 'transfer-warehouse'], ['transformations', 'transformations']]) {
+      if (!Array.isArray(operationKinds) || !operationKinds.length || operationKinds.some(kind => !['counts', 'transfers', 'transformations'].includes(kind))) throw Error('Tipo de operación de inventario inválido.');
+      for (const [kind, route] of [['counts', 'take-inventory'], ['transfers', 'transfer-warehouse'], ['transformations', 'transformations']].filter(([kind]) => operationKinds.includes(kind))) {
         const documents = new Map();
         for (let start = from; start <= to;) {
         const finish = new Date(Math.min(Date.parse(to + 'T12:00:00Z'), Date.parse(start + 'T12:00:00Z') + 14 * 86400000)).toISOString().slice(0, 10);

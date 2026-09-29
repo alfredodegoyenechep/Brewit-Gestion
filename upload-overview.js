@@ -4,7 +4,7 @@ const { atomicJson } = require('./toteat-sales');
 const columns = [
   ['sales', 'Transacciones de venta'], ['payment-details', 'Detalle Pagos'],
   ['mercadopago', 'Transacciones MercadoPago'], ['marketing', 'Consumo de Marketing'],
-  ['employees', 'Consumo de Colaboradores'], ['purchases', 'Compras'],
+  ['employees', 'Consumo de Colaboradores'], ['calibrations', 'Calibraciones y bebidas desechadas'], ['purchases', 'Compras'],
   ['counts', 'Tomas de Inventario'], ['transformations', 'Transformaciones'], ['transfers', 'Transferencias entre bodegas']
 ];
 const masterLabels = [
@@ -12,7 +12,7 @@ const masterLabels = [
   ['ingredient-hierarchy', 'Jerarquía Ingredientes'], ['extras-hierarchy', 'Jerarquía Extras'],
   ['master-recipes', 'Recetas'], ['master-suppliers', 'Proveedores']
 ];
-function registerUploadOverview(app, { locations, sales, masters, stock, files, masterFiles, uploadsRoot, enableSync = false, now = () => Date.now() }) {
+function registerUploadOverview(app, { locations, sales, masters, stock, counts, files, masterFiles, uploadsRoot, enableSync = false, now = () => Date.now() }) {
   const settingsFile = uploadsRoot ? path.join(uploadsRoot, '.integrations/toteat-api/native-refresh.json') : null;
   let settings = settingsFile && fs.existsSync(settingsFile) ? JSON.parse(fs.readFileSync(settingsFile, 'utf8')) : {};
   const persist = () => { if (settingsFile) atomicJson(settingsFile, settings); };
@@ -37,7 +37,22 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
     for(const step of job.steps)if(['pending','running'].includes(step.state))Object.assign(step,{state:'error',message:'Proceso interrumpido por reinicio. Vuelve a actualizar.',finishedAt:job.finishedAt});
     saveJob();
   }
-  const publicJob = () => ({...job,summary:Object.fromEntries(['pending','running','complete','error','skipped'].map(state=>[state,job.steps.filter(step=>step.state===state).length]))});
+  const publicJob = () => {
+    const current = masters.sharedStatus();
+    const steps = job.steps.map(step => {
+      const isMasters = step.source === 'masters' || step.label === 'Maestros compartidos · La Concepción';
+      const recoveredAt = current.publishedAt || current.observedAt;
+      // Keep the persisted run intact; only reconcile a failed step with a
+      // verified successful publication that happened after that failure.
+      if (job.running || !isMasters || step.state !== 'error' || current.running || current.lastError
+        || !(Date.parse(recoveredAt) > Date.parse(step.finishedAt))) return step;
+      return { ...step, state: 'complete', recoveredAt, finishedAt: recoveredAt,
+        previousFailure: { message: step.message, finishedAt: step.finishedAt },
+        message: 'Problema resuelto en una actualización posterior. Maestros compartidos actualizados y guardados.' };
+    });
+    return { ...job, steps, recoveredCount: steps.filter(step => step.recoveredAt).length,
+      summary: Object.fromEntries(['pending','running','complete','error','skipped'].map(state => [state, steps.filter(step => step.state === state).length])) };
+  };
   const active = () => locations().filter(l => l.status === 'active');
   const latest = records => [...records].sort((a,b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')))[0];
   app.get('/api/uploads/overview', (req, res) => {
@@ -52,7 +67,8 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
           let status, updatedAt, origin = 'Archivo cargado';
           if (['sales','payment-details'].includes(key)) { status=sale; updatedAt=sale?.lastSuccess; }
           if (key === 'purchases') { status=purchase; updatedAt=purchase?.lastSuccess; }
-          if (['counts','transformations','transfers'].includes(key)) { status=inventory; updatedAt=inventory?.updatedAt; origin=inventory?.sourceKind==='public-inventory'?'Toteat API pública':'Toteat'; }
+          if (['counts','transformations','transfers'].includes(key)) { status=inventory; updatedAt=inventory?.updatedAt; origin=inventory?.sourceKind==='native-documents'?'Documentos originales Toteat':'Fuente histórica'; }
+          if (key === 'counts' && counts) { status=counts.status(source); updatedAt=status.updatedAt; origin='Toteat · documentos originales de tomas'; }
           if (updatedAt && origin === 'Archivo cargado') origin='Toteat API';
           if (!updatedAt && !['counts','transformations','transfers'].includes(key)) updatedAt=latest(files(source,key))?.savedAt;
           return { key, applicable: true, updatedAt: updatedAt || null, origin, sharedFrom:central?'La Concepción':null,
@@ -81,13 +97,16 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
       if(updateInventory){
         const from=stock.status(location.id).range?.from || s.from;
         add(`${location.name} · Inventario${location.id==='store-1'?' (incluye Bodega Principal y mermas)':' (incluye mermas)'}`,
-          ['Tomas de Inventario','Transformaciones','Transferencias entre bodegas'],'API pública · token',
+          (counts ? ['Transformaciones','Transferencias entre bodegas'] : ['Tomas de Inventario','Transformaciones','Transferencias entre bodegas']),'API interna · sesión autorizada',
           ()=>stock.synchronize(location.id,{from,to:new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Santiago'}).format(new Date())}),
+          s.configured&&from?null:'Configura la conexión y el período inicial.');
+        if (counts) add(`${location.name} · Tomas originales`, ['Tomas de Inventario'], 'API interna · sesión autorizada',
+          () => counts.synchronize(location.id, { from, to: new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago' }).format(new Date()) }),
           s.configured&&from?null:'Configura la conexión y el período inicial.');
       }
     }
     job={id:require('node:crypto').randomUUID(),trigger:updateTransactions?'manual':'scheduled',running:true,startedAt:new Date(now()).toISOString(),steps:plan.map(p=>p.step),finishedAt:null,
-      excluded:['Transacciones MercadoPago','Consumo de Marketing','Consumo de Colaboradores']};
+      excluded:['Transacciones MercadoPago','Consumo de Marketing','Consumo de Colaboradores','Calibraciones y bebidas desechadas']};
     saveJob();
     const mark = key => { settings[key]={...settings[key],lastAttempt:new Date(now()).toISOString()};persist(); };
     return (async()=>{
@@ -110,7 +129,7 @@ function registerUploadOverview(app, { locations, sales, masters, stock, files, 
     catch {res.status(500).json({error:'No se pudo iniciar o guardar el proceso de actualización.'});}
   });
   function tick() {
-    if(job.running || masters.sharedStatus().running || active().some(l=>l.type==='store'&&stock.status(l.id).running))return;
+    if(job.running || masters.sharedStatus().running || active().some(l=>l.type==='store'&&(stock.status(l.id).running || counts?.status(l.id).running)))return;
     const due=key=>settings[key]?.minutes && now()-(Date.parse(settings[key].lastAttempt)||0)>=settings[key].minutes*60000;
     const updateMasters=!!due('masters'),updateInventory=!!due('inventory');
     if(updateMasters||updateInventory)return refresh({updateMasters,updateInventory,updateTransactions:false});

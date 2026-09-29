@@ -7,7 +7,7 @@ test('overview distinguishes manual files, central source, schedules and sequent
  registerUploadOverview(app,{locations:()=>[{id:'store-1',name:'La Concepción',type:'store',status:'active'},{id:'store-2',name:'Lyon',type:'store',status:'active'},{id:'main-warehouse',name:'Bodega Principal',type:'warehouse',status:'active'}],sales,
  masters:{sharedStatus:()=>({running:false}),synchronizeShared:async()=>calls.push('masters')},stock:{status:()=>({range:{from:'2026-08-23'},updatedAt:'2026-09-22T11:00:00Z'}),synchronize:async id=>calls.push('stock:'+id)},files:()=>[{savedAt:'2026-09-20T10:00:00Z'}],masterFiles:()=>[{savedAt:'2026-09-21T10:00:00Z'}]});
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));const url=`http://127.0.0.1:${server.address().port}`;
- let data=await fetch(url+'/api/uploads/overview').then(r=>r.json());assert.equal(data.columns.length,9);assert.equal(data.masters.length,6);assert.equal(data.rows[2].cells[0].applicable,false);assert.equal(data.rows[2].cells[5].sharedFrom,'La Concepción');assert.equal(data.rows[0].cells[3].origin,'Archivo cargado');assert.equal(data.rows[1].schedules[0].enabled,false);
+ let data=await fetch(url+'/api/uploads/overview').then(r=>r.json());assert.equal(data.columns.length,10);assert.equal(data.masters.length,6);assert.equal(data.rows[2].cells[0].applicable,false);assert.equal(data.rows[2].cells.find(c=>c.key==='purchases').sharedFrom,'La Concepción');assert.equal(data.rows[0].cells[3].origin,'Archivo cargado');assert.equal(data.rows[1].schedules[0].enabled,false);
  assert.equal((await fetch(url+'/api/uploads/refresh',{method:'POST'})).status,202);
  for(let i=0;i<20;i++){data=await fetch(url+'/api/uploads/overview').then(r=>r.json());if(!data.job.running)break;}
  assert.deepEqual(calls,['masters','sales:store-1','purchases:store-1','stock:store-1','sales:store-2','purchases:store-2','stock:store-2']);assert.ok(data.job.steps.every(s=>s.state==='complete'));
@@ -41,4 +41,21 @@ test('refresh exposes the full plan before execution and preserves success and f
  const app2=express();app2.use(express.json());registerUploadOverview(app2,deps);
  const server2=app2.listen(0,'127.0.0.1');await new Promise(r=>server2.once('listening',r));t.after(()=>new Promise(r=>server2.close(r)));
  const restored=await fetch(`http://127.0.0.1:${server2.address().port}/api/uploads/overview`).then(r=>r.json());assert.equal(restored.job.id,job.id);assert.equal(restored.job.summary.error,1);
+});
+
+test('failed master step reflects a later successful publication without overwriting the original run', async t => {
+ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-master-recovered-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const file=path.join(root,'.integrations/toteat-api/last-refresh.json');fs.mkdirSync(path.dirname(file),{recursive:true});
+ const failed={running:false,finishedAt:'2026-09-28T18:10:31Z',steps:[{label:'Maestros compartidos · La Concepción',state:'error',message:'Autenticación vencida',finishedAt:'2026-09-28T18:00:42Z'},{label:'Compras',state:'error',message:'Otro problema',finishedAt:'2026-09-28T18:01:00Z'}]};
+ fs.writeFileSync(file,JSON.stringify(failed));
+ let master={running:false,lastError:null,publishedAt:'2026-09-28T18:17:31Z'};
+ const app=express();registerUploadOverview(app,{uploadsRoot:root,locations:()=>[],sales:{},stock:{},files:()=>[],masterFiles:()=>[],masters:{sharedStatus:()=>master}});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));
+ const get=async()=> (await fetch(`http://127.0.0.1:${server.address().port}/api/uploads/overview`).then(r=>r.json())).job;
+ let job=await get();assert.equal(job.steps[0].state,'complete');assert.equal(job.steps[0].previousFailure.message,'Autenticación vencida');assert.equal(job.recoveredCount,1);assert.equal(job.summary.error,1);assert.equal(job.summary.complete,1);
+ assert.deepEqual(JSON.parse(fs.readFileSync(file)),failed);
+ master.lastError='Rechazado';assert.equal((await get()).steps[0].state,'error');
+ master.lastError=null;master.publishedAt='2026-09-28T17:00:00Z';assert.equal((await get()).steps[0].state,'error');
+ master.publishedAt='2026-09-28T18:17:31Z';master.running=true;assert.equal((await get()).steps[0].state,'error');
 });
