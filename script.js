@@ -11090,7 +11090,22 @@ async function loadUploadOverview() {
           td.classList.add('upload-record-cell');td.tabIndex=0;td.setAttribute('aria-label',`Ver registros: ${label}`);
           td.addEventListener('click',event=>{if(!event.target.closest('button'))open();});
           td.addEventListener('keydown',event=>{if(event.target===td&&['Enter',' '].includes(event.key)){event.preventDefault();open();}});
-          const view=cell('button','Ver registros');view.type='button';view.className='icon-button';view.setAttribute('aria-label',`Ver registros: ${label}`);view.addEventListener('click',event=>{event.stopPropagation();open();});td.append(view);
+          const view=cell('button','Ver registros');view.type='button';view.className='icon-button';view.setAttribute('aria-label',`Ver registros: ${label}`);view.addEventListener('click',event=>{event.stopPropagation();open();});
+          const actions=document.createElement('div');actions.className='upload-record-actions';actions.append(view);
+          if(item.refreshable){
+            const refresh=cell('button','');refresh.type='button';refresh.className='icon-button upload-source-refresh';
+            const related=['sales','payment-details'].includes(item.key)?'Incluye ventas y detalle de pagos.':['transformations','transfers'].includes(item.key)?'Incluye las operaciones de inventario vinculadas.':'';
+            refresh.title=`Actualizar ${label}. ${related}${item.sharedFrom?' Fuente compartida con '+item.sharedFrom+'.':''}`;
+            refresh.setAttribute('aria-label',refresh.title);
+            refresh.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>';
+            refresh.disabled=data.job.running || data.masterStatus.running || data.rows.some(r=>r.cells.some(c=>c.running));
+            refresh.addEventListener('click',async event=>{
+              event.stopPropagation();refresh.disabled=true;
+              try{await apiRequest('/api/uploads/refresh-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:location.id,key:item.key})});await loadUploadOverview();}
+              catch(error){setStatus(el('upload-overview-status'),error.message,'error');refresh.disabled=false;}
+            });actions.append(refresh);
+          }
+          td.append(actions);
           td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
         }row.append(td);
       }body.append(row);
@@ -11113,6 +11128,8 @@ async function loadUploadOverview() {
     }el('upload-refresh-steps').replaceChildren(progressHead,progressBody);
     const otherRunning=data.rows.filter(r=>r.cells.some(c=>c.running)).map(r=>r.name);
     setStatus(el('upload-overview-status'),data.job.running?'Actualización en curso…':otherRunning.length?'Hay actualizaciones independientes en curso: '+otherRunning.join(', '):data.masterStatus.running?'Maestros actualizándose desde otra vista…':data.job.finishedAt?'Último proceso finalizado: '+date(data.job.finishedAt):'');
+    const loginRequired=job.steps.find(step=>step.state==='error'&&step.code==='TOTEAT_AUTH_REQUIRED');
+    if(loginRequired)setStatus(el('upload-overview-status'),loginRequired.message,'error');
   } catch(error){setStatus(el('upload-overview-status'),error.message,'error');}finally{uploadOverviewBusy=false;}
 }
 document.getElementById('open-previous-upload')?.addEventListener('click',()=>setView('uploads-previous'));

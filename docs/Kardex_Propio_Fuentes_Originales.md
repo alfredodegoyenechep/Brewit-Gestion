@@ -148,3 +148,11 @@ El resumen presenta cuatro filas: consumo de marketing, consumo de colaboradores
 En el resumen ejecutivo, los títulos de indicadores usan el color normal y los importes de Total se presentan como costos negativos en rojo (cero se conserva como cero). Es una convención de presentación; no cambia el cálculo original ni la explicación del Contexto. Excel e impresión conservan esta presentación.
 
 El porcentaje de cada indicador del resumen se calcula con el importe negativo mostrado en Total dividido por la venta neta del período. La última fila suma esos importes y calcula su porcentaje sobre la misma venta neta, sin sumar porcentajes redondeados. Si faltan indicadores se identifica como TOTAL DISPONIBLE; sin venta neta el porcentaje es «—». Se elimina el comentario inferior «Criterio de compensación».
+
+## Transferencias entre locales (30-09-2026)
+
+La sincronización de inventario incorpora ahora las solicitudes originales de `/mw/newmarket/solicitudes`, consultadas mediante el servicio autenticado de la aplicación de Toteat. Se leen las listas de recepción y despacho por fecha de creación y recepción, además de pendientes, y el detalle de cada solicitud por ID. Solo se ejecutan lecturas; no se invoca el generador de movimientos de Toteat.
+
+Los documentos recibidos (estado 30) generan entrada según cantidad, unidad y bodega de la lista de recepción (fase 3), y salida según la lista de despacho (fase 2). La fecha de salida utiliza la fecha de movimiento de despacho si está registrada; en su ausencia utiliza la recepción. Un documento aún despachado (estado 20) solo genera salida con evidencia explícita de movimiento de despacho. Pendientes y cancelados no se contabilizan. Se preservan cantidades diferentes entre envío y recepción. Los identificadores de documento y línea evitan duplicación entre consultas sin eliminar líneas legítimas repetidas.
+
+Las referencias desconocidas, detalles incompletos o configuraciones de descuento de recetas no conciliadas impiden publicar una versión nueva. Las versiones anteriores sin esta fuente incluyen una incidencia de cobertura hasta que se sincronizan de nuevo. Las transferencias internas de bodega permanecen en sus columnas separadas.

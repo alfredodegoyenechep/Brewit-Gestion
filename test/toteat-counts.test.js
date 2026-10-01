@@ -48,3 +48,18 @@ test('record and overview endpoints expose original count documents as their own
   const overview = await fetch(base + '/api/uploads/overview').then(r => r.json());
   assert.match(overview.rows.find(r => r.id === 'store-1').cells.find(c => c.key === 'counts').origin, /documentos originales/);
 });
+
+test('expired session gives actionable feedback, preserves counts and clears after login', async t => {
+ let expired=true;
+ const sync=createCountSync({...options(t),reader:async()=>{
+  if(expired)throw Object.assign(Error('private browser details'),{code:'TOTEAT_AUTH_REQUIRED',loginOpened:true});
+  return source();
+ }});
+ sync.publish('store-1',source());
+ await assert.rejects(sync.synchronize('main-warehouse',source().range),e=>e.code==='TOTEAT_AUTH_REQUIRED'&&e.loginOpened);
+ assert.match(sync.status('main-warehouse').error,/Dejamos abierta/);
+ assert.doesNotMatch(sync.status('main-warehouse').error,/private/);
+ assert.equal(sync.current('main-warehouse').documents.length,2);
+ expired=false;await sync.synchronize('main-warehouse',source().range);
+ assert.equal(sync.status('main-warehouse').error,null);
+});

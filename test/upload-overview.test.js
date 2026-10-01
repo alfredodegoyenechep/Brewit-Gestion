@@ -59,3 +59,36 @@ test('failed master step reflects a later successful publication without overwri
  master.lastError=null;master.publishedAt='2026-09-28T17:00:00Z';assert.equal((await get()).steps[0].state,'error');
  master.publishedAt='2026-09-28T18:17:31Z';master.running=true;assert.equal((await get()).steps[0].state,'error');
 });
+
+test('individual refresh targets only the selected local source and rejects manual or inactive cells', async t => {
+ const calls=[],status=()=>({configured:true,from:'2026-08-23'}),app=express();app.use(express.json());
+ let release;
+ const record=kind=>async id=>{calls.push(`${kind}:${id}`);if(release)await release.promise;};
+ registerUploadOverview(app,{
+  locations:()=>[{id:'store-1',name:'Concepción',type:'store',status:'active'},{id:'store-2',name:'Lyon',type:'store',status:'active'},{id:'main-warehouse',name:'Bodega',type:'warehouse',status:'active'}],
+  sales:{status,synchronize:record('sales'),purchases:{status,synchronize:record('purchases')}},
+  masters:{sharedStatus:()=>({}),synchronizeShared:record('masters')},
+  stock:{status:()=>({range:{from:'2026-08-23'}}),synchronize:record('stock')},
+  counts:{status:()=>({}),synchronize:record('counts')},files:()=>[],masterFiles:()=>[]
+ });
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));
+ const url=`http://127.0.0.1:${server.address().port}`;
+ const overview=()=>fetch(url+'/api/uploads/overview').then(r=>r.json());
+ const post=(location,key)=>fetch(url+'/api/uploads/refresh-source',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location,key})});
+ const finish=async()=>{for(let i=0;i<50;i++){const data=await overview();if(!data.job.running)return data;}assert.fail('refresh did not finish');};
+ const data=await overview();
+ assert.deepEqual(data.rows[0].cells.filter(c=>c.refreshable).map(c=>c.key),['sales','payment-details','purchases','counts','transformations','transfers']);
+ assert.equal(data.rows[2].cells[0].refreshable,undefined);
+ for(const [location,key,expected] of [['store-2','sales','sales:store-2'],['store-1','payment-details','sales:store-1'],['store-2','purchases','purchases:store-2'],['store-2','counts','counts:store-2'],['store-1','transformations','stock:store-1'],['store-2','transfers','stock:store-2'],['main-warehouse','purchases','purchases:store-1'],['main-warehouse','counts','counts:store-1']]){
+  calls.length=0;assert.equal((await post(location,key)).status,202);
+  const result=await finish();assert.deepEqual(calls,[expected]);assert.equal(result.job.steps.length,1);assert.equal(result.job.summary.complete,1);
+ }
+ calls.length=0;
+ for(const key of ['mercadopago','marketing','employees','calibrations','unknown'])assert.equal((await post('store-1',key)).status,400);
+ assert.equal((await post('main-warehouse','sales')).status,400);assert.equal((await post('inactive','purchases')).status,400);assert.deepEqual(calls,[]);
+ release={};release.promise=new Promise(r=>release.resolve=r);
+ assert.equal((await post('store-1','counts')).status,202);assert.equal((await post('store-2','purchases')).status,409);
+ release.resolve();release=null;await finish();
+ calls.length=0;assert.equal((await fetch(url+'/api/uploads/refresh',{method:'POST'})).status,202);await finish();
+ assert.deepEqual(calls,['masters:undefined','sales:store-1','purchases:store-1','stock:store-1','counts:store-1','sales:store-2','purchases:store-2','stock:store-2','counts:store-2']);
+});

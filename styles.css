@@ -8893,3 +8893,41 @@ button:disabled {
 .financial-warning-evidence table { min-width: 850px; }
 .financial-warning-evidence th { position: sticky; top: 0; background: var(--panel); }
 .financial-warning-evidence td { vertical-align: top; }
+
+.upload-record-actions { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
+.upload-source-refresh { display:inline-flex; align-items:center; justify-content:center; padding:10px; flex-shrink:0; }
+
+/* Increase financial workspace text by 3px without changing other views. */
+#financial-results-workspace { font-size: calc(16px * var(--font-scale) + 3px); }
+#financial-results-workspace h3 { font-size: calc(18.72px * var(--font-scale) + 3px); }
+#financial-results-workspace .panel-eyebrow { font-size: calc(11px * var(--font-scale) + 3px); }
+#financial-results-workspace .panel-description,
+#financial-results-workspace .form-status { font-size: calc(13px * var(--font-scale) + 3px); }
+#financial-results-workspace .chip { font-size: calc(10px * var(--font-scale) + 3px); }
+#financial-results-workspace input,
+#financial-results-workspace select,
+#financial-results-workspace button { font-size: calc(13.333333px + 3px); }
+#financial-results-workspace .workspace-tabs button { font-size: inherit; }
+#financial-results-workspace .financial-warning-detail-button { font-size: inherit; }
+#financial-results-workspace .financial-weekly-table thead th { font-size: 15px; }
+#financial-results-workspace .financial-results-heading h2 { font-size: calc(30px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-results-filters label { font-size: calc(10px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-summary-card span { font-size: calc(10px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-summary-card strong { font-size: calc(22px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-general-expenses-selector label,
+#financial-results-workspace .financial-general-expense-field { font-size: calc(10px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-general-expenses-table { font-size: calc(11px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-table { font-size: calc(12px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-table th { font-size: calc(9px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-line-context { font-size: calc(9px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-result-row td { font-size: calc(13px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-statement-table .financial-highlight-row td { font-size: calc(14px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-future-note { font-size: calc(12px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-hierarchy-item summary > strong { font-size: calc(13px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-hierarchy-metrics small { font-size: calc(8px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-hierarchy-metrics b { font-size: calc(11px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-hierarchy-detail h4 { font-size: calc(12px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-table.compact { font-size: calc(10px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-warnings h3 { font-size: calc(14px * var(--font-scale) + 3px); }
+#financial-results-workspace .financial-warnings li { font-size: calc(12px * var(--font-scale) + 3px); }
+body:has(#financial-results-workspace:not([style*="display: none"]):not([style*="display:none"])) .source-policy-notice { font-size: calc(16px * var(--font-scale) + 3px); }

@@ -498,6 +498,7 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
     await page.goto(restaurantsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await ensureActiveSession(page, []);
+    if (await authenticationRequired(page)) throw automationError('Inicia sesión en Toteat para continuar.', 'TOTEAT_AUTH_REQUIRED', 409);
     const rows = page.locator('tr[ng-click*="selecciona"]');
     const count = await rows.count();
     const expected = {
@@ -824,6 +825,28 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
           if (!page) { page = await context.newPage(); ownsPage = true; }
           await selectRestaurantRecord(page, restaurant);
           return await readNative(page, restaurant, options);
+        } catch (error) {
+          if (error.code === 'TOTEAT_AUTH_REQUIRED' || (page && !page.isClosed() && await authenticationRequired(page).catch(() => false))) {
+            let opened = false;
+            try {
+              // A local persistent profile must be visible for the user to sign in.
+              if (!browser && !contexts.has('master-downloads')) {
+                await context.close();
+                context = await launch('master-downloads', false);
+                contexts.set('master-downloads', context);
+                context.on('close', () => contexts.delete('master-downloads'));
+                page = context.pages()[0] || await context.newPage();
+              }
+              await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+              await page.bringToFront();
+              ownsPage = false;
+              opened = true;
+            } catch { /* Still report authentication accurately if opening fails. */ }
+            const failure = automationError(require('../toteat-session').sessionMessage(opened), 'TOTEAT_AUTH_REQUIRED', 409);
+            failure.loginOpened = opened;
+            throw failure;
+          }
+          throw error;
         } finally {
           if (ownsPage) await page?.close().catch(() => {});
           if (browser) await browser.close().catch(() => {});

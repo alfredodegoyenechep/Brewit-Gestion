@@ -218,11 +218,12 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
           TOTEAT_RESTAURANT_NOT_FOUND: 'La sesión de Toteat no permite seleccionar La Concepción. Revisa el acceso al local en el navegador conectado.',
           TOTEAT_RESTAURANT_SWITCH_FAILED: 'No se confirmó La Concepción como local activo. Vuelve a seleccionar el local en Toteat.'
         };
-        sharedError = (error.safeMasterMessage || reasons[error.code] || 'No se completó la lectura o publicación de todos los maestros de La Concepción. Revisa la sesión del navegador conectado de Toteat.') + ' Se conserva la versión compartida anterior.';
+        sharedError = (error.code === 'TOTEAT_AUTH_REQUIRED' ? require('./toteat-session').sessionMessage(error.loginOpened) : error.safeMasterMessage || reasons[error.code] || 'No se completó la lectura o publicación de todos los maestros de La Concepción. Revisa la sesión del navegador conectado de Toteat.') + ' Se conserva la versión compartida anterior.';
         lastFailedAt = clock().toISOString();
         saveAttempt();
         const failure = Error(sharedError);
         failure.safeMasterMessage = sharedError;
+        if(error.code === 'TOTEAT_AUTH_REQUIRED') Object.assign(failure,{code:error.code,loginOpened:error.loginOpened});
         throw failure;
       } finally { sharedTask = null; }
       return sharedStatus();

@@ -51,9 +51,12 @@ function createCountSync({ uploadsRoot, activeLocation, credentials, reader }) {
         const source = await reader({ restaurantId: String(config.restaurantId), localId: String(config.localId) },
           { from: range.from, to: range.to, includeOperations: true, operationKinds: ['counts'] });
         return publish(key, source);
-      } catch {
-        const error = 'No se pudieron actualizar las tomas originales. Revisa la sesión autorizada de Toteat; se conserva la última versión completa.';
-        atomicJson(path.join(root, key, 'attempt.json'), { error }); throw Error(error);
+      } catch (cause) {
+        const error = cause.code === 'TOTEAT_AUTH_REQUIRED' ? require('./toteat-session').sessionMessage(cause.loginOpened) : 'No se pudieron actualizar las tomas originales. Revisa la sesión autorizada de Toteat; se conserva la última versión completa.';
+        atomicJson(path.join(root, key, 'attempt.json'), { error, code: cause.code === 'TOTEAT_AUTH_REQUIRED' ? cause.code : null });
+        const failure = Error(error);
+        if (cause.code === 'TOTEAT_AUTH_REQUIRED') Object.assign(failure, { code: cause.code, loginOpened: cause.loginOpened });
+        throw failure;
       } finally { jobs.delete(key); }
     });
     jobs.set(key, task); return task;

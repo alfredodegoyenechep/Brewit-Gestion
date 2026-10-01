@@ -94,6 +94,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         }
         result.operations[kind] = [...documents.values()];
       }
+      if(operationKinds.includes('transfers')) result.localTransfers=await require('./toteat-local-transfers').readLocalTransfers(page,restaurant,from,to);
     } else if (from && to) {
       const get = async (route, params) => {
         const url = new URL(route, 'https://inventory.toteat.com');

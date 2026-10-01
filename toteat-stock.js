@@ -54,7 +54,8 @@ function normalizeOperations(source, canonicalProducts) {
       }
     }
   }
-  return {documents,lines,issues};
+  const local=require('./toteat-local-transfers').normalizeLocalTransfers(source,canonicalProducts);
+  return {documents:[...documents,...local.documents],lines:[...lines,...local.lines],issues:[...issues,...local.issues]};
 }
 function buildLedger(source, canonicalProducts, sales, purchases) {
   const data=normalizeOperations(source,canonicalProducts), issues=[...data.issues], lines=data.lines.filter(l=>l.active);
@@ -87,12 +88,13 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
     catch(e){issues.push({kind:'sale-excluded',document:order,message:e.message});}
   }
   const groups=new Map();
-  for(const line of lines.filter(l=>inRange(l.date))){const key=`${line.warehouse}|${line.code}|${line.unit}`;const group=groups.get(key)||[];group.push(line);groups.set(key,group);}
+  for(const line of lines.filter(l=>inRange(l.date)||(l.column==='count'&&l.date===require('./inventory-boundaries').advance(to,1)))){const key=`${line.warehouse}|${line.code}|${line.unit}`;const group=groups.get(key)||[];group.push(line);groups.set(key,group);}
   const daily=[];
   for(const group of groups.values()){
     let balance=null;const identity=group[0];
-    for(let date=from;date<=to;date=new Date(Date.parse(date+'T12:00:00Z')+86400000).toISOString().slice(0,10)){
-      const today=group.filter(l=>l.date===date),counts=today.filter(l=>l.column==='count');
+    for(let date=from;date<=require('./inventory-boundaries').advance(to,1);date=new Date(Date.parse(date+'T12:00:00Z')+86400000).toISOString().slice(0,10)){
+      const today=group.filter(l=>l.date===date&&(date<=to||l.column==='count')),counts=today.filter(l=>l.column==='count');
+      if(date>to&&!counts.length)continue;
       const row={code:identity.code,name:identity.name,warehouse:identity.warehouse,date,unit:identity.unit,opening:balance,adjustment:null,physicalCount:false,...Object.fromEntries(fields.map(k=>[k,0]))};
       if(counts.length>1){issues.push({kind:'ambiguous-count',code:row.code,date,message:'Más de una toma aprobada por día; no se infiere su orden.'});balance=null;row.opening=null;}
       else if(counts.length){row.physicalCount=true;row.adjustment=balance===null?null:counts[0].quantity-balance;row.opening=counts[0].quantity;balance=row.opening;}
@@ -105,7 +107,7 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
   const missingOpenings=daily.filter(r=>r.date===from&&r.opening===null).length;
   if(missingOpenings)issues.push({kind:'opening',message:`${missingOpenings} combinaciones de producto/bodega sin inventario inicial conocido; saldo no calculado hasta la primera toma.`});
   return {documents:data.documents,operationLines:data.lines,movements:lines.filter(l=>inRange(l.date)),daily,issues,
-    sourceKind:'native-documents',salesConsumptionPolicy:'base-plus-extras-before-compensation-v1',includedOrders,mode:'independent',assumptions:['Recetas compartidas de La Concepción observadas actualmente; consumo de ventas estimado, sin historia de recetas.', 'Consumo base incluye producto y extras; las sustituciones y envases se compensan una sola vez en el informe consolidado.', 'Ventas asignadas a bodega operativa código 2; confirmar configuración para nuevos locales.', 'Tomas aplicadas al inicio de su fecha operativa; documentos conservan fecha de registro y aprobación.', 'Compras por cantidad y fecha recibidas; las fechas sin hora se concilian por día.', 'Consumo de transformación redondeado por línea a tres decimales de stock, verificado en el piloto; se conserva también la cantidad exacta original.', 'Transferencias entre locales y reversos de consumo no están certificados por estas tres fuentes. No se infieren movimientos faltantes.', 'Esta tabla reconstruye cantidades. Los reportes valorizan con compras y maestros; no utilizan saldos ni costos del Kardex de Toteat.'],
+    sourceKind:'native-documents',salesConsumptionPolicy:'base-plus-extras-before-compensation-v1',includedOrders,mode:'independent',assumptions:['Recetas compartidas de La Concepción observadas actualmente; consumo de ventas estimado, sin historia de recetas.', 'Consumo base incluye producto y extras; las sustituciones y envases se compensan una sola vez en el informe consolidado.', 'Ventas asignadas a bodega operativa código 2; confirmar configuración para nuevos locales.', 'Tomas aplicadas al inicio de su fecha operativa; documentos conservan fecha de registro y aprobación.', 'Compras por cantidad y fecha recibidas; las fechas sin hora se concilian por día.', 'Consumo de transformación redondeado por línea a tres decimales de stock, verificado en el piloto; se conserva también la cantidad exacta original.', 'Transferencias entre locales según documentos de despacho y recepción; pendientes y canceladas no contabilizadas. No se infieren reversos de consumo faltantes.', 'Esta tabla reconstruye cantidades. Los reportes valorizan con compras y maestros; no utilizan saldos ni costos del Kardex de Toteat.'],
     range:source.range,sourceCapturedAt:source.capturedAt};
 }
 function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}){
@@ -117,7 +119,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     const state=read(path.join(root,key,pointer.version,'state.json'));
     if(state?.sourceKind==='native-documents') {
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
-      if(state.dependencies?.sales!==version('sales') || state.dependencies?.purchases!==version('purchases') || state.masterObservedAt!==masters()?.observedAt) {
+      if(state.dependencies?.sales!==version('sales') || state.dependencies?.purchases!==version('purchases') || state.dependencies?.counts!==version('original-counts') || state.masterObservedAt!==masters()?.observedAt) {
         publish(key,read(path.join(root,key,pointer.version,'original.json')));
         const latest=read(path.join(root,key,'current.json'));
         return read(path.join(root,key,latest.version,'state.json'));
@@ -131,15 +133,31 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     const master=masters();if(!master)throw Error('Actualiza primero los maestros compartidos de La Concepción.');
     const products=master.products.map(p=>({...p,custom_id:p.code,stock_enabled:p.stockManaged,stock_unit:p.stockUnit,name:{translations:{default:p.name}}}));
     if(source.kind==='public-inventory')throw Error('El Kardex propio requiere documentos originales; no admite saldos agregados de Toteat.');
-    const sales=dependency('sales',key),purchases=dependency('purchases',key),state=buildLedger(source,products,sales,purchases);
-    Object.assign(state,{location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null}});
+    const sales=dependency('sales',key),purchases=dependency('purchases',key);
+    const countRoot=path.join(uploadsRoot,'.integrations/toteat-api/original-counts',key);
+    const countVersion=read(path.join(countRoot,'current.json'))?.version || null;
+    const countSource=countVersion?read(path.join(countRoot,countVersion,'original.json')):null;
+    let ledgerSource=source;
+    // Replace counts only inside the independently confirmed coverage. Keep the
+    // movement coverage unchanged; a next-day count is a physical closing boundary.
+    if(countSource && Date.parse(countSource.capturedAt)>=Date.parse(source.capturedAt)) {
+      if(countSource.restaurantId!==source.restaurantId||countSource.localId!==source.localId||countSource.localRef!==source.localRef)throw Error('Las tomas no corresponden al local del Kardex.');
+      const covered=d=>day(d.registration_date)>=countSource.range.from&&day(d.registration_date)<=countSource.range.to;
+      const fresh=countSource.operations.counts.filter(covered);
+      const ids=new Set(fresh.map(d=>String(d.id)));
+      ledgerSource={...source,products:[...source.products,...countSource.products.filter(p=>!source.products.some(old=>old.id===p.id))],operations:{...source.operations,
+        counts:[...source.operations.counts.filter(d=>!covered(d)&&!ids.has(String(d.id))),...fresh]}};
+    }
+    const state=buildLedger(ledgerSource,products,sales,purchases);
+    state.countsCapturedAt=ledgerSource!==source?countSource.capturedAt:source.capturedAt;
+    Object.assign(state,{location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
     const version=crypto.randomUUID(),directory=path.join(root,key,version);fs.mkdirSync(directory,{recursive:true,mode:0o700});
     atomicJson(path.join(directory,'original.json'),source);atomicJson(path.join(directory,'state.json'),state);
     // Separate durable local tables, all committed by one pointer.
     for(const kind of ['counts','transfers','transformations'])atomicJson(path.join(directory,`${kind}.json`),{documents:state.documents.filter(d=>d.kind===kind),lines:state.operationLines.filter(l=>l.source===kind)});
     atomicJson(path.join(root,key,'current.json'),{version});return status(key);
   }
-  function synchronize(id,range){const key=locationKey(id);if(jobs.has(key))throw Error('Ya hay una actualización en curso.');const from=day(range.from),to=day(range.to);if(from>to||Date.parse(to)-Date.parse(from)>366*86400000)throw Error('Selecciona un período de hasta un año.');const c=credentials()[key];if(!c)throw Error('Configura la conexión Toteat de este local.');errors.delete(key);const job=Promise.resolve().then(async()=>{try{const source=await reader({restaurantId:c.restaurantId,localId:c.localId},{from,to,includeOperations:true});return publish(key,source);}catch(e){errors.set(key,'No se pudo completar la actualización. Revisa los documentos originales y la sesión autorizada de Toteat; se conserva la versión anterior.');throw e;}finally{jobs.delete(key);}});jobs.set(key,job);return job;}
+  function synchronize(id,range){const key=locationKey(id);if(jobs.has(key))throw Error('Ya hay una actualización en curso.');const from=day(range.from),to=day(range.to);if(from>to||Date.parse(to)-Date.parse(from)>366*86400000)throw Error('Selecciona un período de hasta un año.');const c=credentials()[key];if(!c)throw Error('Configura la conexión Toteat de este local.');errors.delete(key);const job=Promise.resolve().then(async()=>{try{const source=await reader({restaurantId:c.restaurantId,localId:c.localId},{from,to,includeOperations:true});return publish(key,source);}catch(e){errors.set(key,e.code==='TOTEAT_AUTH_REQUIRED'?require('./toteat-session').sessionMessage(e.loginOpened):'No se pudo completar la actualización. Revisa los documentos originales y la sesión autorizada de Toteat; se conserva la versión anterior.');throw e;}finally{jobs.delete(key);}});jobs.set(key,job);return job;}
   function view(id) {
     const state=current(id); if(!state)return null;
     const wh=id==='main-warehouse'?new Set(state.warehouses.filter(w=>[1,4].includes(w.custom_id)).map(w=>w.id)):null;

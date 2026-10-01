@@ -38,3 +38,21 @@ test('extra sales include base and replacement once, leaving compensation to the
  const s=source();const p=[...products,{id:'drink',custom_id:'D',stock_enabled:false,stock_unit:'UN',types:['PRODUCT'],recipe:{quantity:1,portions_per_unit:1,ingredients:[{custom_id:'C',quantity:200,quantity_unit:'G',yield_rate:100}]}},{id:'extra',custom_id:'X',stock_enabled:false,stock_unit:'UN',types:['EXTRA'],recipe:{quantity:1,portions_per_unit:1,ingredients:[{custom_id:'C',quantity:50,quantity_unit:'G',yield_rate:100}]}}];
  const sales={...empty,payments:[{orderId:1,dateClosed:'2026-08-23T15:00:00',products:[{id:'D',lineId:1,quantity:2},{id:'X',lineId:2,lineReference:1,quantity:1}]}]};const r=buildLedger(s,p,sales,empty);assert.equal(r.daily.find(r=>r.code==='C').use,.45);assert.deepEqual(r.includedOrders,['1']);assert.equal(r.issues.filter(i=>i.kind==='sale-excluded').length,0);assert.equal(r.salesConsumptionPolicy,'base-plus-extras-before-compensation-v1');
 });
+
+test('independent counts rebuild the ledger and close the next day without extending movement coverage',t=>{
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-count-dependency-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const config={uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}})};
+ const sync=createStockSync({...config,masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))})});
+ const original=source();original.capturedAt='2026-09-21T00:00:00Z';sync.publish('store-1',original);
+ const counts=require('../toteat-counts').createCountSync(config);
+ const fresh=source();fresh.range.to='2026-08-25';fresh.operations.counts.push({...fresh.operations.counts[0],id:2,registration_date:'2026-08-25',take_inventory_products:[{id:3,product_ref:'coffee',quantity:0,measure_unit_ref:'KG'}]});
+ counts.publish('store-1',fresh);
+ let state=sync.current('store-1');assert.equal(state.range.to,'2026-08-24');assert.equal(state.daily.find(r=>r.date==='2026-08-25'&&r.code==='C').physicalCount,true);
+ const report=()=>require('../inventory-boundaries').countBoundaryReport(sync.current('store-1'),{type:'store'},'2026-08-23','2026-08-25');
+ assert.equal(report().items.find(i=>i.code==='C').finalInventory,0);assert.equal(report().items.find(i=>i.code==='S').finalInventory,null);
+ const version=state.dependencies.counts;assert.ok(version);assert.equal(sync.current('store-1').dependencies.counts,version);
+ assert.throws(()=>require('../inventory-boundaries').countBoundaryReport(state,{type:'store'},'2026-08-23','2026-08-26'),/cubrir/);
+ fresh.operations.counts[1].status='CANCELLED';counts.publish('store-1',fresh);
+ assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
+ fresh.operations.counts.pop();counts.publish('store-1',fresh);assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
+});
