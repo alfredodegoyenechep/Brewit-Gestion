@@ -1,12 +1,16 @@
 // Read-only adapter for Toteat's authenticated web application. This is not
 // the public token API. Authorization headers live only in this function.
 async function readNative(page, restaurant, { from, to, includeSuppliers = false, includeOperations = false, operationKinds = ['counts', 'transfers', 'transformations'], onProgress = () => {} } = {}) {
+  const checkAuthentication = response => {
+    if ([401, 403].includes(response.status())) throw Object.assign(Error('Inicia sesión en Toteat para continuar.'), { code: 'TOTEAT_AUTH_REQUIRED' });
+  };
   const pending = [], captured = {};
   let inventoryHeaders, masterHeaders;
   const observe = response => {
     const url = new URL(response.url());
     const kind = url.origin === 'https://api.toteat.com' && /^\/locals\/[^/]+\/(products|warehouses)\/$/.exec(url.pathname)?.[1];
     if (kind) pending.push((async () => {
+      checkAuthentication(response);
       if (!response.ok()) throw Error('Toteat no entregó el maestro completo.');
       const body = await response.json();
       if (!Array.isArray(body.results)) throw Error('Formato de maestro no reconocido.');
@@ -53,7 +57,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
     // endpoint explicitly so pre-opening locations still get complete masters.
     if (!captured.products && captured.localRef && masterHeaders?.authorization) {
       const response = await page.context().request.get(`https://api.toteat.com/locals/${encodeURIComponent(captured.localRef)}/products/`, { headers: masterHeaders, timeout: 45000, maxRedirects: 0 });
-      try { if (response.ok()) captured.products = (await response.json()).results; }
+      try { checkAuthentication(response); if (response.ok()) captured.products = (await response.json()).results; }
       finally { await response.dispose(); }
     }
     if (!captured.products || !captured.warehouses || (from && !inventoryHeaders?.authorization)) throw Error('La sesión web no permitió leer inventario. Inicia sesión en Toteat y vuelve a actualizar.');
@@ -64,6 +68,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
     if (includeSuppliers) {
       const response = await page.context().request.get(`https://api.toteat.com/locals/${encodeURIComponent(captured.localRef)}/providers/`, { headers: masterHeaders, timeout: 45000, maxRedirects: 0 });
       try {
+        checkAuthentication(response);
         if (!response.ok()) throw Error('No se pudo leer el maestro de proveedores.');
         result.suppliers = (await response.json()).results;
         if (!Array.isArray(result.suppliers) || result.suppliers.some(p => p.local !== captured.localRef)) throw Error('Proveedores incompletos o de otro local.');
@@ -81,6 +86,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         url.search = new URLSearchParams({ local_ref: captured.localRef, init_date: start, finish_date: finish });
         const response = await page.context().request.get(url.href, { headers: inventoryHeaders, timeout: 60000, maxRedirects: 0 });
         try {
+          checkAuthentication(response);
           if (!response.ok()) throw Error('No se pudo leer una fuente de inventario. Se conserva la versión anterior.');
           const body = await response.json();
           if (!Array.isArray(body.results) || body.next || (body.count != null && body.count !== body.results.length)) throw Error('La fuente de inventario está incompleta o paginada.');
@@ -101,6 +107,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         url.search = new URLSearchParams({ ...params, init_date: from, finish_date: to, timezone: 'America/Santiago' });
         const response = await page.context().request.get(url.href, { headers: inventoryHeaders, timeout: 60000, maxRedirects: 0 });
         try {
+          checkAuthentication(response);
           if (!response.ok()) throw Error('Toteat no completó la lectura de inventario. Se conserva la versión anterior.');
           return await response.json();
         } finally { await response.dispose(); }

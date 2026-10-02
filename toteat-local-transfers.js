@@ -62,7 +62,8 @@ function normalizeLocalTransfers(source, canonicalProducts) {
     const phase=outgoing?2:3,detail=d.det.listas?.[phase];
     if(!Array.isArray(detail))throw Error('Transferencia entre locales sin detalle de despacho o recepción.');
     const key=`${source.restaurantId}:${source.localId}:local-transfers:${d.key}`;
-    documents.push({key,id:d.key,kind:'transfers',transferKind:'local',status:'APPROVED',originalStatus:status,date:movementDate,createdAt:d.fc,approvedAt:d.det.fechas?.[phase]||null});
+    const partyLabel = role => { const p=d.det[role]; return p.name || p.np || p.nombre || `Restaurante ${p.ir} · Local ${p.il}`; };
+    documents.push({key,id:d.key,kind:'transfers',transferKind:'local',status:'APPROVED',originalStatus:status,date:movementDate,createdAt:d.fc,approvedAt:d.det.fechas?.[phase]||null,origin:partyLabel('proveedor'),destination:partyLabel('receptor'),observation:d.observation||d.comments||''});
     detail.forEach((line,index)=>{
       if(typeof line.cant!=='number'||!Number.isFinite(line.cant)||line.cant<0)throw Error('Cantidad de transferencia entre locales inválida.');
       if(line.cant===0)return;

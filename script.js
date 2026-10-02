@@ -8827,6 +8827,95 @@ function signedKardexMovement(item, definition) {
   return direction * (Number(item.movements[definition.key]) || 0);
 }
 
+function renderKardexTotalsNote(element, items, report) {
+  const missingCost = items.filter(item => !item.costAvailable).length;
+  const nonComparable = items.filter(item => item.difference == null).length;
+  const missingPhysical = items.filter(item => (report.selection ? item.finalInventory : item.physicalFinal) == null).length;
+  const observations = [];
+  if (missingCost) observations.push(`${missingCost} registro(s) sin costo`);
+  if (nonComparable) observations.push(`${nonComparable} registro(s) no comparables`);
+  if (missingPhysical) observations.push(`${missingPhysical} registro(s) sin toma física`);
+  element.hidden = !observations.length;
+  element.textContent = observations.length
+    ? `Observación: los totales suman los valores disponibles de las filas mostradas. ${observations.join('; ')}. Los valores faltantes no se incluyen en la suma.`
+    : '';
+}
+
+function makeInventoryItemRowInteractive(row, item) {
+  row.classList.add('inventory-item-row');
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'inventory-item-trigger';
+  button.textContent = item.code;
+  button.setAttribute('aria-label', `Ver movimientos de ${item.code}: ${item.name}`);
+  row.cells[0].replaceChildren(button);
+  row.addEventListener('click', () => openInventoryItemDetail(item, button));
+}
+
+async function openInventoryItemDetail(item, trigger) {
+  const state = inventoryKardexTableState;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'inventory-report-dialog inventory-item-dialog';
+  dialog.setAttribute('aria-label', `Detalle de ${item.code}: ${item.name}`);
+  const head = document.createElement('div'); head.className = 'preview-dialog-head';
+  const title = document.createElement('h2'); title.textContent = `${item.code} · ${item.name}`;
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'icon-button'; close.textContent = 'Cerrar';
+  close.addEventListener('click', () => dialog.close()); head.append(title, close); dialog.append(head);
+  const period = document.createElement('p');
+  period.textContent = `${state.location?.name || ''} · Movimientos: ${formatReportDate(state.report.dateFrom)} – ${formatReportDate(state.report.dateTo)} · Unidad: ${item.unit}`;
+  dialog.append(period);
+  const summary = document.createElement('dl'); summary.className = 'inventory-item-summary';
+  for (const column of state.columns.slice(2)) {
+    const label = document.createElement('dt'), value = document.createElement('dd');
+    label.textContent = column.label; value.textContent = column.value(item); summary.append(label,value);
+  }
+  dialog.append(summary);
+  const content = document.createElement('div'); content.textContent = 'Cargando documentos y movimientos…'; dialog.append(content);
+  dialog.addEventListener('close', () => { dialog.remove(); if (trigger?.isConnected) trigger.focus({preventScroll:true}); });
+  document.body.append(dialog); dialog.showModal(); close.focus();
+  const quantity = value => value == null ? 'No disponible' : formatKardexQuantity(value, 4);
+  const exactQuantity = value => value == null ? 'No disponible' : Number(value).toLocaleString('es-CL', { maximumFractionDigits: 12 });
+  const timestamp = value => !value ? 'No informado' : /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatReportDate(value) : new Date(value).toLocaleString('es-CL', { timeZone: 'America/Santiago' });
+  const addTable = (title, rows, columns, empty) => {
+    const section = document.createElement('section'), heading = document.createElement('h3'); heading.textContent = title; section.append(heading);
+    if (!rows.length) {const p=document.createElement('p');p.textContent=empty;section.append(p);content.append(section);return;}
+    const wrap=document.createElement('div');wrap.className='inventory-item-table-wrap';
+    const table=document.createElement('table');table.className='inventory-results-table';
+    const head=document.createElement('thead'),header=document.createElement('tr'),body=document.createElement('tbody');
+    for(const [label] of columns){const th=document.createElement('th');th.textContent=label;header.append(th);}head.append(header);
+    for(const row of rows){const tr=document.createElement('tr');for(const [,value] of columns){const td=document.createElement('td');td.textContent=value(row)??'No informado';tr.append(td);}body.append(tr);}
+    table.append(head,body);wrap.append(table);section.append(wrap);content.append(section);
+  };
+  try {
+    if (!state.detailReportId) throw Error('Vuelve a procesar el informe para cargar el detalle de sus movimientos.');
+    const detail = await apiRequest(`/api/inventory/item-detail?${new URLSearchParams({report:state.detailReportId,code:item.code,unit:item.unit})}`);
+    if (!dialog.isConnected) return;
+    content.replaceChildren();
+    const note=document.createElement('p');note.className='inventory-item-note';
+    note.textContent=`${detail.warehouse ? 'Bodega considerada: '+detail.warehouse+'. ' : ''}${detail.capturedAt ? 'Captura: '+timestamp(detail.capturedAt)+'. ' : ''}Las cantidades corresponden a la unidad del ítem; se conserva también la cantidad original. Las tomas fijan un saldo, no se suman como entradas. Los documentos pendientes o anulados no afectan el inventario. El consumo de ventas es estimado según recetas. Fechas de registro y aprobación en horario de Chile.`;
+    content.append(note);
+    if(!detail.documentsAvailable){const p=document.createElement('p');p.className='inventory-totals-note';p.textContent='Esta fuente contiene saldos agregados; no dispone de documentos individuales para desglosar los movimientos.';content.append(p);}
+    const movementColumns=[
+      ['Fecha',m=>formatReportDate(m.date)],['Movimiento',m=>m.type],['Documento',m=>m.document],
+      ['Cantidad',m=>`${quantity(m.quantity)} ${m.unit}`],['Efecto en saldo',m=>!m.active?'No contabilizado':m.count?'Fija saldo':`${quantity(m.effect)} ${m.unit}`],
+      ['Estado',m=>m.status],['Origen',m=>m.origin],['Destino',m=>m.destination],
+      ['Cantidad original',m=>`${exactQuantity(m.originalQuantity)} ${m.originalUnit}`],['Cantidad exacta convertida',m=>`${exactQuantity(m.exactQuantity)} ${m.unit}`],
+      ['Registrado',m=>timestamp(m.createdAt)],['Aprobado',m=>timestamp(m.approvedAt)],['Observación',m=>m.observation|| (m.estimated?'Consumo estimado según receta':'—')]
+    ];
+    addTable('Transferencias entre bodegas y locales',detail.movements.filter(m=>m.transfer),movementColumns,'No hay transferencias registradas para este ítem en la bodega y período considerados.');
+    addTable('Compras, ventas y transformaciones',detail.movements.filter(m=>!m.transfer&&!m.count),movementColumns,'No hay documentos de estos movimientos disponibles para el período.');
+    addTable('Tomas físicas y apertura',detail.movements.filter(m=>m.count),movementColumns,'No hay documentos de tomas físicas disponibles para las fechas consideradas.');
+    addTable('Marketing, colaboradores y calibraciones',detail.consumptionMovements || [],[
+      ['Fecha',r=>formatReportDate(r.date)],['Consumo',r=>r.type],['Cantidad',r=>`${quantity(r.quantity)} ${r.unit}`],['Efecto en saldo',r=>`${quantity(r.effect)} ${r.unit}`],['Producto consumido',r=>r.product],['Archivo',r=>r.source],['Cantidad en unidad original',r=>`${quantity(r.originalQuantity)} ${r.originalUnit}`]
+    ],'No hay consumos diarios disponibles para este ítem.');
+    addTable('Saldos diarios de las fuentes originales',detail.daily,[
+      ['Fecha',r=>formatReportDate(r.date)],['Saldo inicial',r=>quantity(r.opening)],['Saldo final',r=>quantity(r.closing)],['Toma física',r=>r.physicalCount?'Sí':'No'],['Ajuste por toma',r=>quantity(r.adjustment)]
+    ],'No hay saldos diarios disponibles.');
+    const explanation=document.createElement('p');explanation.className='inventory-item-note';
+    explanation.textContent='Los saldos diarios muestran el cálculo de las fuentes originales. Marketing, colaboradores, calibraciones y compensaciones se aplican en el consolidado. Los consumos de ingredientes se estiman con las recetas; las compensaciones por sustituciones y envases no utilizados figuran como cantidad total del período en el resumen del ítem.';content.append(explanation);
+    for(const issue of detail.issues){const p=document.createElement('p');p.className='inventory-totals-note';p.textContent=issue;content.append(p);}
+  } catch(error){if(dialog.isConnected){content.textContent=error.message;content.className='form-status error';}}
+}
+
 function renderInventoryKardexTable() {
   if (!inventoryKardexTableState) return;
   const { report, columns } = inventoryKardexTableState;
@@ -8925,6 +9014,7 @@ function renderInventoryKardexTable() {
         }
         row.appendChild(cell);
       }
+      makeInventoryItemRowInteractive(row, item);
       body.appendChild(row);
     }
   }
@@ -8937,8 +9027,8 @@ function renderInventoryKardexTable() {
     else if (column.totalValue) {
       cell.textContent = column.totalValue(items);
       const values = items.map(item => column.sortValue?.(item));
-      if (values.every(value => typeof value === 'number' && Number.isFinite(value)) && !/Sin |No comparable/.test(cell.textContent)) {
-        const total = values.reduce((sum, value) => sum + value, 0);
+      if (!/Sin |No comparable/.test(cell.textContent)) {
+        const total = values.reduce((sum, value) => sum + (typeof value === 'number' && Number.isFinite(value) ? value : 0), 0);
         if (total) cell.className = total > 0 ? 'difference-positive' : 'difference-negative';
       }
     }
@@ -8947,6 +9037,7 @@ function renderInventoryKardexTable() {
   foot.appendChild(totalRow);
   table.replaceChildren(head, body, foot);
   table.parentElement.scrollLeft = previousScrollLeft;
+  renderKardexTotalsNote(document.getElementById('inventory-kardex-totals-note'), items, report);
   document.getElementById('inventory-kardex-visible-count').textContent = `${items.length} de ${report.items.length} filas`;
 }
 
@@ -9350,7 +9441,7 @@ function renderInventoryResults(data) {
   const physicalInventoryQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
   const inventoryValue = (item, quantity) => (Number(quantity) || 0) * (Number(item.unitCost) || 0);
   const totalInventoryValue = (items, quantity) => formatKardexCost(items.reduce(
-    (sum, item) => item.costAvailable ? sum + inventoryValue(item, quantity(item)) : sum,
+    (sum, item) => item.costAvailable && quantity(item) != null ? sum + inventoryValue(item, quantity(item)) : sum,
     0
   ));
   renderInventoryExecutiveSummary(data.executiveSummary);
@@ -9438,8 +9529,8 @@ function renderInventoryResults(data) {
     {
       label: 'Costo Total',
       value: item => item.totalCost==null?'No comparable':item.costAvailable ? formatKardexCost(item.totalCost) : 'Sin costo',
-      sortValue: item => item.costAvailable ? Number(item.totalCost) || 0 : null,
-      totalValue: items => items.some(i=>i.totalCost==null)?'No comparable':formatKardexCost(items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0))
+      sortValue: item => item.costAvailable && Number.isFinite(item.totalCost) ? item.totalCost : null,
+      totalValue: items => formatKardexCost(items.reduce((sum, item) => sum + (item.costAvailable && Number.isFinite(item.totalCost) ? item.totalCost : 0), 0))
     },
     {
       label: 'Valor Inventario Final Teórico',
@@ -9450,15 +9541,15 @@ function renderInventoryResults(data) {
     {
       label: 'Valor Inventario Físico',
       value: item => physicalInventoryQuantity(item)==null?'Sin toma física':item.costAvailable ? formatKardexCost(inventoryValue(item, physicalInventoryQuantity(item))) : 'Sin costo',
-      sortValue: item => item.costAvailable ? inventoryValue(item, physicalInventoryQuantity(item)) : null,
-      totalValue: items => items.some(i=>physicalInventoryQuantity(i)==null)?'Sin toma física completa':totalInventoryValue(items, physicalInventoryQuantity)
+      sortValue: item => item.costAvailable && physicalInventoryQuantity(item) != null ? inventoryValue(item, physicalInventoryQuantity(item)) : null,
+      totalValue: items => totalInventoryValue(items, physicalInventoryQuantity)
     }
   ];
   document.getElementById('inventory-kardex-search').value = '';
   document.getElementById('inventory-kardex-cost-filter').value = 'all';
   document.getElementById('inventory-kardex-cost-min').value = '';
   document.getElementById('inventory-kardex-cost-max').value = '';
-  inventoryKardexTableState = { report, columns, sortIndex: 0, direction: 'asc' };
+  inventoryKardexTableState = { report, columns, detailReportId: data.itemDetailReportId, location: data.location, sortIndex: 0, direction: 'asc' };
   renderInventoryKardexTable();
   renderOtherConsumables(data.otherConsumables, columns, data.executiveSummary?.metrics.otherConsumables);
   renderLac001SubstitutionReport(data.lac001Substitutions);
@@ -9480,15 +9571,17 @@ function renderOtherConsumables(report, columns, metric) {
   for (const item of [...report.items].sort((a,b)=>a.code.localeCompare(b.code))) {
     const row=document.createElement('tr');
     for (const column of columns) {const td=document.createElement('td');td.textContent=column.value(item);row.appendChild(td);}
+    makeInventoryItemRowInteractive(row, item);
     body.appendChild(row);
   }
   const foot=document.createElement('tfoot'), total=document.createElement('tr');
   for (const [index,column] of columns.entries()) {
     const td=document.createElement('td');
-    td.textContent=index===0?(metric?.partial?'TOTAL DISPONIBLE':'TOTAL'):column.label==='Costo Total'?(metric?.available?formatKardexCost(metric.amount):'No disponible'):column.totalValue?column.totalValue(report.items):'';
+    td.textContent=index===0?'TOTAL':column.totalValue?column.totalValue(report.items):'';
     total.appendChild(td);
   }
   foot.appendChild(total);table.replaceChildren(head,body,foot);
+  renderKardexTotalsNote(document.getElementById('inventory-other-consumables-totals-note'), report.items, inventoryKardexTableState.report);
 }
 
 function currentInventoryColumns() {
@@ -11117,18 +11210,20 @@ async function loadUploadOverview() {
     el('upload-refresh-methods').textContent = `Ventas, pagos y compras: API pública con token. Tomas, transformaciones y transferencias originales: API interna con sesión autorizada. Maestros: ${data.masterStatus.connection || 'servicios internos con sesión web'}.`;
     const job=data.job,summary=job.summary || {};
     el('upload-refresh-report').hidden=!job.steps.length;
-    el('upload-refresh-progress').textContent=`${job.running?'En curso':'Finalizado'} · ${summary.complete||0} grupos actualizados · ${summary.error||0} con problemas · ${summary.skipped||0} omitidos · ${(summary.pending||0)+(summary.running||0)} pendientes. Inicio: ${date(job.startedAt)}${job.finishedAt?' · Fin: '+date(job.finishedAt):''}${job.recoveredCount ? ` · ${job.recoveredCount} problema(s) resuelto(s) después de este proceso` : ''}`;
+    el('resume-upload-api').hidden=!job.waitingForAuthentication;
+    el('resume-upload-api').disabled=false;
+    el('upload-refresh-progress').textContent=`${job.waitingForAuthentication?'En pausa · Inicia sesión en TotEat para continuar':job.running?'En curso':'Finalizado'} · ${summary.complete||0} grupos actualizados · ${summary.error||0} con problemas · ${summary.skipped||0} omitidos · ${(summary.pending||0)+(summary.running||0)+(summary['waiting-auth']||0)} pendientes. Inicio: ${date(job.startedAt)}${job.finishedAt?' · Fin: '+date(job.finishedAt):''}${job.recoveredCount ? ` · ${job.recoveredCount} problema(s) resuelto(s) después de este proceso` : ''}`;
     const progressHead=document.createElement('thead'),progressHeader=document.createElement('tr');
     progressHeader.append(...['Local / grupo','Fuentes previstas','Conexión','Estado','Resultado','Último cambio'].map(label=>cell('th',label)));progressHead.append(progressHeader);
     const progressBody=document.createElement('tbody');
     for(const step of job.steps){const row=document.createElement('tr');
       row.dataset.state=step.state;
-      row.append(cell('td',step.label),cell('td',(step.sources||[]).join(' · ')),cell('td',step.method||''),cell('td',({pending:'Pendiente',running:'Actualizando…',complete:'Actualizado',error:'Con problemas',skipped:'Omitido'})[step.state]),cell('td',step.message||(step.state==='running'?'Consultando y guardando las fuentes…':'En espera de su turno.')),cell('td',date(step.finishedAt||step.startedAt)));
+      row.append(cell('td',step.label),cell('td',(step.sources||[]).join(' · ')),cell('td',step.method||''),cell('td',({pending:'Pendiente',running:'Actualizando…','waiting-auth':'Esperando autenticación',complete:'Actualizado',error:'Con problemas',skipped:'Omitido'})[step.state]),cell('td',step.message||(step.state==='running'?'Consultando y guardando las fuentes…':'En espera de su turno.')),cell('td',date(step.finishedAt||step.startedAt)));
       progressBody.append(row);
     }el('upload-refresh-steps').replaceChildren(progressHead,progressBody);
     const otherRunning=data.rows.filter(r=>r.cells.some(c=>c.running)).map(r=>r.name);
     setStatus(el('upload-overview-status'),data.job.running?'Actualización en curso…':otherRunning.length?'Hay actualizaciones independientes en curso: '+otherRunning.join(', '):data.masterStatus.running?'Maestros actualizándose desde otra vista…':data.job.finishedAt?'Último proceso finalizado: '+date(data.job.finishedAt):'');
-    const loginRequired=job.steps.find(step=>step.state==='error'&&step.code==='TOTEAT_AUTH_REQUIRED');
+    const loginRequired=job.steps.find(step=>['waiting-auth','error'].includes(step.state)&&step.code==='TOTEAT_AUTH_REQUIRED');
     if(loginRequired)setStatus(el('upload-overview-status'),loginRequired.message,'error');
   } catch(error){setStatus(el('upload-overview-status'),error.message,'error');}finally{uploadOverviewBusy=false;}
 }
@@ -11138,6 +11233,11 @@ document.getElementById('refresh-upload-api').addEventListener('click',async()=>
   const button=document.getElementById('refresh-upload-api');button.disabled=true;
   try{await apiRequest('/api/uploads/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
   catch(error){setStatus(document.getElementById('upload-overview-status'),error.message,'error');button.disabled=false;}
+});
+document.getElementById('resume-upload-api').addEventListener('click',async event=>{
+  event.currentTarget.disabled=true;
+  try{await apiRequest('/api/uploads/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
+  catch(error){setStatus(document.getElementById('upload-overview-status'),error.message,'error');event.currentTarget.disabled=false;}
 });
 setInterval(()=>{const view=document.getElementById('upload-overview');if(!view.hidden&&view.style.display!=='none')loadUploadOverview();},5000);
 

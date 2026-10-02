@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const AUTH_ERROR = 'La autenticación de la API interna de maestros venció o fue rechazada. Renueva la conexión autorizada de Toteat; se conserva el último maestro completo.';
-function failure(message) { const error = new Error(message); error.safeMasterMessage = message; return error; }
+function failure(message) { const error = new Error(message); error.safeMasterMessage = message; if (message === AUTH_ERROR) error.code = 'TOTEAT_AUTH_REQUIRED'; return error; }
 function connectionPath(uploadsRoot) { return path.join(uploadsRoot, '.integrations', 'toteat', 'direct-masters', 'connection.json'); }
 function configured(uploadsRoot) { return Boolean(uploadsRoot) && fs.existsSync(connectionPath(uploadsRoot)); }
 
@@ -90,4 +90,11 @@ async function readDirectMasters(uploadsRoot, restaurant, { fetchImpl = fetch } 
     products, items: legacyItems(products), warehouses, suppliers, hierarchies,
     capturedAt: new Date().toISOString(), source: 'toteat-internal-direct-api', historicalValidity: 'observed-at-capture' };
 }
-module.exports = { readDirectMasters, legacyItems, configured, connectionPath, connectionStatus };
+async function readMastersWithSession(uploadsRoot, restaurant, options, automation) {
+  if (configured(uploadsRoot)) {
+    try { return await readDirectMasters(uploadsRoot, restaurant); }
+    catch (error) { if (error.code !== 'TOTEAT_AUTH_REQUIRED') throw error; }
+  }
+  return automation.readNativeSources(restaurant, options);
+}
+module.exports = { readDirectMasters, readMastersWithSession, legacyItems, configured, connectionPath, connectionStatus };

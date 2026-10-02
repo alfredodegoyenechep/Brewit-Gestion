@@ -41,6 +41,7 @@ function normalizeOperations(source, canonicalProducts) {
       seen.add(String(d.id));
       if (d.local_ref && d.local_ref !== source.localRef) throw Error('Documento de otro local.');
       const doc={key:`${source.restaurantId}:${source.localId}:${kind}:${d.id}`,id:d.id,kind,status:d.status,date:day(d.registration_date),createdAt:d.created_at,approvedAt:d.approved_at||null,observation:d.observation||d.comments||''};
+      if (kind === 'transfers') Object.assign(doc, { origin: source.warehouses.find(w=>w.id===d.warehouse_ref)?.name || null, destination: source.warehouses.find(w=>w.id===d.warehouse_receive_ref)?.name || null });
       documents.push(doc);
       if (!['APPROVED','CREATED','REVERSED','CANCELLED','CANCELED','REJECTED'].includes(d.status)) issues.push({kind:'unknown-status',document:doc.key,message:`Estado no contabilizado: ${d.status}`});
       const detail=kind==='transformations'?d.transformation_details:d.take_inventory_products;
@@ -119,7 +120,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     const state=read(path.join(root,key,pointer.version,'state.json'));
     if(state?.sourceKind==='native-documents') {
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
-      if(state.dependencies?.sales!==version('sales') || state.dependencies?.purchases!==version('purchases') || state.dependencies?.counts!==version('original-counts') || state.masterObservedAt!==masters()?.observedAt) {
+      if(state.detailSchemaVersion!==1 || state.dependencies?.sales!==version('sales') || state.dependencies?.purchases!==version('purchases') || state.dependencies?.counts!==version('original-counts') || state.masterObservedAt!==masters()?.observedAt) {
         publish(key,read(path.join(root,key,pointer.version,'original.json')));
         const latest=read(path.join(root,key,'current.json'));
         return read(path.join(root,key,latest.version,'state.json'));
@@ -150,7 +151,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     }
     const state=buildLedger(ledgerSource,products,sales,purchases);
     state.countsCapturedAt=ledgerSource!==source?countSource.capturedAt:source.capturedAt;
-    Object.assign(state,{location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
+    Object.assign(state,{detailSchemaVersion:1,location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
     const version=crypto.randomUUID(),directory=path.join(root,key,version);fs.mkdirSync(directory,{recursive:true,mode:0o700});
     atomicJson(path.join(directory,'original.json'),source);atomicJson(path.join(directory,'state.json'),state);
     // Separate durable local tables, all committed by one pointer.

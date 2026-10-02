@@ -7,6 +7,7 @@ test('received transfer debits dispatch warehouse and credits receiving warehous
  const out=normalizeLocalTransfers(source(),products),incoming=normalizeLocalTransfers(source('2'),products);
  assert.equal(out.lines[0].column,'transfer_local_out');assert.equal(out.lines[0].warehouse,'central');assert.equal(out.lines[0].quantity,1);assert.equal(out.lines[0].date,'2026-09-29');
  assert.equal(incoming.lines[0].column,'transfer_local_in');assert.equal(incoming.lines[0].warehouse,'local');assert.equal(incoming.lines[0].quantity,1);
+ assert.equal(out.documents[0].origin,'Restaurante r · Local 1');assert.equal(out.documents[0].destination,'Restaurante r · Local 2');
  assert.throws(()=>normalizeLocalTransfers(source('1',[doc(),doc()]),products),/única/);
 });
 test('pending and cancelled requests do not move stock; confirmed dispatch uses its own date',()=>{

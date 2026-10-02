@@ -1299,10 +1299,12 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
         costSource: costReference.source,
         costSourceDate: costReference.sourceDate,
         costIncomplete: !!costReference.costIncomplete || costReference.source === 'missing',
-        totalCost: 0
+        totalCost: 0,
+        dailyQuantities: []
       };
       current.quantity += quantity;
       current.totalCost += quantity * current.unitCost;
+      for (const day of product.dailyQuantities || []) current.dailyQuantities.push({ ...day, quantity: day.quantity * recipe.quantity / yieldFactor * canonical.factor, productCode: product.code, productName: product.name });
       ingredients.set(key, current);
     }
   }
@@ -2096,6 +2098,7 @@ function createApp(options = {}) {
     return state;
   }
   const productAnalyticsSourceCache = new Map();
+  const inventoryDetailReports = new Map();
   const demandEnrichmentCache = new Map();
   const toteatMasterDownloadBatches = new Map();
   ensureDir(weeksRoot);
@@ -2656,7 +2659,7 @@ function createApp(options = {}) {
           datesProcessed.add(date);
           parsed.products.forEach(product => {
             const key = `${date}|${product.code || normalizeHeader(product.name)}|${product.unit}`;
-            if (!dailyProducts.has(key)) dailyProducts.set(key, product);
+            if (!dailyProducts.has(key)) dailyProducts.set(key, { ...product, date, source: source.originalName || source.name || 'Archivo de consumo' });
           });
         } catch {
           // This source simply has no product data for the requested day.
@@ -2667,9 +2670,10 @@ function createApp(options = {}) {
     const products = new Map();
     dailyProducts.forEach(product => {
       const key = `${product.code || normalizeHeader(product.name)}|${product.unit}`;
-      const current = products.get(key) || { ...product, quantity: 0, totalCost: 0 };
+      const current = products.get(key) || { ...product, quantity: 0, totalCost: 0, dailyQuantities: [] };
       current.quantity += product.quantity;
       current.totalCost += product.totalCost;
+      current.dailyQuantities.push({date:product.date,quantity:product.quantity,source:product.source});
       products.set(key, current);
     });
     const items = [...products.values()];
@@ -3070,9 +3074,7 @@ function createApp(options = {}) {
   app.locals.toteatSalesSync = toteatSalesSync;
   toteatMasterSync = createMasterSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations', 'toteat-api', 'credentials.json'), {}),
-    reader: (restaurant, readOptions) => require('./toteat-direct-masters').configured(uploadsRoot)
-      ? require('./toteat-direct-masters').readDirectMasters(uploadsRoot, restaurant)
-      : toteatAutomation.readNativeSources(restaurant, readOptions) });
+    reader: (restaurant, readOptions) => require('./toteat-direct-masters').readMastersWithSession(uploadsRoot, restaurant, readOptions, toteatAutomation) });
   app.locals.toteatMasterSync = toteatMasterSync;
   const stockSync = createStockSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {}),
@@ -7377,6 +7379,15 @@ function createApp(options = {}) {
     }catch(error){res.status(400).json({error:error.message});}
   });
 
+  app.get('/api/inventory/item-detail', (req,res) => {
+    const snapshot = inventoryDetailReports.get(req.query.report);
+    if (!snapshot || Date.now() - snapshot.createdAt > 3600000) return res.status(410).json({error:'El detalle de este informe venció. Vuelve a procesar el inventario para abrir los movimientos.'});
+    if (!activeLocation(snapshot.location.id)) return res.status(400).json({error:'La ubicación del informe ya no está activa.'});
+    const item = snapshot.items.find(item => item.code === req.query.code && item.unit === req.query.unit);
+    if (!item) return res.status(404).json({error:'El ítem no pertenece a este informe.'});
+    res.set('Cache-Control','no-store').json(require('./inventory-item-detail').buildItemDetail(snapshot.stock, snapshot.location, snapshot.report, item, {consumption:snapshot.consumption,convertQuantity:convertQuantityUnit}));
+  });
+
   function buildInventoryProcessPayload(body = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
@@ -7565,10 +7576,17 @@ function createApp(options = {}) {
         require('./inventory-cost-summary').applyBoundaryCostSummary(executiveSummary, report, !!salesData.filesRead);
       }
       const otherConsumables = require('./other-consumables').separateOtherConsumables(report, executiveSummary, !!salesData.filesRead);
+      // Keep detail tied to the exact report snapshot even if sources refresh
+      // before the user opens a row. Load document lines only on demand.
+      for (const [id, snapshot] of inventoryDetailReports) if (Date.now()-snapshot.createdAt>3600000) inventoryDetailReports.delete(id);
+      while (inventoryDetailReports.size >= 10) inventoryDetailReports.delete(inventoryDetailReports.keys().next().value);
+      const itemDetailReportId = crypto.randomUUID();
+      inventoryDetailReports.set(itemDetailReportId, { createdAt: Date.now(), stock: originalMode ? stock : null, consumption, location, report, items: [...report.items, ...(otherConsumables?.items || [])] });
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       return {
         location: publicLocation(location),
+        itemDetailReportId,
         source,
         otherConsumables,
         provenance: originalMode ? {

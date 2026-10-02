@@ -42,5 +42,12 @@ test('connection presence never claims active authentication and expired JWT is 
   let calls = 0;
   await assert.rejects(readDirectMasters(root, { restaurantId: '1', localId: '2' }, { fetchImpl: async () => { calls++; return respond(new URL('https://api.toteat.com')); } }), /autenticación/);
   assert.equal(calls, 0);
+  const nativeSource = { source: 'toteat-authenticated-web' };
+  const restaurant = { restaurantId: '1', localId: '2' }, options = { includeSuppliers: true };
+  assert.equal(await require('../toteat-direct-masters').readMastersWithSession(root, restaurant, options, {
+    readNativeSources: async (received, readOptions) => {
+      assert.deepEqual(received, restaurant); assert.equal(readOptions, options); return nativeSource;
+    }
+  }), nativeSource);
   assert.doesNotMatch(JSON.stringify(status), /Bearer|signature/);
 });

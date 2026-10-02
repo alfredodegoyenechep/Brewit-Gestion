@@ -5,6 +5,29 @@ const path = require('node:path');
 const { chromium } = require('playwright-core');
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+test('upload view announces authentication pause and offers continuation', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+  const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
+  await page.addScriptTag({ content: `
+    const testOverview={masters:[],columns:[],rows:[],schedule:{masters:{},inventory:{}},masterStatus:{},job:{running:true,waitingForAuthentication:true,steps:[{state:'waiting-auth',code:'TOTEAT_AUTH_REQUIRED',label:'Maestros compartidos',message:'Inicia sesión en TotEat.'}],summary:{'waiting-auth':1}}};
+    const apiRequest=async url=>{if(url==='/api/uploads/resume'){window.resumeCalls=(window.resumeCalls||0)+1;testOverview.job.waitingForAuthentication=false;testOverview.job.steps[0].state='running';}return testOverview;};
+    const setStatus=(element,message)=>{element.textContent=message;};
+  ` });
+  const script = fs.readFileSync(path.join(__dirname, '../script.js'), 'utf8');
+  await page.addScriptTag({ content: script.slice(script.indexOf('let uploadOverviewBusy = false;'), script.indexOf('setInterval(()=>{const view=document.getElementById(\'upload-overview\')')) });
+  await page.evaluate(async () => { document.getElementById('upload-overview').hidden=false;document.getElementById('upload-overview').style.display='block';await loadUploadOverview(); });
+  assert.match(await page.locator('#upload-refresh-progress').innerText(), /En pausa/);
+  assert.match(await page.locator('#upload-refresh-steps').innerText(), /Esperando autenticación/);
+  assert.match(await page.locator('#upload-overview-status').innerText(), /Inicia sesión/);
+  assert.equal(await page.locator('#refresh-upload-api').isDisabled(), true);
+  await page.getByRole('button', { name: 'Ya inicié sesión, continuar' }).click();
+  await page.waitForFunction(() => document.getElementById('resume-upload-api').hidden);
+  assert.equal(await page.evaluate(() => window.resumeCalls), 1);
+  assert.match(await page.locator('#upload-refresh-steps').innerText(), /Actualizando/);
+});
+
 test('el resumen abre el detalle de carga y permite revisar pagos sin productos', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
   t.after(() => browser.close());

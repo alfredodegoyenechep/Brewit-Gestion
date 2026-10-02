@@ -43,6 +43,13 @@ test('HTTP derives movement dates, exposes take dates, and keeps unknown physica
  const calendar=await fetch(url+'/api/inventory/calendar?location=store-1&source=originals').then(r=>r.json());assert.deepEqual(calendar.countDates,['2026-08-23','2026-08-30']);
  const res=await fetch(url+'/api/inventory/process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'store-1',source:'originals',criteriaMode:'count-boundaries',initialInventoryDate:'2026-08-25',finalInventoryDate:'2026-08-29',movementDateFrom:'2026-01-01',movementDateTo:'2026-12-31'})});
  const data=await res.json();assert.equal(res.status,200,JSON.stringify(data));assert.equal(data.report.dateFrom,'2026-08-25');assert.equal(data.report.dateTo,'2026-08-28');assert.equal(data.report.items[0].initialInventory,94);assert.equal(data.report.items[0].finalInventory,null);assert.equal(data.report.items[0].totalCost,null);assert.equal(data.executiveSummary.metrics.physicalInventoryValue.available,false);assert.equal(data.executiveSummary.metrics.adjustedKardexTotalCost.available,false);
+ const params=new URLSearchParams({report:data.itemDetailReportId,code:'LAC001',unit:'L'});
+ const detail=await fetch(url+'/api/inventory/item-detail?'+params).then(r=>r.json());assert.equal(detail.code,'LAC001');assert.equal(detail.daily.length,5);
+ // A later capture must not change details for an already-open report.
+ app.locals.toteatStockSync.current=()=>({...state,daily:[]});
+ assert.equal((await fetch(url+'/api/inventory/item-detail?'+params).then(r=>r.json())).daily.length,5);
+ params.set('code','FOREIGN');assert.equal((await fetch(url+'/api/inventory/item-detail?'+params)).status,404);
+ params.set('report','expired');assert.equal((await fetch(url+'/api/inventory/item-detail?'+params)).status,410);
 });
 test('excludes only the four requested internal codes and preserves source records',()=>{
  const s=fixture();

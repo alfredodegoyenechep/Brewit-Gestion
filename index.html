@@ -1906,6 +1906,7 @@
           </div>
         </section>
         <h4 class="inventory-kardex-heading">Consolidado del Kardex</h4>
+        <p class="panel-description">Haz clic en un ítem para ver sus saldos, documentos y movimientos del período.</p>
         <div class="inventory-kardex-tools">
           <label class="inventory-kardex-search">Buscar por código o producto
             <input id="inventory-kardex-search" type="search" placeholder="Código o nombre" autocomplete="off" />
@@ -1939,12 +1940,14 @@
         <div class="inventory-results-table-wrap inventory-kardex-scroll" tabindex="0" role="region" aria-label="Consolidado del Kardex, tabla desplazable">
           <table id="inventory-results-table" class="inventory-results-table"></table>
         </div>
+        <p id="inventory-kardex-totals-note" class="inventory-totals-note" hidden></p>
         <section id="inventory-other-consumables" class="consumption-report-card" hidden>
           <h4>Otros Consumibles</h4>
           <p id="inventory-other-consumables-summary" class="panel-description"></p>
           <div class="inventory-results-table-wrap inventory-kardex-scroll" tabindex="0" role="region" aria-label="Otros Consumibles, tabla desplazable">
             <table id="inventory-other-consumables-table" class="inventory-results-table"></table>
           </div>
+          <p id="inventory-other-consumables-totals-note" class="inventory-totals-note" hidden></p>
         </section>
         <section id="inventory-lac001-substitution-report" class="consumption-report-card" hidden>
           <h4>Sustitución de LAC001 por extras</h4>
@@ -2097,6 +2100,7 @@
         <h3>Proceso de actualización</h3>
         <p id="upload-refresh-methods" class="panel-description">Ventas, pagos y compras: API pública con token. Tomas, transformaciones y transferencias: documentos originales con sesión autorizada. La conexión de maestros se indica en su estado.</p>
         <div id="upload-refresh-progress" class="form-status" aria-live="polite"></div>
+        <button id="resume-upload-api" class="primary" type="button" hidden>Ya inicié sesión, continuar</button>
         <div class="inventory-results-table-wrap"><table id="upload-refresh-steps" class="inventory-results-table"></table></div>
         <p class="panel-description">Fuera de este proceso: MercadoPago, Marketing, Colaboradores y Calibraciones y bebidas desechadas (carga manual).</p>
       </section>

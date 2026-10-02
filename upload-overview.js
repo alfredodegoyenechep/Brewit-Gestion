@@ -33,9 +33,11 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
   const jobFile = uploadsRoot ? path.join(uploadsRoot, '.integrations/toteat-api/last-refresh.json') : null;
   let job = jobFile && fs.existsSync(jobFile) ? JSON.parse(fs.readFileSync(jobFile, 'utf8')) : { running: false, steps: [], finishedAt: null };
   const saveJob = () => { if(jobFile)atomicJson(jobFile,job); };
+  let resumeTask = null;
   if(job.running) {
     job.running=false;job.finishedAt=new Date(now()).toISOString();
-    for(const step of job.steps)if(['pending','running'].includes(step.state))Object.assign(step,{state:'error',message:'Proceso interrumpido por reinicio. Vuelve a actualizar.',finishedAt:job.finishedAt});
+    job.waitingForAuthentication=false;
+    for(const step of job.steps)if(['pending','running','waiting-auth'].includes(step.state))Object.assign(step,{state:'error',message:'Proceso interrumpido por reinicio. Vuelve a actualizar.',finishedAt:job.finishedAt});
     saveJob();
   }
   const publicJob = () => {
@@ -52,7 +54,7 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
         message: 'Problema resuelto en una actualización posterior. Maestros compartidos actualizados y guardados.' };
     });
     return { ...job, steps, recoveredCount: steps.filter(step => step.recoveredAt).length,
-      summary: Object.fromEntries(['pending','running','complete','error','skipped'].map(state => [state, steps.filter(step => step.state === state).length])) };
+      summary: Object.fromEntries(['pending','running','waiting-auth','complete','error','skipped'].map(state => [state, steps.filter(step => step.state === state).length])) };
   };
   const active = () => locations().filter(l => l.status === 'active');
   const latest = records => [...records].sort((a,b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')))[0];
@@ -110,21 +112,34 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
       excluded:['Transacciones MercadoPago','Consumo de Marketing','Consumo de Colaboradores','Calibraciones y bebidas desechadas']};
     saveJob();
     const mark = key => { settings[key]={...settings[key],lastAttempt:new Date(now()).toISOString()};persist(); };
-    return (async()=>{
+    const run = ()=> (async()=>{
       if(!target){if(updateMasters)mark('masters');if(updateInventory)mark('inventory');}
       for(const {step,execute} of plan){
-        if(step.state==='skipped')continue;
+        if(['skipped','complete','error'].includes(step.state))continue;
+        delete step.code;
         Object.assign(step,{state:'running',startedAt:new Date(now()).toISOString()});saveJob();
         try { await execute();step.state='complete';step.message='Fuentes actualizadas y guardadas.'; }
         catch (error) {step.state='error';if(error.code==='TOTEAT_AUTH_REQUIRED')step.code=error.code;step.message=error.code==='TOTEAT_AUTH_REQUIRED'?require('./toteat-session').sessionMessage(error.loginOpened):error.safeMasterMessage || (step.method.startsWith('API pública')
           ? 'No se completó la lectura. Revisa credenciales, permisos o límites de Toteat en Configuración. Se conserva la actualización anterior.'
-          : 'No se completó la lectura o publicación. Revisa la sesión web de Toteat y la conexión del local. Se conserva la actualización anterior.');}
+          : 'No se completó la lectura o publicación. Revisa la sesión web de Toteat y la conexión del local. Se conserva la actualización anterior.');
+          if(error.code==='TOTEAT_AUTH_REQUIRED') {
+            step.state='waiting-auth';job.waitingForAuthentication=true;
+            resumeTask=()=>{job.waitingForAuthentication=false;resumeTask=null;return run();};
+            saveJob();return;
+          }
+        }
         step.finishedAt=new Date(now()).toISOString();saveJob();
       }
     })().catch(()=>{
       for(const step of job.steps)if(['pending','running'].includes(step.state))Object.assign(step,{state:'error',message:'No se pudo finalizar el proceso. Vuelve a actualizar.',finishedAt:new Date(now()).toISOString()});
-    }).finally(()=>{job.running=false;job.finishedAt=new Date(now()).toISOString();saveJob();});
+    }).finally(()=>{if(!job.waitingForAuthentication){job.running=false;job.finishedAt=new Date(now()).toISOString();}saveJob();});
+    return run();
   }
+  app.post('/api/uploads/resume', (req,res)=>{
+    if(!job.waitingForAuthentication || !resumeTask)return res.status(409).json({error:'No hay un proceso esperando autenticación.'});
+    try { resumeTask().catch(()=>{});res.status(202).json(publicJob()); }
+    catch {res.status(500).json({error:'No se pudo continuar el proceso.'});}
+  });
   app.post('/api/uploads/refresh', (req,res)=>{
     try { const task=refresh();task?.catch(()=>{});res.status(202).json(publicJob()); }
     catch {res.status(500).json({error:'No se pudo iniciar o guardar el proceso de actualización.'});}

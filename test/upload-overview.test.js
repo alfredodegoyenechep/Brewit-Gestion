@@ -1,5 +1,28 @@
 const test=require('node:test'),assert=require('node:assert/strict'),express=require('express');
 const {registerUploadOverview}=require('../upload-overview');
+test('authentication pauses the plan and resumes the same step without repeating completed groups',async t=>{
+ const calls=[],app=express();app.use(express.json());let authenticated=false;
+ const status=()=>({configured:true,from:'2026-09-01'});
+ registerUploadOverview(app,{locations:()=>[{id:'store-1',name:'La Concepción',type:'store',status:'active'}],
+  sales:{status,synchronize:async()=>calls.push('sales'),purchases:{status,synchronize:async()=>calls.push('purchases')}},
+  masters:{sharedStatus:()=>({}),synchronizeShared:async()=>calls.push('masters')},
+  stock:{status:()=>({range:{from:'2026-09-01'}}),synchronize:async()=>{calls.push('stock');if(!authenticated)throw Object.assign(Error('private auth detail'),{code:'TOTEAT_AUTH_REQUIRED',loginOpened:true});}},
+  counts:{status:()=>({}),synchronize:async()=>calls.push('counts')},files:()=>[],masterFiles:()=>[]});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));
+ const url=`http://127.0.0.1:${server.address().port}`;
+ const post=route=>fetch(url+route,{method:'POST'});
+ const get=async()=> (await fetch(url+'/api/uploads/overview').then(r=>r.json())).job;
+ const settle=async()=>{for(let i=0;i<30;i++){const job=await get();if(job.waitingForAuthentication||!job.running)return job;}throw Error('Job did not settle');};
+ await post('/api/uploads/refresh');let job=await settle();const id=job.id;
+ assert.equal(job.waitingForAuthentication,true);assert.equal(job.running,true);assert.equal(job.finishedAt,null);
+ assert.equal(job.steps[3].state,'waiting-auth');assert.equal(job.steps[4].state,'pending');assert.match(job.steps[3].message,/Dejamos abierta/);assert.doesNotMatch(JSON.stringify(job),/private auth detail/);
+ assert.deepEqual(calls,['masters','sales','purchases','stock']);
+ await post('/api/uploads/resume');job=await settle();assert.equal(job.waitingForAuthentication,true);
+ authenticated=true;await post('/api/uploads/resume');job=await settle();
+ assert.equal(job.id,id);assert.equal(job.running,false);assert.equal(job.waitingForAuthentication,false);assert.equal(job.summary.complete,5);
+ assert.deepEqual(calls,['masters','sales','purchases','stock','stock','stock','counts']);
+ assert.equal((await post('/api/uploads/resume')).status,409);
+});
 test('overview distinguishes manual files, central source, schedules and sequential API refresh',async t=>{
  const calls=[],app=express();app.use(express.json());
  const status=id=>({configured:true,from:'2026-08-23',enabled:id==='store-1',intervalMinutes:5,lastSuccess:'2026-09-22T10:00:00Z'});

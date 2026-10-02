@@ -2130,6 +2130,8 @@ body {
 #inventory-executive-summary-table td:first-child {
   width: 29%;
   font-weight: 800;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 #inventory-executive-summary-table th:nth-child(2),
@@ -2358,6 +2360,28 @@ body {
   color: var(--coffee);
   font-size: calc(16px * var(--font-scale));
 }
+
+.inventory-totals-note {
+  margin: 8px 0 0;
+  color: #e4573d;
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.4;
+}
+
+.inventory-item-row { cursor: pointer; }
+.inventory-item-row:hover td { background: var(--bg-soft); }
+.inventory-item-trigger { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.inventory-item-trigger:hover { text-decoration: underline; }
+.inventory-item-trigger:focus-visible { outline: 2px solid var(--clay); outline-offset: 3px; }
+.inventory-item-dialog { width: min(1250px, calc(100vw - 32px)); padding: 24px; }
+.inventory-item-summary { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(100px, 1fr); gap: 8px 20px; margin: 24px 0; }
+.inventory-item-summary dt { color: var(--text-soft); overflow-wrap: anywhere; }
+.inventory-item-summary dd { margin: 0; overflow-wrap: anywhere; }
+.inventory-item-dialog h3 { margin: 24px 0 12px; }
+.inventory-item-note { font-size: calc(12px * var(--font-scale)); line-height: 1.5; margin: 16px 0; }
+.inventory-item-table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--border-soft); }
+.inventory-item-dialog .inventory-results-table td { white-space: normal; overflow-wrap: anywhere; min-width: 100px; text-align: left; }
+.inventory-item-dialog .inventory-results-table th { text-align: left; }
 
 .inventory-kardex-tools {
   display: grid;
