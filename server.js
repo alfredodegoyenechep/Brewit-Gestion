@@ -2095,6 +2095,7 @@ function createApp(options = {}) {
   function synchronizedStock(locationId) {
     const state=stockSync.current(locationId);
     if(!state || state.sourceKind !== 'native-documents') throw Error('Actualiza las fuentes originales de inventario para construir el Kardex propio. No se utilizarán saldos del Kardex de Toteat.');
+    if(state.rebuildError)throw Error(state.rebuildError);
     return state;
   }
   const productAnalyticsSourceCache = new Map();

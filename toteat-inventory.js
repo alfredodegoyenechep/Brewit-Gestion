@@ -102,7 +102,7 @@ function convert(quantity, from, to, product) {
   if (units[from] && units[to] && units[from][0] === units[to][0]) return quantity * units[from][1] / units[to][1];
   const conversion = product.conversions?.find(c => String(c.conversion_unit).toUpperCase() === from && String(c.base_unit).toUpperCase() === to);
   if (conversion && conversion.denominator > 0 && conversion.numerator > 0) return quantity * conversion.numerator / conversion.denominator;
-  throw Error(`Conversión no definida para ${product.custom_id}: ${from} → ${to}.`);
+  throw Object.assign(Error(`Conversión no definida para ${product.custom_id}: ${from} → ${to}.`), { code: 'TOTEAT_UNIT_CONVERSION_REQUIRED', productCode: product.custom_id });
 }
 
 function recipeConsumption(products, code, quantity, { transformation = false, unit = 'UN' } = {}) {

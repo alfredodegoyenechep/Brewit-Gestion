@@ -4,6 +4,30 @@ const {normalizeOperations,buildLedger,createStockSync}=require('../toteat-stock
 const products=[{id:'coffee',custom_id:'C',types:['INGREDIENT'],stock_enabled:true,stock_unit:'KG',name:{translations:{default:'Café'}}},{id:'sandwich',custom_id:'S',types:['PRODUCT'],stock_enabled:true,stock_unit:'UN',recipe:{quantity:1,portions_per_unit:1,ingredients:[{custom_id:'C',quantity:100,quantity_unit:'G',yield_rate:100}]}}];
 const source=()=>({restaurantId:'r',localId:'1',localRef:'l1',capturedAt:'2026-09-22T01:00:00Z',range:{from:'2026-08-23',to:'2026-08-24'},products,warehouses:[{id:'w1',custom_id:1},{id:'w2',custom_id:2},{id:'w3',custom_id:3}],operations:{counts:[{id:1,status:'APPROVED',registration_date:'2026-08-23 00:00:00',warehouse_ref:'w2',take_inventory_products:[{id:1,product_ref:'coffee',quantity:1,measure_unit_ref:'KG'},{id:2,product_ref:'sandwich',quantity:0,measure_unit_ref:'UN'}]}],transfers:[],transformations:[]}});
 const empty={from:'2026-08-23',through:'2026-08-24',documents:[],payments:[]};
+test('a master unit change keeps original records and excludes only the unconvertible product',()=>{
+ const s=source(),canonical=products.map(p=>p.custom_id==='C'?{...p,stock_unit:'BOT',conversions:[]}:p);
+ const before=JSON.stringify(s),ledger=buildLedger(s,canonical,empty,empty);
+ assert.equal(JSON.stringify(s),before);assert.ok(ledger.issues.some(i=>i.kind==='unit-conversion'&&i.code==='C'));
+ assert.equal(ledger.operationLines.find(l=>l.code==='C').originalQuantity,1);
+ assert.equal(ledger.operationLines.find(l=>l.code==='C').unit,'KG');assert.equal(ledger.operationLines.find(l=>l.code==='C').active,false);
+ assert.equal(ledger.daily.some(r=>r.code==='C'),false);assert.equal(ledger.daily.find(r=>r.code==='S').opening,0);
+ assert.deepEqual(ledger.excluded.map(i=>i.code),['C']);
+ const report=require('../inventory-boundaries').countBoundaryReport({...ledger,warehouses:s.warehouses},{type:'store'},'2026-08-23','2026-08-25');
+ assert.deepEqual(report.excluded.map(i=>i.code),['C']);assert.deepEqual(report.items.map(i=>i.code),['S']);
+ canonical[0].conversions=[{conversion_unit:'KG',base_unit:'BOT',numerator:1,denominator:2}];
+ const resolved=buildLedger(s,canonical,empty,empty);assert.equal(resolved.excluded.length,0);assert.equal(resolved.daily.find(r=>r.code==='C').opening,.5);
+});
+test('a failed dependency rebuild preserves the last version and status remains readable until recovery',t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-rebuild-failure-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ let master={observedAt:'v1',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))};
+ const sync=createStockSync({uploadsRoot:root,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>master});
+ sync.publish('store-1',source());const original=sync.current('store-1'),pointer=path.join(root,'.integrations/toteat-api/stock/store-1/current.json'),version=fs.readFileSync(pointer,'utf8');
+ master=null;
+ for(let i=0;i<3;i++){assert.match(sync.status('store-1').error,/Se conserva/);assert.deepEqual(sync.current('store-1').daily,original.daily);}
+ assert.equal(fs.readFileSync(pointer,'utf8'),version);
+ master={observedAt:'v2',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))};
+ assert.equal(sync.status('store-1').error,null);assert.equal(sync.current('store-1').masterObservedAt,'v2');
+});
 test('corrected purchase warehouse replaces old local receipts automatically without reading Toteat Kardex',t=>{
  const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-independent-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
  const base=path.join(uploadsRoot,'.integrations/toteat-api/purchases/store-1');

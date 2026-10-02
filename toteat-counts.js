@@ -20,7 +20,7 @@ function createCountSync({ uploadsRoot, activeLocation, credentials, reader }) {
   }
   function status(id) {
     const key = keyFor(id), state = current(key), attempt = read(path.join(root, key, 'attempt.json'));
-    return { location: key, running: jobs.has(key), error: attempt?.error || null,
+    return { location: key, running: jobs.has(key), error: attempt?.error || null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],
       updatedAt: state?.capturedAt || null, range: state?.range || null, sourceKind: 'original-count-documents',
       documents: state?.documents.length ?? null, approved: state?.documents.filter(d => d.status === 'APPROVED').length ?? null,
       lines: state?.lines.length ?? null };

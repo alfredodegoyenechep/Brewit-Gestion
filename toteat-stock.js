@@ -22,8 +22,11 @@ function normalizeOperations(source, canonicalProducts) {
     if (!warehouses.has(warehouse)) throw Error('Bodega de otra sucursal o desconocida en el documento.');
     const original = products.get(line.product_ref), p = canonical.get(original?.custom_id);
     const code = original?.custom_id || line.product_ref;
-    let amount = number(quantity), normalizedUnit = unit;
-    if (p) { amount=convert(amount,unit,p.stock_unit,p); normalizedUnit=p.stock_unit; }
+    let amount = number(quantity), normalizedUnit = unit, conversionPending = false;
+    if (p) {
+      try { amount=convert(amount,unit,p.stock_unit,p); normalizedUnit=p.stock_unit; }
+      catch (error) { if(error.code!=='TOTEAT_UNIT_CONVERSION_REQUIRED')throw error;conversionPending=true;issues.push({kind:'unit-conversion',document:doc.key,code,message:error.message+' Se conserva la cantidad original; el ítem queda pendiente de conciliación.'}); }
+    }
     else issues.push({kind:'missing-master',document:doc.key,code,message:'Referencia histórica ausente del maestro compartido; se conserva unidad original.'});
     // Toteat posts each transformation input to three stock-unit decimals.
     // Verified independently against all 90 rounding differences in the August pilot.
@@ -31,7 +34,7 @@ function normalizeOperations(source, canonicalProducts) {
     lines.push({id:`${doc.key}:${line.id ?? suffix}:${suffix}`,document:doc.key,source:doc.kind,date:doc.date,status:doc.status,
       warehouse,code,name:p?.name?.translations?.default||original?.name?.translations?.default||code,
       unit:normalizedUnit,quantity:posted,exactQuantity:amount,originalQuantity:quantity,originalUnit:unit,column,
-      active:doc.status==='APPROVED',cost:line.cost??null});
+      active:doc.status==='APPROVED'&&!conversionPending,conversionPending,cost:line.cost??null});
   };
   for (const kind of ['counts','transfers','transformations']) {
     if (!Array.isArray(source.operations?.[kind])) throw Error('Falta una tabla de operaciones.');
@@ -69,7 +72,7 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
     const received=p.received_date||p.recieived_date;
     if(!received){issues.push({kind:'purchase-date',document:p.movement_id,message:'Compra sin fecha de recepción; excluida.'});continue;}
     const date=day(received);if(!inRange(date))continue;
-    for(const [i,l]of p.products.entries())try{add({id:`purchase:${p.movement_id}:${i}`,document:String(p.movement_id),source:'purchases',date,code:l.sku,warehouse:warehouseByCode.get(String(l.warehouse)),quantity:l.received_quantity,unit:l.received_measurement,column:'purchase'});}catch(e){issues.push({kind:'purchase-line',document:p.movement_id,message:e.message});}
+    for(const [i,l]of p.products.entries())try{add({id:`purchase:${p.movement_id}:${i}`,document:String(p.movement_id),source:'purchases',date,code:l.sku,warehouse:warehouseByCode.get(String(l.warehouse)),quantity:l.received_quantity,unit:l.received_measurement,column:'purchase'});}catch(e){issues.push({kind:e.code==='TOTEAT_UNIT_CONVERSION_REQUIRED'?'unit-conversion':'purchase-line',code:e.productCode,document:p.movement_id,message:e.message});}
   }
   // Work per order, not per payment, and retain ambiguities instead of doubling split bills.
   const orders=new Map(),includedOrders=[];
@@ -86,10 +89,13 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
     if(reason){issues.push({kind:'sale-excluded',document:order,message:reason});continue;}
     const staged=[];
     try{for(const l of saleLines)for(const [i,item]of recipeConsumption(canonicalProducts,l.id,number(l.quantity)).entries())staged.push({id:`sale:${order}:${l.lineId}:${i}`,document:order,source:'sales',date:localTimestamp(group[0].dateClosed).date,code:item.code,warehouse:warehouseByCode.get('2'),quantity:item.quantity,unit:item.unit,column:'use',estimated:true});const checkpoint=lines.length;try{for(const item of staged)add(item);}catch(error){lines.length=checkpoint;throw error;}includedOrders.push(order);}
-    catch(e){issues.push({kind:'sale-excluded',document:order,message:e.message});}
+    catch(e){issues.push({kind:'sale-excluded',document:order,message:e.message});if(e.code==='TOTEAT_UNIT_CONVERSION_REQUIRED')issues.push({kind:'unit-conversion',code:e.productCode,document:order,message:e.message});}
   }
+  const blockedCodes=new Set(issues.filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.code));
+  for(const line of data.lines)if(blockedCodes.has(line.code))Object.assign(line,{active:false,conversionPending:true});
+  const accountedLines=lines.filter(line=>!blockedCodes.has(line.code));
   const groups=new Map();
-  for(const line of lines.filter(l=>inRange(l.date)||(l.column==='count'&&l.date===require('./inventory-boundaries').advance(to,1)))){const key=`${line.warehouse}|${line.code}|${line.unit}`;const group=groups.get(key)||[];group.push(line);groups.set(key,group);}
+  for(const line of accountedLines.filter(l=>inRange(l.date)||(l.column==='count'&&l.date===require('./inventory-boundaries').advance(to,1)))){const key=`${line.warehouse}|${line.code}|${line.unit}`;const group=groups.get(key)||[];group.push(line);groups.set(key,group);}
   const daily=[];
   for(const group of groups.values()){
     let balance=null;const identity=group[0];
@@ -107,12 +113,13 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
   }
   const missingOpenings=daily.filter(r=>r.date===from&&r.opening===null).length;
   if(missingOpenings)issues.push({kind:'opening',message:`${missingOpenings} combinaciones de producto/bodega sin inventario inicial conocido; saldo no calculado hasta la primera toma.`});
-  return {documents:data.documents,operationLines:data.lines,movements:lines.filter(l=>inRange(l.date)),daily,issues,
+  return {documents:data.documents,operationLines:data.lines,movements:accountedLines.filter(l=>inRange(l.date)),daily,issues,
+    excluded:[...blockedCodes].map(code=>({code,name:byCode.get(code)?.name?.translations?.default||code,reason:'Cambio de unidad sin conversión definida. Los registros originales se conservan; el saldo y costo de este ítem no se calculan.'})),
     sourceKind:'native-documents',salesConsumptionPolicy:'base-plus-extras-before-compensation-v1',includedOrders,mode:'independent',assumptions:['Recetas compartidas de La Concepción observadas actualmente; consumo de ventas estimado, sin historia de recetas.', 'Consumo base incluye producto y extras; las sustituciones y envases se compensan una sola vez en el informe consolidado.', 'Ventas asignadas a bodega operativa código 2; confirmar configuración para nuevos locales.', 'Tomas aplicadas al inicio de su fecha operativa; documentos conservan fecha de registro y aprobación.', 'Compras por cantidad y fecha recibidas; las fechas sin hora se concilian por día.', 'Consumo de transformación redondeado por línea a tres decimales de stock, verificado en el piloto; se conserva también la cantidad exacta original.', 'Transferencias entre locales según documentos de despacho y recepción; pendientes y canceladas no contabilizadas. No se infieren reversos de consumo faltantes.', 'Esta tabla reconstruye cantidades. Los reportes valorizan con compras y maestros; no utilizan saldos ni costos del Kardex de Toteat.'],
     range:source.range,sourceCapturedAt:source.capturedAt};
 }
 function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}){
-  const root=path.join(uploadsRoot,'.integrations/toteat-api/stock'),jobs=new Map(),errors=new Map();
+  const root=path.join(uploadsRoot,'.integrations/toteat-api/stock'),jobs=new Map(),errors=new Map(),rebuildFailures=new Map();
   function locationKey(id){const actual=id==='main-warehouse'?'store-1':id;if(activeLocation(actual)?.type!=='store')throw Error('Selecciona un local activo.');return actual;}
   const current=id=>{
     const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));
@@ -120,16 +127,25 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     const state=read(path.join(root,key,pointer.version,'state.json'));
     if(state?.sourceKind==='native-documents') {
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
-      if(state.detailSchemaVersion!==1 || state.dependencies?.sales!==version('sales') || state.dependencies?.purchases!==version('purchases') || state.dependencies?.counts!==version('original-counts') || state.masterObservedAt!==masters()?.observedAt) {
-        publish(key,read(path.join(root,key,pointer.version,'original.json')));
-        const latest=read(path.join(root,key,'current.json'));
-        return read(path.join(root,key,latest.version,'state.json'));
+      const dependencies={sales:version('sales'),purchases:version('purchases'),counts:version('original-counts'),master:masters()?.observedAt};
+      if(state.detailSchemaVersion!==2 || state.dependencies?.sales!==dependencies.sales || state.dependencies?.purchases!==dependencies.purchases || state.dependencies?.counts!==dependencies.counts || state.masterObservedAt!==dependencies.master) {
+        const signature=JSON.stringify({version:pointer.version,...dependencies});
+        if(rebuildFailures.get(key)?.signature!==signature) {
+          try {
+            publish(key,read(path.join(root,key,pointer.version,'original.json')));
+            rebuildFailures.delete(key);
+            const latest=read(path.join(root,key,'current.json'));
+            return read(path.join(root,key,latest.version,'state.json'));
+          } catch(error) {rebuildFailures.set(key,{signature,message:'No se pudo recalcular el inventario con las fuentes actuales. Se conserva la última versión completa; vuelve a actualizar inventario.'});}
+        }
+        return {...state,rebuildError:rebuildFailures.get(key).message};
       }
     }
+    rebuildFailures.delete(key);
     return state;
   };
   const dependency=(kind,id)=>{const base=path.join(uploadsRoot,'.integrations/toteat-api',kind,id),pointer=read(path.join(base,'current.json'));return pointer?read(path.join(base,pointer.version,'state.json')):null;};
-  function status(id){const key=locationKey(id),state=current(key);return {location:key,running:jobs.has(key),error:errors.get(key)||null,range:state?.range||null,updatedAt:state?.sourceCapturedAt||null,sourceKind:state?.sourceKind||'native-documents',dailyRows:state?.daily.length||0,counts:state?Object.fromEntries(['counts','transfers','transformations'].map(kind=>[kind,state.sourceKind==='public-inventory'?{documents:null,approved:null,lines:state.daily.filter(r=>kind==='counts'?r.physicalCount:kind==='transfers'?[r.transfer_local_in,r.transfer_local_out,r.transfer_warehouse_in,r.transfer_warehouse_out].some(n=>n!==0):r.transformed_in!==0||r.transformed_out!==0).length}:{documents:state.documents.filter(d=>d.kind===kind).length,approved:state.documents.filter(d=>d.kind===kind&&d.status==='APPROVED').length,lines:state.operationLines.filter(l=>l.source===kind).length}])):null};}
+  function status(id){const key=locationKey(id),state=current(key);return {location:key,running:jobs.has(key),error:errors.get(key)||state?.rebuildError||null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],excluded:state?.excluded||[],range:state?.range||null,updatedAt:state?.sourceCapturedAt||null,sourceKind:state?.sourceKind||'native-documents',dailyRows:state?.daily.length||0,counts:state?Object.fromEntries(['counts','transfers','transformations'].map(kind=>[kind,state.sourceKind==='public-inventory'?{documents:null,approved:null,lines:state.daily.filter(r=>kind==='counts'?r.physicalCount:kind==='transfers'?[r.transfer_local_in,r.transfer_local_out,r.transfer_warehouse_in,r.transfer_warehouse_out].some(n=>n!==0):r.transformed_in!==0||r.transformed_out!==0).length}:{documents:state.documents.filter(d=>d.kind===kind).length,approved:state.documents.filter(d=>d.kind===kind&&d.status==='APPROVED').length,lines:state.operationLines.filter(l=>l.source===kind).length}])):null};}
   function publish(id,source){const key=locationKey(id),config=credentials()[key];if(!config||source.restaurantId!==config.restaurantId||source.localId!==config.localId)throw Error('La fuente no corresponde al local.');
     const master=masters();if(!master)throw Error('Actualiza primero los maestros compartidos de La Concepción.');
     const products=master.products.map(p=>({...p,custom_id:p.code,stock_enabled:p.stockManaged,stock_unit:p.stockUnit,name:{translations:{default:p.name}}}));
@@ -151,7 +167,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     }
     const state=buildLedger(ledgerSource,products,sales,purchases);
     state.countsCapturedAt=ledgerSource!==source?countSource.capturedAt:source.capturedAt;
-    Object.assign(state,{detailSchemaVersion:1,location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
+    Object.assign(state,{detailSchemaVersion:2,location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
     const version=crypto.randomUUID(),directory=path.join(root,key,version);fs.mkdirSync(directory,{recursive:true,mode:0o700});
     atomicJson(path.join(directory,'original.json'),source);atomicJson(path.join(directory,'state.json'),state);
     // Separate durable local tables, all committed by one pointer.

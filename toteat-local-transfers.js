@@ -70,8 +70,10 @@ function normalizeLocalTransfers(source, canonicalProducts) {
       const code=outgoing?line.plProv:line.plRecep;
       const p=products.get(code),warehouse=warehouses.get(Number(line.w));
       if(!code||!p||!warehouse)throw Error('Producto o bodega de transferencia entre locales no reconocido.');
-      const unit=line.unit_select||line.ub,quantity=convert(line.cant,unit,p.stock_unit,p);
-      lines.push({id:`${key}:${phase}:${index}`,document:key,source:'transfers',transferKind:'local',date:movementDate,status:'APPROVED',warehouse,code,name:p.name?.translations?.default||code,unit:p.stock_unit,quantity,exactQuantity:quantity,originalQuantity:line.cant,originalUnit:unit,column:outgoing?'transfer_local_out':'transfer_local_in',active:true,cost:line.costo??null});
+      const unit=line.unit_select||line.ub;let quantity=line.cant,normalizedUnit=unit,conversionPending=false;
+      try {quantity=convert(line.cant,unit,p.stock_unit,p);normalizedUnit=p.stock_unit;}
+      catch(error){if(error.code!=='TOTEAT_UNIT_CONVERSION_REQUIRED')throw error;conversionPending=true;issues.push({kind:'unit-conversion',code,document:key,message:error.message+' Se conserva la cantidad original.'});}
+      lines.push({id:`${key}:${phase}:${index}`,document:key,source:'transfers',transferKind:'local',date:movementDate,status:'APPROVED',warehouse,code,name:p.name?.translations?.default||code,unit:normalizedUnit,quantity,exactQuantity:quantity,originalQuantity:line.cant,originalUnit:unit,column:outgoing?'transfer_local_out':'transfer_local_in',active:!conversionPending,conversionPending,cost:line.costo??null});
     });
   }
   return {documents,lines,issues};

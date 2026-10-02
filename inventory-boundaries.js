@@ -12,7 +12,7 @@ function countBoundaryReport(state,location,initial,final,correction=()=>0) {
  const warehouse=state.warehouses.find(w=>Number(w.custom_id)===(location.type==='warehouse'?1:2));
  if(!warehouse)throw Error('Bodega no disponible en las fuentes originales.');
  const series=new Map();for(const row of state.daily.filter(r=>r.warehouse===warehouse.id)){const key=`${row.code}|${row.unit}`;if(!series.has(key))series.set(key,[]);series.get(key).push(row);}
- const items=[],excluded=[];
+ const items=[],excluded=[...(state.excluded||[])];
  for(const rows of series.values()){
   rows.sort((a,b)=>a.date.localeCompare(b.date));const identity=rows[0];
   const exclusion=inventoryExclusion(identity.code);

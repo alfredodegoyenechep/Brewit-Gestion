@@ -57,25 +57,30 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
       summary: Object.fromEntries(['pending','running','waiting-auth','complete','error','skipped'].map(state => [state, steps.filter(step => step.state === state).length])) };
   };
   const active = () => locations().filter(l => l.status === 'active');
+  const warningText = status => (status?.warnings || []).filter(warning=>typeof warning==='string').join(' ');
+  const sourceStatus = (service,id,label) => {
+    try {return service.status(id);}
+    catch {return {configured:false,running:false,error:`No se pudo consultar ${label} de esta ubicación. Actualiza esa fuente; las demás siguen disponibles.`};}
+  };
   const latest = records => [...records].sort((a,b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')))[0];
   app.get('/api/uploads/overview', (req, res) => {
     try {
       const rows = active().map(location => {
         const central = location.id === 'main-warehouse', source = central ? 'store-1' : location.id;
         const store = location.type === 'store' || central;
-        const sale = store ? sales.status(source) : null, purchase = store ? sales.purchases.status(source) : null;
-        const inventory = store ? stock.status(source) : null;
+        const sale = store ? sourceStatus(sales,source,'ventas') : null, purchase = store ? sourceStatus(sales.purchases,source,'compras') : null;
+        const inventory = store ? sourceStatus(stock,source,'inventario') : null;
         const cells = columns.map(([key]) => {
           if (location.type === 'warehouse' && !['purchases','counts','transformations','transfers'].includes(key)) return { key, applicable: false };
           let status, updatedAt, origin = 'Archivo cargado';
           if (['sales','payment-details'].includes(key)) { status=sale; updatedAt=sale?.lastSuccess; }
           if (key === 'purchases') { status=purchase; updatedAt=purchase?.lastSuccess; }
           if (['counts','transformations','transfers'].includes(key)) { status=inventory; updatedAt=inventory?.updatedAt; origin=inventory?.sourceKind==='native-documents'?'Documentos originales Toteat':'Fuente histórica'; }
-          if (key === 'counts' && counts) { status=counts.status(source); updatedAt=status.updatedAt; origin='Toteat · documentos originales de tomas'; }
+          if (key === 'counts' && counts) { status=sourceStatus(counts,source,'tomas físicas'); updatedAt=status.updatedAt; origin='Toteat · documentos originales de tomas'; }
           if (updatedAt && origin === 'Archivo cargado') origin='Toteat API';
           if (!updatedAt && !['counts','transformations','transfers'].includes(key)) updatedAt=latest(files(source,key))?.savedAt;
           return { key, applicable: true, refreshable: store && synchronizedKeys.includes(key), updatedAt: updatedAt || null, origin, sharedFrom:central?'La Concepción':null,
-            running:!!status?.running, error:status?.lastError || status?.error || null };
+            running:!!status?.running, error:status?.lastError || status?.error || warningText(status) || null };
         });
         return { id:location.id, name:location.name, cells,
           schedules:location.type==='store'?[{label:'Ventas y detalle de pagos',enabled:!!sale?.enabled,minutes:sale?.intervalMinutes},{label:'Compras',enabled:!!purchase?.enabled,minutes:purchase?.intervalMinutes}]:[] };
@@ -92,13 +97,13 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
     if(updateMasters && !target)add('Maestros compartidos · La Concepción',masterLabels.map(([,label])=>label),require('./toteat-direct-masters').connectionStatus(uploadsRoot).label,()=>masters.synchronizeShared());
     const stores=active().filter(l=>l.type==='store' && (!target || l.id===target.location));
     for(const location of stores) {
-      const s=sales.status(location.id),p=sales.purchases.status(location.id);
+      const s=sourceStatus(sales,location.id,'ventas'),p=sourceStatus(sales.purchases,location.id,'compras');
       if(updateTransactions)for(const [label,sources,status,service] of [
         ['Ventas y pagos',['Transacciones de venta','Detalle Pagos'],s,sales],
         ['Compras',['Compras'],p,sales.purchases]
       ])if(!target || (service===sales ? ['sales','payment-details'].includes(target.key) : target.key==='purchases'))add(`${location.name} · ${label}`,sources,'API pública · token',()=>service.synchronize(location.id),status.configured&&status.from?null:'Sin conexión o fecha inicial configurada.');
       if(updateInventory){
-        const from=stock.status(location.id).range?.from || s.from;
+        const from=sourceStatus(stock,location.id,'inventario').range?.from || s.from;
         if(!target || ['transformations','transfers'].includes(target.key) || (target.key==='counts' && !counts))add(`${location.name} · Inventario${location.id==='store-1'?' (incluye Bodega Principal y mermas)':' (incluye mermas)'}`,
           (counts ? ['Transformaciones','Transferencias entre bodegas y locales'] : ['Tomas de Inventario','Transformaciones','Transferencias entre bodegas y locales']),'API interna · sesión autorizada',
           ()=>stock.synchronize(location.id,{from,to:new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Santiago'}).format(new Date())}),
@@ -118,7 +123,7 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
         if(['skipped','complete','error'].includes(step.state))continue;
         delete step.code;
         Object.assign(step,{state:'running',startedAt:new Date(now()).toISOString()});saveJob();
-        try { await execute();step.state='complete';step.message='Fuentes actualizadas y guardadas.'; }
+        try { const result=await execute();step.state='complete';const warnings=warningText(result);step.message=warnings?'Fuentes actualizadas con observaciones: '+warnings:'Fuentes actualizadas y guardadas.'; }
         catch (error) {step.state='error';if(error.code==='TOTEAT_AUTH_REQUIRED')step.code=error.code;step.message=error.code==='TOTEAT_AUTH_REQUIRED'?require('./toteat-session').sessionMessage(error.loginOpened):error.safeMasterMessage || (step.method.startsWith('API pública')
           ? 'No se completó la lectura. Revisa credenciales, permisos o límites de Toteat en Configuración. Se conserva la actualización anterior.'
           : 'No se completó la lectura o publicación. Revisa la sesión web de Toteat y la conexión del local. Se conserva la actualización anterior.');
@@ -155,14 +160,14 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
     }
     try {
       if(job.running || masters.sharedStatus().running || sales.status(source).running
-        || sales.purchases.status(source).running || stock.status(source).running || counts?.status(source).running)
+        || sales.purchases.status(source).running || sourceStatus(stock,source,'inventario').running || (counts && sourceStatus(counts,source,'tomas físicas').running))
         return res.status(409).json({error:'Hay una actualización en curso. Espera a que termine.'});
       const task=refresh({updateMasters:false,target:{location:source,key}});
       task?.catch(()=>{});res.status(202).json(publicJob());
     } catch {res.status(500).json({error:'No se pudo iniciar o guardar la actualización de esta fuente.'});}
   });
   function tick() {
-    if(job.running || masters.sharedStatus().running || active().some(l=>l.type==='store'&&(stock.status(l.id).running || counts?.status(l.id).running)))return;
+    if(job.running || masters.sharedStatus().running || active().some(l=>l.type==='store'&&(sourceStatus(stock,l.id,'inventario').running || (counts && sourceStatus(counts,l.id,'tomas físicas').running))))return;
     const due=key=>settings[key]?.minutes && now()-(Date.parse(settings[key].lastAttempt)||0)>=settings[key].minutes*60000;
     const updateMasters=!!due('masters'),updateInventory=!!due('inventory');
     if(updateMasters||updateInventory)return refresh({updateMasters,updateInventory,updateTransactions:false});

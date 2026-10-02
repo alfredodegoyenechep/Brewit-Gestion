@@ -14,7 +14,7 @@ function originalReportData(state,location,selection,from,to,{waste=false,comple
   const daily=state.daily.filter(r=>r.warehouse===warehouse.id);
   const groups=[...new Set(daily.map(r=>r.date))].sort().map((date,index)=>({date,startColumn:3+index*metrics.length,metrics:metrics.map(([field,label],j)=>({field,label,normalized:label.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,''),column:3+index*metrics.length+j}))}));
   const byCode=new Map();for(const r of daily){const id=`${r.code}|${r.unit}`;if(!byCode.has(id))byCode.set(id,[]);byCode.get(id).push(r);}
-  const excluded=[],products=[];let physicalFinalItems=0;
+  const excluded=[...(state.excluded||[])],products=[];let physicalFinalItems=0;
   for(const rows of byCode.values()){
     const exclusion=inventoryExclusion(rows[0].code);
     if(exclusion){excluded.push({code:rows[0].code,name:rows[0].name,reason:exclusion});continue;}

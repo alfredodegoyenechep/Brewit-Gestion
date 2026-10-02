@@ -1,5 +1,19 @@
 const test=require('node:test'),assert=require('node:assert/strict'),express=require('express');
 const {registerUploadOverview}=require('../upload-overview');
+test('one unreadable inventory source does not block overview or refresh of other sources',async t=>{
+ const app=express();app.use(express.json());const calls=[],status=()=>({configured:true,from:'2026-09-01'});
+ registerUploadOverview(app,{locations:()=>[{id:'store-1',name:'La Concepción',type:'store',status:'active'}],
+ sales:{status,synchronize:async()=>calls.push('sales'),purchases:{status,synchronize:async()=>calls.push('purchases')}},
+ masters:{sharedStatus:()=>({}),synchronizeShared:async()=>calls.push('masters')},
+ stock:{status:()=>{throw Error('private-source-error');},synchronize:async()=>{calls.push('stock');return {warnings:['Producto C pendiente de conversión.']};}},
+ files:()=>[],masterFiles:()=>[]});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));const url=`http://127.0.0.1:${server.address().port}`;
+ const read=async()=>{const response=await fetch(url+'/api/uploads/overview');assert.equal(response.status,200);return response.json();};
+ const initial=await read();assert.match(initial.rows[0].cells.find(c=>c.key==='transfers').error,/inventario/);assert.equal(initial.rows[0].cells.find(c=>c.key==='sales').error,null);assert.ok(!JSON.stringify(initial).includes('private-source-error'));
+ assert.equal((await fetch(url+'/api/uploads/refresh',{method:'POST'})).status,202);
+ let data;for(let i=0;i<30;i++){data=await read();if(!data.job.running)break;}
+ assert.deepEqual(calls,['masters','sales','purchases','stock']);assert.equal(data.job.summary.complete,4);assert.match(data.job.steps[3].message,/observaciones/);
+});
 test('authentication pauses the plan and resumes the same step without repeating completed groups',async t=>{
  const calls=[],app=express();app.use(express.json());let authenticated=false;
  const status=()=>({configured:true,from:'2026-09-01'});
