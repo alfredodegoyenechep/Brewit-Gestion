@@ -18,6 +18,10 @@ const { averageTicketWithVat } = require('./metric-policy');
 const { buildDemandAnalysis, resolveDemandPeriod, orderMatches } = require('./demand-analysis');
 const { linkOrdersToSettlements } = require('./transaction-linkage');
 const { classifyRecordedName, NAME_CLASSIFIER_VERSION } = require('./name-segmentation');
+const { createClusterJobs } = require('./sales-clusters-jobs');
+const { createClusterSourceLoader } = require('./sales-clusters-source');
+const { normalizeConfig: clusterConfig, optionsFor: clusterOptions, recurrenceAsOf } = require('./sales-clusters');
+const { paymentLocalTimestamp } = require('./payment-timestamps');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -3230,6 +3234,7 @@ function createApp(options = {}) {
   app.get('/upload-records-view.js', (req, res) => res.sendFile(path.join(__dirname, 'upload-records-view.js')));
   app.get('/toteat-stock-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-stock-view.js')));
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
+  app.get('/sales-clusters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-clusters-view.js')));
   app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
   app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -5105,6 +5110,7 @@ function createApp(options = {}) {
     if (cached) return cached;
     const warnings = [];
     const seenRows = new Set();
+    const duplicateRows = new Map();
     const orders = new Map();
     let salesFilesRead = 0;
     for (const location of stores) {
@@ -5119,7 +5125,11 @@ function createApp(options = {}) {
               .map(([key, value]) => [normalizeHeader(key), value instanceof Date ? value.toISOString() : String(value ?? '').trim()])
               .sort(([left], [right]) => left.localeCompare(right));
             const rowKey = `${location.id}:${crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex')}`;
-            if (seenRows.has(rowKey)) continue;
+            if (seenRows.has(rowKey)) {
+              const key = `${location.id}|${date}`;
+              duplicateRows.set(key, (duplicateRows.get(key) || 0) + 1);
+              continue;
+            }
             seenRows.add(rowKey);
             const code = String(rowValue(row, ['ID Producto', 'ID de Producto']) ?? '').trim().toUpperCase();
             const name = repairMojibake(rowValue(row, ['Nombre', 'Producto'])) || code;
@@ -5134,7 +5144,8 @@ function createApp(options = {}) {
             const lineGrossSales = paid !== null ? paid : list + discount;
             const quantity = row['API Source'] === 'Toteat' ? (numericValue(rowValue(row, ['Cantidad'])) ?? 0) : Math.max(0, numericValue(rowValue(row, ['Cantidad'])) ?? 1);
             const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
-            const orderDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento total'])) || 0;
+            const reportedOrderDiscount = numericValue(rowValue(row, ['Descuentos', 'Descuento total']));
+            const orderDiscount = reportedOrderDiscount || 0;
             const existing = orders.get(orderKey) || {
               orderKey,
               orderReference: transactionKey.startsWith('order:') ? transactionKey.slice('order:'.length) : null,
@@ -5143,11 +5154,13 @@ function createApp(options = {}) {
               date,
               dateTime,
               time: dateTime.slice(11, 16),
+              timeKnown: Boolean(cellTime(rowValue(row, ['Hora de creacion', 'Hora de creación', 'Hora de cierre']))),
               hour: Number(dateTime.slice(11, 13)) + Number(dateTime.slice(14, 16)) / 60,
               channel: String(rowValue(row, ['Origen', 'Canal', 'Channel']) || '').trim(),
               clients: Math.max(0, numericValue(rowValue(row, ['Numero de clientes', 'Número de clientes'])) || 0),
               grossSales: gross,
               orderDiscount,
+              orderDiscountKnown: reportedOrderDiscount !== null,
               netSales: gross !== null ? (gross + orderDiscount) / 1.19 : 0,
               reversalSignals: new Set(),
               lines: []
@@ -5212,6 +5225,7 @@ function createApp(options = {}) {
       fingerprint,
       salesFilesRead,
       paymentFilesRead: payment.filesRead,
+      duplicateRows: [...duplicateRows].map(([key, count]) => { const [locationId, date] = key.split('|'); return { locationId, date, count }; }),
       coverage: {
         paymentMatchPercent: orderFacts.length ? orderFacts.filter(order => payment.modes.has(order.orderKey)).length / orderFacts.length * 100 : 0,
         ambiguousPaymentOrders: orderFacts.filter(order => order.modeAmbiguous).length
@@ -5384,7 +5398,7 @@ function createApp(options = {}) {
   function demandFilters(query = {}, today = projectionToday()) {
     const mode = String(query.mode || 'month');
     if (!['custom', 'day', 'week', 'month', 'ytd', 'all'].includes(mode)) {
-      const error = new Error('Selecciona un período válido para el análisis de la demanda.');
+      const error = new Error('Selecciona un período válido para el análisis de la venta.');
       error.status = 400;
       throw error;
     }
@@ -5489,6 +5503,7 @@ function createApp(options = {}) {
     const paymentSource = demandMercadoPagoSettlements(payload.stores);
     const linkage = linkOrdersToSettlements(orders, paymentSource.settlements, { maximumMinutes: 2, amountTolerance: 2 });
     const instrumentDates = new Map();
+    const paymentDates = new Set(paymentSource.settlements.map(row => `${row.locationId}|${row.date}`));
     for (const settlement of paymentSource.settlements) {
       if (!settlement.instrumentKey) continue;
       const dates = instrumentDates.get(settlement.instrumentKey) || new Set();
@@ -5502,6 +5517,10 @@ function createApp(options = {}) {
         ? [...(instrumentDates.get(link.instrumentKey) || [])].filter(date => date <= payload.today) : [];
       return { ...order, nameGenderSegment: name.segment, nameClassificationBasis: name.basis,
         paymentLinkStatus: link.status, paymentLinkConfidence: link.confidence || null,
+        linkedPaymentDateTime: link.status === 'estimated-high' ? link.dateTime : null,
+        recurrenceUnavailableReason: !paymentDates.has(`${order.locationId}|${order.date}`) ? 'no-payment-data'
+          : link.status === 'ambiguous' ? 'ambiguous' : link.status !== 'estimated-high' ? 'unmatched'
+            : !link.instrumentKey ? 'missing-instrument' : null,
         instrumentKey: link.status === 'estimated-high' ? link.instrumentKey : null,
         recurrenceGroup: link.status === 'estimated-high'
           ? (new Set(instrumentDatesUntilToday).size >= 2 ? 'returning-instrument' : 'single-observed-date') : 'unlinked' };
@@ -5513,7 +5532,7 @@ function createApp(options = {}) {
   }
 
   function demandEnrichmentFingerprint(payload) {
-    const signatures = [payload.source.fingerprint, payload.today, ...payload.stores.map(store => store.id).sort()];
+    const signatures = ['identity-santiago-v3', payload.source.fingerprint, payload.today, ...payload.stores.map(store => store.id).sort()];
     const visit = directory => {
       if (!fs.existsSync(directory)) return;
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -5581,14 +5600,14 @@ function createApp(options = {}) {
     };
   }
 
-  function enrichedDemandOrders(payload) {
+  function enrichedDemandOrders(payload, { includeCosts = true } = {}) {
     const effectiveCatalog = latestMasterFile('master-catalog', payload.today);
     const productMap = new Map();
     let extras = new Map();
     if (effectiveCatalog) {
       try {
         for (const product of parseProductCatalog(effectiveCatalog.filePath)) {
-          productMap.set(product.code.toUpperCase(), { listPrice: product.price });
+          productMap.set(product.code.toUpperCase(), { listPrice: product.price, unit: product.unit });
         }
         extras = parseSalesAnalysisCatalog(effectiveCatalog.filePath).recipeExtras;
       } catch {}
@@ -5607,7 +5626,7 @@ function createApp(options = {}) {
     return payload.sourceOrders.map(rawOrder => {
       const order = reconcileOrderLineSales(rawOrder, productMap);
       const hierarchy = hierarchyFor(order.date);
-      if (!historicalCostByStore.has(order.locationId)) {
+      if (includeCosts && !historicalCostByStore.has(order.locationId)) {
         historicalCostByStore.set(order.locationId, buildHistoricalCostResolver(payload.today, [order.locationId]));
       }
       const costResolver = historicalCostByStore.get(order.locationId);
@@ -5615,15 +5634,24 @@ function createApp(options = {}) {
       let costAvailable = true;
       const lines = order.lines.map(line => {
         const hierarchyNode = hierarchy?.hierarchyMap.get(line.hierarchyId);
+        let principalNode = hierarchyNode;
+        const principalVisited = new Set();
+        while (principalNode?.parentId && !principalVisited.has(principalNode.id)) {
+          principalVisited.add(principalNode.id);
+          const parent = hierarchy?.hierarchyMap.get(principalNode.parentId);
+          if (!parent?.parentId) break;
+          principalNode = parent;
+        }
         const categoryPath = hierarchyNode ? hierarchy.pathFor(hierarchyNode.id) :
           line.hierarchyName ? [line.hierarchyName] : [];
         const isExtra = Boolean(line.extraHierarchyId || extras.has(line.code));
-        const reference = costResolver.resolve(order.date, line.code);
-        const available = line.quantity <= 0 || reference.source !== 'missing';
+        const reference = includeCosts ? costResolver.resolve(order.date, line.code) : { source: 'missing' };
+        const available = includeCosts && (line.quantity <= 0 || reference.source !== 'missing');
         const lineCost = available ? line.quantity * (Number(reference.unitCost) || 0) : 0;
         cost += lineCost;
         if (!available) costAvailable = false;
         return { ...line, isExtra, categoryId: line.hierarchyId || '', categoryName: categoryPath.at(-1) || line.hierarchyName || 'Sin categoría',
+          rootHierarchyId: principalNode?.id || null, unit: productMap.get(line.code)?.unit || null,
           categoryPath, cost: lineCost, costAvailable: available, costSource: reference.source,
           costBasisEvidence: reference.costBasisEvidence || 'unverified' };
       });
@@ -5633,7 +5661,7 @@ function createApp(options = {}) {
 
   app.get('/api/demand-analysis/options', (req, res) => {
     try { return res.json(demandOptions(buildDemandSource(req.query))); }
-    catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las opciones de demanda.' }); }
+    catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las opciones de venta.' }); }
   });
 
   app.get('/api/demand-analysis', (req, res) => {
@@ -5651,7 +5679,7 @@ function createApp(options = {}) {
       report.coverage.warnings = payload.source.warnings;
       return res.json(report);
     } catch (error) {
-      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis de la demanda.' });
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis de la venta.' });
     }
   });
 
@@ -5718,6 +5746,161 @@ function createApp(options = {}) {
     } catch (error) {
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo abrir el detalle de los pedidos.' });
     }
+  });
+
+  const salesClusterJobs = createClusterJobs({ storageRoot: options.clusterCachePersistence === false ? undefined : path.join(uploadsRoot, 'reports', '.sales-clusters') });
+  const clusterSourceLoader = options.clusterSourceWorker === false ? null : createClusterSourceLoader({ uploadsRoot, sourceMode: options.sourceMode, today: projectionToday });
+  const disposeClusterJobs = salesClusterJobs.dispose;
+  salesClusterJobs.dispose = () => { clusterSourceLoader?.dispose(); disposeClusterJobs(); };
+  app.locals.salesClusterJobs = salesClusterJobs;
+  const clusterOwner = req => req.actor?.id || 'local';
+  const clusterInputCache = new Map();
+  function clusterSource(query) {
+    const payload = buildDemandSource(query);
+    const fingerprint = demandEnrichmentFingerprint(payload);
+    let cachedSource = clusterInputCache.get(fingerprint);
+    if (!cachedSource) {
+      const identity = demandEnrichmentCache.get(fingerprint) || addDemandIdentity(payload, enrichedDemandOrders(payload, { includeCosts: false }));
+      const history = demandMercadoPagoSettlements(payload.stores).settlements;
+      const transactionRecurrence = new Map(recurrenceAsOf(identity.orders, history, { sameDay: true }).map(o => [o.orderKey, o.recurrenceGroup]));
+      const orders = recurrenceAsOf(identity.orders, history).map(order => ({
+        orderKey: order.orderKey, orderReference: order.orderReference, locationId: order.locationId, locationName: order.locationName,
+        date: order.date, time: order.timeKnown === false ? '' : order.time, netSales: order.netSales,
+        orderDiscount: order.orderDiscountKnown === false ? null : order.orderDiscount,
+        mode: order.mode, channel: order.channel, recurrenceGroup: order.recurrenceGroup,
+        nameGenderSegment: order.nameGenderSegment,
+        recurrenceTransactionGroup: transactionRecurrence.get(order.orderKey),
+        recurrenceUnavailableReason: order.recurrenceUnavailableReason,
+        paymentLinkStatus: order.paymentLinkStatus,
+        reversalSignals: order.reversalSignals,
+        lines: order.lines.map(line => ({ code: line.code, name: line.name, quantity: line.quantity, netSales: line.netSales,
+          unit: line.unit, isExtra: line.isExtra, hierarchyId: line.hierarchyId, hierarchyName: line.hierarchyName,
+          categoryId: line.categoryId, categoryName: line.categoryName, categoryPath: line.categoryPath, rootHierarchyId: line.rootHierarchyId,
+          size: line.size }))
+      }));
+      if (clusterInputCache.size >= 4) clusterInputCache.delete(clusterInputCache.keys().next().value);
+      const paymentPeriods = payload.stores.map(store => {
+        const payments = history.filter(row => row.locationId === store.id), dates = payments.map(row => row.date).sort();
+        return { locationId: store.id, locationName: store.name, from: dates[0] || null, to: dates.at(-1) || null,
+          transactions: payments.length, identifiable: payments.filter(row => row.instrumentKey).length };
+      });
+      cachedSource = { orders, paymentPeriods }; clusterInputCache.set(fingerprint, cachedSource);
+    }
+    const { orders, paymentPeriods } = cachedSource;
+    const period = resolveDemandPeriod(payload.filters, payload.today, payload.availablePeriod?.from || payload.today);
+    const selected = new Set(payload.stores.map(s => s.id));
+    const duplicateSalesRows = (payload.source.duplicateRows || []).filter(r => selected.has(r.locationId) && r.date >= period.from && r.date <= period.to).reduce((s, r) => s + r.count, 0);
+    const sourceOptions = demandOptions(payload);
+    return { payload, sourceOptions, input: { orders, recurrenceResolved: true, period, depth: 1,
+      sourceFingerprint: fingerprint, sourceUpdatedAt: sourceOptions.sourceUpdatedAt,
+      filterOptions: { locations: sourceOptions.locations, products: sourceOptions.products, categories: sourceOptions.categories,
+        today: payload.today, availablePeriod: payload.availablePeriod },
+      sourceDiagnostics: { duplicateSalesRows, basis: 'Filas duplicadas eliminadas antes de los filtros de productos y atributos.',
+        salesFiles: payload.source.salesFilesRead, paymentFiles: payload.source.paymentFilesRead, paymentPeriods },
+      warnings: [...payload.source.warnings, 'La recurrencia corresponde a instrumentos de pago vinculados, no necesariamente a personas únicas.',
+        'Las jerarquías reflejan el maestro observado disponible para cada fecha.'], config: { filters: payload.filters } } };
+  }
+  app.locals.salesClusterSource = clusterSource;
+  async function loadClusterSource(query) {
+    if (clusterSourceLoader) return clusterSourceLoader.load(query);
+    const source = clusterSource(query);
+    return { ...source, filters: source.payload.filters, today: source.payload.today, availablePeriod: source.payload.availablePeriod };
+  }
+  async function clusterRequest(body = {}, owner) {
+    if (body.parent) {
+      const parentJob = salesClusterJobs.result(body.parent.jobId, owner);
+      if (parentJob.output.result.kind === 'refinements') { const error = new Error('Selecciona un resultado de clusters como grupo padre.'); error.status = 400; throw error; }
+      if (parentJob.input.depth >= 3) { const error = new Error('La profundización admite hasta tres niveles.'); error.status = 400; throw error; }
+      const cluster = parentJob.output.result.clusters.find(c => c.id === body.parent.clusterId);
+      if (!cluster) { const error = new Error('El grupo padre no existe.'); error.status = 400; throw error; }
+      const keys = new Set(parentJob.output.membership.filter(m => m.clusterId === cluster.id).map(m => m.orderKey));
+      const input = { ...parentJob.input, orders: parentJob.input.orders.filter(o => keys.has(o.orderKey)), depth: parentJob.input.depth + 1,
+        rootTotals: parentJob.output.result.summary.rootTotals, parent: { jobId: parentJob.id, clusterId: cluster.id, name: cluster.name },
+        parentSilhouette: cluster.silhouette, config: clusterConfig({ filters: parentJob.input.config.filters,
+          dimensions: body.dimensions || parentJob.input.config.dimensions, parameters: body.parameters || parentJob.input.config.parameters }) };
+      return { input, mode: body.searchRefinements ? 'refinements' : 'analysis' };
+    }
+    const source = await loadClusterSource(body.filters || {});
+    const input = { ...source.input, config: clusterConfig({ filters: { ...source.filters, ...(body.filters || {}) }, dimensions: body.dimensions, parameters: body.parameters }) };
+    if (input.config.filters.nameGender && input.config.filters.nameGender !== 'all' && input.config.dimensions.gender.level === 'validated') {
+      const error = new Error('El género asociado por nombre no es una clasificación validada para este análisis.'); error.status = 400; throw error;
+    }
+    if (body.referenceJobId) {
+      const referenceJob = salesClusterJobs.result(body.referenceJobId, owner);
+      if (!referenceJob.output.model || referenceJob.output.result.comparison) { const error = new Error('Utiliza un cálculo original con clusters como período base.'); error.status = 400; throw error; }
+      input.referenceJobId = referenceJob.id;
+      input.config = clusterConfig({ filters: input.config.filters, dimensions: referenceJob.output.model.dimensions, parameters: referenceJob.output.model.parameters });
+      return { input, mode: 'comparison', reference: { model: referenceJob.output.model } };
+    }
+    return { input, mode: 'analysis' };
+  }
+  app.get('/api/sales-clusters/options', async (req, res) => {
+    try {
+      let definition = {};
+      if (req.query.configuration) {
+        try { definition = JSON.parse(req.query.configuration); }
+        catch { const e = new Error('La configuración de clusters no es válida.'); e.status = 400; throw e; }
+      }
+      if (req.query.parentJobId) {
+        const request = await clusterRequest({ parent: { jobId: req.query.parentJobId, clusterId: req.query.parentClusterId },
+          dimensions: definition.dimensions, parameters: definition.parameters }, clusterOwner(req));
+        const options = clusterOptions(request.input, request.input.config);
+        res.set('Cache-Control', 'no-store');
+        return res.json({ ...options, ...request.input.filterOptions, sourceDiagnostics: request.input.sourceDiagnostics, parent: request.input.parent });
+      }
+      const source = await loadClusterSource(req.query);
+      const reference = req.query.referenceJobId ? salesClusterJobs.result(req.query.referenceJobId, clusterOwner(req)).output.model : null;
+      if (req.query.referenceJobId && !reference) { const error = new Error('El período base no tiene definiciones de clusters.'); error.status = 400; throw error; }
+      const config = clusterConfig({ ...definition, ...(reference ? { dimensions: reference.dimensions, parameters: reference.parameters } : {}), filters: { ...source.filters, ...req.query } });
+      const options = clusterOptions(source.input, config, reference);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ...options, locations: source.sourceOptions.locations, products: source.sourceOptions.products,
+        categories: source.sourceOptions.categories, today: source.today, availablePeriod: source.availablePeriod,
+        sourceDiagnostics: source.input.sourceDiagnostics });
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las opciones de clusters.' }); }
+  });
+  app.post('/api/sales-clusters/jobs', async (req, res) => {
+    try {
+      const request = await clusterRequest(req.body, clusterOwner(req));
+      if (res.destroyed) return;
+      return res.status(202).json(salesClusterJobs.submit(request.input, clusterOwner(req), request.mode, request.reference));
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudo iniciar el cálculo de clusters.' }); }
+  });
+  app.get('/api/sales-clusters/jobs/:id', (req, res) => {
+    try { res.set('Cache-Control', 'no-store'); return res.json(salesClusterJobs.publicJob(salesClusterJobs.get(req.params.id, clusterOwner(req)))); }
+    catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+  });
+  app.get('/api/sales-clusters/jobs/:id/result', (req, res) => {
+    try {
+      const job = salesClusterJobs.result(req.params.id, clusterOwner(req));
+      let stale = true;
+      try {
+        const fingerprint = productAnalyticsSourceFingerprint(productAnalyticsLocations('all'));
+        const current = demandEnrichmentFingerprint({ today: projectionToday(), stores: demandStores(job.input.config.filters), source: { fingerprint } });
+        stale = current !== job.input.sourceFingerprint;
+      }
+      catch { /* A removed location/source must not hide a previously valid result. */ }
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ...job.output.result, jobId: job.id, stale, sourceDiagnostics: job.input.sourceDiagnostics,
+        createdAt: new Date(job.createdAt).toISOString(), expiresAt: new Date(job.updatedAt + 86400000).toISOString() });
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudo abrir el resultado de clusters.' }); }
+  });
+  app.delete('/api/sales-clusters/jobs/:id', (req, res) => {
+    try { return res.json(salesClusterJobs.cancel(req.params.id, clusterOwner(req))); }
+    catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+  });
+  app.get('/api/sales-clusters/jobs/:id/clusters/:clusterId/orders', (req, res) => {
+    try {
+      const job = salesClusterJobs.result(req.params.id, clusterOwner(req)), clusterId = req.params.clusterId;
+      if (clusterId !== 'unassigned' && !job.output.result.clusters?.some(c => c.id === clusterId)) {
+        return res.status(404).json({ error: 'El cluster no existe.' });
+      }
+      const members = new Map(job.output.membership.filter(m => m.clusterId === clusterId).map(m => [m.orderKey, m.reason]));
+      const orders = job.output.orders.filter(o => members.has(o.orderKey)).sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || ''));
+      const page = Math.max(1, Math.trunc(Number(req.query.page) || 1)), limit = Math.min(100, Math.max(1, Math.trunc(Number(req.query.limit) || 25)));
+      return res.json({ clusterId, page, limit, total: orders.length, period: job.input.period,
+        orders: orders.slice((page - 1) * limit, page * limit).map(o => ({ ...o, unassignedReason: members.get(o.orderKey) })) });
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
   });
 
   function buildAuditSourceDiagnostics(stores, transactions, dateFrom, dateTo) {
@@ -7644,13 +7827,14 @@ function createApp(options = {}) {
 
   function mercadoPagoCardKey(row) {
     const initial = String(rowValue(row, ['CARD_INITIAL_NUMBER']) ?? '').replace(/\D/g, '');
-    const last = String(rowValue(row, ['LAST_FOUR_DIGITS']) ?? '').replace(/\D/g, '').padStart(4, '0');
-    return initial && last ? `${initial}|${last}` : null;
+    const last = String(rowValue(row, ['LAST_FOUR_DIGITS']) ?? '').replace(/\D/g, '');
+    return initial && last && last.length <= 4 ? `${initial}|${last.padStart(4, '0')}` : null;
   }
 
   function mercadoPagoDateTime(row) {
     const value = rowValue(row, ['TRANSACTION_DATE']);
-    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+    const local = paymentLocalTimestamp(value);
+    if (local) return local;
     const text = String(value || '').trim();
     const localTimestamp = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
     if (localTimestamp) return `${localTimestamp[1]}T${localTimestamp[2]}`;
@@ -9390,7 +9574,7 @@ function createApp(options = {}) {
     const peakSales = bucketRows.slice().sort((left, right) => right.salesStats.mean - left.salesStats.mean)[0];
     if (peakUnits) addFinding({
       category: 'Concentración horaria',
-      title: `La mayor demanda se concentra entre ${peakUnits.label}`,
+      title: `La mayor venta se concentra entre ${peakUnits.label}`,
       conclusion: `Esta franja promedia ${formatNumber(peakUnits.unitStats.mean)} unidades y representa ${formatNumber(peakUnits.unitShare)}% de las unidades del día analizado.`,
       evidence: `Rango ${formatNumber(peakUnits.unitStats.min)}–${formatNumber(peakUnits.unitStats.max)} unidades; facturación promedio ${formatMoney(peakUnits.salesStats.mean)}.`,
       questions: ['¿La dotación, preparación previa y disponibilidad de productos están dimensionadas para esta concentración?']
@@ -9598,10 +9782,10 @@ function createApp(options = {}) {
       if (volatile) addBreakdownFinding({
         priority: (volatile.unitCoefficientOfVariation || 0) >= 80 ? 'medium' : 'info',
         category: 'Variabilidad',
-        title: `${volatile.label} tiene la demanda más variable`,
+        title: `${volatile.label} tiene la venta más variable`,
         conclusion: `Su coeficiente de variación en unidades es ${formatNumber(volatile.unitCoefficientOfVariation)}%.`,
         evidence: `Promedio ${formatNumber(volatile.averageUnits)} unidades diarias; franja principal ${volatile.strongestInterval || 'sin datos'}.`,
-        possibleExplanations: ['Demanda ocasional, promociones, quiebres de stock o concentración en pocos días.'],
+        possibleExplanations: ['Venta ocasional, promociones, quiebres de stock o concentración en pocos días.'],
         questions: ['¿La variabilidad coincide con días específicos, campañas o problemas de disponibilidad?']
       });
       const anomalous = rows.filter(row => row.anomalyCount > 0)
@@ -9686,7 +9870,7 @@ function createApp(options = {}) {
     try {
       return res.json(buildHourlySalesDemand(String(req.query.location || 'all'), req.query));
     } catch (error) {
-      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la demanda por franja horaria.' });
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir la venta por franja horaria.' });
     }
   });
 

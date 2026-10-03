@@ -109,7 +109,7 @@ function aggregateOccasions(orders, filters) {
   return { bands: byBand, weekday: { ...basicMetrics(weekday), mix: topMix(weekday) },
     saturday: { ...basicMetrics(saturday), mix: topMix(saturday) },
     scope: `${orders.length} pedidos, clasificados por la hora registrada en la venta y las franjas configuradas.`,
-    limitations: 'Las ventas son demanda atendida. Horas sin pedidos no prueban que el local estuviera abierto; sin calendario histórico completo no se normalizan todavía todas las cifras por hora operada. La modalidad depende de Detalle Pagos y puede quedar sin clasificar.' };
+    limitations: 'Se analizan las ventas registradas. Horas sin pedidos no prueban que el local estuviera abierto; sin calendario histórico completo no se normalizan todavía todas las cifras por hora operada. La modalidad depende de Detalle Pagos y puede quedar sin clasificar.' };
 }
 
 function recurrenceGroup(order, histories, periodEnd) {

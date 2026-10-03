@@ -24,7 +24,7 @@
   --shadow: 0 6px 24px rgba(74, 47, 16, 0.06);
 }
 
-/* Análisis de la demanda */
+/* Análisis de la Venta */
 .demand-workspace { display: grid; gap: 16px; min-width: 0; }
 .demand-heading { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
 .demand-heading h2 { margin: 5px 0; font-size: calc(30px * var(--font-scale)); }
@@ -87,6 +87,39 @@
 .demand-advanced-card:hover, .demand-advanced-card:focus-visible { border-color: var(--clay); box-shadow: var(--shadow); transform: translateY(-1px); outline: none; }
 .demand-card-link { display: inline-block; margin-top: 8px; color: var(--clay); font-size: calc(11px * var(--font-scale)); font-weight: 900; }
 .demand-advanced-dialog { width: min(1180px, 95vw); }
+.sales-clusters-dialog { width: min(1440px, 96vw); max-height: 92vh; overflow: auto; }
+.sales-clusters-dialog fieldset, .sales-clusters-dialog #sales-clusters-quality { margin: 16px 0; padding: 14px; min-width: 0; border: 1px solid var(--border); border-radius: 10px; }
+.sales-clusters-dialog legend, .sales-clusters-dialog summary { font-weight: 700; }
+.sales-clusters-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; margin: 10px 0; }
+.sales-clusters-controls label, .sales-clusters-actions label { display: grid; gap: 5px; font-size: .9rem; }
+.sales-clusters-controls input:not([type="checkbox"]), .sales-clusters-controls select { width: 100%; min-width: 0; box-sizing: border-box; }
+.sales-clusters-dimension { padding: 10px; border: 1px solid var(--border); border-radius: 8px; display: grid; gap: 8px; min-width: 0; }
+.sales-clusters-dimension .sales-clusters-check { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.sales-clusters-dimension small, .sales-clusters-note { font-size: .82rem; color: var(--text-soft); overflow-wrap: anywhere; }
+.sales-clusters-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 8px; margin: 10px 0; }
+.sales-clusters-coverage-grid small { overflow-wrap: anywhere; }
+.sales-clusters-actions { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+.sales-clusters-badge { display: inline-block; padding: 4px 9px; margin: 5px 0; border-radius: 8px; background: var(--bg-soft); font-size: .8rem; font-weight: 700; }
+.sales-clusters-badge[hidden] { display: none; }
+.sales-clusters-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 14px; margin: 12px 0; }
+.sales-clusters-card { padding: 14px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow-wrap: anywhere; }
+.sales-clusters-card.solid { border-left: 4px solid #6c9e70; }
+.sales-clusters-card.exploratory { border-left: 4px solid var(--clay); }
+.sales-clusters-card-title { background: transparent; border: 0; color: inherit; padding: 0; text-align: left; font-size: 1.05rem; font-weight: 700; cursor: pointer; white-space: normal; }
+.sales-clusters-card-title:focus-visible { outline: 2px solid var(--clay); outline-offset: 4px; }
+.sales-clusters-warning { color: #e8674b; font-size: .88rem; }
+.sales-clusters-table th, .sales-clusters-table td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; max-width: 320px; }
+.sales-clusters-table { min-width: 650px; }
+.sales-clusters-table button { white-space: normal; text-align: left; }
+.sales-clusters-distribution { flex: 1 1 240px; min-width: 0; }
+.sales-clusters-bar { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(60px, 1fr) 55px; gap: 8px; align-items: center; margin: 5px 0; font-size: .85rem; }
+.sales-clusters-bar span { overflow-wrap: anywhere; }
+.sales-clusters-bar meter { width: 100%; }
+#sales-clusters-detail { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
+#sales-clusters-progress-bar { width: 100%; }
+.demand-navigation-row { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 8px 0 14px; margin-bottom: 12px; border-bottom: 1px solid var(--border, #49443e); }
+.demand-navigation-row .workspace-tabs { padding: 0; margin: 0; border-bottom: 0; overflow: visible; flex: 0 0 auto; width: auto; }
+#sales-clusters-open { flex: 0 0 auto; margin: 0; }
 .demand-advanced-content { display: grid; gap: 14px; margin-top: 16px; }
 .demand-advanced-summary, .demand-advanced-definitions, .demand-advanced-explanation { padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-soft); }
 .demand-advanced-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }

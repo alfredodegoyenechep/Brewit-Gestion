@@ -63,6 +63,7 @@ function linkOrdersToSettlements(orders, settlements, options = {}) {
     if (candidates.length === 1 && reverse.length === 1) {
       links.set(order.orderKey, { status: 'estimated-high', confidence: 'high', candidateCount: 1,
         settlementKey: settlement.key, instrumentKey: settlement.instrumentKey || null,
+        dateTime: settlement.dateTime,
         minuteDifference: Math.abs(timestampMinutes(settlement.dateTime) - timestampMinutes(order.dateTime)),
         amount: Math.abs(number(settlement.amount) || 0) });
     } else {

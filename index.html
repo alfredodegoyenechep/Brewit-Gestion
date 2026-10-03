@@ -109,7 +109,7 @@
       </a>
       <a href="#" class="nav-link" data-view="demand-analysis">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
-        <span class="nav-text">Análisis de la demanda</span>
+        <span class="nav-text">Análisis de la Venta</span>
       </a>
       <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -419,7 +419,7 @@
       <section class="panel hourly-demand-panel">
         <div class="panel-head hourly-demand-head">
           <div>
-            <div class="panel-eyebrow">Demanda intradía</div>
+            <div class="panel-eyebrow">Venta intradía</div>
             <h3>Venta por franja horaria</h3>
             <p>Unidades y facturación neta sin IVA entre las 07:00 y las 21:00.</p>
           </div>
@@ -2178,8 +2178,8 @@
       </dialog>
 
     <section id="demand-analysis-workspace" class="demand-workspace" style="display:none;">
-      <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Análisis de la demanda</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
-      <div id="demand-status" class="form-status demand-status" role="status" aria-live="polite">Preparando filtros de demanda…</div>
+      <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Análisis de la Venta</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
+      <div id="demand-status" class="form-status demand-status" role="status" aria-live="polite">Preparando filtros de venta…</div>
       <form id="demand-filters" class="demand-filters">
         <fieldset class="demand-locations"><legend>Cafeterías</legend><div id="demand-location-options"></div></fieldset>
         <label>Período<select id="demand-period"><option value="month">Mes</option><option value="week">Semana</option><option value="day">Día</option><option value="ytd">Acumulado anual</option><option value="custom">Personalizado</option><option value="all">Todo el historial</option></select></label>
@@ -2201,13 +2201,43 @@
       </form>
       <div id="demand-report" hidden>
         <section class="demand-section"><div class="demand-section-head"><div><div class="panel-eyebrow">01 · Hechos</div><h3>Resumen del período</h3></div><button type="button" class="icon-button demand-detail" data-kind="all">Ver pedidos</button></div><div id="demand-context" class="demand-meta"></div><div id="demand-summary" class="demand-kpis"></div><div id="demand-comparison" class="demand-note"></div><div id="demand-coverage" class="demand-note"></div><h4>Calidad y capacidad actual</h4><div id="demand-quality" class="demand-kpis"></div><div class="demand-scroll"><table class="demand-table"><thead><tr><th>Local</th><th>Pedidos</th><th>Venta neta</th><th>Ticket mediano con IVA</th><th>Descuento</th><th>Margen neto</th><th>vs período equivalente</th><th></th></tr></thead><tbody id="demand-locations-body"></tbody></table></div></section>
-        <section class="demand-section"><div class="panel-eyebrow">02 · Exploración</div><h3>Cómo se compone la demanda</h3><p class="panel-description">Venta y margen netos; tickets y precios pagados con IVA. Una compra observada no equivale a una persona única.</p><div class="demand-tabs"><button type="button" data-demand-tab="products" class="active">Productos</button><button type="button" data-demand-tab="categories">Categorías</button><button type="button" data-demand-tab="baskets">Combinaciones</button><button type="button" data-demand-tab="occasions">Ocasiones</button><button type="button" data-demand-tab="segments">Género estimado por nombre</button><button type="button" data-demand-tab="recurrence">Recurrencia observable</button><button type="button" data-demand-tab="spending">Gasto y precios</button><button type="button" data-demand-tab="time">Horarios y evolución</button></div><div id="demand-exploration"></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">02 · Exploración</div><h3>Cómo se compone la venta</h3><p class="panel-description">Venta y margen netos; tickets y precios pagados con IVA. Una compra observada no equivale a una persona única.</p><div class="demand-tabs"><button type="button" data-demand-tab="products" class="active">Productos</button><button type="button" data-demand-tab="categories">Categorías</button><button type="button" data-demand-tab="baskets">Combinaciones</button><button type="button" data-demand-tab="occasions">Ocasiones</button><button type="button" data-demand-tab="segments">Género estimado por nombre</button><button type="button" data-demand-tab="recurrence">Recurrencia observable</button><button type="button" data-demand-tab="spending">Gasto y precios</button><button type="button" data-demand-tab="time">Horarios y evolución</button></div><div id="demand-exploration"></div></section>
         <section class="demand-section"><div class="panel-eyebrow">03 · Interpretación</div><h3>Hipótesis por validar</h3><p class="panel-description">Estas explicaciones son posibles, no relaciones causales comprobadas.</p><div id="demand-hypotheses" class="demand-card-grid"></div></section>
         <section class="demand-section"><div class="panel-eyebrow">04 · Decisiones</div><h3>Acciones y próximas investigaciones</h3><div id="demand-actions" class="demand-card-grid"></div></section>
-        <section class="demand-section"><div class="panel-eyebrow">Módulos que evolucionan con los datos</div><h3>Disponibilidad del análisis avanzado</h3><div id="demand-advanced" class="demand-card-grid"></div><div id="demand-methodology" class="demand-note"></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">Módulos que evolucionan con los datos</div><h3>Disponibilidad del análisis avanzado</h3><div id="demand-advanced" class="demand-card-grid"></div><div id="demand-methodology" class="demand-note"></div><button type="button" id="sales-clusters-open" class="primary">Análisis de clusters</button></section>
       </div>
       <dialog id="demand-detail-dialog" class="demand-dialog"><div class="demand-dialog-head"><h3 id="demand-detail-title">Pedidos que sustentan el resultado</h3><button type="button" id="demand-detail-close" class="icon-button">Cerrar</button></div><div id="demand-detail-status" class="demand-meta"></div><div id="demand-detail-content" class="demand-scroll"></div><div class="demand-dialog-pages"><button type="button" id="demand-detail-prev" class="icon-button">Anterior</button><span id="demand-detail-page"></span><button type="button" id="demand-detail-next" class="icon-button">Siguiente</button></div></dialog>
       <dialog id="demand-advanced-dialog" class="demand-dialog demand-advanced-dialog"><div class="demand-dialog-head"><div><div class="panel-eyebrow">Análisis avanzado</div><h3 id="demand-advanced-title">Detalle del módulo</h3></div><button type="button" id="demand-advanced-close" class="icon-button">Cerrar</button></div><div id="demand-advanced-content" class="demand-advanced-content"></div></dialog>
+      <dialog id="sales-clusters-dialog" class="demand-dialog sales-clusters-dialog" aria-labelledby="sales-clusters-title">
+        <div class="demand-dialog-head"><div><div class="panel-eyebrow">Análisis avanzado · Patrones de venta</div><h3 id="sales-clusters-title">Análisis de clusters</h3></div><button type="button" id="sales-clusters-close" class="icon-button">Cerrar</button></div>
+        <p class="panel-description">Agrupa pedidos completos para descubrir patrones de venta. Las oportunidades comerciales son hipótesis para evaluar.</p>
+        <div id="sales-clusters-status" class="form-status" role="status" aria-live="polite"></div>
+        <form id="sales-clusters-form">
+          <fieldset><legend>Datos que se analizarán</legend><div class="sales-clusters-controls">
+            <label>Cafetería<select id="sales-clusters-location"><option value="all">Todas las cafeterías</option></select></label>
+            <label>Desde<input id="sales-clusters-from" type="date" required /></label><label>Hasta<input id="sales-clusters-to" type="date" required /></label>
+            <label>Categoría<select id="sales-clusters-category"><option value="">Todas</option></select></label>
+            <label>Producto<select id="sales-clusters-product"><option value="">Todos</option></select></label>
+            <label>Modalidad<select id="sales-clusters-mode"><option value="all">Todas</option><option value="dineIn">En local</option><option value="takeaway">Para llevar</option><option value="unknown">Sin clasificar</option></select></label>
+            <label>Recurrencia observada<select id="sales-clusters-recurrence"><option value="all">Todos</option><option value="single-observed-date">Primera observación</option><option value="returning-instrument">Repetición observada</option><option value="unlinked">Sin vínculo confiable</option></select></label>
+            <label>Hora desde<input id="sales-clusters-hour-from" type="number" min="0" max="24" step="0.5" placeholder="Sin mínimo" /></label>
+            <label>Hora hasta<input id="sales-clusters-hour-to" type="number" min="0" max="24" step="0.5" placeholder="Sin máximo" /></label>
+            <label>Ticket mínimo con IVA<input id="sales-clusters-min-spend" type="number" min="0" placeholder="Sin mínimo" /></label>
+            <label>Ticket máximo con IVA<input id="sales-clusters-max-spend" type="number" min="0" placeholder="Sin máximo" /></label>
+            <label>Descuento mínimo (%)<input id="sales-clusters-min-discount" type="number" min="0" max="100" step="0.1" placeholder="Sin mínimo" /></label>
+            <label>Descuento máximo (%)<input id="sales-clusters-max-discount" type="number" min="0" max="100" step="0.1" placeholder="Sin máximo" /></label>
+          </div><p class="sales-clusters-note">Los filtros seleccionan pedidos completos. Para horarios que cruzan medianoche, utiliza una hora inicial mayor que la final.</p></fieldset>
+          <fieldset><legend>Variables que forman los clusters</legend><p class="sales-clusters-note">Desactivar una dimensión la retira del cálculo; podrá seguir apareciendo como descripción de los resultados.</p><div id="sales-clusters-dimensions" class="sales-clusters-controls"></div></fieldset>
+          <details id="sales-clusters-quality"><summary>Parámetros de calidad</summary><p class="sales-clusters-note">La clasificación de solidez depende de estos valores. Cobertura es disponibilidad de datos; no equivale a confianza en su clasificación.</p><div id="sales-clusters-parameters" class="sales-clusters-controls"></div><button id="sales-clusters-reset" type="button" class="icon-button">Restaurar valores iniciales</button><span id="sales-clusters-custom" class="sales-clusters-badge" hidden>Parámetros personalizados</span></details>
+          <div class="sales-clusters-actions"><button id="sales-clusters-coverage-button" type="button" class="icon-button">Revisar cobertura</button><button id="sales-clusters-calculate" type="submit" class="primary">Calcular clusters</button><button id="sales-clusters-cancel" type="button" class="icon-button" hidden>Cancelar cálculo</button></div>
+          <div class="sales-clusters-actions"><label>Nombre de configuración<input id="sales-clusters-config-name" type="text" maxlength="80" placeholder="Ej. Compras de mañana" /></label><button id="sales-clusters-save" type="button" class="icon-button">Guardar configuración</button><label>Configuraciones guardadas<select id="sales-clusters-saved"><option value="">Seleccionar…</option></select></label><button id="sales-clusters-load" type="button" class="icon-button">Cargar configuración</button></div>
+        </form>
+        <div id="sales-clusters-coverage" class="demand-note"></div>
+        <div id="sales-clusters-context" class="demand-note" hidden></div>
+        <div id="sales-clusters-progress" hidden><progress id="sales-clusters-progress-bar" max="100" value="0" aria-label="Progreso del cálculo"></progress><span id="sales-clusters-progress-text" role="status"></span></div>
+        <section id="sales-clusters-results" aria-label="Resultados de clusters" hidden></section>
+        <section id="sales-clusters-detail" aria-label="Detalle del cluster" hidden></section>
+      </dialog>
     </section>
 
     <section id="location-settings" class="panel" style="display:none;">
@@ -2353,6 +2383,7 @@
   <script src="/vendor/xlsx.full.min.js"></script>
   <script src="/operations-session.js"></script>
   <script src="demand-view.js"></script>
+  <script src="sales-clusters-view.js"></script>
   <script src="upload-records-view.js"></script>
   <script src="sales-insight-filters.js"></script>
   <script src="script.js"></script>

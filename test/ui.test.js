@@ -9,7 +9,7 @@ const { createApp } = require('../server');
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-test('Análisis de la demanda abre sus cuatro capas y conserva el detalle aun sin ventas', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+test('Análisis de la Venta abre sus cuatro capas y conserva el detalle aun sin ventas', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-demand-ui-'));
   const server = createApp({ enableLegacyTools: true, uploadsRoot, reportToday: '2026-09-17' }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
@@ -21,7 +21,7 @@ test('Análisis de la demanda abre sus cuatro capas y conserva el detalle aun si
   });
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('link', { name: 'Análisis de la demanda' }).click();
+  await page.getByRole('link', { name: 'Análisis de la Venta' }).click();
   assert.equal(await page.locator('#demand-location-options input').count(), 2);
   await page.waitForFunction(() => document.getElementById('demand-status')?.textContent.includes('Análisis actualizado.'));
   assert.equal(await page.locator('#demand-category option').first().innerText(), 'Sin categorías con ventas');
@@ -204,7 +204,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.match(await auditChartRows.first().locator('td').nth(1).textContent(), /50%/);
 });
 
-test('Análisis de la demanda muestra un error visible si el servidor aún no sirve su módulo', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+test('Análisis de la Venta muestra un error visible si el servidor aún no sirve su módulo', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-demand-module-'));
   const server = createApp({ enableLegacyTools: true, uploadsRoot }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
@@ -217,7 +217,7 @@ test('Análisis de la demanda muestra un error visible si el servidor aún no si
   const page = await browser.newPage();
   await page.route('**/demand-view.js', route => route.fulfill({ status: 404, body: 'Not Found' }));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('link', { name: 'Análisis de la demanda' }).click();
+  await page.getByRole('link', { name: 'Análisis de la Venta' }).click();
   assert.match(await page.locator('#demand-status').innerText(), /Reinicia el servidor de Brewit/);
 });
 

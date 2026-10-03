@@ -1,4 +1,4 @@
-/* Análisis de la demanda: presentación. Los cálculos viven en demand-analysis.js. */
+/* Análisis de la Venta: presentación. Los cálculos viven en demand-analysis.js. */
 const demandView = { options: null, report: null, tab: 'products', query: '', detail: { kind: 'all', key: '', page: 1 } };
 const demandMoney = value => value == null ? '—' : new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(value);
 const demandNumber = value => value == null ? '—' : new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value);
@@ -106,7 +106,7 @@ async function loadDemandAnalysis() {
   const status = document.getElementById('demand-status');
   const reportElement = document.getElementById('demand-report');
   try {
-    setStatus(status, 'Actualizando opciones y calculando demanda…');
+    setStatus(status, 'Actualizando opciones y calculando venta…');
     const selectedLocations = [...document.querySelectorAll('#demand-location-options input:checked')].map(input => input.value);
     if (document.querySelector('#demand-location-options input') && !selectedLocations.length) {
       throw new Error('Selecciona al menos una cafetería.');
@@ -129,7 +129,7 @@ async function loadDemandAnalysis() {
   } catch (error) {
     reportElement.hidden = true;
     if (error.status === 404) {
-      setStatus(status, 'La API de demanda no está disponible en este servidor. Reinicia Brewit y recarga la página.', 'error');
+      setStatus(status, 'La API de venta no está disponible en este servidor. Reinicia Brewit y recarga la página.', 'error');
     } else {
       setStatus(status, error.message, 'error');
     }
@@ -245,7 +245,7 @@ function renderDemandExploration() {
   const root = document.getElementById('demand-exploration'); root.replaceChildren();
   if (demandView.tab === 'products' || demandView.tab === 'categories') {
     const rows = report.portfolio[demandView.tab];
-    root.append(demandScopeAndLimits(`Base: ${report.summary.orders} pedidos filtrados; venta neta y unidades observadas.`, 'El margen solo aparece con costo completo y el crecimiento solo con períodos operativos comparables. Venta observada no mide quiebres ni demanda perdida.'));
+    root.append(demandScopeAndLimits(`Base: ${report.summary.orders} pedidos filtrados; venta neta y unidades observadas.`, 'El margen solo aparece con costo completo y el crecimiento solo con períodos operativos comparables. Venta observada no mide quiebres ni venta perdida.'));
     root.append(demandTable([
       { label: demandView.tab === 'products' ? 'Producto' : 'Categoría', value: item => item.name },
       { label: 'Unidades', value: item => demandNumber(item.units) }, { label: 'Pedidos', value: item => item.orders },

@@ -257,7 +257,7 @@ function setView(view) {
     demand.style.display = '';
     if (typeof loadDemandAnalysis === 'function') loadDemandAnalysis();
     else setStatus(document.getElementById('demand-status'),
-      'No se cargó el módulo de demanda. Reinicia el servidor de Brewit y recarga esta página.', 'error');
+      'No se cargó el módulo de venta. Reinicia el servidor de Brewit y recarga esta página.', 'error');
     return;
   }
   if (view === 'inventory') {
@@ -1855,7 +1855,7 @@ const ANALYTICAL_TABLE_CHART_RULES = [
   { selector: '#inventory-syrup-substitution-table', types: ['bar'], title: 'Sustituciones de jarabes' },
   { selector: '#inventory-avoided-packaging-table', types: ['bar', 'pie'], pieHeaders: /cantidad|unidades|costo|valor|monto/i, title: 'Packaging desechable evitado' },
   { selector: '#current-inventory-table', types: ['bar', 'pie'], pieHeaders: /stock|cantidad|unidades|costo|valor|monto/i, title: 'Inventario actual por producto' },
-  { selector: '#demand-locations-body', types: ['bar', 'pie'], pieHeaders: /Pedidos|Venta neta/i, title: 'Demanda comparada por local' },
+  { selector: '#demand-locations-body', types: ['bar', 'pie'], pieHeaders: /Pedidos|Venta neta/i, title: 'Venta comparada por local' },
   { selector: '#sales-ingredients-report table', types: ['bar'], title: 'Ventas asociadas a ingredientes y extras' }
 ];
 
@@ -3845,7 +3845,7 @@ async function loadHourlySalesDemand() {
     interval: document.getElementById('hourly-demand-interval').value
   });
   button.disabled = true;
-  setStatus(status, 'Calculando demanda por franja horaria…');
+  setStatus(status, 'Calculando venta por franja horaria…');
   try {
     const report = await apiRequest(`/api/sales/hourly-demand?${params}`);
     if (location !== document.getElementById('sales-dashboard-location').value) return;
@@ -5700,7 +5700,7 @@ function renderProductAnalysis() {
     return [formatReportDate(item.date), formatProductAnalysisUnits(item.units), formatClp(item.netSales), anomaly ? `${anomaly.direction} (${anomaly.deviationPercent}%)` : 'Dentro de rango'];
   })));
 
-  const temporal = register('temporal', 'Día y hora', productAnalysisSection('temporal', 'Preferencias por día y horario', 'Cuándo se concentra la demanda', 'Los promedios diarios consideran solo días con ventas de cada día de semana.'));
+  const temporal = register('temporal', 'Día y hora', productAnalysisSection('temporal', 'Preferencias por día y horario', 'Cuándo se concentra la venta', 'Los promedios diarios consideran solo días con ventas de cada día de semana.'));
   temporal.append(productAnalysisTable(['Día', 'Días observados', 'Unidades promedio', 'Venta neta promedio'], report.temporal.weekdays.map(item => [item.label, item.days, formatProductAnalysisUnits(item.averageUnits), formatClp(item.averageNetSales)])), productAnalysisTable(['Hora', 'Unidades', 'Venta neta'], report.temporal.hours.map(item => [item.label, formatProductAnalysisUnits(item.units), formatClp(item.netSales)])));
 
   const service = register('service', 'Modalidad', productAnalysisSection('service', 'Para llevar, local y sin información', 'Modalidad y ticket promedio', 'La clasificación proviene del Comentario General de Detalle Pagos.'));
@@ -5747,7 +5747,7 @@ function renderProductAnalysis() {
   report.priceDistribution.insights.forEach(insight => valueInsights.appendChild(productAnalysisElement('p', 'product-analysis-interpretation', insight)));
   value.appendChild(valueInsights);
 
-  const price = register('price', 'Precio', productAnalysisSection('price', 'Precio, demanda y margen', 'Sensibilidad observada — no causal', report.priceSensitivity.caveat));
+  const price = register('price', 'Precio', productAnalysisSection('price', 'Precio, venta y margen', 'Sensibilidad observada — no causal', report.priceSensitivity.caveat));
   price.appendChild(productAnalysisPriceSensitivityTable(report.priceSensitivity.items));
   const priceReading = productAnalysisElement('div', 'product-analysis-price-reading');
   priceReading.appendChild(productAnalysisElement('h5', '', 'Cómo leer las columnas'));
@@ -11327,6 +11327,7 @@ function installWorkspaceTabs(workspaceId, headingSelector, definitions) {
   });
   workspace.querySelector(headingSelector).after(navigation);
   activate(0);
+  return navigation;
 }
 
 installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
@@ -11344,13 +11345,17 @@ installWorkspaceTabs('financial-results-workspace', '.financial-results-heading'
   ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
   ['costs', 'Revisión de costos', ['#financial-costs-empty', '#financial-missing-costs']]
 ]);
-installWorkspaceTabs('demand-analysis-workspace', '.demand-heading', [
+const demandNavigation = installWorkspaceTabs('demand-analysis-workspace', '.demand-heading', [
   ['overview', 'Resumen del período', ['#demand-report > .demand-section:nth-child(1)']],
-  ['exploration', 'Composición de la demanda', ['#demand-report > .demand-section:nth-child(2)']],
+  ['exploration', 'Composición de la venta', ['#demand-report > .demand-section:nth-child(2)']],
   ['hypotheses', 'Hipótesis', ['#demand-report > .demand-section:nth-child(3)']],
   ['actions', 'Acciones', ['#demand-report > .demand-section:nth-child(4)']],
   ['advanced', 'Análisis avanzado', ['#demand-report > .demand-section:nth-child(5)']]
 ]);
+const demandNavigationRow = document.createElement('div');
+demandNavigationRow.className = 'demand-navigation-row';
+demandNavigation.before(demandNavigationRow);
+demandNavigationRow.append(demandNavigation, document.getElementById('sales-clusters-open'));
 
 // The screen, print view and workbook share the same report rows.
 (() => {

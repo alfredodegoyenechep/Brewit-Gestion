@@ -597,7 +597,7 @@ function buildProductAnalytics(snapshot, filters) {
   const priceInterpretation = [];
   priceInterpretation.push({
     level: mediumConfidencePrices.length ? 'atención' : 'informativo',
-    title: mediumConfidencePrices.length ? `${mediumConfidencePrices.length} producto(s) presentan una señal de confianza media` : 'No hay señales suficientemente firmes para atribuir la demanda al precio',
+    title: mediumConfidencePrices.length ? `${mediumConfidencePrices.length} producto(s) presentan una señal de confianza media` : 'No hay señales suficientemente firmes para atribuir la venta al precio',
     detail: mediumConfidencePrices.length
       ? 'Estas señales merecen revisión individual, controlando promociones, disponibilidad, día de semana, canal y cambios de mix.'
       : `El R² mediano es ${round(medianPriceRSquared, 2)} y todas las señales quedan en confianza baja; los datos actuales muestran asociación débil, no una base para modificar precios por sí sola.`

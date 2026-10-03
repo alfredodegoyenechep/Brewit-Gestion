@@ -292,7 +292,7 @@ function buildEvidenceAndActions({ summary, baskets, portfolio, time, coverage, 
   const recurring = intelligence?.recurrence;
   if (recurring?.identifiableInstruments >= 30 && (recurring.linkageCoverage?.linkedPercent || 0) >= 70) {
     const returningGroup = recurring.groups.find(item => item.key === 'returning-instrument');
-    hypotheses.push({ id: 'H-RECURRENCIA', title: 'Los instrumentos recurrentes representan una parte medible de la demanda vinculada',
+    hypotheses.push({ id: 'H-RECURRENCIA', title: 'Los instrumentos recurrentes representan una parte medible de la venta vinculada',
       evidence: `${recurring.returningInstruments}/${recurring.identifiableInstruments} instrumentos tienen compras en al menos dos fechas; ${returningGroup?.orders || 0} pedidos observados en el segmento recurrente.`,
       alternatives: 'Un instrumento puede ser compartido y una misma persona puede usar varios; el pagador puede no ser quien consume.',
       missing: 'Identificador de cliente consentido y explícito, además de mayor cobertura de otros medios de pago.',
@@ -476,10 +476,10 @@ function buildDemandAnalysis(input) {
       availableData: 'Código, nombre, categoría, precio y cantidad de cada línea vendida.',
       limitations: 'No se deduce tamaño desde el nombre porque puede confundir formato, receta o descripción comercial.',
       requirements: 'Campo Tamaño poblado o maestro versionado código–formato validado.' },
-    { key: 'lost-demand', title: 'Demanda perdida', status: 'insufficient', detail: 'Kardex diario no demuestra quiebres de vitrina ni clientes que desistieron; se necesita registro de disponibilidad.',
-      scope: 'Solo demanda atendida registrada como venta.',
+    { key: 'lost-demand', title: 'Venta perdida', status: 'insufficient', detail: 'Kardex diario no demuestra quiebres de vitrina ni clientes que desistieron; se necesita registro de disponibilidad.',
+      scope: 'Solo ventas realizadas y registradas.',
       availableData: 'Ventas y Kardex diario, útiles para inventario pero no para observar intentos de compra fallidos.',
-      limitations: 'Venta cero no distingue local cerrado, producto no ofrecido, quiebre, falta técnica o ausencia de demanda.',
+      limitations: 'Venta cero no distingue local cerrado, producto no ofrecido, quiebre, falta técnica o falta de intención de compra.',
       requirements: 'Registro horario de disponibilidad/quiebres, cancelaciones, productos no ofrecidos y, si es posible, intentos de compra.' },
     { key: 'customers', title: 'Recurrencia observable', status: intelligence.recurrence.identifiableInstruments ? 'exploratory' : 'insufficient',
       detail: intelligence.recurrence.identifiableInstruments ? `${intelligence.recurrence.identifiableInstruments} instrumentos de pago pseudonimizados vinculados; no equivalen a clientes únicos y el vínculo es estimado.` : 'No hay vínculos de alta confianza entre pedidos e instrumentos de pago.',
@@ -498,10 +498,10 @@ function buildDemandAnalysis(input) {
       sales: 'Venta neta sin IVA; ticket y precio pagado con IVA. Pedidos distintos, no personas.',
       cost: 'Costo de la última compra comparable disponible a la fecha de venta; receta y maestro como respaldo. Sin costo completo, margen no calculable.',
       comparisons: 'Solo se publican variaciones cuando apertura, horario habitual, cierres declarados y rangos de archivos del período comparado están cubiertos. Los rangos indican cobertura declarada, no garantizan integridad del archivo ni reconstruyen cambios históricos de horario.',
-      demand: 'Las ventas registran demanda atendida, no quiebres ni clientes que no compraron.',
+      demand: 'Se analizan ventas registradas; no se miden quiebres ni clientes que no compraron.',
       basket: 'Soporte, confianza condicional y lift; un lift alto sin suficiente soporte no justifica un combo.',
       identity: 'El nombre se segmenta solo de forma agregada y orientativa. La recurrencia corresponde a instrumentos de pago pseudonimizados vinculados por coincidencia de local, fecha, monto y hora; no a personas confirmadas.',
-      limitations: 'Cada bloque publica su alcance, denominador y limitaciones. Dato ausente no se interpreta como cero y las ventas observadas representan demanda atendida.'
+      limitations: 'Cada bloque publica su alcance, denominador y limitaciones. Dato ausente no se interpreta como cero y se analizan únicamente ventas observadas.'
     }
   };
 }
