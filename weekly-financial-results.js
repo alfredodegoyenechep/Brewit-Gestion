@@ -5,7 +5,18 @@ const inventoryMetrics = [
   ['waste', 'Costo de merma'], ['otherConsumables', 'Otros Consumibles'],
   ['adjustedKardexTotalCost', 'Costo Total Kardex ajustado por sustit. y vasos no ut.']
 ];
-const metrics = [['netSales', 'Venta Neta'], ['discounts', 'Total Descuentos'], ...inventoryMetrics, ['combined', 'Total Costos (sin descuentos)']];
+const metrics = [
+  ['grossSales', 'Venta Bruta'],
+  ['mercadoPagoCollection', 'Recaudación MercadoPago'],
+  ['mercadoPagoTips', 'Propinas recaudadas (MercadoPago)'],
+  ['mercadoPagoNet', 'MercadoPago menos propinas'],
+  ['mercadoPagoDifference', 'Diferencia MercadoPago vs. Venta Bruta'],
+  ['cashSales', 'Venta en efectivo (TotEat)'],
+  ['collectedSales', 'Recaudación sin propinas (MercadoPago + efectivo)'],
+  ['collectionDifference', 'Diferencia final vs. Venta Bruta'],
+  ['netSales', 'Venta Neta'], ['discounts', 'Total Descuentos'],
+  ...inventoryMetrics, ['combined', 'Total Costos (sin descuentos)']
+];
 const iso = date => date.toISOString().slice(0, 10);
 function currentWeeks(today) {
   const date = new Date(`${today}T00:00:00Z`);
@@ -17,10 +28,24 @@ function currentWeeks(today) {
   });
 }
 function extract(payload) {
+  const collection = key => ({
+    amount: payload.statement?.[key]?.amount ?? 0,
+    available: payload.statement?.[key]?.available === true,
+    complete: payload.statement?.[key]?.complete === true
+  });
   const values = {
     netSales: { amount: payload.revenue.total.netSales || 0, complete: payload.revenue.filesRead > 0 },
+    mercadoPagoCollection: collection('mercadoPagoCollection'),
+    mercadoPagoTips: collection('mercadoPagoTips'),
+    cashSales: collection('cashSales'),
     discounts: { amount: payload.revenue.discountsNet || 0, complete: payload.revenue.filesRead > 0 }
   };
+  values.grossSales = { amount: Math.round(values.netSales.amount * 1.19), available: values.netSales.complete, complete: values.netSales.complete };
+  const derived = (amount, sources) => ({ amount, available: sources.every(value => value.available), complete: sources.every(value => value.complete) });
+  values.mercadoPagoNet = derived(values.mercadoPagoCollection.amount - values.mercadoPagoTips.amount, [values.mercadoPagoCollection, values.mercadoPagoTips]);
+  values.mercadoPagoDifference = derived(values.mercadoPagoNet.amount - values.grossSales.amount, [values.mercadoPagoNet, values.grossSales]);
+  values.collectedSales = derived(values.mercadoPagoNet.amount + values.cashSales.amount, [values.mercadoPagoNet, values.cashSales]);
+  values.collectionDifference = derived(values.collectedSales.amount - values.grossSales.amount, [values.collectedSales, values.grossSales]);
   const summaries = payload.inventorySummaries || [];
   for (const [key] of inventoryMetrics) {
     const cells = summaries.map(summary => summary?.metrics?.[key]);
@@ -44,6 +69,7 @@ function percentages(values) {
 function report(weeks, scope, warnings) {
   const total = percentages(Object.fromEntries(metrics.map(([key]) => [key, {
     amount: weeks.reduce((sum, week) => sum + week.values[key].amount, 0),
+    ...(weeks.some(week => 'available' in week.values[key]) ? { available: weeks.some(week => week.values[key].available) } : {}),
     complete: weeks.every(week => week.values[key].complete)
   }])));
   return { period: { from: weeks[0].period.from, to: weeks.at(-1).period.to }, scope, metrics, weeks, total, warnings: [...warnings] };

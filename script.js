@@ -539,20 +539,30 @@ function openWeeklyPreview(field, record) {
   );
 }
 
-function openTransactionDeleteDialog(field, uploaded) {
+function openTransactionDeleteDialog(field, uploaded, {
+  location = document.getElementById('location-select').value,
+  source = 'uploads',
+  allOnly = false
+} = {}) {
   pendingTransactionDelete = {
     field,
-    location: document.getElementById('location-select').value,
+    location,
+    source,
+    allOnly,
     fileCount: uploaded.fileCount,
     latest: uploaded.latest
   };
   const label = FIELD_LABELS[field] || field;
+  const locationName = locationRegistry[location]?.name || location;
   document.getElementById('transaction-delete-title').textContent = `Eliminar ${label}`;
-  document.getElementById('transaction-delete-description').textContent =
-    `Hay ${uploaded.fileCount} carga(s) guardada(s). La última es “${uploaded.latest.originalName || uploaded.latest.name}”. Selecciona el alcance y confirma antes de continuar.`;
-  document.querySelector('input[name="transaction-delete-action"][value="last"]').checked = true;
+  document.getElementById('transaction-delete-description').textContent = allOnly
+    ? `Se eliminarán TODOS los datos de ${label} para ${locationName}, incluidos todos los archivos cargados y su historial. Esta acción no se puede deshacer.`
+    : `Hay ${uploaded.fileCount} carga(s) guardada(s). La última es “${uploaded.latest.originalName || uploaded.latest.name}”. Selecciona el alcance y confirma antes de continuar.`;
+  document.querySelector('.transaction-delete-options').hidden = allOnly;
+  document.querySelector(`input[name="transaction-delete-action"][value="${allOnly ? 'all' : 'last'}"]`).checked = true;
   document.getElementById('transaction-delete-confirmation').value = '';
   document.getElementById('confirm-transaction-delete').disabled = true;
+  document.getElementById('confirm-transaction-delete').textContent = allOnly ? 'Eliminar todos los datos' : 'Confirmar eliminación';
   setStatus(document.getElementById('transaction-delete-status'), 'Esta acción no puede deshacerse desde esta pantalla.', 'muted');
   document.getElementById('transaction-delete-dialog').showModal();
 }
@@ -560,6 +570,40 @@ function openTransactionDeleteDialog(field, uploaded) {
 function closeTransactionDeleteDialog() {
   pendingTransactionDelete = null;
   document.getElementById('transaction-delete-dialog').close();
+}
+
+async function confirmTransactionDeletion(event) {
+  if (!pendingTransactionDelete || pendingTransactionDelete.deleting
+    || document.getElementById('transaction-delete-confirmation').value.trim() !== 'ELIMINAR') return;
+  const button = event.currentTarget;
+  const context = pendingTransactionDelete;
+  const action = context.allOnly ? 'all' : document.querySelector('input[name="transaction-delete-action"]:checked')?.value;
+  const { location, field, source } = context;
+  context.deleting = true;
+  button.disabled = true;
+  setStatus(document.getElementById('transaction-delete-status'), action === 'all'
+    ? 'Eliminando toda la información de esta categoría…'
+    : 'Revirtiendo la última carga…');
+  try {
+    const result = await apiRequest(`/api/transactions/${encodeURIComponent(location)}/${encodeURIComponent(field)}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, confirmed: true, confirmationText: 'ELIMINAR' })
+    });
+    if (pendingTransactionDelete === context) closeTransactionDeleteDialog();
+    await loadTransactionFiles();
+    if (source === 'inventory') await loadInventorySources();
+    const status = document.getElementById(source === 'inventory' ? 'inventory-source-status' : 'week-status');
+    const currentLocation = document.getElementById(source === 'inventory' ? 'inventory-location-select' : 'location-select').value;
+    if (currentLocation === location) setStatus(status, action === 'all'
+      ? `Se eliminó toda la información de ${FIELD_LABELS[field] || field}.`
+      : `Se revirtió la última carga de ${FIELD_LABELS[field] || field}. Quedan ${result.remainingCount} carga(s).`, 'success');
+  } catch (error) {
+    if (pendingTransactionDelete !== context) return;
+    setStatus(document.getElementById('transaction-delete-status'), error.message, 'error');
+    context.deleting = false;
+    button.disabled = document.getElementById('transaction-delete-confirmation').value.trim() !== 'ELIMINAR';
+  }
 }
 
 function transactionUploadStatus() {
@@ -573,10 +617,13 @@ async function inspectTransactionFile(file, field, locationOverride = null, inpu
   setStatus(status, `Validando “${file.name}” y detectando sus fechas…`);
   document.querySelectorAll('.transaction-upload-button').forEach(button => { button.disabled = true; });
   try {
-    const location = locationOverride || transactionUploadContext?.location || document.getElementById('location-select').value;
+    const location = field === 'mercadopago' ? null
+      : locationOverride || transactionUploadContext?.location || document.getElementById('location-select').value;
     const formData = new FormData();
     formData.append(field, file);
-    const manifest = await apiRequest(`/api/uploads/transactions/inspect?location=${encodeURIComponent(location)}`, {
+    const inspectUrl = location === null ? '/api/uploads/transactions/inspect'
+      : `/api/uploads/transactions/inspect?location=${encodeURIComponent(location)}`;
+    const manifest = await apiRequest(inspectUrl, {
       method: 'POST',
       body: formData
     });
@@ -587,6 +634,13 @@ async function inspectTransactionFile(file, field, locationOverride = null, inpu
         `Estructura y fechas válidas (${formatDetectedRange(manifest.detectedRange)}). Procesando automáticamente ${FIELD_LABELS[manifest.files[0].field] || 'el reporte'}…`,
         'success');
       return confirmTransactionUpload('keep', { automatic: true });
+    }
+    if (manifest.mercadoPagoSummary) {
+      const summary = manifest.mercadoPagoSummary;
+      setStatus(status, summary.associatedCount
+        ? `Archivo revisado: ${summary.associatedCount.toLocaleString('es-CL')} registro(s) asociados y ${summary.unassociatedCount.toLocaleString('es-CL')} sin asociación. Revisa el resumen y confirma la carga en la ventana emergente.`
+        : 'El archivo no tiene registros asociados a nuestras cafeterías. Revisa el resumen en la ventana emergente.', summary.unassociatedCount ? 'warning' : 'success');
+      return true;
     }
     const acceptedWarning = manifest.files.find(file => file.structure?.permissive);
     if (acceptedWarning) {
@@ -635,6 +689,7 @@ function clearInspection(clearStatus = false) {
   document.getElementById('inventory-file-confirmed').checked = false;
   document.getElementById('inventory-file-confirmation-row').hidden = true;
   document.getElementById('detected-files-list').replaceChildren();
+  renderMercadoPagoUploadSummary(null);
   document.getElementById('transaction-overlap-notice').hidden = true;
   document.getElementById('replace-transactions-btn').hidden = true;
   setStatus(document.getElementById('transaction-confirmation-status'), '');
@@ -652,6 +707,12 @@ function cancelTransactionConfirmation() {
 function hasCompleteDetectedRange(range) {
   const isoDate = /^\d{4}-\d{2}-\d{2}$/;
   return Boolean(range && isoDate.test(range.from) && isoDate.test(range.to) && range.from <= range.to);
+}
+
+function hasSharedMercadoPagoDates(manifest) {
+  return Boolean(manifest?.assignments?.length && manifest.files?.length
+    && manifest.files.every(file => file.field === 'mercadopago' && hasCompleteDetectedRange(file.detectedRange))
+    && hasCompleteDetectedRange(manifest.detectedRange));
 }
 
 function canAutoConfirmToteatReport(manifest) {
@@ -676,7 +737,7 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
   const pageStatus = transactionUploadStatus();
   const dateFrom = document.getElementById('confirmed-date-from').value;
   const dateTo = document.getElementById('confirmed-date-to').value;
-  const requiresDateConfirmation = !automatic && (!inspectionState?.files?.length
+  const requiresDateConfirmation = !automatic && !hasSharedMercadoPagoDates(inspectionState) && (!inspectionState?.files?.length
     || inspectionState.files.some(file => file.field !== 'sales'));
   const confirmed = document.getElementById('dates-confirmed').checked;
   const requiresCategoryConfirmation = inspectionState?.files.some(file => file.structure?.requiresCategoryConfirmation);
@@ -691,6 +752,7 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
     return false;
   };
   if (!inspectionState) return fail('Vuelve a revisar los archivos antes de confirmar.');
+  if (inspectionState.mercadoPagoSummary?.associatedCount === 0) return fail('No hay registros asociados a nuestras cafeterías para procesar.');
   if (!dateFrom || !dateTo) return fail('Ingresa las fechas desde y hasta.');
   if (requiresDateConfirmation && !confirmed) return fail('Marca la confirmación de fechas antes de guardar.');
   if (requiresCategoryConfirmation && !categoryConfirmed) {
@@ -705,7 +767,8 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
     const result = await apiRequest('/api/uploads/transactions/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction })
+      body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction,
+        ...(inspectionState.mercadoPagoSummary?.unassociatedCount ? { excludedAcknowledged: true } : {}) })
     });
     clearWeeklySelections();
     clearInspection();
@@ -724,6 +787,11 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
       importMessages.push(imported.newTransactions
         ? `${imported.newTransactions} transacción(es) MercadoPago nueva(s) guardada(s); ${imported.duplicateTransactions} fila(s) repetida(s) omitida(s).`
         : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
+      for (const assignment of result.assignments || []) {
+        const stats = assignment.imports?.mercadopago;
+        importMessages.push(`${assignment.name} (STORE_ID ${assignment.storeId}): ${stats?.newTransactions || 0} registro(s) nuevo(s), ${stats?.duplicateTransactions || 0} repetido(s) omitido(s).`);
+      }
+      if (result.skippedCount) importMessages.push(`${result.skippedCount} registro(s) sin cafetería asociada no fueron procesados.`);
     }
     if (result.imports?.['payment-details']) {
       const imported = result.imports['payment-details'];
@@ -8279,6 +8347,17 @@ async function loadInventorySources() {
         download.rel = 'noopener';
         download.textContent = 'Descargar';
         actions.append(preview, download);
+        if (source.applicable && ['marketing', 'employees', 'calibrations'].includes(source.field)) {
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'delete-button small';
+          remove.textContent = 'Eliminar todos los datos';
+          remove.setAttribute('aria-label', `Eliminar todos los datos de ${source.label}`);
+          remove.addEventListener('click', () => openTransactionDeleteDialog(source.field, { latest: source.file, fileCount: source.file.fileCount }, {
+            location, source: 'inventory', allOnly: true
+          }));
+          actions.appendChild(remove);
+        }
       }
       card.append(name, details, actions);
       return card;
@@ -9875,6 +9954,19 @@ function renderLocationManagement(data) {
       toteatFields.appendChild(wrapper);
       return [field, input];
     });
+    if (location.type === 'store') {
+      const wrapper = document.createElement('label');
+      const caption = document.createElement('span');
+      caption.textContent = 'MercadoPago · STORE_ID';
+      const input = document.createElement('input');
+      input.value = location.mercadoPagoStoreId || '';
+      input.inputMode = 'numeric';
+      input.maxLength = 40;
+      input.setAttribute('aria-label', `STORE_ID MercadoPago para ${location.name}`);
+      wrapper.append(caption, input);
+      toteatFields.appendChild(wrapper);
+      toteatInputs.push(['mercadoPagoStoreId', input]);
+    }
     let openingInput = null;
     let weekdayInputs = [];
     let weekdayHoursInputs = [];
@@ -9997,8 +10089,9 @@ function renderLocationManagement(data) {
             ...Object.fromEntries(toteatInputs.map(([field, input]) => [field, input.value]))
           })
         });
-        setStatus(document.getElementById('location-status'), 'Ubicación e identificadores de TotEat actualizados.', 'success');
+        setStatus(document.getElementById('location-status'), 'Ubicación e identificadores de TotEat y MercadoPago actualizados.', 'success');
         await refreshLocationConfiguration();
+        window.dispatchEvent(new Event('brewit-location-settings-updated'));
       } catch (error) {
         setStatus(document.getElementById('location-status'), error.message, 'error');
         saveButton.disabled = false;
@@ -10064,10 +10157,45 @@ function closeLocationTrashDialog() {
   document.getElementById('location-trash-dialog').close();
 }
 
+function renderMercadoPagoUploadSummary(summary) {
+  const container = document.getElementById('mercadopago-upload-summary');
+  container.replaceChildren();
+  container.hidden = !summary;
+  if (!summary) return;
+  const title = document.createElement('h4');
+  title.textContent = `Resumen del archivo: ${summary.originalName}`;
+  const wrap = document.createElement('div');
+  wrap.className = 'inventory-results-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'inventory-results-table';
+  const header = table.createTHead().insertRow();
+  for (const label of ['Sucursal', 'STORE_ID', 'Registros']) {
+    const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; header.append(cell);
+  }
+  const body = table.createTBody();
+  for (const item of [...summary.stores, ...summary.unassociated.map(item => ({ ...item, name: 'Sin asociación' }))]) {
+    const row = body.insertRow();
+    for (const value of [item.name, item.storeId || 'Sin STORE_ID', item.rowCount.toLocaleString('es-CL')]) row.insertCell().textContent = value;
+  }
+  const total = table.createTFoot().insertRow();
+  total.insertCell().textContent = 'Total del archivo'; total.insertCell().textContent = ''; total.insertCell().textContent = summary.totalRows.toLocaleString('es-CL');
+  wrap.append(table);
+  const note = document.createElement('p');
+  note.className = 'panel-description';
+  note.textContent = `${summary.associatedCount.toLocaleString('es-CL')} registro(s) asociados a nuestras cafeterías. Los registros repetidos se revisarán al confirmar la carga.`;
+  container.append(title, wrap, note);
+  const warning = document.createElement('p');
+  setStatus(warning, summary.unassociatedCount
+    ? `Advertencia: ${summary.unassociatedCount.toLocaleString('es-CL')} registro(s) sin cafetería asociada no serán procesados. Al confirmar la carga, se guardarán únicamente los registros asociados según la opción elegida.`
+    : 'Todos los registros tienen una cafetería asociada.', summary.unassociatedCount ? 'warning' : 'success');
+  container.append(warning);
+}
+
 function showInspection(manifest, { openDialog = true } = {}) {
   inspectionState = manifest;
   const confirmation = document.getElementById('date-confirmation');
   const list = document.getElementById('detected-files-list');
+  renderMercadoPagoUploadSummary(manifest.mercadoPagoSummary);
   list.replaceChildren();
   for (const file of manifest.files) {
     const row = document.createElement('div');
@@ -10078,7 +10206,12 @@ function showInspection(manifest, { openDialog = true } = {}) {
     range.textContent = formatDetectedRange(file.detectedRange);
     if (!file.detectedRange) range.className = 'detection-warning';
     row.append(name, range);
-    if (file.structure?.ok) {
+    if (file.storeId) {
+      const assignment = document.createElement('span');
+      assignment.textContent = `${file.locationLabel} · STORE_ID ${file.storeId} · ${file.rowCount} registro(s)`;
+      row.appendChild(assignment);
+    }
+    if (file.structure?.ok && !manifest.mercadoPagoSummary) {
       const structure = document.createElement('span');
       structure.className = file.structure.permissive ? 'detection-warning' : 'structure-validation-ok';
       structure.textContent = file.structure.permissive
@@ -10098,7 +10231,12 @@ function showInspection(manifest, { openDialog = true } = {}) {
   document.getElementById('confirmed-date-to').value = manifest.detectedRange?.to || '';
   document.getElementById('dates-confirmed').checked = false;
   const salesOnlyUpload = manifest.files.length > 0 && manifest.files.every(file => file.field === 'sales');
-  document.getElementById('date-confirmation-row').hidden = salesOnlyUpload;
+  const sharedMercadoPago = hasSharedMercadoPagoDates(manifest);
+  const noAssociatedRows = manifest.mercadoPagoSummary?.associatedCount === 0;
+  confirmation.querySelector('.confirmation-dates').hidden = sharedMercadoPago || noAssociatedRows;
+  document.getElementById('date-confirmation-row').hidden = salesOnlyUpload || sharedMercadoPago || noAssociatedRows;
+  document.getElementById('transaction-confirmation-title').textContent = manifest.mercadoPagoSummary
+    ? 'Carga de MercadoPago por STORE_ID' : 'Revisa las fechas detectadas';
   const inventoryFile = manifest.files.find(file => file.structure?.requiresCategoryConfirmation);
   const inventoryConfirmation = document.getElementById('inventory-file-confirmation-row');
   document.getElementById('inventory-file-confirmed').checked = false;
@@ -10111,21 +10249,27 @@ function showInspection(manifest, { openDialog = true } = {}) {
   const overlapNotice = document.getElementById('transaction-overlap-notice');
   const replaceButton = document.getElementById('replace-transactions-btn');
   const keepButton = document.getElementById('keep-transactions-btn');
+  keepButton.disabled = replaceButton.disabled = noAssociatedRows;
   overlapNotice.hidden = !manifest.hasOverlap;
   replaceButton.hidden = !manifest.hasOverlap;
   if (manifest.hasOverlap) {
     keepButton.textContent = 'Mantener existentes y agregar nuevos';
     const descriptions = manifest.files.filter(file => file.overlapRange).map(file =>
-      `${FIELD_LABELS[file.field] || file.field}: ${formatDetectedRange(file.overlapRange)}`);
+      `${file.locationLabel ? file.locationLabel + ' · ' : ''}${FIELD_LABELS[file.field] || file.field}: ${formatDetectedRange(file.overlapRange)}`);
     overlapNotice.textContent = `Ya existen datos para ${descriptions.join(' · ')}. Puedes mantenerlos y agregar únicamente registros no repetidos, o reemplazar completamente la información de esos días con la nueva carga.`;
     document.getElementById('transaction-confirmation-copy').textContent =
-      'Revisa el rango y elige qué hacer con los días que coinciden con datos ya guardados.';
+      sharedMercadoPago
+        ? 'Los registros se asignarán automáticamente a cada cafetería por STORE_ID. Elige si reemplazar los días coincidentes o mantener los existentes y agregar solo los nuevos.'
+        : 'Revisa el rango y elige qué hacer con los días que coinciden con datos ya guardados.';
   } else {
-    keepButton.textContent = 'Confirmar y guardar registros';
+    keepButton.textContent = sharedMercadoPago ? 'Agregar registros nuevos' : 'Confirmar y guardar registros';
     overlapNotice.textContent = '';
     document.getElementById('transaction-confirmation-copy').textContent =
-      'No se encontraron fechas coincidentes. Confirma el rango para agregar estos registros al sistema.';
+      sharedMercadoPago
+        ? 'Los registros se asignarán automáticamente a cada cafetería por STORE_ID. No hay días coincidentes; guarda para agregar los registros nuevos.'
+        : 'No se encontraron fechas coincidentes. Confirma el rango para agregar estos registros al sistema.';
   }
+  if (noAssociatedRows) document.getElementById('transaction-confirmation-copy').textContent = 'No hay registros asociados a nuestras cafeterías para cargar. Revisa el resumen y cierra esta ventana.';
   setStatus(document.getElementById('transaction-confirmation-status'), '');
   if (openDialog) confirmation.showModal();
 }
@@ -10548,33 +10692,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('weekly-upload-form')?.addEventListener('submit', event => event.preventDefault());
 
   document.getElementById('transaction-delete-confirmation').addEventListener('input', event => {
-    document.getElementById('confirm-transaction-delete').disabled = event.target.value.trim() !== 'ELIMINAR';
+    document.getElementById('confirm-transaction-delete').disabled = !!pendingTransactionDelete?.deleting || event.target.value.trim() !== 'ELIMINAR';
   });
-  document.getElementById('confirm-transaction-delete').addEventListener('click', async event => {
-    if (!pendingTransactionDelete) return;
-    const button = event.currentTarget;
-    const action = document.querySelector('input[name="transaction-delete-action"]:checked')?.value;
-    const { location, field } = pendingTransactionDelete;
-    button.disabled = true;
-    setStatus(document.getElementById('transaction-delete-status'), action === 'all'
-      ? 'Eliminando toda la información de esta categoría…'
-      : 'Revirtiendo la última carga…');
-    try {
-      const result = await apiRequest(`/api/transactions/${encodeURIComponent(location)}/${encodeURIComponent(field)}/remove`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, confirmed: true, confirmationText: 'ELIMINAR' })
-      });
-      closeTransactionDeleteDialog();
-      await loadTransactionFiles();
-      setStatus(document.getElementById('week-status'), action === 'all'
-        ? `Se eliminó toda la información de ${FIELD_LABELS[field] || field}.`
-        : `Se revirtió la última carga de ${FIELD_LABELS[field] || field}. Quedan ${result.remainingCount} carga(s).`, 'success');
-    } catch (error) {
-      setStatus(document.getElementById('transaction-delete-status'), error.message, 'error');
-      button.disabled = false;
-    }
-  });
+  document.getElementById('confirm-transaction-delete').addEventListener('click', confirmTransactionDeletion);
   document.getElementById('close-transaction-delete').addEventListener('click', closeTransactionDeleteDialog);
   document.getElementById('cancel-transaction-delete').addEventListener('click', closeTransactionDeleteDialog);
   document.getElementById('transaction-delete-dialog').addEventListener('close', () => { pendingTransactionDelete = null; });
@@ -11146,7 +11266,7 @@ async function loadUploadOverview() {
       item.append(cell('strong',m.label),cell('span',date(m.updatedAt)));
       item.addEventListener('click',()=>openLatestMasterPreview(m.key,m.label));return item;
     }));
-    const manualColumns=data.columns.filter(c=>['mercadopago','marketing','employees','calibrations'].includes(c.key));
+    const manualColumns=data.columns.filter(c=>['marketing','employees','calibrations'].includes(c.key));
     const manualHead=document.createElement('thead'),manualHeader=document.createElement('tr');
     for(const label of ['Local',...manualColumns.map(c=>c.label)]) {
       const th=cell('th',label);th.scope='col';manualHeader.append(th);
@@ -11243,6 +11363,11 @@ setInterval(()=>{const view=document.getElementById('upload-overview');if(!view.
 
 // The confirmation dialog is shared by both upload views.
 document.body.append(document.getElementById('date-confirmation'));
+document.getElementById('upload-mercadopago-shared').addEventListener('click', () => {
+  if (inspectionState) { document.getElementById('date-confirmation').showModal(); return; }
+  uploadManualTarget = { field: 'mercadopago' };
+  document.getElementById('upload-overview-file').click();
+});
 document.getElementById('upload-overview-file').addEventListener('change',async event=>{
   const input=event.currentTarget,file=input.files[0],target=uploadManualTarget;
   if(!file||!target)return;
@@ -11542,10 +11667,36 @@ async function loadWeeklyFinancialResults() {
     const context = document.createElement('p');
     context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Semanas de lunes a domingo`;
     container.append(context);
-    const fillCell = (cell, value, showPercent = true) => {
+    const reconciliationTitles = {
+      grossSales: 'Venta Neta × 1,19: incluye IVA y considera los descuentos.',
+      mercadoPagoCollection: 'Cobros registrados en MercadoPago antes de comisiones, en el mismo período.',
+      mercadoPagoTips: 'Propinas registradas en TotEat para los pagos por MercadoPago. Excluye las propinas en efectivo.',
+      mercadoPagoNet: 'Recaudación MercadoPago − propinas de MercadoPago.',
+      mercadoPagoDifference: 'MercadoPago menos propinas − Venta Bruta. Un valor negativo indica cuánto falta cubrir.',
+      cashSales: 'Efectivo registrado en TotEat, descontando vuelto y propinas en efectivo.',
+      collectedSales: 'Recaudación MercadoPago − propinas de MercadoPago + venta en efectivo.',
+      collectionDifference: 'MercadoPago − propinas + efectivo − Venta Bruta. $0 indica que los montos cuadran; positivo indica exceso y negativo, faltante.'
+    };
+    const comparisonKeys = new Set(['mercadoPagoNet', 'mercadoPagoDifference', 'collectedSales', 'collectionDifference']);
+    const fillCell = (cell, value, showPercent = true, reconciliationKey = null) => {
       const amount = document.createElement('span'); amount.className = 'weekly-amount';
+      if (reconciliationKey && !value?.available) {
+        amount.textContent = comparisonKeys.has(reconciliationKey) ? 'Pendiente' : 'Sin datos';
+        cell.classList.add('weekly-unavailable');
+        cell.title = 'Faltan datos para comparar todas las fuentes del período.';
+        cell.append(amount);
+        return;
+      }
       amount.textContent = formatClp(value?.amount ?? 0);
       cell.append(amount);
+      if (reconciliationKey && !value.complete) cell.title = 'Cobertura incompleta: monto disponible para este período.';
+      if (comparisonKeys.has(reconciliationKey) && !value.complete) {
+        const pending = document.createElement('span'); pending.className = 'weekly-pending'; pending.textContent = 'Pendiente';
+        cell.classList.add('weekly-unavailable');
+        cell.append(' · ', pending);
+        return;
+      }
+      if (reconciliationKey === 'collectionDifference') cell.classList.add(Math.round(value.amount) === 0 ? 'weekly-balanced' : 'weekly-difference');
       if (!showPercent) return;
       const percent = document.createElement('span'); percent.className = 'weekly-percent';
       percent.textContent = `${(value?.percent ?? 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
@@ -11561,15 +11712,23 @@ async function loadWeeklyFinancialResults() {
       const body = table.createTBody();
       data.metrics.forEach(([key, label]) => {
         const row = body.insertRow(); const th = document.createElement('th'); th.scope = 'row'; th.textContent = label; row.append(th);
-        row.className = key === 'netSales' ? 'weekly-net-sales' : key === 'discounts' ? 'weekly-expense weekly-discounts' : 'weekly-expense';
-        if (key === 'netSales') {
+        const isReconciliation = Object.hasOwn(reconciliationTitles, key);
+        row.className = key === 'netSales' ? 'weekly-net-sales' : key === 'grossSales' ? 'weekly-gross-sales' : isReconciliation ? 'weekly-reconciliation' : key === 'discounts' ? 'weekly-expense weekly-discounts' : 'weekly-expense';
+        if (key === 'mercadoPagoCollection') row.classList.add('weekly-mercadopago');
+        if (key === 'collectionDifference') row.classList.add('weekly-collection-difference');
+        if (isReconciliation) th.title = reconciliationTitles[key];
+        if (key === 'netSales' || key === 'grossSales') {
           const note = document.createElement('span'); note.className = 'weekly-net-sales-note';
           note.textContent = '(descuentos considerados)'; th.append(' ', note);
         }
-        data.weeks.forEach(week => fillCell(row.insertCell(), week?.values[key], key !== 'netSales'));
-        fillCell(row.insertCell(), data.total[key], key !== 'netSales');
+        const showPercent = key !== 'netSales' && !isReconciliation;
+        data.weeks.forEach(week => fillCell(row.insertCell(), week?.values[key], showPercent, isReconciliation ? key : null));
+        fillCell(row.insertCell(), data.total[key], showPercent, isReconciliation ? key : null);
       });
       wrap.append(table); container.append(wrap);
+      const reconciliationNote = document.createElement('p'); reconciliationNote.className = 'weekly-reconciliation-note';
+      reconciliationNote.textContent = 'La venta bruta debe ser igual a MercadoPago menos sus propinas más la venta en efectivo de TotEat. La diferencia final debe ser $0; «Pendiente» indica que faltan datos para completar la comparación.';
+      container.append(reconciliationNote);
     }
     if (data.warnings.length) {
       const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'Cobertura y criterios de cálculo'; details.append(summary);

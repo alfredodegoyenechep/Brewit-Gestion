@@ -263,17 +263,24 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
   const browser=await chromium.launch({executablePath:CHROME_PATH,headless:true});t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));fs.rmSync(uploadsRoot,{recursive:true,force:true});});
   const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();
   await page.locator('[data-upload-location="store-1"][data-upload-field="marketing"]').waitFor();
-  assert.equal(await page.locator('[data-upload-field]').count(),8);
+  assert.equal(await page.locator('[data-upload-field]').count(),6);
   assert.equal(await page.locator('[data-upload-location="main-warehouse"]').count(),0);
   for(const field of ['marketing','employees','calibrations','mercadopago']) {
-    const chooser=page.waitForEvent('filechooser');await page.locator(`[data-upload-location="store-1"][data-upload-field="${field}"]`).click();
-    await (await chooser).setFiles({name:field+'.csv',mimeType:'text/csv',buffer:Buffer.from(field==='mercadopago'?'TRANSACTION_DATE\tSOURCE_ID\tTRANSACTION_TYPE\tTRANSACTION_AMOUNT\tFEE_AMOUNT\n2026-08-05T10:00:00.000-04:00\tmp-ui-1\tSETTLEMENT\t1190\t-20':'ID Producto **\tNombre Producto *\t2026-08-05\nP1\tProducto Uno\t1')});
+    const chooser=page.waitForEvent('filechooser');await (field==='mercadopago'?page.getByRole('button',{name:'Cargar archivo único de MercadoPago'}):page.locator(`[data-upload-location="store-1"][data-upload-field="${field}"]`)).click();
+    await (await chooser).setFiles({name:field+'.csv',mimeType:'text/csv',buffer:Buffer.from(field==='mercadopago'?'TRANSACTION_DATE\tSOURCE_ID\tTRANSACTION_TYPE\tTRANSACTION_AMOUNT\tFEE_AMOUNT\tSTORE_ID\n2026-08-05T10:00:00.000-04:00\tmp-ui-1\tSETTLEMENT\t1190\t-20\t82010740\n2026-08-05T11:00:00.000-04:00\tmp-ui-2\tSETTLEMENT\t2380\t-40\t81555097':'ID Producto **\tNombre Producto *\t2026-08-05\nP1\tProducto Uno\t1')});
     await page.locator('#date-confirmation').waitFor({state:'visible',timeout:5000}).catch(async error=>{throw Error(await page.locator('#upload-manual-status').innerText()+' | '+error.message);});
     assert.equal(await page.locator('#file-loader').isVisible(),false);
-    await page.locator('#dates-confirmed').check();await page.locator('#keep-transactions-btn').click();
+    if(field==='mercadopago') {
+      assert.match(await page.locator('#detected-files-list').innerText(),/Tienda 1 · STORE_ID 82010740 · 1 registro/);
+      assert.match(await page.locator('#detected-files-list').innerText(),/Tienda 2 · STORE_ID 81555097 · 1 registro/);
+    }
+    if(field!=='mercadopago')await page.locator('#dates-confirmed').check();await page.locator('#keep-transactions-btn').click();
     await page.locator('#date-confirmation').waitFor({state:'hidden'});
     await page.locator('#upload-manual-status').filter({hasText:/agregaron|MercadoPago nueva/}).waitFor();
     const data=await page.request.get(`http://127.0.0.1:${server.address().port}/api/transactions?location=store-1`).then(r=>r.json());assert.equal(data.files[field].fileCount,1);
+    if(field==='mercadopago') {
+      const lyon=await page.request.get(`http://127.0.0.1:${server.address().port}/api/transactions?location=store-2`).then(r=>r.json());assert.equal(lyon.files.mercadopago.latest.transactionCount,1);
+    }
   }
   await page.locator('#upload-masters-frequency').selectOption('60');await page.locator('#upload-inventory-frequency').selectOption('15');await page.getByRole('button',{name:'Guardar frecuencias'}).click();
   await page.locator('#upload-schedule-status').filter({hasText:'Frecuencias guardadas'}).waitFor();

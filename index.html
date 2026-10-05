@@ -2072,7 +2072,10 @@
       <div id="upload-master-list" class="upload-master-list"></div>
       <h3>Fuentes sincronizadas</h3>
       <div class="inventory-results-table-wrap"><table id="upload-transaction-matrix" class="inventory-results-table"></table></div>
-      <h3 id="manual-uploads-title">Cargas manuales</h3><div class="inventory-results-table-wrap"><table id="upload-manual-actions" class="inventory-results-table" aria-labelledby="manual-uploads-title"></table></div><p class="panel-description">Carga MercadoPago, marketing, colaboradores y calibraciones y bebidas desechadas con los botones de esta sección. Las fuentes de la Bodega Principal se consultan en La Concepción.</p>
+      <h3 id="manual-uploads-title">Cargas manuales</h3>
+      <div class="report-actions"><button id="upload-mercadopago-shared" class="icon-button" type="button">Cargar archivo único de MercadoPago</button></div>
+      <p class="panel-description">MercadoPago: carga un archivo con todos los locales. Cada registro se asigna a su cafetería por la columna STORE_ID, configurada en Configuración.</p>
+      <div class="inventory-results-table-wrap"><table id="upload-manual-actions" class="inventory-results-table" aria-labelledby="manual-uploads-title"></table></div><p class="panel-description">Carga marketing, colaboradores y calibraciones y bebidas desechadas por local con los botones de esta sección. Las fuentes de la Bodega Principal se consultan en La Concepción.</p>
 <section class="panel" id="inventory-sync-panel"><h3>Inventario por API</h3><label>Ubicación <select id="location-select"><option value="store-1">La Concepción</option></select></label><section class="inventory-sources" aria-labelledby="stock-title">
             <h3 id="stock-title">Inventario sincronizado</h3>
             <p>Reconstruye el inventario desde tomas físicas, compras recibidas, transferencias, transformaciones y consumos de recetas. Los reportes incorporan los consumos internos y compensaciones configuradas. La valoración usa compras y maestros.</p>
@@ -2115,6 +2118,7 @@
             </div>
             <button id="close-transaction-confirmation" class="icon-button" type="button">Cerrar</button>
           </div>
+          <section id="mercadopago-upload-summary" hidden aria-label="Resumen de registros de MercadoPago"></section>
           <div id="detected-files-list" class="detected-files-list"></div>
           <div class="confirmation-dates">
             <label>Desde <input type="date" id="confirmed-date-from" /></label>
@@ -2136,7 +2140,7 @@
             <button id="cancel-transaction-confirmation" class="icon-button" type="button">Cancelar</button>
           </div>
         </dialog>
-<dialog id="transaction-delete-dialog" class="inventory-criteria-dialog transaction-delete-dialog">
+<dialog id="transaction-delete-dialog" class="inventory-criteria-dialog transaction-delete-dialog" aria-labelledby="transaction-delete-title" aria-describedby="transaction-delete-description">
           <div class="preview-dialog-head">
             <div>
               <div class="panel-eyebrow">Eliminar información</div>
@@ -2287,6 +2291,11 @@
           <button id="toteat-api-refresh" class="icon-button" type="button">Actualizar ubicaciones</button>
         </form>
         <div id="toteat-api-status" class="form-status" role="status" aria-live="polite"></div>
+        <form id="mercadopago-store-form" class="create-location-form" autocomplete="off">
+          <label><span>MercadoPago · STORE_ID</span><input name="storeId" type="text" inputmode="numeric" pattern="[0-9]{1,40}" maxlength="40" /><small>Identificador de MercadoPago para la cafetería seleccionada arriba.</small></label>
+          <button class="icon-button" type="submit">Guardar STORE_ID de MercadoPago</button>
+        </form>
+        <p id="mercadopago-store-status" class="form-status" aria-live="polite"></p>
         <form id="toteat-sales-settings" class="create-location-form">
           <label><span>Obtener ventas desde</span><input name="from" type="date" required /><small>Incluye el histórico que deseas consultar. Para nuevos locales, usa su fecha de creación en Toteat.</small></label>
           <label><span>Actualización de ventas</span><select name="frequency"><option value="5">Automática cada 5 minutos</option><option value="15">Automática cada 15 minutos</option><option value="manual">Solo manual</option></select></label>

@@ -1994,6 +1994,11 @@ body {
   grid-column: 3;
 }
 
+.inventory-source-card .inventory-source-actions > .delete-button {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
 .inventory-source-card .inventory-source-actions > .primary,
 .inventory-source-card .inventory-source-actions > .icon-button {
   box-sizing: border-box;
@@ -6349,6 +6354,19 @@ button.file-upload-state:disabled {
   overflow-y: auto;
 }
 
+#mercadopago-upload-summary h4 {
+  overflow-wrap: anywhere;
+}
+
+#mercadopago-upload-summary .inventory-results-table-wrap {
+  max-height: min(280px, 32vh);
+}
+
+#mercadopago-upload-summary th:last-child,
+#mercadopago-upload-summary td:last-child {
+  text-align: right;
+}
+
 .master-conflict {
   margin-top: 18px;
   padding: 18px;
@@ -8904,8 +8922,21 @@ button:disabled {
 #financial-weekly-form { flex-wrap: wrap; margin-bottom: 14px; }
 
 .financial-weekly-table .weekly-net-sales th,
-.financial-weekly-table .weekly-net-sales td { font-size: calc(1em + 1px); }
-.financial-weekly-table .weekly-net-sales td { color: #4c9aff; }
+.financial-weekly-table .weekly-net-sales td,
+.financial-weekly-table .weekly-gross-sales th,
+.financial-weekly-table .weekly-gross-sales td { font-size: calc(1em + 1px); }
+.financial-weekly-table .weekly-net-sales td,
+.financial-weekly-table .weekly-gross-sales td { color: #4c9aff; }
+.financial-weekly-table .weekly-reconciliation th,
+.financial-weekly-table .weekly-reconciliation td { font-size: calc(1em - 3px); }
+.financial-weekly-table .weekly-reconciliation td { color: #4c9aff; }
+.financial-weekly-table .weekly-collection-difference th,
+.financial-weekly-table .weekly-collection-difference td { font-weight: 800; border-bottom: 2px solid var(--border); }
+.financial-weekly-table .weekly-reconciliation .weekly-balanced { color: var(--green); }
+.financial-weekly-table .weekly-reconciliation .weekly-difference { color: var(--red); }
+.financial-weekly-table .weekly-reconciliation .weekly-unavailable,
+.financial-weekly-table .weekly-gross-sales .weekly-unavailable { color: var(--text-muted); }
+.weekly-reconciliation-note { font-size: calc(1em - 3px); color: var(--text-muted); }
 .financial-weekly-table .weekly-expense td { color: var(--red); font-size: calc(1em - 3px); }
 
 /* Separate supplier groups in the consolidated purchase summary, including PDF. */

@@ -3,6 +3,8 @@
   const select = document.getElementById('toteat-api-location');
   const status = document.getElementById('toteat-api-status');
   const refresh = document.getElementById('toteat-api-refresh');
+  const mercadoPagoForm = document.getElementById('mercadopago-store-form');
+  const mercadoPagoStatus = document.getElementById('mercadopago-store-status');
   let locations = [];
   let revision = 0;
   const salesForm = document.getElementById('toteat-sales-settings');
@@ -121,6 +123,11 @@
   }
   async function loadConfig() {
     const current = ++revision;
+    if (mercadoPagoForm) {
+      mercadoPagoForm.elements.storeId.value = locations.find(location => location.id === select.value)?.mercadoPagoStoreId || '';
+      mercadoPagoForm.querySelector('button').disabled = !select.value;
+      mercadoPagoStatus.textContent = '';
+    }
     form.elements.token.value = '';
     for (const key of ['restaurantId', 'localId', 'userId']) form.elements[key].value = '';
     if (!select.value) { status.textContent = 'Primero crea una ubicación en Brewit.'; return; }
@@ -154,6 +161,23 @@
   }
   select.addEventListener('change', loadConfig);
   refresh.addEventListener('click', loadLocations);
+  mercadoPagoForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const locationId = select.value;
+    const button = mercadoPagoForm.querySelector('button');
+    button.disabled = true;
+    mercadoPagoStatus.textContent = 'Guardando el STORE_ID de MercadoPago…';
+    try {
+      const location = await request(`/api/config/locations/${encodeURIComponent(locationId)}/mercadopago`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ storeId: mercadoPagoForm.elements.storeId.value })
+      });
+      locations = locations.map(item => item.id === location.id ? location : item);
+      if (typeof refreshLocationConfiguration === 'function') await refreshLocationConfiguration();
+      if (select.value === locationId) mercadoPagoStatus.textContent = `STORE_ID de MercadoPago guardado para ${location.name}.`;
+    } catch (error) { if (select.value === locationId) mercadoPagoStatus.textContent = error.message; }
+    finally { button.disabled = !select.value; }
+  });
+  window.addEventListener('brewit-location-settings-updated', loadLocations);
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const body = Object.fromEntries(new FormData(form));

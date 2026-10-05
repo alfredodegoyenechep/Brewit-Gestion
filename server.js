@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
 const { reconcilePaymentDetail } = require('./payment-reconciliation');
+const { toteatPaymentCollections } = require('./payment-collections');
 const { reversalSignals } = require('./transaction-signals');
 const { buildSourceDiagnostics } = require('./source-diagnostics');
 const { businessClock, buildNetworkSalesDashboard } = require('./network-sales');
@@ -22,6 +23,7 @@ const { createClusterJobs } = require('./sales-clusters-jobs');
 const { createClusterSourceLoader } = require('./sales-clusters-source');
 const { normalizeConfig: clusterConfig, optionsFor: clusterOptions, recurrenceAsOf } = require('./sales-clusters');
 const { paymentLocalTimestamp } = require('./payment-timestamps');
+const mercadoPagoStores = require('./mercadopago-stores');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -1141,6 +1143,19 @@ function enrichKardexReport(report, consumption, catalog, costResolver = null) {
   };
 }
 
+function inventoryConsumptionMetric(entry, netSales = 0) {
+  const available = entry?.available === true && !entry?.error;
+  const amount = available ? Number(entry.products?.totalCost ?? entry.ingredients?.totalCost) || 0 : null;
+  return {
+    amount,
+    percentOfNetSales: amount !== null && netSales !== 0 ? amount / netSales * 100 : null,
+    available,
+    quantity: Number(entry?.products?.totalQuantity) || 0,
+    partial: !!entry?.products?.productsWithoutMasterCost?.length,
+    missingCostCodes: entry?.products?.productsWithoutMasterCost || []
+  };
+}
+
 function buildInventoryExecutiveSummary({
   location,
   dateFrom,
@@ -1163,11 +1178,7 @@ function buildInventoryExecutiveSummary({
       ...detail
     };
   };
-  const consumptionMetric = entry => metric(
-    entry?.products?.totalCost ?? entry?.ingredients?.totalCost ?? 0,
-    entry?.available === true && !entry?.error,
-    { quantity: Number(entry?.products?.totalQuantity) || 0, partial: !!entry?.products?.productsWithoutMasterCost?.length, missingCostCodes: entry?.products?.productsWithoutMasterCost || [] }
-  );
+  const consumptionMetric = entry => inventoryConsumptionMetric(entry, netSales);
   const physicalQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
   const inventoryValue = quantityField => report.items.reduce((sum, item) =>
     item.costAvailable ? sum + (Number(quantityField(item)) || 0) * (Number(item.unitCost) || 0) : sum, 0);
@@ -2139,6 +2150,16 @@ function createApp(options = {}) {
     return readJson(locationsPath, { locations: [] });
   }
 
+  const mercadoPagoRegistry = readLocations();
+  let migratedMercadoPagoIds = false;
+  for (const location of mercadoPagoRegistry.locations) {
+    if (location.type === 'store' && location.mercadoPagoStoreId === undefined && mercadoPagoStores.DEFAULT_STORE_IDS[location.id]) {
+      location.mercadoPagoStoreId = mercadoPagoStores.DEFAULT_STORE_IDS[location.id];
+      migratedMercadoPagoIds = true;
+    }
+  }
+  if (migratedMercadoPagoIds) writeJsonAtomic(locationsPath, mercadoPagoRegistry);
+
   function readGeneralExpenses() {
     const stored = readJson(generalExpensesPath, { version: 1, records: [] });
     return { version: 1, records: Array.isArray(stored.records) ? stored.records : [] };
@@ -2874,8 +2895,11 @@ function createApp(options = {}) {
     return dates.sort()[0] || null;
   }
 
-  function genericTransactionRowKey(row) {
-    const values = row.map(value => {
+  function genericTransactionRowKey(row, header = [], field = '') {
+    const values = row.map((value, column) => {
+      if (field === 'mercadopago' && String(header[column] ?? '').trim().toUpperCase().replace(/[\s_]+/g, '_') === 'STORE_ID') {
+        return mercadoPagoStores.storeId(value);
+      }
       if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
       if (typeof value === 'string') return value.trim();
       return value ?? '';
@@ -2898,13 +2922,14 @@ function createApp(options = {}) {
 
   function genericTransactionHistory(locationId, field, additionalExcludedRanges = []) {
     const keys = new Set();
-    for (const stored of storedTransactionFiles(locationId, field)) {
+    const storedFiles = field === 'mercadopago' ? storedWeeklyFiles(locationId, field) : storedTransactionFiles(locationId, field);
+    for (const stored of storedFiles) {
       for (const sheet of readGenericTransactionSheets(stored.filePath)) {
         const header = sheet.rows[0] || [];
         for (const row of sheet.rows.slice(1)) {
           const date = genericTransactionRowDate(row, header);
           if (date && (dateIsExcluded(date, stored.excludedRanges) || dateIsExcluded(date, additionalExcludedRanges))) continue;
-          keys.add(genericTransactionRowKey(row));
+          keys.add(genericTransactionRowKey(row, header, field));
         }
       }
     }
@@ -2975,7 +3000,7 @@ function createApp(options = {}) {
       const header = sheet.rows[0] || [];
       const rows = sheet.rows.slice(1).filter(row => {
         uploadedRows += 1;
-        const key = genericTransactionRowKey(row);
+        const key = genericTransactionRowKey(row, header, field);
         if (historyKeys.has(key) || acceptedKeys.has(key)) {
           duplicateTransactions += 1;
           return false;
@@ -3336,12 +3361,15 @@ function createApp(options = {}) {
     if (address.length > 200) return res.status(400).json({ error: 'La dirección no puede superar 200 caracteres.' });
     if (!['store', 'warehouse'].includes(type)) return res.status(400).json({ error: 'Select a valid location type.' });
     const registry = readLocations();
+    let mercadoPagoStoreId;
+    try { mercadoPagoStoreId = mercadoPagoStores.validateStoreId(req.body?.mercadoPagoStoreId, { type }, registry.locations); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
     if (registry.locations.some(location => location.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
       return res.status(409).json({ error: 'A location with this name already exists, including locations in trash.' });
     }
     const location = {
       id: `location-${crypto.randomUUID()}`, name, address, type, status: 'active', createdAt: new Date().toISOString(),
-      toteatRestaurantId, toteatLocalId, toteatName, toteatSimpleId
+      toteatRestaurantId, toteatLocalId, toteatName, toteatSimpleId, mercadoPagoStoreId
     };
     registry.locations.push(location);
     writeJsonAtomic(locationsPath, registry);
@@ -3356,6 +3384,11 @@ function createApp(options = {}) {
     const registry = readLocations();
     const location = registry.locations.find(item => item.id === req.params.id && item.status === 'active');
     if (!location) return res.status(404).json({ error: 'Active location not found.' });
+    let mercadoPagoStoreId = location.mercadoPagoStoreId;
+    if (req.body?.mercadoPagoStoreId !== undefined) {
+      try { mercadoPagoStoreId = mercadoPagoStores.validateStoreId(req.body.mercadoPagoStoreId, location, registry.locations); }
+      catch (error) { return res.status(400).json({ error: error.message }); }
+    }
     if (registry.locations.some(item => item.id !== location.id && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
       return res.status(409).json({ error: 'A location with this name already exists, including locations in trash.' });
     }
@@ -3378,6 +3411,7 @@ function createApp(options = {}) {
     }
     location.name = name;
     location.address = address;
+    if (mercadoPagoStoreId !== undefined) location.mercadoPagoStoreId = mercadoPagoStoreId;
     if (req.body?.openingDate !== undefined) location.openingDate = String(req.body.openingDate || '');
     if (req.body?.operatingWeekdays !== undefined) location.operatingWeekdays = [...new Set(req.body.operatingWeekdays)];
     if (req.body?.operatingHours !== undefined) location.operatingHours = req.body.operatingHours;
@@ -3396,6 +3430,18 @@ function createApp(options = {}) {
         writeJsonAtomic(metadataPath, metadata);
       }
     }
+    return res.json(publicLocation(location));
+  });
+
+  app.patch('/api/config/locations/:id/mercadopago', (req, res) => {
+    const registry = readLocations();
+    const location = registry.locations.find(item => item.id === req.params.id && item.status === 'active' && item.type === 'store');
+    if (!location) return res.status(404).json({ error: 'Selecciona una cafetería activa.' });
+    if (req.body?.storeId === undefined) return res.status(400).json({ error: 'Indica el STORE_ID de MercadoPago.' });
+    try { location.mercadoPagoStoreId = mercadoPagoStores.validateStoreId(req.body.storeId, location, registry.locations); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
+    location.updatedAt = new Date().toISOString();
+    writeJsonAtomic(locationsPath, registry);
     return res.json(publicLocation(location));
   });
 
@@ -6783,6 +6829,7 @@ function createApp(options = {}) {
     const fields = new Set();
     const locationsWithFiles = new Set();
     const locationsWithFee = new Set();
+    const locationsWithCollection = new Set();
     const warnings = [];
     let filesRead = 0;
     for (const location of stores) {
@@ -6805,7 +6852,9 @@ function createApp(options = {}) {
               const fee = field ? numericValue(rowValue(row, [field])) : null;
               if (field) fields.add(field);
               if (fee !== null) locationsWithFee.add(location.id);
-              facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee) });
+              const collectedAmount = numericValue(rowValue(row, ['TRANSACTION_AMOUNT']));
+              if (collectedAmount !== null) locationsWithCollection.add(location.id);
+              facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee), collectedAmount });
             }
           }
           locationsWithFiles.add(location.id);
@@ -6818,6 +6867,7 @@ function createApp(options = {}) {
     const withFee = facts.filter(item => item.fee !== null);
     const grossAmount = withFee.reduce((sum, item) => sum + item.fee, 0);
     const netAmount = grossAmount / vatFactor;
+    const withCollection = facts.filter(item => item.collectedAmount !== null);
     if (facts.length && !withFee.length) warnings.push('Las transacciones MercadoPago del período no contienen una columna de comisión reconocida.');
     return {
       amount: netAmount,
@@ -6831,6 +6881,14 @@ function createApp(options = {}) {
       locationsWithFiles: locationsWithFiles.size,
       locationsWithFee: locationsWithFee.size,
       detectedFields: [...fields],
+      collection: {
+        amount: withCollection.reduce((sum, item) => sum + item.collectedAmount, 0),
+        available: withCollection.length > 0,
+        complete: locationsWithCollection.size === stores.length && withCollection.length === facts.length,
+        transactions: withCollection.length,
+        coveredLocations: locationsWithCollection.size,
+        totalLocations: stores.length
+      },
       warnings
     };
   }
@@ -7179,6 +7237,7 @@ function createApp(options = {}) {
       },
       statement: {
         netSales: revenueMetric.netSales,
+        mercadoPagoCollection: mercadoPago.collection,
         productCost: revenueMetric.totalCost,
         contributionMargin,
         contributionMarginPercent: revenueMetric.marginPercent,
@@ -7214,6 +7273,11 @@ function createApp(options = {}) {
     const payload = buildFinancialResultsPayload({ ...query, skipInventory: true });
     const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store'
       && (!query.location || query.location === 'all' || query.location === location.id));
+    const payments = toteatPaymentCollections(stores.map(location => ({ location, state: toteatSalesSync.get(location.id) })), query.dateFrom, query.dateTo);
+    payload.statement.mercadoPagoTips = payments.mercadoPagoTips;
+    payload.statement.cashSales = payments.cashSales;
+    payload.warnings.push(...payments.warnings);
+    if (!payload.statement.mercadoPagoCollection.complete) payload.warnings.push(`MercadoPago no tiene cobertura completa para las cafeterías seleccionadas del ${query.dateFrom} al ${query.dateTo}; la conciliación queda pendiente.`);
     payload.inventorySummaries = stores.map(location => {
       try {
         // Use the same original sources and count boundaries as Procesar Kardex Propio.
@@ -7221,8 +7285,17 @@ function createApp(options = {}) {
         return buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
           initialInventoryDate: query.dateFrom, finalInventoryDate: addDays(query.dateTo, 1) }).executiveSummary;
       } catch (error) {
-        payload.warnings.push(`${location.name}: ${error.message}`);
-        return null;
+        payload.warnings.push(`${location.name} (${query.dateFrom} al ${query.dateTo}): ${error.message}`);
+        try {
+          // Uploaded consumption and waste do not require complete count boundaries.
+          const independent = buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
+            initialInventoryDate: query.dateFrom, finalInventoryDate: addDays(query.dateTo, 1) }, { independentMetricsOnly: true });
+          payload.warnings.push(...independent.warnings);
+          return independent.executiveSummary;
+        } catch (independentError) {
+          payload.warnings.push(`${location.name}: ${independentError.message}`);
+          return null;
+        }
       }
     });
     return payload;
@@ -7572,7 +7645,7 @@ function createApp(options = {}) {
     res.set('Cache-Control','no-store').json(require('./inventory-item-detail').buildItemDetail(snapshot.stock, snapshot.location, snapshot.report, item, {consumption:snapshot.consumption,convertQuantity:convertQuantityUnit}));
   });
 
-  function buildInventoryProcessPayload(body = {}) {
+  function buildInventoryProcessPayload(body = {}, { independentMetricsOnly = false } = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
     const originalMode = synchronizedOnly || body?.source === 'originals';
@@ -7666,6 +7739,16 @@ function createApp(options = {}) {
         } catch (error) {
           waste = { label: 'Merma', available: true, error: error.message };
         }
+      }
+      if (independentMetricsOnly) {
+        const metrics = Object.fromEntries([
+          ['marketingConsumption', 'marketing'], ['employeeConsumption', 'employees'], ['calibrationConsumption', 'calibrations']
+        ].map(([key, field]) => [key, inventoryConsumptionMetric(consumption[field])]));
+        metrics.waste = { available: waste.available === true && !waste.error, amount: waste.report?.totalCost ?? null };
+        const warnings = Object.values(consumption).filter(entry => entry.error)
+          .map(entry => `${location.name} (${movementDateFrom} al ${movementDateTo}): ${entry.label}: ${entry.error}`);
+        if (waste.error) warnings.push(`${location.name} (${movementDateFrom} al ${movementDateTo}): Merma: ${waste.error}`);
+        return { executiveSummary: { metrics }, warnings };
       }
       let boundaryReport=null;
       if(boundaryMode) {
@@ -10681,7 +10764,7 @@ function createApp(options = {}) {
   app.post('/api/uploads/transactions/inspect', (req, res) => {
     const locationId = String(req.query.location || '');
     const selectedLocation = activeLocation(locationId);
-    if (!selectedLocation) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
+    if (!selectedLocation && locationId && locationId !== 'all') return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
     cleanExpiredStaging(stagingRoot);
     const token = crypto.randomUUID();
     const stagingDirectory = path.join(stagingRoot, token);
@@ -10696,16 +10779,20 @@ function createApp(options = {}) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
         return res.status(400).json({ error: multerErrorMessage(error) });
       }
-      const files = uploadedFiles(req);
+      let files = uploadedFiles(req);
       if (!files.length) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
         return res.status(400).json({ error: 'Selecciona al menos un archivo para revisar.' });
       }
-      const allowedFields = fieldsForLocation(selectedLocation.type);
+      if (!selectedLocation && files.some(file => file.fieldname !== 'mercadopago')) {
+        fs.rmSync(stagingDirectory, { recursive: true, force: true });
+        return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
+      }
+      const allowedFields = selectedLocation ? fieldsForLocation(selectedLocation.type) : ['mercadopago'];
       const invalidField = files.find(file => !allowedFields.includes(file.fieldname));
       if (invalidField) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
-        return res.status(400).json({ error: `${selectedLocation.name} no admite archivos de ${invalidField.fieldname}.` });
+        return res.status(400).json({ error: `${selectedLocation?.name || 'La carga compartida'} no admite archivos de ${invalidField.fieldname}.` });
       }
       const structureValidations = files.map(validateUploadStructure);
       const mismatch = structureValidations.find(validation => !validation.ok);
@@ -10718,10 +10805,33 @@ function createApp(options = {}) {
         });
       }
       try {
+        let assignments = null;
+        let mercadoPagoSummary = null;
+        const mercadoPago = files.find(file => file.fieldname === 'mercadopago');
+        if (mercadoPago) {
+          const sheets = readGenericTransactionSheets(mercadoPago.path);
+          const hasStoreId = sheets.some(sheet => sheet.rows[0]?.some(value => String(value ?? '').trim().toUpperCase().replace(/[\s_]+/g, '_') === 'STORE_ID'));
+          // Legacy recovery still accepts older exports without STORE_ID.
+          if (hasStoreId || !legacyToolsEnabled || !selectedLocation) {
+            if (files.length !== 1) throw new Error('Carga el archivo compartido de MercadoPago por separado de los otros conceptos.');
+            const split = mercadoPagoStores.splitByStore(sheets, readLocations().locations);
+            const groups = split.groups;
+            mercadoPagoSummary = { ...split.summary, originalName: mercadoPago.originalname };
+            assignments = groups.map(group => ({ location: group.location.id, name: group.location.name, storeId: group.location.mercadoPagoStoreId, rowCount: group.rowCount }));
+            files = groups.map(group => {
+              const filename = `${path.parse(mercadoPago.filename).name}_${group.location.id}.xlsx`;
+              const filePath = path.join(stagingDirectory, filename);
+              mercadoPagoStores.writeStoreWorkbook(filePath, group.sheets);
+              return { ...mercadoPago, filename, path: filePath, size: fs.statSync(filePath).size, location: group.location.id, storeId: group.location.mercadoPagoStoreId, rowCount: group.rowCount };
+            });
+            fs.rmSync(mercadoPago.path, { force: true });
+          }
+        }
         const inspectedFiles = files.map((file, index) => {
           const detectedRange = detectFileDateRange(file);
           const recordDates = transactionRecordDates(file);
-          const existingSources = storedFieldFiles(locationId, file.fieldname).flatMap(stored => {
+          const targetLocation = file.location || locationId;
+          const existingSources = storedFieldFiles(targetLocation, file.fieldname).flatMap(stored => {
             const existingRange = stored.record.confirmedRange || stored.record.detectedRange;
             const overlap = intersectDateRanges(detectedRange, existingRange);
             return overlap ? [{ sourceId: stored.sourceId, existingRange, overlap }] : [];
@@ -10731,18 +10841,20 @@ function createApp(options = {}) {
             filename: file.filename,
             originalName: file.originalname,
             size: file.size,
+            ...(assignments ? { location: targetLocation, locationLabel: activeLocation(targetLocation).name, storeId: file.storeId, rowCount: file.rowCount } : {}),
             detectedRange,
             recordDates,
             existingRange: combinedDateRange(existingSources.map(source => ({ detectedRange: source.existingRange }))),
             overlapRange: combinedDateRange(existingSources.map(source => ({ detectedRange: source.overlap }))),
             existingSources,
-            structure: structureValidations[index]
+            structure: structureValidations[assignments ? 0 : index]
           };
         });
         const manifest = {
           token,
-          location: locationId,
-          locationLabel: selectedLocation.name,
+          location: assignments ? 'all' : locationId,
+          locationLabel: assignments ? 'Cafeterías según STORE_ID de MercadoPago' : selectedLocation.name,
+          ...(assignments ? { assignments, mercadoPagoSummary } : {}),
           createdAt: new Date().toISOString(),
           files: inspectedFiles,
           detectedRange: combinedDateRange(inspectedFiles),
@@ -10752,7 +10864,7 @@ function createApp(options = {}) {
         return res.json(manifest);
       } catch (inspectionError) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
-        return res.status(500).json({ error: 'No se pudieron inspeccionar los archivos seleccionados.' });
+        return res.status(422).json({ error: inspectionError.message || 'No se pudieron inspeccionar los archivos seleccionados.' });
       }
     });
   });
@@ -10771,7 +10883,17 @@ function createApp(options = {}) {
     const stagingDirectory = path.join(stagingRoot, token);
     const manifest = readJson(path.join(stagingDirectory, 'manifest.json'), null);
     const selectedLocation = manifest && activeLocation(manifest.location);
-    if (!manifest || !selectedLocation) return res.status(404).json({ error: 'Esta revisión expiró. Selecciona nuevamente los archivos.' });
+    if (!manifest || (!selectedLocation && !manifest.assignments)) return res.status(404).json({ error: 'Esta revisión expiró. Selecciona nuevamente los archivos.' });
+    if (manifest.mercadoPagoSummary?.unassociatedCount > 0 && req.body?.excludedAcknowledged !== true) {
+      return res.status(400).json({ error: 'Confirma la carga teniendo en cuenta que los registros sin cafetería asociada no serán procesados.' });
+    }
+    if (manifest.mercadoPagoSummary && !manifest.mercadoPagoSummary.associatedCount) {
+      return res.status(422).json({ error: 'No hay registros asociados a nuestras cafeterías para procesar.' });
+    }
+    if (manifest.assignments?.some(assignment => {
+      const location = activeLocation(assignment.location);
+      return !location || location.type !== 'store' || location.mercadoPagoStoreId !== assignment.storeId;
+    })) return res.status(409).json({ error: 'Cambió la configuración de STORE_ID o de las cafeterías. Revisa el archivo nuevamente antes de guardar.' });
     if (!legacyToolsEnabled && manifest.files.some(file => !legacy.manualFields.has(file.field))) return res.status(400).json({ error: 'Esta fuente se actualiza por API. La carga histórica está deshabilitada.' });
     const requiresCategoryConfirmation = manifest.files.some(file => ['kardex', 'waste'].includes(file.field));
     if (requiresCategoryConfirmation && categoryConfirmed !== true) {
@@ -10785,19 +10907,30 @@ function createApp(options = {}) {
       || !manifest.files[0].recordDates?.some(date => date >= dateFrom && date <= dateTo))) {
       return res.status(422).json({ error: 'El archivo no contiene fechas válidas para reemplazar registros.' });
     }
-    const destination = transactionLocationRoot(manifest.location);
-    ensureDir(destination);
-    const index = readTransactionIndex(manifest.location);
+    const indexes = new Map();
+    const originalIndexes = new Map();
+    const writtenIndexes = [];
     const movedFiles = [];
     const imports = {};
+    const locationImports = {};
     try {
       for (const staged of manifest.files) {
+        const locationId = staged.location || manifest.location;
+        const destination = transactionLocationRoot(locationId);
+        ensureDir(destination);
+        if (!indexes.has(locationId)) {
+          const original = readJson(transactionIndexPath(locationId), null);
+          originalIndexes.set(locationId, original);
+          indexes.set(locationId, original ? structuredClone(original) : readTransactionIndex(locationId));
+        }
+        const index = indexes.get(locationId);
+        const targetImports = manifest.assignments ? (locationImports[locationId] ||= {}) : imports;
         const incomingRange = intersectDateRanges(staged.detectedRange, { from: dateFrom, to: dateTo }) || { from: dateFrom, to: dateTo };
         const replacementRanges = replaceOnlyIncomingDates
           ? (staged.recordDates || []).filter(date => date >= dateFrom && date <= dateTo)
             .map(date => ({ from: date, to: date }))
           : [incomingRange];
-        const overlaps = storedFieldFiles(manifest.location, staged.field).flatMap(stored => {
+        const overlaps = storedFieldFiles(locationId, staged.field).flatMap(stored => {
           const existingRange = stored.record.confirmedRange || stored.record.detectedRange;
           const overlap = intersectDateRanges(incomingRange, existingRange);
           return overlap ? [{ stored, overlap }] : [];
@@ -10811,31 +10944,31 @@ function createApp(options = {}) {
         if (staged.field === 'sales') {
           const prepared = prepareIncrementalSales(
             staged,
-            manifest.location,
+            locationId,
             stagingDirectory,
             overlapAction === 'replace' ? replacementRanges : []
           );
-          imports.sales = prepared.stats;
+          targetImports.sales = prepared.stats;
           stagedFile = prepared.staged;
           if (!stagedFile) continue;
         } else if (staged.field === 'mercadopago') {
           const prepared = prepareIncrementalMercadoPago(
             staged,
-            manifest.location,
+            locationId,
             stagingDirectory,
             overlapAction === 'replace' ? replacementRanges : []
           );
-          imports.mercadopago = prepared.stats;
+          targetImports.mercadopago = prepared.stats;
           stagedFile = prepared.staged;
           if (!stagedFile) continue;
         } else if (staged.field === 'payment-details') {
           const prepared = prepareIncrementalPaymentDetails(
             staged,
-            manifest.location,
+            locationId,
             stagingDirectory,
             overlapAction === 'replace' ? replacementRanges : []
           );
-          imports['payment-details'] = prepared.stats;
+          targetImports['payment-details'] = prepared.stats;
           stagedFile = prepared.staged;
           if (!stagedFile) continue;
         }
@@ -10854,22 +10987,39 @@ function createApp(options = {}) {
           transactionCount: stagedFile.transactionCount,
           rowCount: stagedFile.rowCount,
           latestTransactionAt: stagedFile.latestTransactionAt,
+          ...(staged.storeId ? { storeId: staged.storeId } : {}),
           overlapAction,
           replacementEffects,
           savedAt: new Date().toISOString(),
-          url: `/uploads/transactions/${manifest.location}/${encodeURIComponent(stagedFile.filename)}`
+          url: `/uploads/transactions/${locationId}/${encodeURIComponent(stagedFile.filename)}`
         };
         index.fields ||= {};
         index.fields[staged.field] ||= { files: [] };
         index.fields[staged.field].files.push(record);
-        imports[staged.field] = { ...(imports[staged.field] || {}), saved: true, overlapCount: overlaps.length };
+        targetImports[staged.field] = { ...(targetImports[staged.field] || {}), saved: true, overlapCount: overlaps.length };
       }
-      rebuildTransactionExclusions(index);
-      index.updatedAt = new Date().toISOString();
-      writeTransactionIndex(manifest.location, index);
+      for (const [locationId, index] of indexes) {
+        rebuildTransactionExclusions(index);
+        index.updatedAt = new Date().toISOString();
+        writeTransactionIndex(locationId, index);
+        writtenIndexes.push(locationId);
+      }
+      if (manifest.assignments) {
+        imports.mercadopago = { newTransactions: 0, duplicateTransactions: 0 };
+        for (const value of Object.values(locationImports)) {
+          imports.mercadopago.newTransactions += value.mercadopago?.newTransactions || 0;
+          imports.mercadopago.duplicateTransactions += value.mercadopago?.duplicateTransactions || 0;
+        }
+      }
       fs.rmSync(stagingDirectory, { recursive: true, force: true });
-      return res.json({ ok: true, location: manifest.location, overlapAction, imports });
+      return res.json({ ok: true, location: manifest.location, overlapAction, imports,
+        ...(manifest.assignments ? { assignments: manifest.assignments.map(assignment => ({ ...assignment, imports: locationImports[assignment.location] })), skippedCount: manifest.mercadoPagoSummary?.unassociatedCount || 0 } : {}) });
     } catch (confirmationError) {
+      for (const locationId of writtenIndexes) {
+        const original = originalIndexes.get(locationId);
+        if (original) writeTransactionIndex(locationId, original);
+        else fs.rmSync(transactionIndexPath(locationId), { force: true });
+      }
       movedFiles.forEach(filePath => fs.rmSync(filePath, { force: true }));
       return res.status(500).json({ error: 'No se pudo guardar la carga transaccional confirmada.' });
     }

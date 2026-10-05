@@ -1638,7 +1638,10 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   const mercadoPago = [
     ['TRANSACTION_DATE', 'SOURCE_ID', 'TRANSACTION_TYPE', 'TRANSACTION_AMOUNT', 'FEE_AMOUNT'],
     ['2026-08-10T10:00:00.000-04:00', 'mp-f-1', 'SETTLEMENT', 1190, -20],
-    ['2026-08-10T11:00:00.000-04:00', 'mp-f-2', 'SETTLEMENT', 1190, -40]
+    ['2026-08-10T11:00:00.000-04:00', 'mp-f-2', 'SETTLEMENT', 1190, -40],
+    ['2026-08-10T10:00:00.000-04:00', 'mp-f-1', 'SETTLEMENT', 1190, -20],
+    ['2026-08-10T12:00:00.000-04:00', 'mp-f-ignored', 'PAYOUT', 2380, 0],
+    ['2026-08-17T10:00:00.000-04:00', 'mp-f-later', 'SETTLEMENT', 5000, -100]
   ].map(row => row.join('\t')).join('\n');
   const mpInspection = await inspectTransactions(baseUrl, 'store-1', [
     { field: 'mercadopago', contents: mercadoPago, filename: 'mercadopago-finanzas.csv' }
@@ -1668,6 +1671,9 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   assert.equal(mpExpense.detail.netAmount, 60 / 1.18);
   assert.equal(mpExpense.detail.vatFactor, 1.18);
   assert.deepEqual(mpExpense.detail.detectedFields, ['FEE_AMOUNT']);
+  assert.equal(report.statement.mercadoPagoCollection.amount, 2380);
+  assert.equal(report.statement.mercadoPagoCollection.transactions, 2);
+  assert.equal(report.statement.mercadoPagoCollection.complete, true);
   assert.equal(report.statement.partial, true);
 
   const generalExpenseValues = {
@@ -1723,8 +1729,32 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   assert.ok(weekly.metrics.some(([key]) => key === 'otherConsumables'));
   assert.ok(weekly.metrics.some(([key]) => key === 'adjustedKardexTotalCost'));
   assert.equal(Math.round(weekly.total.netSales.amount), Math.round(manualReport.statement.netSales));
+  assert.equal(weekly.total.mercadoPagoCollection.amount, 2380);
+  assert.equal(weekly.weeks[4].values.mercadoPagoCollection.amount, 2380);
 
 
+});
+
+test('MercadoPago collection is independent of fees and preserves signed amounts', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const contents = [
+    ['TRANSACTION_DATE', 'SOURCE_ID', 'TRANSACTION_TYPE', 'TRANSACTION_AMOUNT'],
+    ['2026-08-10T10:00:00.000-04:00', 'collection-1', 'SETTLEMENT', 1190],
+    ['2026-08-10T11:00:00.000-04:00', 'collection-2', 'SETTLEMENT', -190],
+    ['2026-08-10T12:00:00.000-04:00', 'collection-3', 'SETTLEMENT', 0]
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [
+    { field: 'mercadopago', contents, filename: 'collection-no-fees.csv' }
+  ]).then(response => response.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+  const report = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-10&dateTo=2026-08-10`).then(response => response.json());
+  assert.equal(report.statement.mercadoPagoCollection.amount, 1000);
+  assert.equal(report.statement.mercadoPagoCollection.transactions, 3);
+  assert.equal(report.statement.mercadoPagoCollection.complete, true);
+  assert.equal(report.statement.expenses.find(item => item.key === 'mercadoPago').available, false);
+  const otherStore = await fetch(`${baseUrl}/api/financial-results?location=store-2&dateFrom=2026-08-10&dateTo=2026-08-10`).then(response => response.json());
+  assert.equal(otherStore.statement.mercadoPagoCollection.amount, 0);
+  assert.equal(otherStore.statement.mercadoPagoCollection.available, false);
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
