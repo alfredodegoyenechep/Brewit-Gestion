@@ -28,12 +28,19 @@ test('weekly inventory matches original Kardex and only stores separate other co
   const base = `http://127.0.0.1:${server.address().port}`;
   const catalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
-    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base'], ['A', 'A', 1, 10, 'UN'], ['PAC014', 'Consumible', 1, 20, 'UN']
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Costo', 'Medida Base', 'Jerarquías de Ingredientes *'], ['A', 'A', 1, 10, 'UN', 'IC.2'], ['PAC014', 'Consumible', 1, 20, 'UN', 'IC.2']
   ]), 'Ingr');
   const form = new FormData();
   form.append('master-catalog', new Blob([XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' })]), 'catalog.xlsx');
   form.append('master-catalog-from', '2026-08-01');
-  const upload = await fetch(`${base}/upload/master`, { method: 'POST', body: form }); assert.equal(upload.status, 200);
+  const hierarchies = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(hierarchies, XLSX.utils.json_to_sheet([
+    {'ID Jerarquia':'IC.1','ID Nodo **':'IC.1','Nombre Jerarquía *':'Raíz','ID nodo padre':''},
+    {'ID Jerarquia':'IC.2','ID Nodo **':'IC.2','Nombre Jerarquía *':'Packaging','ID nodo padre':'IC.1'}
+  ]), 'Jerarquías');
+  form.append('ingredient-hierarchy', new Blob([XLSX.write(hierarchies, {type:'buffer',bookType:'xlsx'})]), 'hierarchies.xlsx');
+  form.append('ingredient-hierarchy-from', '2026-08-01');
+  const upload = await fetch(`${base}/upload/master`, { method: 'POST', body: form }); assert.equal(upload.status, 200, await upload.text());
   const response = await fetch(`${base}/api/financial-results/weekly?location=store-1`);
   const weekly = await response.json(); assert.equal(response.status, 200, JSON.stringify(weekly));
   for (const week of weekly.weeks) {
@@ -57,8 +64,13 @@ test('weekly inventory matches original Kardex and only stores separate other co
   assert.equal(centralResponse.status, 200, JSON.stringify(central));
   assert.deepEqual(central.report.items.map(item => item.code).sort(), ['A', 'PAC014']);
   assert.equal(central.report.itemCount, 2);
+  assert.deepEqual(central.report.items.map(item => item.hierarchyPath), [['Ingredientes','Packaging'],['Ingredientes','Packaging']]);
   assert.equal(central.otherConsumables, null);
   assert.equal(central.executiveSummary.metrics.otherConsumables, undefined);
+  assert.equal(central.executiveSummary.salesFilesRead, 0);
+  assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.available, true, 'warehouse differences do not require sales files');
+  assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.amount, central.report.totalCost);
+  assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.percentOfNetSales, null);
   assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.totalItemCount, 2);
   assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.coveredItemCount, 2);
   assert.equal(central.report.totalCost, central.report.items.reduce((sum, item) => sum + item.totalCost, 0));

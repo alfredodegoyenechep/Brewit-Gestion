@@ -8933,7 +8933,7 @@ function makeInventoryItemRowInteractive(row, item) {
   button.type = 'button'; button.className = 'inventory-item-trigger';
   button.textContent = item.code;
   button.setAttribute('aria-label', `Ver movimientos de ${item.code}: ${item.name}`);
-  row.cells[0].replaceChildren(button);
+  row.cells[1].replaceChildren(button);
   row.addEventListener('click', () => openInventoryItemDetail(item, button));
 }
 
@@ -8950,7 +8950,7 @@ async function openInventoryItemDetail(item, trigger) {
   period.textContent = `${state.location?.name || ''} · Movimientos: ${formatReportDate(state.report.dateFrom)} – ${formatReportDate(state.report.dateTo)} · Unidad: ${item.unit}`;
   dialog.append(period);
   const summary = document.createElement('dl'); summary.className = 'inventory-item-summary';
-  for (const column of state.columns.slice(2)) {
+  for (const column of state.columns.filter(column => !['Código', 'Producto'].includes(column.label))) {
     const label = document.createElement('dt'), value = document.createElement('dd');
     label.textContent = column.label; value.textContent = column.value(item); summary.append(label,value);
   }
@@ -9040,6 +9040,7 @@ function renderInventoryKardexTable() {
     return (comparison || String(left.code).localeCompare(String(right.code), 'es', { numeric: true })) * direction;
   });
 
+  inventoryKardexTableState.visibleItems = items;
   const header = document.createElement('tr');
   columns.forEach((column, index) => {
     const cell = document.createElement('th');
@@ -9091,7 +9092,7 @@ function renderInventoryKardexTable() {
       for (const [columnIndex, column] of columns.entries()) {
         const cell = document.createElement('td');
         cell.textContent = column.value(item);
-        if (columnIndex < 4) cell.title = cell.textContent;
+        if (columnIndex < 5) cell.title = cell.textContent;
         const numericValue = column.signValue ? column.signValue(item) : column.sortValue?.(item);
         if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
           if (numericValue < 0) cell.className = 'difference-negative';
@@ -9559,6 +9560,7 @@ function renderInventoryResults(data) {
   provenance.textContent = provenance.hidden ? '' : `${data.provenance.note} Lectura: ${new Date(data.provenance.capturedAt).toLocaleString('es-CL')}. ${data.provenance.excluded.length} productos excluidos (motivos en Excel); ${data.provenance.issues.length} incidencias en la captura. ${data.provenance.physicalFinalItems} productos incluidos con toma física en el saldo final seleccionado.`;
   document.getElementById('inventory-report-item-count').textContent = `${report.itemCount} productos`;
   const columns = [
+    { label: 'Jerarquía', value: item => item.hierarchyPath?.join(' › ') || 'Sin jerarquía', sortValue: item => item.hierarchyPath?.join(' › ') || 'Sin jerarquía' },
     { label: 'Código', value: item => item.code, sortValue: item => item.code },
     { label: 'Producto', value: item => item.name, sortValue: item => item.name },
     { label: 'Unidad', value: item => item.unit, sortValue: item => item.unit },
@@ -9638,7 +9640,7 @@ function renderInventoryResults(data) {
   document.getElementById('inventory-kardex-cost-filter').value = 'all';
   document.getElementById('inventory-kardex-physical-filter').value = 'all';
   document.getElementById('inventory-kardex-theoretical-filter').value = 'all';
-  inventoryKardexTableState = { report, columns, detailReportId: data.itemDetailReportId, location: data.location, sortIndex: 0, direction: 'asc' };
+  inventoryKardexTableState = { report, columns, detailReportId: data.itemDetailReportId, location: data.location, sortIndex: 1, direction: 'asc' };
   renderInventoryKardexTable();
   renderOtherConsumables(data.otherConsumables, columns, data.executiveSummary?.metrics.otherConsumables);
   renderLac001SubstitutionReport(data.lac001Substitutions);
@@ -10486,6 +10488,80 @@ function printInventoryReport(sectionId) {
   }
 }
 
+function reducedKardexReport() {
+  const state = inventoryKardexTableState;
+  if (!state?.report) return null;
+  const labels = ['Jerarquía', 'Código', 'Producto', 'Unidad', 'Costo Unitario',
+    'Inventario Final Teórico', 'Inventario Físico', 'Diff de inventario', 'Costo Total',
+    'Valor Inventario Final Teórico', 'Valor Inventario Final Físico'];
+  const columns = [...state.columns.slice(0, 5), ...state.columns.slice(-6)]
+    .map((column, index) => ({ ...column, label: labels[index] }));
+  return { columns, items: state.visibleItems || [], state };
+}
+
+function exportReducedKardexReport() {
+  const reduced = reducedKardexReport();
+  if (!reduced) return;
+  const status = document.getElementById('inventory-source-status');
+  if (!window.XLSX) return setStatus(status, 'No fue posible cargar el generador de archivos Excel.', 'error');
+  try {
+    const { columns, items } = reduced;
+    const rows = [columns.map(column => column.label), ...items.map(item => columns.map((column, index) => {
+      if (index < 4) return column.value(item);
+      // Keep unavailable values explicit and available quantities numeric in Excel.
+      const displayed = column.value(item);
+      const value = column.sortValue(item);
+      return typeof value === 'number' && Number.isFinite(value) && !/Sin |No comparable/.test(displayed) ? value : displayed;
+    }))];
+    rows.push(columns.map((column, index) => index === 0 ? 'TOTAL' : column.totalValue
+      ? items.reduce((sum, item) => sum + (Number.isFinite(column.sortValue(item)) ? column.sortValue(item) : 0), 0) : ''));
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    const decimals = Number(document.getElementById('inventory-kardex-decimals').value) || 2;
+    for (let row = 1; row < rows.length; row++) {
+      for (let column = 4; column < columns.length; column++) {
+        const cell = sheet[XLSX.utils.encode_cell({r: row, c: column})];
+        if (cell?.t === 'n') cell.z = [4, 8, 9, 10].includes(column) ? '"$"#,##0;"$"-#,##0' : `#,##0.${'0'.repeat(decimals)}`;
+      }
+    }
+    sheet['!cols'] = [35, 14, 45, 10, 18, 24, 22, 22, 20, 30, 30].map(wch => ({wch}));
+    sheet['!autofilter'] = {ref: XLSX.utils.encode_range({r:0,c:0}, {r:items.length,c:10})};
+    const workbook = XLSX.utils.book_new();
+    workbook.Props = {Title: 'Consolidado del Kardex resumido', Subject: `${reduced.state.location?.name || ''} · ${document.getElementById('inventory-report-period').textContent}`};
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Kardex resumido');
+    writeConfiguredExcelWorkbook(workbook, inventoryReportFilename('Consolidado del Kardex resumido', 'xlsx'));
+  } catch (error) { setStatus(status, error.message, 'error'); }
+}
+
+function printReducedKardexReport() {
+  const reduced = reducedKardexReport();
+  if (!reduced) return;
+  const section = document.createElement('section');
+  section.id = 'inventory-kardex-reduced-report';
+  const head = document.createElement('div'); head.className = 'inventory-results-head';
+  const title = document.createElement('h3'); title.textContent = 'Consolidado del Kardex resumido'; head.append(title);
+  const context = document.createElement('p');
+  context.textContent = `${reduced.state.location?.name || ''} · ${document.getElementById('inventory-report-period').textContent} · ${reduced.items.length} de ${reduced.state.report.items.length} filas, según los filtros y el orden del consolidado.`;
+  const table = document.createElement('table'); table.className = 'inventory-results-table';
+  const thead = table.createTHead(), tbody = table.createTBody(), tfoot = table.createTFoot();
+  const header = thead.insertRow();
+  reduced.columns.forEach(column => { const cell = document.createElement('th'); cell.textContent = column.label; header.append(cell); });
+  reduced.items.forEach(item => {
+    const row = tbody.insertRow();
+    reduced.columns.forEach(column => { row.insertCell().textContent = column.value(item); });
+  });
+  const total = tfoot.insertRow();
+  reduced.columns.forEach((column, index) => { total.insertCell().textContent = index === 0 ? 'TOTAL' : column.totalValue?.(reduced.items) || ''; });
+  const note = document.createElement('p');
+  renderKardexTotalsNote(note, reduced.items, reduced.state.report);
+  section.append(head, context, table, note);
+  document.getElementById('inventory-workspace').append(section);
+  const dialog = document.getElementById('inventory-report-results');
+  const reopen = dialog.open;
+  if (reopen) dialog.close();
+  try { printInventoryReport(section.id); }
+  finally { section.remove(); if (reopen) dialog.showModal(); }
+}
+
 function excelSheetLabel(table, index) {
   if (table.id === 'inventory-other-consumables-table') return 'Otros Consumibles';
   if (table.id === 'inventory-executive-summary-table') return 'Resumen ejecutivo';
@@ -11169,6 +11245,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   document.getElementById('inventory-kardex-cost-filter').addEventListener('change', renderInventoryKardexTable);
   document.getElementById('inventory-kardex-decimals').addEventListener('change', renderInventoryKardexTable);
+  document.getElementById('inventory-kardex-reduced-pdf').addEventListener('click', printReducedKardexReport);
+  document.getElementById('inventory-kardex-reduced-xlsx').addEventListener('click', exportReducedKardexReport);
   document.getElementById('clear-inventory-kardex-filters').addEventListener('click', () => {
     document.getElementById('inventory-kardex-search').value = '';
     document.getElementById('inventory-kardex-cost-filter').value = 'all';

@@ -19,7 +19,9 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
     movements:[{id:'tr1',date:'2026-09-01',type:'Transferencia entre bodegas · salida',document:'TR-1',quantity:3,unit:'UN',effect:-3,active:true,status:'APPROVED',origin:'Cafetería',destination:'Principal',originalQuantity:3,originalUnit:'UN',exactQuantity:3,createdAt:'2026-09-01T12:00:00Z',approvedAt:'2026-09-01T13:00:00Z',observation:'<img src=x onerror=alert(1)>',transfer:true}]
   }}));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
   await page.getByRole('link', { name: 'Inventario', exact: true }).click();
+  await page.waitForFunction(() => inventorySourceState !== null);
   await page.evaluate(() => {
     const base = { unit: 'UN', unitCost: 100, costAvailable: true, initialInventory: 2, theoreticalFinal: 2, movements: {} };
     const items = [
@@ -43,7 +45,7 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
   const totals = table => page.locator(`${table} tfoot td`).allTextContents().then(cells => cells.slice(-3));
   assert.deepEqual(await totals('#inventory-results-table'), ['$200', '$1.100', '$600']);
   assert.deepEqual(await totals('#inventory-other-consumables-table'), ['$200', '$1.100', '$600']);
-  await page.locator('#inventory-results-table tbody tr').filter({has:page.getByRole('button',{name:'Ver movimientos de A: Negativo',exact:true})}).locator('td').nth(1).click();
+  await page.locator('#inventory-results-table tbody tr').filter({has:page.getByRole('button',{name:'Ver movimientos de A: Negativo',exact:true})}).locator('td').nth(2).click();
   const dialog=page.getByRole('dialog',{name:'Detalle de A: Negativo',exact:true});
   await dialog.getByRole('heading',{name:'Transferencias entre bodegas y locales'}).waitFor();
   assert.match(await dialog.innerText(),/TR-1/);assert.match(await dialog.innerText(),/Principal/);assert.match(await dialog.innerText(),/3,0000 UN/);
@@ -91,4 +93,18 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
     assert.equal(await page.locator('#inventory-executive-summary-table tfoot td').nth(1).innerText(),example.total);
     assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').first().locator('td').nth(1).innerText(),'$-200');
   }
+  await page.evaluate(()=>{
+    const summary=structuredClone(window.executiveFixture);
+    summary.netSales=0;summary.salesFilesRead=0;
+    delete summary.metrics.otherConsumables;
+    for(const key of ['marketingConsumption','employeeConsumption','calibrationConsumption'])summary.metrics[key].available=false;
+    summary.metrics.waste={...summary.metrics.waste,available:true,amount:590882};
+    Object.assign(summary.metrics.adjustedKardexTotalCost,{amount:127720,kardexTotalCost:127720,totalAdjustmentCost:0,coveredItemCount:113,totalItemCount:116});
+    renderInventoryExecutiveSummary(summary);
+  });
+  const warehouseRow=page.locator('#inventory-executive-summary-table tbody tr').filter({hasText:'Costo Total Kardex ajustado'});
+  assert.equal(await warehouseRow.locator('td').nth(1).innerText(),'$127.720');
+  assert.equal(await warehouseRow.locator('td').nth(2).innerText(),'—');
+  assert.match(await warehouseRow.locator('td').nth(3).innerText(),/113 de 116 productos/);
+  assert.equal(await page.locator('#inventory-executive-summary-table tfoot td').nth(1).innerText(),'$-463.162');
 });

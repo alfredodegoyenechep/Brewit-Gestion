@@ -7776,6 +7776,24 @@ function createApp(options = {}) {
         ingredientCatalog,
         costResolver
       );
+      const hierarchyLookups = {};
+      for (const [type, field, parser] of [
+        ['product', 'product-hierarchy', parseProductHierarchies],
+        ['ingredient', 'ingredient-hierarchy', path => parseNamedHierarchies(path, ['Nombre Jerarquía *', 'Nombre Jerarquia *', 'Nombre Jerarquía Producto *'])],
+        ['extra', 'extras-hierarchy', path => parseNamedHierarchies(path, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Nombre Jerarquía *'])]
+      ]) {
+        const master = latestMasterFile(field, balanceDate, location.id);
+        if (master) {
+          try { hierarchyLookups[type] = parser(master.filePath); }
+          catch (error) { masterErrors.push(`Jerarquía ${type}: ${error.message}`); }
+        }
+      }
+      for (const item of report.items) {
+        const assignment = catalogAssignments?.get(String(item.code).toUpperCase());
+        const category = {product: 'Productos', ingredient: 'Ingredientes', extra: 'Extras'}[assignment?.type];
+        const nestedPath = hierarchyLookups[assignment?.type]?.pathFor(assignment.hierarchyId) || [];
+        item.hierarchyPath = category ? [category, ...(nestedPath.length ? nestedPath : ['Sin jerarquía'])] : ['Sin jerarquía'];
+      }
       const salesData = periodSalesData(location.id, movementDateFrom, movementDateTo, { apiOnly: originalMode });
       const includedOrderKeys = new Set((stock?.includedOrders || []).map(id => `${location.id}:order:${id}`));
       const adjustmentSales = originalMode && stock.sourceKind !== 'public-inventory' ? { ...salesData, rows: salesData.rows.filter(row => includedOrderKeys.has(row.orderKey)), orderFacts: salesData.orderFacts.filter(row => includedOrderKeys.has(row.orderKey)) } : salesData;
@@ -7848,11 +7866,13 @@ function createApp(options = {}) {
         }
         report.totalCost = report.items.some(item => item.totalCost === null)
           ? null : report.items.reduce((sum, item) => sum + item.totalCost, 0);
-        require('./inventory-cost-summary').applyBoundaryCostSummary(executiveSummary, report, !!salesData.filesRead);
+        // Warehouses do not sell products or need sales-based substitutions;
+        // their verified physical differences remain available without sales.
+        require('./inventory-cost-summary').applyBoundaryCostSummary(executiveSummary, report, location.type === 'warehouse' || !!salesData.filesRead);
       }
       const otherConsumables = location.id === 'main-warehouse'
         ? null
-        : require('./other-consumables').separateOtherConsumables(report, executiveSummary, !!salesData.filesRead);
+        : require('./other-consumables').separateOtherConsumables(report, executiveSummary, location.type === 'warehouse' || !!salesData.filesRead);
       // Keep detail tied to the exact report snapshot even if sources refresh
       // before the user opens a row. Load document lines only on demand.
       for (const [id, snapshot] of inventoryDetailReports) if (Date.now()-snapshot.createdAt>3600000) inventoryDetailReports.delete(id);
