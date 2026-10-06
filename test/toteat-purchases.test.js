@@ -59,7 +59,12 @@ test('purchase reports use the API source once and expose a preview and protecte
   t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
   fs.mkdirSync(path.join(uploadsRoot, '.integrations/toteat-api'), { recursive: true });
   fs.writeFileSync(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), JSON.stringify({ 'store-1': { localId: '1', restaurantId: 'r', userId: 'u', token: 'secret' } }));
-  const app = createApp({ enableLegacyTools: true, uploadsRoot, toteatRequestSpacing: 0, toteatSyncClock: () => '2026-09-21', toteatApiFetch: async () => Response.json({ ok: true, data: { purchases: [purchase()] } }) });
+  const app = createApp({ enableLegacyTools: true, uploadsRoot, toteatRequestSpacing: 0, toteatSyncClock: () => '2026-09-21',
+    toteatPurchaseReceiptReader: async () => ({restaurantId: 'r', localId: '1', range: {from: '2026-09-07', to: '2026-09-21'},
+      products: [{id: 'p', custom_id: 'SAN01'}], warehouses: [{id: 'local', custom_id: 2}],
+      operations: {purchases: [{id: 'm1', document: '0012', receive_date: '2026-09-07', warehouse_receive_ref: 'local',
+        purchase_detail: [{product_ref: 'p', quantity: 2, measure_unit: 'KG', warehouse_ref: 'local'}]}]}}),
+    toteatApiFetch: async () => Response.json({ ok: true, data: { purchases: [purchase()] } }) });
   const dir = path.join(uploadsRoot, 'transactions/store-1'); fs.mkdirSync(dir, { recursive: true });
   const w = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(w, XLSX.utils.json_to_sheet([{ 'Fecha emisión': '2026-09-07', 'Número identificador fiscal': '761111523', 'Tipo Documento': 'Factura Normal', Documento: '12', Cod: 'SAN01', Lin: 1, 'Q.Fac': 3, 'Monto total': 99999 }]), 'Compras'); XLSX.writeFile(w, path.join(dir, 'old.xlsx'));
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ fields: { purchases: { files: [{ id: 'old', name: 'old.xlsx' }] } } }));

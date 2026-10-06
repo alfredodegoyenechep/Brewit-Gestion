@@ -1,6 +1,6 @@
 // Read-only adapter for Toteat's authenticated web application. This is not
 // the public token API. Authorization headers live only in this function.
-async function readNative(page, restaurant, { from, to, includeSuppliers = false, includeOperations = false, operationKinds = ['counts', 'transfers', 'transformations'], onProgress = () => {} } = {}) {
+async function readNative(page, restaurant, { from, to, includeSuppliers = false, includeOperations = false, includePurchases = false, operationKinds = ['counts', 'transfers', 'transformations'], onProgress = () => {} } = {}) {
   const checkAuthentication = response => {
     if ([401, 403].includes(response.status())) throw Object.assign(Error('Inicia sesión en Toteat para continuar.'), { code: 'TOTEAT_AUTH_REQUIRED' });
   };
@@ -21,7 +21,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         masterHeaders = { authorization: headers.authorization };
       }
     })());
-    if (url.origin === 'https://inventory.toteat.com' && ['/kardex/', '/take-inventory/'].includes(url.pathname)) {
+    if (url.origin === 'https://inventory.toteat.com' && ['/kardex/', '/take-inventory/', '/purchases/'].includes(url.pathname)) {
       pending.push((async () => {
         const headers = await response.request().allHeaders();
         inventoryHeaders = { authorization: headers.authorization, timezone: 'America/Santiago' };
@@ -46,6 +46,8 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         hierarchies: { products: setup.jerarquias.listado, ingredients: setup.jerarquiasIngredientes.listado, extras: setup.jerarquiasExtras.listado } };
     });
     if (legacy.restaurantId !== restaurant.restaurantId || legacy.localId !== restaurant.localId) throw Error('El local activo en Toteat no coincide con el solicitado.');
+    // Kardex initializes the product/warehouse masters and the inventory-service
+    // session. Compras alone does not load all of those masters.
     await page.goto(`https://res8.toteat.com/#/${includeOperations ? 'autorizaciones' : 'list-kardex'}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     const deadline = Date.now() + 45000;
     while ((!captured.warehouses || !masterHeaders || (from && !inventoryHeaders)) && Date.now() < deadline) {
@@ -74,16 +76,19 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         if (!Array.isArray(result.suppliers) || result.suppliers.some(p => p.local !== captured.localRef)) throw Error('Proveedores incompletos o de otro local.');
       } finally { await response.dispose(); }
     }
-    if (from && to && includeOperations) {
+    if (from && to && (includeOperations || includePurchases)) {
       result.range = { from, to, timezone: 'America/Santiago' };
       result.operations = {};
-      if (!Array.isArray(operationKinds) || !operationKinds.length || operationKinds.some(kind => !['counts', 'transfers', 'transformations'].includes(kind))) throw Error('Tipo de operación de inventario inválido.');
-      for (const [kind, route] of [['counts', 'take-inventory'], ['transfers', 'transfer-warehouse'], ['transformations', 'transformations']].filter(([kind]) => operationKinds.includes(kind))) {
+      if (includePurchases) operationKinds = ['purchases'];
+      if (!Array.isArray(operationKinds) || !operationKinds.length || operationKinds.some(kind => !['counts', 'transfers', 'transformations', 'purchases'].includes(kind))) throw Error('Tipo de operación de inventario inválido.');
+      for (const [kind, route] of [['counts', 'take-inventory'], ['transfers', 'transfer-warehouse'], ['transformations', 'transformations'], ['purchases', 'purchases']].filter(([kind]) => operationKinds.includes(kind))) {
         const documents = new Map();
         for (let start = from; start <= to;) {
         const finish = new Date(Math.min(Date.parse(to + 'T12:00:00Z'), Date.parse(start + 'T12:00:00Z') + 14 * 86400000)).toISOString().slice(0, 10);
         const url = new URL(`/${route}/`, 'https://inventory.toteat.com');
-        url.search = new URLSearchParams({ local_ref: captured.localRef, init_date: start, finish_date: finish });
+        // Compras requests source=web; without it the API returns accounting
+        // details and omits warehouse_receive_ref from the receipt header.
+        url.search = new URLSearchParams({ ...(kind === 'purchases' ? {source: 'web'} : {}), local_ref: captured.localRef, init_date: start, finish_date: finish });
         const response = await page.context().request.get(url.href, { headers: inventoryHeaders, timeout: 60000, maxRedirects: 0 });
         try {
           checkAuthentication(response);

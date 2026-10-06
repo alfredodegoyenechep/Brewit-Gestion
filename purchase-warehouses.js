@@ -6,12 +6,11 @@ const day = value => {
   return result;
 };
 const key = (date, code) => `${date}|${code}`;
-const near = (a, b) => Math.abs(a - b) <= 1e-6;
 const add = (map, warehouse, quantity) => map.set(String(warehouse), (map.get(String(warehouse)) || 0) + quantity);
 
-// Keep upstream accounting responses intact. Only the published copy is routed
-// using independent inventory evidence; never fabricate documents or quantities.
-function reconcilePurchaseWarehouses(documents, batches, products = []) {
+// Purchases already resolves the receiving warehouse. Inventory is only a
+// cross-check: discrepancies must never reroute a purchase or alter its amounts.
+function reconcilePurchaseWarehouses(documents, batches = [], products = []) {
   const result = structuredClone(documents), inventory = new Map(), groups = new Map(), warnings = [], corrections = [];
   const masters = new Map(products.map(product => [product.code || product.custom_id, product]));
   const codes = new Set(documents.flatMap(document => document.products.map(line => line.sku)).filter(Boolean));
@@ -48,20 +47,27 @@ function reconcilePurchaseWarehouses(documents, batches, products = []) {
   }
   for (const [identity, group] of groups) {
     const evidence = inventory.get(identity), master = masters.get(group.code);
-    const fail = reason => { throw Object.assign(Error(`No se pudo conciliar la bodega de ${group.code} (${group.date}): ${reason} Se conserva la última versión de compras.`), {code: 'TOTEAT_PURCHASE_WAREHOUSE_UNRESOLVED'}); };
     if (!evidence) {
       if (master?.stockManaged === false || master?.stock_enabled === false) {
         warnings.push({type: 'warehouse-not-applicable', code: group.code, date: group.date, message: 'Producto sin manejo de stock; su bodega no se verifica contra inventario.'});
         continue;
       }
-      fail('falta el registro diario de inventario.');
+      warnings.push({type: 'warehouse-unverified', code: group.code, date: group.date,
+        message: 'Falta el registro diario de inventario; se conserva la bodega de la API de Compras.'});
+      continue;
     }
     const original = new Map();
     for (const entry of group.lines) {
       try { entry.quantity = convert(entry.line.received_quantity, entry.line.received_measurement, evidence.unit, {...master, custom_id: group.code}); }
-      catch { fail('las unidades recibidas no tienen una conversión comprobada a la unidad de inventario.'); }
-      if (!Number.isFinite(entry.quantity)) fail('la cantidad recibida no es válida.');
+      catch { entry.quantity = null; }
+      if (entry.quantity === null) continue;
+      if (!Number.isFinite(entry.quantity)) throw Error('Cantidad inválida para comparar con inventario.');
       add(original, entry.line.warehouse, entry.quantity);
+    }
+    if (group.lines.some(entry => entry.quantity === null)) {
+      warnings.push({type: 'warehouse-unverified', code: group.code, date: group.date,
+        message: 'Las unidades no permiten comparar con inventario; se conserva la bodega de la API de Compras.'});
+      continue;
     }
     // Converted volume/mass receipts can differ at the last posted stock
     // decimal (e.g. BOT factors 1/1.33333 versus 0.75 L). Never apply that
@@ -70,24 +76,14 @@ function reconcilePurchaseWarehouses(documents, batches, products = []) {
     const matches = (a, b) => Math.abs(a - b) <= tolerance;
     const warehouses = new Set([...original.keys(), ...evidence.warehouses.keys()]);
     const agrees = [...warehouses].every(warehouse => matches(original.get(warehouse) || 0, evidence.warehouses.get(warehouse) || 0));
-    let destination;
-    if (!agrees) {
-      const total = group.lines.reduce((sum, entry) => sum + entry.quantity, 0);
-      const targets = [...evidence.warehouses].filter(([, quantity]) => !near(quantity, 0));
-      // Daily totals identify the destination only if all receipts are accounted
-      // for, in one warehouse, without positive/negative cancellation.
-      if (targets.length !== 1 || near(total, 0) || !matches(targets[0][1], total) || group.lines.some(entry => Math.sign(entry.quantity) !== Math.sign(total))) fail('las cantidades por bodega son diferentes y el destino no es inequívoco.');
-      destination = targets[0][0];
-    }
     for (const {document, index, line, quantity} of group.lines) {
-      const reported = line.warehouse_reconciliation?.reportedWarehouse ?? line.warehouse;
-      if (!agrees) line.warehouse = Number(destination);
-      const corrected = String(reported) !== String(line.warehouse);
-      line.warehouse_reconciliation = { source: 'inventorystate', date: group.date, unit: evidence.unit, quantity, capturedAt: evidence.capturedAt, reportedWarehouse: reported, status: corrected ? 'corrected' : 'verified' };
-      if (corrected) {
-        const correction = { movementId: String(document.movement_id), line: index + 1, code: group.code, date: group.date, reportedWarehouse: reported, warehouse: line.warehouse };
-        corrections.push(correction);
-        warnings.push({...correction, type: 'warehouse-corrected', message: `Bodega corregida de ${reported} a ${line.warehouse} según la recepción en el inventario de Toteat.`});
+      line.warehouse_reconciliation = { source: line.warehouse_assignment?.source || 'accountingmovements', verificationSource: 'inventorystate', date: group.date, unit: evidence.unit, quantity,
+        capturedAt: evidence.capturedAt, reportedWarehouse: line.warehouse_assignment?.reportedWarehouse ?? line.warehouse, effectiveWarehouse: line.warehouse, status: agrees ? 'verified' : 'discrepancy',
+        inventoryWarehouses: Object.fromEntries(evidence.warehouses) };
+      if (!agrees) {
+        warnings.push({ movementId: String(document.movement_id), line: index + 1, code: group.code, date: group.date,
+          warehouse: line.warehouse, type: 'warehouse-discrepancy',
+          message: `La API de Inventario difiere de la API de Compras para ${group.code}; se conserva la bodega ${line.warehouse} indicada en Compras.` });
       }
     }
   }

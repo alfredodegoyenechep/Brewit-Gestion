@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const XLSX = require('xlsx');
 const { atomicJson, windows } = require('./toteat-sales');
 const { reconcilePurchaseWarehouses, receiptDay } = require('./purchase-warehouses');
+const { applyPurchaseReceiptWarehouses } = require('./purchase-receipts');
 
 const inventoryWindow = value => {
   const start = Math.floor(Date.parse(value + 'T00:00:00Z') / (8 * 86400000)) * 8 * 86400000;
@@ -37,6 +38,16 @@ function legacyKey(row) {
     get(['Tipo Documento', 'Tipo de documento', 'Document Type']), get(['Documento', 'Número documento', 'Document']));
 }
 
+function accountingDocuments(batches) {
+  const unique = new Map();
+  for (const batch of Object.values(batches)) for (const document of batch) {
+    const key = text(document.movement_id);
+    if (unique.has(key) && JSON.stringify(unique.get(key)) !== JSON.stringify(document)) throw new Error('Una compra aparece con versiones diferentes en dos períodos; revisa todo el histórico.');
+    unique.set(key, document);
+  }
+  return [...unique.values()];
+}
+
 function purchaseRows(documents, localId) {
   const rows = [], owned = [], warnings = [], seen = new Set();
   for (const p of documents) {
@@ -66,7 +77,8 @@ function purchaseRows(documents, localId) {
         'API Detalle': missing ? 'Sin SKU o unidades en Toteat; revisar' : 'Identificado',
         'API Total documento': index === 0 ? p.total_amount : null,
         'API Bodega Toteat': l.warehouse ?? null, 'API Fecha recepción': (p.received_date || p.recieived_date) ? date(p.received_date || p.recieived_date) : null,
-        'API Bodega reportada compras': l.warehouse_reconciliation?.reportedWarehouse ?? l.warehouse ?? null,
+        'API Bodega reportada compras': l.warehouse_assignment?.reportedWarehouse ?? l.warehouse_reconciliation?.reportedWarehouse ?? l.warehouse ?? null,
+        'API Origen bodega': l.warehouse_assignment?.mode === 'receipt' ? 'Bodega de recepción' : l.warehouse_assignment?.mode === 'product' ? 'Bodega por producto de la recepción' : 'Detalle contable sin recepción verificada',
         'API Conciliación bodega': l.warehouse_reconciliation?.status || 'Sin verificar',
         'API Observación': p.observation || '', 'API Costo efectivo unitario': l.invoice_quantity ? l.total_price / l.invoice_quantity : null,
         'API Campos no disponibles': 'Usuario; forma de pago; costo negociado; monto neto antes de descuento; descuento de línea'
@@ -78,7 +90,7 @@ function purchaseRows(documents, localId) {
   return { rows, owned, warnings };
 }
 
-function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request, clock = today }) {
+function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request, receiptReader, clock = today }) {
   const root = path.join(uploadsRoot, '.integrations/toteat-api/purchases');
   const settingsFile = path.join(root, 'settings.json'), jobs = new Map(), cache = new Map();
   const read = (file, fallback) => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback;
@@ -88,6 +100,13 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     return pointer ? read(path.join(base, pointer.version, 'normalized.json'))?.products || [] : [];
   };
   let timer;
+  function compareWarehouses(documents, inventoryBatches) {
+    try { return reconcilePurchaseWarehouses(documents, inventoryBatches, products()); }
+    catch (error) {
+      return { documents: structuredClone(documents), warnings: [{type: 'warehouse-unverified',
+        message: `No se pudo comparar con inventario: ${error.message} Se conservan las bodegas de la API de Compras.`}] };
+    }
+  }
   function publish(location, state, converted) {
     const version = crypto.randomUUID(), directory = path.join(root, location, version);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -105,6 +124,21 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     if (cache.get(location)?.stamp === stamp) return cache.get(location).state;
     const { version } = read(pointer), directory = path.join(root, location, version);
     const state = { ...read(path.join(directory, 'state.json')), directory };
+    if (state.warehouseReconciliationVersion === 1) {
+      // Restore every receipt from the untouched accounting batches, including
+      // old windows that incremental synchronization will not request again.
+      if (!state.batches) throw new Error('Faltan las respuestas originales de Compras para restaurar sus bodegas.');
+      const documents = accountingDocuments(state.batches);
+      const localId = credentials()[location]?.localId || state.documents[0]?.local_id;
+      purchaseRows(documents, localId);
+      const compared = compareWarehouses(documents, Object.values(state.inventoryBatches || {}));
+      const converted = purchaseRows(compared.documents, localId);
+      const {directory: oldDirectory, ...previous} = state;
+      publish(location, {...previous, documents: compared.documents, warehouseReconciliationVersion: 2,
+        warehouseAuthority: 'accountingmovements', warehouseAuthorityMigratedAt: new Date().toISOString(),
+        warnings: [...converted.warnings, ...compared.warnings]}, converted);
+      return get(location);
+    }
     state.ownedSet = new Set(state.owned);
     cache.set(location, { stamp, state }); return state;
   }
@@ -113,7 +147,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     return { location, configured: !!credentials()[location], enabled: config?.enabled || false, from: config?.from || null,
       intervalMinutes: config?.intervalMinutes || 15, running: jobs.has(location), progress: jobs.get(location)?.progress || null,
       lastSuccess: s?.syncedAt || null, lastError: config?.lastError || null, documentCount: s?.documents.length || 0,
-      lineCount: s?.lineCount || 0, warnings: s?.warnings || [],
+      lineCount: s?.lineCount || 0, warnings: [...(s?.warnings || []), ...(receiptReader && s && !s.receiptSource ? [{type: 'warehouse-receipts-pending', message: 'Actualiza Compras para verificar sus bodegas contra las recepciones originales.'}] : [])],
       excludedCashMovements: Object.values(s?.excludedByRange || {}).reduce((sum, value) => sum + value, 0),
       state: jobs.has(location) ? 'syncing' : config?.lastError ? 'error' : !s ? 'not-synced' : s.documents.length ? 'connected' : 'connected-empty' };
   }
@@ -137,6 +171,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
       if ((registered.toteatRestaurantId && String(registered.toteatRestaurantId) !== credential.restaurantId)
         || (registered.toteatLocalId && String(registered.toteatLocalId) !== credential.localId)) throw new Error('La API no corresponde a esta cafetería.');
       const previous = get(location), batches = { ...(previous?.batches || {}) }, ranges = windows(config.from, clock());
+      if (previous?.receiptSource && !receiptReader) throw Error('No está configurada la verificación de recepciones de Compras; se conserva la última versión completa.');
       const excludedByRange = { ...(previous?.excludedByRange || {}) };
       const selected = ranges.filter((w, i) => full || !batches[w.from] || i >= ranges.length - 3);
       let count = 0;
@@ -153,35 +188,22 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
           return true;
         });
       }
-      const unique = new Map();
-      for (const batch of Object.values(batches)) for (const p of batch) {
-        const key = text(p.movement_id);
-        if (unique.has(key) && JSON.stringify(unique.get(key)) !== JSON.stringify(p)) throw new Error('Una compra aparece con versiones diferentes en dos períodos; revisa todo el histórico.');
-        unique.set(key, p);
-      }
-      const documents = [...unique.values()];
-      let converted, reconciled;
+      const documents = accountingDocuments(batches);
+      let converted, reconciled, receiptSource, assigned = {documents, warnings: []};
       const inventoryBatches = {...(previous?.inventoryBatches || {})};
       try {
-        // Validate accounting documents before issuing any inventory reads.
+        // Validate the authoritative source. Inventory evidence is advisory and
+        // must not become a prerequisite for publishing valid purchases.
         purchaseRows(documents, credential.localId);
-        if (documents.some(p => (p.received_date || p.recieived_date) && receiptDay(p.received_date || p.recieived_date) > clock())) throw Error('Compra con recepción futura; no se puede verificar su bodega.');
-        const refresh = new Set(selected.flatMap(w => batches[w.from]).filter(p => p.received_date || p.recieived_date)
-          .map(p => inventoryWindow(receiptDay(p.received_date || p.recieived_date)).from));
-        const required = new Map(documents.filter(p => (p.received_date || p.recieived_date) && p.products.some(l => l.sku && l.received_quantity !== 0))
-          .map(p => { const w = inventoryWindow(receiptDay(p.received_date || p.recieived_date)); return [w.from, w]; }));
-        for (const w of [...required.values()].sort((a, b) => a.from.localeCompare(b.from))) {
-          const finish = w.to > clock() ? clock() : w.to;
-          if (w.from > finish) throw Error('Compra con recepción futura; no se puede verificar su bodega.');
-          if (!full && inventoryBatches[w.from]?.to === finish && !refresh.has(w.from)) continue;
-          job.progress = `Verificando bodegas de compras: ${w.from} a ${finish}…`;
-          const response = await request(credential, 'inventorystate', {initial_date: w.from.replaceAll('-', ''), final_date: finish.replaceAll('-', '')});
-          if (response.ok !== true || !Array.isArray(response.data)) throw Error('Toteat no confirmó el inventario necesario para verificar las bodegas de compras.');
-          // Retain independent receipt evidence, without unrelated balances/costs.
-          inventoryBatches[w.from] = {from: w.from, to: finish, capturedAt: new Date().toISOString(), data: response.data.map(p => ({sku: p.sku, unit: p.unit,
-            warehouses: p.warehouses?.map(w => ({warehouse_id: w.warehouse_id, inventory: w.inventory?.map(r => ({date: r.date, purchase: r.purchase}))}))}))};
+        if (documents.some(p => (p.received_date || p.recieived_date) && receiptDay(p.received_date || p.recieived_date) > clock())) throw Error('Compra con fecha de recepción futura.');
+        if (receiptReader) {
+          job.progress = 'Verificando bodegas en las recepciones originales de Compras…';
+          const from = documents.reduce((start, doc) => date(doc.emission_date) < start ? date(doc.emission_date) : start, config.from);
+          receiptSource = await receiptReader({restaurantId: credential.restaurantId, localId: credential.localId},
+            {from, to: clock(), includePurchases: true, onProgress: value => {job.progress = value;}});
+          assigned = applyPurchaseReceiptWarehouses(documents, receiptSource, credential);
         }
-        reconciled = reconcilePurchaseWarehouses(documents, Object.values(inventoryBatches), products());
+        reconciled = compareWarehouses(assigned.documents, Object.values(inventoryBatches));
         converted = purchaseRows(reconciled.documents, credential.localId);
       }
       catch (error) {
@@ -191,8 +213,9 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
       const currentCredential = credentials()[location];
       if (activeLocation(location)?.type !== 'store' || !currentCredential || ['restaurantId', 'localId', 'userId', 'token'].some(key => credential[key] !== currentCredential[key])) throw new Error('La conexión cambió durante la actualización.');
       const syncedAt = new Date().toISOString();
-      publish(location, {syncedAt, from: config.from, through: clock(), documents: reconciled.documents, batches, inventoryBatches, warehouseReconciliationVersion: 1,
-        excludedByRange, lineCount: converted.rows.length, warnings: [...converted.warnings, ...reconciled.warnings],
+      publish(location, {syncedAt, from: config.from, through: clock(), documents: reconciled.documents, batches, inventoryBatches, receiptSource,
+        warehouseReconciliationVersion: receiptSource ? 3 : 2, warehouseAuthority: receiptSource ? 'purchases-reception' : 'accountingmovements',
+        excludedByRange, lineCount: converted.rows.length, warnings: [...converted.warnings, ...assigned.warnings, ...reconciled.warnings],
         owned: [...new Set([...(previous?.owned || []), ...converted.owned])]}, converted);
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
         lastFullSuccess: selected.length === ranges.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
@@ -213,19 +236,37 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     const previous = get(location), credential = credentials()[location];
     if (!previous || activeLocation(location)?.type !== 'store' || !credential || String(evidence.localId) !== String(credential.localId)
       || String(evidence.restaurantId) !== String(credential.restaurantId)) throw Error('La evidencia de inventario no corresponde a este local.');
-    const reconciled = reconcilePurchaseWarehouses(previous.documents, evidence.batches, products());
-    const converted = purchaseRows(reconciled.documents, credential.localId);
     const {directory, ownedSet, ...state} = previous;
-    const covered = warning => evidence.batches.some(b => warning.date >= b.from && warning.date <= b.to);
+    const covered = warning => evidence.batches.some(batch => warning.date >= batch.from && warning.date <= batch.to);
     const reconciledAt = new Date().toISOString();
     const inventoryBatches = {...(state.inventoryBatches || {})};
     for (const batch of evidence.batches) {
       const window = inventoryWindow(batch.from), finish = window.to > clock() ? clock() : window.to;
       if (batch.from === window.from && batch.to === finish) inventoryBatches[batch.from] = batch;
     }
+    const documents = accountingDocuments(state.batches);
+    const assigned = state.receiptSource ? applyPurchaseReceiptWarehouses(documents, state.receiptSource, credential) : {documents, warnings: []};
+    const reconciled = compareWarehouses(assigned.documents, evidence.batches);
+    const converted = purchaseRows(reconciled.documents, credential.localId);
     publish(location, {...state, documents: reconciled.documents, syncedAt: reconciledAt, warehouseReconciledAt: reconciledAt,
       inventoryBatches,
-      warnings: [...(state.warnings || []).filter(w => !['warehouse-corrected', 'warehouse-not-applicable'].includes(w.type) || !covered(w)), ...reconciled.warnings]}, converted);
+      warehouseReconciliationVersion: state.receiptSource ? 3 : 2, warehouseAuthority: state.receiptSource ? 'purchases-reception' : 'accountingmovements',
+      warnings: [...converted.warnings, ...assigned.warnings,
+        ...(state.warnings || []).filter(warning => ['warehouse-discrepancy', 'warehouse-unverified', 'warehouse-not-applicable'].includes(warning.type) && !covered(warning)),
+        ...reconciled.warnings]}, converted);
+    return get(location);
+  }
+  function reconcileReceiptSource(location, source) {
+    if (jobs.has(location)) throw Error('Espera a que termine la actualización de compras.');
+    const previous = get(location), credential = credentials()[location];
+    if (!previous || !credential || activeLocation(location)?.type !== 'store') throw Error('No hay compras guardadas para verificar.');
+    const assigned = applyPurchaseReceiptWarehouses(accountingDocuments(previous.batches), source, credential);
+    const compared = compareWarehouses(assigned.documents, Object.values(previous.inventoryBatches || {}));
+    const converted = purchaseRows(compared.documents, credential.localId);
+    const {directory, ownedSet, ...state} = previous;
+    publish(location, {...state, documents: compared.documents, receiptSource: source,
+      syncedAt: new Date().toISOString(), warehouseReconciliationVersion: 3, warehouseAuthority: 'purchases-reception',
+      warnings: [...converted.warnings, ...assigned.warnings, ...compared.warnings]}, converted);
     return get(location);
   }
   function source(location, field) {
@@ -253,6 +294,6 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     } };
     timer = setInterval(tick, 30000); timer.unref(); tick();
   }
-  return { configure, synchronize, reconcileSaved, status, get, source, filterLegacy, start, stop: () => { clearInterval(timer); timer = null; } };
+  return { configure, synchronize, reconcileSaved, reconcileReceiptSource, status, get, source, filterLegacy, start, stop: () => { clearInterval(timer); timer = null; } };
 }
 module.exports = { createPurchaseSync, purchaseRows, legacyKey, documentKey };

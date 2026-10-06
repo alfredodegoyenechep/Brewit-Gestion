@@ -50,7 +50,9 @@ function extract(payload) {
   for (const [key] of inventoryMetrics) {
     const cells = summaries.map(summary => summary?.metrics?.[key]);
     values[key] = {
-      amount: cells.reduce((sum, cell) => sum + (cell?.available ? -Math.round(Math.abs(cell.amount || 0)) : 0), 0),
+      amount: cells.reduce((sum, cell) => sum + (cell?.available
+        ? key === 'adjustedKardexTotalCost' ? Math.round(cell.amount || 0) : -Math.round(Math.abs(cell.amount || 0))
+        : 0), 0),
       complete: cells.length > 0 && cells.every(cell => cell?.available && !cell.partial)
     };
   }

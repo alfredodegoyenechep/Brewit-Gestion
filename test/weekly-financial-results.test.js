@@ -87,3 +87,18 @@ test('current week keeps Sunday header but calculates only through today', () =>
   assert.equal(calls[4].dateTo, '2026-09-28');
   assert.equal(calls[3].dateTo, '2026-09-27');
 });
+
+test('positive and negative Kardex differences retain their signs in weekly values, percentages and combined totals', () => {
+  const data = buildWeeklyResults(query, q => ({...build(q), inventorySummaries: [
+    {metrics: {adjustedKardexTotalCost: {available: true,amount: 33556,partial: true},marketingConsumption: {available: true,amount: 100}}},
+    {metrics: {adjustedKardexTotalCost: {available: true,amount: -20000}}}
+  ]}));
+  const week=data.weeks[0].values;
+  assert.equal(week.adjustedKardexTotalCost.amount,13556);
+  assert.equal(week.adjustedKardexTotalCost.percent,13556);
+  assert.equal(week.adjustedKardexTotalCost.complete,false);
+  assert.equal(week.marketingConsumption.amount,-100);
+  assert.equal(week.combined.amount,13456);
+  assert.equal(data.total.adjustedKardexTotalCost.amount,67780);
+  assert.equal(data.total.combined.amount,67280);
+});

@@ -821,8 +821,13 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
           if (!context && endpoint) {
             if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('El navegador de Toteat debe estar en este equipo.');
             try { browser = await (factoryOptions.chromium || require('playwright-core').chromium).connectOverCDP(endpoint); }
-            catch { throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503); }
-            context = browser.contexts()[0];
+            catch {
+              if (options.allowSavedProfileFallback) {
+                try { context = await launch('master-downloads', true); }
+                catch { throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503); }
+              } else throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503);
+            }
+            context ||= browser.contexts()[0];
             if (!context) throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503);
           } else if (!context) context = await launch('master-downloads', true);
           page = nativeLoginPages.get(context);

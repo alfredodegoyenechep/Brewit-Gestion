@@ -29,14 +29,15 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
       { ...base, code: 'N', name: 'Sin costo', costAvailable: false, finalInventory: 4, difference: 2, totalCost: 999 }
     ];
     const metric = { available: true, partial: true, amount: 200, quantity: 2, itemCount: 4 };
+    window.executiveFixture = { netSales: 1000, period: { dateFrom: '2026-08-30', dateTo: '2026-09-26', locations: [{ name: 'La Concepción' }] }, metrics: {
+      marketingConsumption: metric, employeeConsumption: metric, calibrationConsumption: metric, waste: metric,
+      adjustedKardexTotalCost: { ...metric, kardexTotalCost: 200, totalAdjustmentCost: 0 }, theoreticalFinalInventoryValue: metric, physicalInventoryValue: { available: false }, otherConsumables: metric
+    } };
     renderInventoryResults({
       itemDetailReportId: 'snapshot', location: {name:'La Concepción'},
       report: { items, itemCount: 4, movementDefinitions: [], dateFrom: '2026-08-30', dateTo: '2026-09-26', selection: { initialBasis: 'physical', finalBasis: 'physical', initialDate: '2026-08-30', finalDate: '2026-09-27' } },
       otherConsumables: { items, itemCount: 4 },
-      executiveSummary: { netSales: 1000, period: { dateFrom: '2026-08-30', dateTo: '2026-09-26', locations: [{ name: 'La Concepción' }] }, metrics: {
-        marketingConsumption: metric, employeeConsumption: metric, calibrationConsumption: metric, waste: metric,
-        adjustedKardexTotalCost: { ...metric, kardexTotalCost: 200, totalAdjustmentCost: 0 }, theoreticalFinalInventoryValue: metric, physicalInventoryValue: { available: false }, otherConsumables: metric
-      } }
+      executiveSummary: window.executiveFixture
     });
   });
   const totals = table => page.locator(`${table} tfoot td`).allTextContents().then(cells => cells.slice(-3));
@@ -72,4 +73,22 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
   await page.locator('#inventory-kardex-search').fill('Sin costo');
   assert.deepEqual(await totals('#inventory-results-table'), ['$0', '$0', '$0']);
   assert.equal(await note.isVisible(), true);
+  for (const example of [
+    {amount:33556,total:'$32.556',value:'$33.556',percent:'3.355,6%',color:'rgb(40, 105, 168)'},
+    {amount:-33556,total:'$-34.556',value:'$-33.556',percent:'-3.355,6%',color:'rgb(192, 57, 43)'},
+    {amount:0,total:'$-1.000',value:'$0',percent:'0,0%',color:'rgb(192, 57, 43)'}
+  ]) {
+    await page.evaluate(amount=>{
+      const summary=structuredClone(window.executiveFixture);
+      summary.metrics.adjustedKardexTotalCost.amount=amount;
+      renderInventoryExecutiveSummary(summary);
+    },example.amount);
+    const row=page.locator('#inventory-executive-summary-table tbody tr').filter({hasText:'Costo Total Kardex ajustado'});
+    assert.match(await row.locator('td').first().innerText(),/parcial/);
+    assert.equal(await row.locator('td').nth(1).innerText(),example.value);
+    assert.equal(await row.locator('td').nth(2).innerText(),example.percent);
+    assert.equal(await row.locator('td').nth(1).evaluate(cell=>getComputedStyle(cell).color),example.color);
+    assert.equal(await page.locator('#inventory-executive-summary-table tfoot td').nth(1).innerText(),example.total);
+    assert.equal(await page.locator('#inventory-executive-summary-table tbody tr').first().locator('td').nth(1).innerText(),'$-200');
+  }
 });

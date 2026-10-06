@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const { createSalesSync } = require('./toteat-sales');
 const { createPurchaseSync } = require('./toteat-purchases');
 
-function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchImpl = fetch, enableSync = false, requestSpacing = 21000, syncClock }) {
+function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchImpl = fetch, enableSync = false, requestSpacing = 21000, syncClock, purchaseReceiptReader }) {
   const root = path.join(uploadsRoot, '.integrations', 'toteat-api');
   const file = path.join(root, 'credentials.json');
   let nextRequestAt = 0;
@@ -27,7 +27,7 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     queue = task.catch(() => {}); return task;
   };
   const sync = createSalesSync({ uploadsRoot, activeLocation, credentials: read, request, clock: syncClock });
-  const purchases = createPurchaseSync({ uploadsRoot, activeLocation, credentials: read, request, clock: syncClock });
+  const purchases = createPurchaseSync({ uploadsRoot, activeLocation, credentials: read, request, clock: syncClock, receiptReader: purchaseReceiptReader });
   sync.purchases = purchases;
   sync.requestInventory = (config, range, warehouses) => require('./toteat-public-inventory').readPublicInventory(request, config, range, warehouses);
   const publicConfig = config => config ? {

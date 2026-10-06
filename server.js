@@ -3101,7 +3101,8 @@ function createApp(options = {}) {
 
   toteatSalesSync = registerToteatApi(app, { uploadsRoot, activeLocation, locations: () => readLocations().locations,
     fetchImpl: options.toteatApiFetch, enableSync: options.enableToteatSync,
-    requestSpacing: options.toteatRequestSpacing, syncClock: options.toteatSyncClock });
+    requestSpacing: options.toteatRequestSpacing, syncClock: options.toteatSyncClock,
+    purchaseReceiptReader: options.toteatPurchaseReceiptReader || ((restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, {...readOptions, allowSavedProfileFallback: true})) });
   app.locals.toteatSalesSync = toteatSalesSync;
   toteatMasterSync = createMasterSync({ uploadsRoot, activeLocation,
     credentials: () => readJson(path.join(uploadsRoot, '.integrations', 'toteat-api', 'credentials.json'), {}),

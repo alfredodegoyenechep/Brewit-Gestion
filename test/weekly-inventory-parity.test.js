@@ -48,7 +48,7 @@ test('weekly inventory matches original Kardex and only stores separate other co
       const metric = direct.executiveSummary.metrics[key];
       assert.equal(metric.available, true, key);
       assert.notEqual(metric.amount, 0, key);
-      assert.equal(week.values[key].amount, -Math.round(Math.abs(metric.amount)), `${week.period.from}: ${key}`);
+      assert.equal(week.values[key].amount, key === 'adjustedKardexTotalCost' ? Math.round(metric.amount) : -Math.round(Math.abs(metric.amount)), `${week.period.from}: ${key}`);
     }
   }
   const centralResponse = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },

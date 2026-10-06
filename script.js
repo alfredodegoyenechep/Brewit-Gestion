@@ -9454,6 +9454,7 @@ function renderInventoryExecutiveSummary(summary) {
     ...(metrics.otherConsumables ? [{label:'Otros Consumibles',metric:metrics.otherConsumables,tone:'executive-negative-concept',context:`${metrics.otherConsumables.coveredItemCount} de ${metrics.otherConsumables.itemCount} ítems con diferencia valorizada. Separados del costo Kardex ajustado.${metrics.otherConsumables.partial ? ' Subtotal parcial: faltan costos o tomas físicas.' : ''}`}]:[]),
     {
       label: 'Costo Total Kardex ajustado por sustit. y vasos no ut.', metric: adjustedKardex,
+      preserveSign: true,
       tone: inventoryExecutiveResultTone(adjustedKardex),
       alwaysShowContext: true,
       context: [
@@ -9479,13 +9480,15 @@ function renderInventoryExecutiveSummary(summary) {
   head.appendChild(headRow);
   const body = document.createElement('tbody');
   const netSales = Number(summary.netSales) || 0;
-  const displayedAmount = metric => -Math.round(Math.abs(Number(metric.amount) || 0));
+  const displayedAmount = (metric, preserveSign = false) => preserveSign
+    ? Math.round(Number(metric.amount) || 0)
+    : -Math.round(Math.abs(Number(metric.amount) || 0));
   const percent = amount => netSales !== 0 ? amount / netSales * 100 : null;
   const availableRows = rows.filter(({ metric }) => metric.available);
-  rows.forEach(({ label, metric, context, tone = '', alwaysShowContext = false }) => {
+  rows.forEach(({ label, metric, context, tone = '', alwaysShowContext = false, preserveSign = false }) => {
     const row = document.createElement('tr');
     row.className = tone;
-    const amount = metric.available ? displayedAmount(metric) : null;
+    const amount = metric.available ? displayedAmount(metric, preserveSign) : null;
     [
       label + (metric.partial ? ' (parcial)' : ''),
       metric.available ? formatKardexCost(amount) : 'No disponible',
@@ -9501,7 +9504,8 @@ function renderInventoryExecutiveSummary(summary) {
   });
   const foot = document.createElement('tfoot');
   const totalRow = document.createElement('tr');
-  const total = availableRows.reduce((sum, { metric }) => sum + displayedAmount(metric), 0);
+  const total = availableRows.reduce((sum, { metric, preserveSign }) => sum + displayedAmount(metric, preserveSign), 0);
+  totalRow.className = inventoryExecutiveResultTone({amount: total});
   const complete = availableRows.length === rows.length && !availableRows.some(({metric}) => metric.partial);
   [
     complete ? 'TOTAL' : 'TOTAL DISPONIBLE',

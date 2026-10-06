@@ -83,3 +83,25 @@ test('stale CDP opens a retained recovery profile and resumes the same update af
  assert.equal(source.products[0].id,'p1');assert.equal(source.localId,'1');assert.equal(page.isClosed(),false);
  assert.equal(connections,1);assert.deepEqual(launches,[false]);
 });
+
+test('receipt verification can use the saved authenticated profile when the configured browser is unavailable', {skip:!fs.existsSync(chrome)}, async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-receipt-session-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const contexts=[],launches=[];let connections=0;
+ const chromium={connectOverCDP:async()=>{connections++;throw Error('private connection failure');},launchPersistentContext:async(dir,options)=>{
+  launches.push(options.headless);const context=await require('playwright-core').chromium.launchPersistentContext(dir,options);contexts.push(context);
+  await context.route('https://res8.toteat.com/**',route=>route.fulfill({contentType:'text/html',body:`<script>
+   localStorage.setItem('resto',JSON.stringify({ir:'r',il:'1',nr:'Local'}));
+   document.write('<table><tr ng-click="selecciona"><td>r</td><td>1</td><td>Local</td><td></td><td></td></tr></table>');
+   const services={configuracion:{objeto:{ir:'r',il:'1'}},masterProd:{maestro:{local:[{m_id:'p1'}]}},setupConfig:{Refresh:(_id,done)=>done(),jerarquias:{listado:[]},jerarquiasIngredientes:{listado:[]},jerarquiasExtras:{listado:[]}}};
+   window.angular={element:()=>({injector:()=>({get:name=>services[name]})})};
+   for(const kind of ['products','warehouses'])fetch('https://api.toteat.com/locals/local1/'+kind+'/',{headers:{authorization:'test-session'}});
+  </script>`}));
+  await context.route('https://api.toteat.com/**',route=>route.fulfill({headers:{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization'},json:{results:route.request().url().includes('/products/')?[{id:'p1',local:'local1'}]:[]}}));
+  return context;
+ }};
+ t.after(async()=>{for(const context of contexts)await context.close().catch(()=>{});});
+ const reader=require('../server').createToteatAutomation(root,{chromium,executablePath:chrome,cdpEndpoint:'http://127.0.0.1:9224',restaurantsUrl:'https://res8.toteat.com/restaurant'});
+ const source=await reader.readNativeSources({restaurantId:'r',localId:'1'},{allowSavedProfileFallback:true});
+ assert.equal(source.localId,'1');assert.equal(source.products[0].id,'p1');assert.equal(connections,1);assert.deepEqual(launches,[true]);
+ assert.ok(!JSON.stringify(source).includes('test-session'));
+});

@@ -2214,6 +2214,10 @@ body {
   font-weight: 900;
 }
 
+#inventory-executive-summary-table tr.executive-positive-result td.executive-total-cost {
+  color: #2869a8;
+}
+
 #inventory-lac001-substitution-report,
 .inventory-analysis-report {
   margin-top: 20px;

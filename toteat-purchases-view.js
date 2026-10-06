@@ -32,8 +32,10 @@
         const status = s.running ? `Actualizando: ${s.progress || ''}` : s.lastError ? `No se pudo actualizar: ${s.lastError}` : !s.lastSuccess ? 'Pendiente de conectar compras' : s.state === 'connected-empty' ? 'Conectado · sin compras registradas' : `${s.documentCount} documentos · ${s.lineCount} líneas`;
         const rounding = s.warnings.filter(w => w.type === 'rounding').length;
         const missing = s.warnings.filter(w => w.type === 'missing-product').length;
-        const corrected = s.warnings.filter(w => w.type === 'warehouse-corrected').length;
-        return `${s.name}: ${status}${s.lastSuccess ? ` · última actualización ${new Date(s.lastSuccess).toLocaleString('es-CL')}` : ''}${rounding ? ` · ${rounding} documentos con diferencia entre cabecera y líneas; se conservan ambos importes.` : ''}${missing ? ` · Atención: ${missing} líneas sin SKU o unidades; importes incluidos, identificación pendiente.` : ''}${corrected ? ` · ${corrected} líneas asignadas a la bodega de recepción comprobada en Toteat.` : ''}`;
+        const discrepancies = s.warnings.filter(w => w.type === 'warehouse-discrepancy').length;
+        const assigned = s.warnings.filter(w => w.type === 'warehouse-receipt-assigned').length;
+        const pendingReceipts = s.warnings.some(w => w.type === 'warehouse-receipts-pending');
+        return `${s.name}: ${status}${s.lastSuccess ? ` · última actualización ${new Date(s.lastSuccess).toLocaleString('es-CL')}` : ''}${rounding ? ` · ${rounding} documentos con diferencia entre cabecera y líneas; se conservan ambos importes.` : ''}${missing ? ` · Atención: ${missing} líneas sin SKU o unidades; importes incluidos, identificación pendiente.` : ''}${assigned ? ` · ${assigned} líneas asignadas según la recepción original de Compras.` : ''}${pendingReceipts ? ' · Actualiza Compras para verificar las bodegas de recepción.' : ''}${discrepancies ? ` · ${discrepancies} líneas con diferencias frente a Inventario; se conservan las bodegas de Compras.` : ''}`;
       });
       document.querySelectorAll('[data-toteat-purchases-status]').forEach(e => { e.replaceChildren(...lines.map(text => { const p = document.createElement('p'); p.textContent = text; return p; })); });
       if (changed) window.dispatchEvent(new Event('brewit-purchases-updated'));
