@@ -8900,6 +8900,13 @@ function normalizedInventorySearch(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
+function matchesInventoryQuantityFilter(value, criterion) {
+  if (criterion === 'all') return true;
+  if (value == null || !Number.isFinite(Number(value))) return false;
+  const isZero = Math.abs(Number(value)) <= 0.000001;
+  return criterion === 'zero' ? isZero : !isZero;
+}
+
 // Keep source quantities unchanged; show each movement's effect on inventory.
 function signedKardexMovement(item, definition) {
   const direction = /^(uso-|trl-out-|mov-out-|trn-out-)/.test(definition.key) ? -1 : 1;
@@ -9002,10 +9009,8 @@ function renderInventoryKardexTable() {
   const previousScrollLeft = table.parentElement.scrollLeft;
   const search = normalizedInventorySearch(document.getElementById('inventory-kardex-search').value);
   const costCriterion = document.getElementById('inventory-kardex-cost-filter').value;
-  const minimumInput = document.getElementById('inventory-kardex-cost-min').value;
-  const maximumInput = document.getElementById('inventory-kardex-cost-max').value;
-  const minimum = minimumInput === '' ? null : Number(minimumInput);
-  const maximum = maximumInput === '' ? null : Number(maximumInput);
+  const physicalCriterion = document.getElementById('inventory-kardex-physical-filter').value;
+  const theoreticalCriterion = document.getElementById('inventory-kardex-theoretical-filter').value;
   const epsilon = 0.000001;
   const items = report.items.filter(item => {
     const matchesSearch = !search || normalizedInventorySearch(`${item.code} ${item.name}`).includes(search);
@@ -9015,9 +9020,10 @@ function renderInventoryKardexTable() {
     if (costCriterion === 'negative' && cost >= -epsilon) return false;
     if (costCriterion === 'zero' && Math.abs(cost) > epsilon) return false;
     if (costCriterion === 'nonzero' && Math.abs(cost) <= epsilon) return false;
-    if (minimum !== null && cost < minimum) return false;
-    if (maximum !== null && cost > maximum) return false;
-    return true;
+    const physical = report.selection ? item.finalInventory : item.physicalFinal;
+    const theoretical = report.boundaryMode ? item.adjustedTheoreticalFinal : item.theoreticalFinal;
+    return matchesInventoryQuantityFilter(physical, physicalCriterion)
+      && matchesInventoryQuantityFilter(theoretical, theoreticalCriterion);
   });
   const sortColumn = columns[inventoryKardexTableState.sortIndex];
   const direction = inventoryKardexTableState.direction === 'desc' ? -1 : 1;
@@ -9626,8 +9632,8 @@ function renderInventoryResults(data) {
   ];
   document.getElementById('inventory-kardex-search').value = '';
   document.getElementById('inventory-kardex-cost-filter').value = 'all';
-  document.getElementById('inventory-kardex-cost-min').value = '';
-  document.getElementById('inventory-kardex-cost-max').value = '';
+  document.getElementById('inventory-kardex-physical-filter').value = 'all';
+  document.getElementById('inventory-kardex-theoretical-filter').value = 'all';
   inventoryKardexTableState = { report, columns, detailReportId: data.itemDetailReportId, location: data.location, sortIndex: 0, direction: 'asc' };
   renderInventoryKardexTable();
   renderOtherConsumables(data.otherConsumables, columns, data.executiveSummary?.metrics.otherConsumables);
@@ -9669,11 +9675,24 @@ function currentInventoryColumns() {
     { label: 'Código', value: item => item.code, sortValue: item => item.code },
     { label: 'Producto', value: item => item.name, sortValue: item => item.name },
     { label: 'Unidad', value: item => item.unit, sortValue: item => item.unit },
-    { label: 'Inventario teórico', value: item => formatKardexQuantity(item.quantity, 2), sortValue: item => Number(item.quantity) || 0 },
+    { label: 'Inventario teórico', value: item => formatCurrentInventoryQuantity(item.quantity), sortValue: item => Number(item.quantity) || 0 },
+    { label: 'Inventario físico', value: item => item.physicalInventory == null ? 'Sin toma física' : formatCurrentInventoryQuantity(item.physicalInventory), sortValue: item => item.physicalInventory ?? null },
     { label: 'Costo unitario', value: item => item.costAvailable ? formatKardexCost(item.unitCost) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.unitCost) || 0 : null },
     { label: 'Origen costo', value: item => costSourceShort(item), sortValue: item => `${item.costSource || ''}:${item.costSourceDate || ''}` },
     { label: 'Valorización', value: item => item.costAvailable ? formatKardexCost(item.valuation) : 'Sin costo', sortValue: item => item.costAvailable ? Number(item.valuation) || 0 : null }
   ];
+}
+
+function formatCurrentInventoryQuantity(value) {
+  const selected = Number(document.getElementById('current-inventory-decimals').value);
+  return formatKardexQuantity(value, Number.isInteger(selected) && selected >= 1 && selected <= 4 ? selected : 2);
+}
+
+function clearCurrentInventoryFilters() {
+  document.getElementById('current-inventory-search').value = '';
+  document.getElementById('current-inventory-value-filter').value = 'all';
+  document.getElementById('current-inventory-physical-filter').value = 'all';
+  document.getElementById('current-inventory-theoretical-filter').value = 'all';
 }
 
 function renderCurrentInventoryTable(table, items, missingCost = false) {
@@ -9721,7 +9740,7 @@ function renderCurrentInventoryTable(table, items, missingCost = false) {
     const cell = document.createElement('td');
     cell.colSpan = columns.length;
     cell.className = 'inventory-empty-result';
-    cell.textContent = 'No hay productos que coincidan con la búsqueda.';
+    cell.textContent = 'No hay productos que coincidan con los filtros seleccionados.';
     row.appendChild(cell);
     body.appendChild(row);
   }
@@ -9746,7 +9765,23 @@ function renderCurrentInventoryTables() {
   if (!currentInventoryTableState) return;
   const { data, columns, sortIndex, direction } = currentInventoryTableState;
   const query = normalizedInventorySearch(document.getElementById('current-inventory-search').value);
-  const matches = item => !query || normalizedInventorySearch(`${item.code} ${item.name}`).includes(query);
+  const criterion = document.getElementById('current-inventory-value-filter').value;
+  const physicalCriterion = document.getElementById('current-inventory-physical-filter').value;
+  const theoreticalCriterion = document.getElementById('current-inventory-theoretical-filter').value;
+  const epsilon = 0.000001;
+  const matches = item => {
+    if (query && !normalizedInventorySearch(`${item.code} ${item.name}`).includes(query)) return false;
+    if (!matchesInventoryQuantityFilter(item.physicalInventory, physicalCriterion)
+      || !matchesInventoryQuantityFilter(item.quantity, theoreticalCriterion)) return false;
+    if (criterion === 'all') return true;
+    if (!item.costAvailable || !Number.isFinite(item.valuation)) return false;
+    const value = item.valuation;
+    if (criterion === 'positive' && value <= epsilon) return false;
+    if (criterion === 'negative' && value >= -epsilon) return false;
+    if (criterion === 'zero' && Math.abs(value) > epsilon) return false;
+    if (criterion === 'nonzero' && Math.abs(value) <= epsilon) return false;
+    return true;
+  };
   const compareItems = (left, right) => {
     const leftValue = columns[sortIndex].sortValue(left);
     const rightValue = columns[sortIndex].sortValue(right);
@@ -9764,6 +9799,7 @@ function renderCurrentInventoryTables() {
   const missingItems = visibleItems.filter(item => !item.costAvailable);
   renderCurrentInventoryTable(document.getElementById('current-inventory-table'), valuedItems);
   renderCurrentInventoryTable(document.getElementById('current-inventory-missing-cost-table'), missingItems, true);
+  document.getElementById('current-inventory-missing-cost').hidden = missingItems.length === 0;
   document.getElementById('current-inventory-visible-count').textContent =
     `${valuedItems.length} valorizado(s) · ${missingItems.length} sin costo`;
   document.getElementById('current-inventory-missing-cost-note').textContent =
@@ -9775,8 +9811,7 @@ function renderCurrentInventoryReport(data) {
   const valuedCount = report.items.filter(item => item.costAvailable).length;
   const missingCount = report.itemCount - valuedCount;
   currentInventoryTableState = { data, columns: currentInventoryColumns(), sortIndex: 0, direction: 'asc' };
-  document.getElementById('current-inventory-search').value = '';
-  document.getElementById('current-inventory-missing-cost').hidden = missingCount === 0;
+  clearCurrentInventoryFilters();
   renderCurrentInventoryTables();
   const basis = report.balanceBasis === 'final' ? 'Inventario Final (IF)' : 'Inventario Inicial (II)';
   document.getElementById('current-inventory-period').textContent =
@@ -11115,20 +11150,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeInventoryResultDialog('current-inventory-results');
   });
   document.getElementById('current-inventory-search').addEventListener('input', renderCurrentInventoryTables);
+  for (const id of ['current-inventory-physical-filter', 'current-inventory-theoretical-filter']) {
+    document.getElementById(id).addEventListener('change', renderCurrentInventoryTables);
+  }
+  document.getElementById('current-inventory-value-filter').addEventListener('change', renderCurrentInventoryTables);
+  document.getElementById('current-inventory-decimals').addEventListener('change', renderCurrentInventoryTables);
   document.getElementById('clear-current-inventory-search').addEventListener('click', () => {
-    document.getElementById('current-inventory-search').value = '';
+    clearCurrentInventoryFilters();
     renderCurrentInventoryTables();
   });
-  for (const id of ['inventory-kardex-search', 'inventory-kardex-cost-min', 'inventory-kardex-cost-max']) {
-    document.getElementById(id).addEventListener('input', renderInventoryKardexTable);
+  document.getElementById('inventory-kardex-search').addEventListener('input', renderInventoryKardexTable);
+  for (const id of ['inventory-kardex-physical-filter', 'inventory-kardex-theoretical-filter']) {
+    document.getElementById(id).addEventListener('change', renderInventoryKardexTable);
   }
   document.getElementById('inventory-kardex-cost-filter').addEventListener('change', renderInventoryKardexTable);
   document.getElementById('inventory-kardex-decimals').addEventListener('change', renderInventoryKardexTable);
   document.getElementById('clear-inventory-kardex-filters').addEventListener('click', () => {
     document.getElementById('inventory-kardex-search').value = '';
     document.getElementById('inventory-kardex-cost-filter').value = 'all';
-    document.getElementById('inventory-kardex-cost-min').value = '';
-    document.getElementById('inventory-kardex-cost-max').value = '';
+    document.getElementById('inventory-kardex-physical-filter').value = 'all';
+    document.getElementById('inventory-kardex-theoretical-filter').value = 'all';
     renderInventoryKardexTable();
   });
   document.querySelectorAll('.inventory-print-report').forEach(button => {

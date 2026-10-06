@@ -2549,14 +2549,20 @@ body {
 
 .current-inventory-tools label {
   display: grid;
-  min-width: min(100%, 320px);
+  flex: 1 1 140px;
+  min-width: 0;
   gap: 6px;
   color: var(--text-soft);
   font-size: calc(12px * var(--font-scale));
   font-weight: 900;
 }
 
-.current-inventory-tools input {
+.current-inventory-tools label:first-child {
+  flex: 2 1 240px;
+}
+
+.current-inventory-tools input,
+.current-inventory-tools select {
   min-width: 0;
   height: 38px;
   padding: 8px 10px;

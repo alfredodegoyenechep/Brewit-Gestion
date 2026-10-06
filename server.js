@@ -753,7 +753,7 @@ function buildKardexInventoryReport(parsed, dateFrom, dateTo, selection = null) 
   };
 }
 
-function buildCurrentTheoreticalInventoryReport(parsed, referenceDate, catalog, assignments, hierarchyLookups, costResolver = null) {
+function buildCurrentTheoreticalInventoryReport(parsed, referenceDate, catalog, assignments, hierarchyLookups, costResolver = null, physicalQuantities = new Map()) {
   const latestGroup = parsed.groups.filter(group => group.date <= referenceDate).at(-1);
   if (!latestGroup) throw new Error(`No hay un saldo de Kardex disponible al ${referenceDate} o en una fecha anterior.`);
   const usesFinalInventory = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
@@ -780,6 +780,7 @@ function buildCurrentTheoreticalInventoryReport(parsed, referenceDate, catalog, 
       unit: product.unit,
       hierarchyPath,
       quantity,
+      physicalInventory: physicalQuantities.get(`${product.code}|${product.unit}`) ?? null,
       unitCost,
       costSource: costReference.source,
       costSourceDate: costReference.sourceDate,
@@ -7535,6 +7536,11 @@ function createApp(options = {}) {
       }
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       const { filePath, ...source } = kardex;
+      const physicalWarehouse = apiStock?.warehouses.find(warehouse => Number(warehouse.custom_id) === (location.type === 'warehouse' ? 1 : 2));
+      const physicalQuantities = new Map((apiStock?.daily || [])
+        .filter(row => physicalWarehouse && row.warehouse === physicalWarehouse.id && row.date === balanceDate
+          && row.physicalCount && Number.isFinite(row.opening))
+        .map(row => [`${row.code}|${row.unit}`, row.opening]));
       return res.json({
         location: publicLocation(location),
         source,
@@ -7552,7 +7558,8 @@ function createApp(options = {}) {
           catalog,
           assignments,
           hierarchyLookups,
-          independentInventory ? buildInventoryPurchaseCostResolver(balanceDate, location, apiStock, {catalog}) : buildCostResolver(balanceDate, [location.id])
+          independentInventory ? buildInventoryPurchaseCostResolver(balanceDate, location, apiStock, {catalog}) : buildCostResolver(balanceDate, [location.id]),
+          physicalQuantities
         )
       });
     } catch (error) {
@@ -7842,7 +7849,9 @@ function createApp(options = {}) {
           ? null : report.items.reduce((sum, item) => sum + item.totalCost, 0);
         require('./inventory-cost-summary').applyBoundaryCostSummary(executiveSummary, report, !!salesData.filesRead);
       }
-      const otherConsumables = require('./other-consumables').separateOtherConsumables(report, executiveSummary, !!salesData.filesRead);
+      const otherConsumables = location.id === 'main-warehouse'
+        ? null
+        : require('./other-consumables').separateOtherConsumables(report, executiveSummary, !!salesData.filesRead);
       // Keep detail tied to the exact report snapshot even if sources refresh
       // before the user opens a row. Load document lines only on demand.
       for (const [id, snapshot] of inventoryDetailReports) if (Date.now()-snapshot.createdAt>3600000) inventoryDetailReports.delete(id);

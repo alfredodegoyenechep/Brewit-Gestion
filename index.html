@@ -1920,11 +1920,19 @@
               <option value="zero">Igual a cero</option>
             </select>
           </label>
-          <label>Costo mínimo
-            <input id="inventory-kardex-cost-min" type="number" step="1" placeholder="Sin mínimo" />
+          <label>Inventario físico
+            <select id="inventory-kardex-physical-filter">
+              <option value="all">Todos</option>
+              <option value="zero">Igual a 0</option>
+              <option value="nonzero">Distinto de 0</option>
+            </select>
           </label>
-          <label>Costo máximo
-            <input id="inventory-kardex-cost-max" type="number" step="1" placeholder="Sin máximo" />
+          <label>Inventario Final Teórico
+            <select id="inventory-kardex-theoretical-filter">
+              <option value="all">Todos</option>
+              <option value="zero">Igual a 0</option>
+              <option value="nonzero">Distinto de 0</option>
+            </select>
           </label>
           <label>Decimales
             <select id="inventory-kardex-decimals">
@@ -2004,7 +2012,38 @@
           <label>Buscar producto o código
             <input id="current-inventory-search" type="search" placeholder="Código o nombre" autocomplete="off" />
           </label>
-          <button id="clear-current-inventory-search" class="icon-button small" type="button">Limpiar búsqueda</button>
+          <label>Valorización
+            <select id="current-inventory-value-filter">
+              <option value="all">Todos</option>
+              <option value="nonzero">Distinto de cero</option>
+              <option value="positive">Mayor que cero</option>
+              <option value="negative">Menor que cero</option>
+              <option value="zero">Igual a cero</option>
+            </select>
+          </label>
+          <label>Inventario físico
+            <select id="current-inventory-physical-filter">
+              <option value="all">Todos</option>
+              <option value="zero">Igual a 0</option>
+              <option value="nonzero">Distinto de 0</option>
+            </select>
+          </label>
+          <label>Inventario Final Teórico
+            <select id="current-inventory-theoretical-filter">
+              <option value="all">Todos</option>
+              <option value="zero">Igual a 0</option>
+              <option value="nonzero">Distinto de 0</option>
+            </select>
+          </label>
+          <label>Decimales
+            <select id="current-inventory-decimals">
+              <option value="1">1 decimal</option>
+              <option value="2" selected>2 decimales</option>
+              <option value="3">3 decimales</option>
+              <option value="4">4 decimales</option>
+            </select>
+          </label>
+          <button id="clear-current-inventory-search" class="icon-button small" type="button">Limpiar filtros</button>
           <span id="current-inventory-visible-count" class="chip neutral"></span>
         </div>
         <h4 class="current-inventory-section-title">Inventario valorizado</h4>

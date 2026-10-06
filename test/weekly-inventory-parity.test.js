@@ -3,16 +3,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const XLSX = require('xlsx');
 const { createApp } = require('../server');
-test('weekly inventory matches original Kardex for each inclusive week without uploaded Kardex', async t => {
+test('weekly inventory matches original Kardex and only stores separate other consumables', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-weekly-parity-'));
   const app = createApp({ uploadsRoot: root, enableLegacyTools: true, sourceMode: 'legacy', reportToday: '2026-09-28' });
   const daily = [];
   for (let i = 0; i < 30; i++) {
     const date = new Date(Date.UTC(2026, 7, 31 + i)).toISOString().slice(0, 10);
-    for (const code of ['A', 'PAC014']) daily.push({ date, warehouse: 'oper', code, name: code, unit: 'UN', opening: 100 - i, closing: 99 - i, physicalCount: true, use: 0 });
+    for (const warehouse of ['oper', 'central']) {
+      for (const code of ['A', 'PAC014']) daily.push({ date, warehouse, code, name: code, unit: 'UN', opening: 100 - i, closing: 99 - i, physicalCount: true, use: 0 });
+    }
   }
   app.locals.toteatStockSync.rebuild = () => ({ range: { from: '2026-08-31', to: '2026-09-29' },
-    warehouses: [{ id: 'oper', custom_id: 2 }, { id: 'waste', custom_id: 3 }], daily,
+    warehouses: [{ id: 'oper', custom_id: 2 }, { id: 'waste', custom_id: 3 }, { id: 'central', custom_id: 1 }, { id: 'central-waste', custom_id: 4 }], daily,
     masterObservedAt: '2026-09-28T00:00:00Z', sourceKind: 'native-documents', includedOrders: [], issues: [], assumptions: [] });
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet([{
@@ -40,6 +42,8 @@ test('weekly inventory matches original Kardex for each inclusive week without u
     const directResponse = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ location: 'store-1', source: 'originals', criteriaMode: 'count-boundaries', initialInventoryDate: week.period.from, finalInventoryDate: finalDate }) });
     const direct = await directResponse.json(); assert.equal(directResponse.status, 200, JSON.stringify(direct));
+    assert.deepEqual(direct.report.items.map(item => item.code), ['A']);
+    assert.deepEqual(direct.otherConsumables.items.map(item => item.code), ['PAC014']);
     for (const key of ['otherConsumables', 'adjustedKardexTotalCost']) {
       const metric = direct.executiveSummary.metrics[key];
       assert.equal(metric.available, true, key);
@@ -47,4 +51,33 @@ test('weekly inventory matches original Kardex for each inclusive week without u
       assert.equal(week.values[key].amount, -Math.round(Math.abs(metric.amount)), `${week.period.from}: ${key}`);
     }
   }
+  const centralResponse = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'main-warehouse', source: 'originals', criteriaMode: 'count-boundaries', initialInventoryDate: '2026-08-31', finalInventoryDate: '2026-09-07' }) });
+  const central = await centralResponse.json();
+  assert.equal(centralResponse.status, 200, JSON.stringify(central));
+  assert.deepEqual(central.report.items.map(item => item.code).sort(), ['A', 'PAC014']);
+  assert.equal(central.report.itemCount, 2);
+  assert.equal(central.otherConsumables, null);
+  assert.equal(central.executiveSummary.metrics.otherConsumables, undefined);
+  assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.totalItemCount, 2);
+  assert.equal(central.executiveSummary.metrics.adjustedKardexTotalCost.coveredItemCount, 2);
+  assert.equal(central.report.totalCost, central.report.items.reduce((sum, item) => sum + item.totalCost, 0));
+  const detailResponse = await fetch(`${base}/api/inventory/item-detail?${new URLSearchParams({ report: central.itemDetailReportId, code: 'PAC014', unit: 'UN' })}`);
+  assert.equal(detailResponse.status, 200);
+  assert.equal((await detailResponse.json()).code, 'PAC014');
+  app.locals.toteatStockSync.current = () => app.locals.toteatStockSync.rebuild();
+  const centralCount = daily.find(row => row.warehouse === 'central' && row.date === '2026-09-07' && row.code === 'PAC014');
+  centralCount.opening = 0;
+  centralCount.closing = 0;
+  const countedResponse = await fetch(`${base}/api/inventory/current?location=main-warehouse&date=2026-09-07`);
+  const counted = await countedResponse.json();
+  assert.equal(countedResponse.status, 200, JSON.stringify(counted));
+  assert.equal(counted.report.items.find(item => item.code === 'PAC014').physicalInventory, 0);
+  assert.equal(counted.report.items.find(item => item.code === 'A').physicalInventory, 93);
+  assert.equal(counted.report.items.find(item => item.code === 'PAC014').quantity, centralCount.closing);
+  for (const row of daily.filter(row => row.warehouse === 'central' && row.date === '2026-09-08')) row.physicalCount = false;
+  const uncountedResponse = await fetch(`${base}/api/inventory/current?location=main-warehouse&date=2026-09-08`);
+  const uncounted = await uncountedResponse.json();
+  assert.equal(uncountedResponse.status, 200, JSON.stringify(uncounted));
+  assert.ok(uncounted.report.items.every(item => item.physicalInventory === null));
 });
