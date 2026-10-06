@@ -10,6 +10,10 @@ Inicialmente `/orderstatus` respondía `Not Authorized`. Habilitamos únicamente
 
 La aplicación web permite leer eventos por línea en `lstk`, con fecha, estación/actor y estado. Encontramos finalizaciones separadas por producto y estación. Las dos estaciones activas están configuradas con estados 0, 100 y 110; 110 corresponde a «Terminado de Preparar». El equipo indica que finaliza los productos al entregarlos, pero algunos pedidos revisados no tienen evento final. La sincronización KDS/delivery está desactivada. El Webhook Global y el webhook de pedidos de esta API también están desactivados.
 
+Actualización del 06-10-2026: probamos también cinco pedidos de caja (local y para llevar) con `body_detail_type=DELIVERY_INFORMATION`, sin `det`. Todas las respuestas fueron HTTP 200 y `ok=true`, con IDs confirmados, pero devolvieron `status=CLOSED` y `status_kds=NOT STATUS`, sin eventos ni timestamps de finalización o entrega. Este formato tampoco permite calcular los tiempos requeridos.
+
+También recuperamos intervalos reales desde Analytics / Operaciones Avanzado mediante el dashboard Superset autorizado (`order_summary` y `order_product`): `kds_p_ip`, `kds_ip_f`, `kds_p_f` y `kds_f_d`. Los primeros dos promedios reproducen lo mostrado en pantalla y tres pedidos coinciden con su historial nativo dentro de un segundo. Necesitamos una vía soportada para leer esos datasets sin sesión interactiva. Detectamos además `created_at` desplazado tres horas frente al UTC nativo y `order_type=Take Away` incluso en pedidos identificados operacionalmente como consumo local: solicitamos aclarar zona horaria y clasificación.
+
 Solicitamos confirmar:
 
 1. ¿Qué endpoint de lectura soportado expone el historial KDS por línea, incluidos hora de pedido, cambios de estado, estación y marca de tiempo real del evento? Necesitamos relacionarlo con los IDs de pedido y línea de ventas.
