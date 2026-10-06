@@ -40,6 +40,7 @@ function chromeExecutablePath(playwrightExecutablePath = null) {
 
 function createToteatAutomation(profilesRoot, factoryOptions = {}) {
   const contexts = new Map();
+  const nativeLoginPages = new WeakMap();
   let nativeQueue = Promise.resolve();
   const diagnosticsRoot = path.join(profilesRoot, 'diagnostics');
   const reportUrls = Array.isArray(factoryOptions.reportUrls) && factoryOptions.reportUrls.length
@@ -814,34 +815,50 @@ function createToteatAutomation(profilesRoot, factoryOptions = {}) {
         const connection = readJson(path.join(profilesRoot, 'browser-connection.json'), {});
         const endpoint = factoryOptions.cdpEndpoint || process.env.TOTEAT_CDP_ENDPOINT || connection.cdpEndpoint;
         try {
-          if (endpoint) {
+          // A recovery window takes precedence over a stale configured endpoint.
+          // The user signs into this profile; retries must use that same session.
+          context = contexts.get('master-downloads');
+          if (!context && endpoint) {
             if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(endpoint)) throw new Error('El navegador de Toteat debe estar en este equipo.');
-            try { browser = await require('playwright-core').chromium.connectOverCDP(endpoint); }
+            try { browser = await (factoryOptions.chromium || require('playwright-core').chromium).connectOverCDP(endpoint); }
             catch { throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503); }
             context = browser.contexts()[0];
-          } else context = contexts.get('master-downloads') || await launch('master-downloads', true);
+            if (!context) throw automationError('El navegador conectado de Toteat no está disponible.', 'TOTEAT_BROWSER_UNAVAILABLE', 503);
+          } else if (!context) context = await launch('master-downloads', true);
+          page = nativeLoginPages.get(context);
+          if (page?.isClosed()) { nativeLoginPages.delete(context); page = null; }
+          // Keep an unfinished login (including MFA) intact on premature retries.
+          if (page && await authenticationRequired(page)) throw automationError('Inicia sesión en Toteat para continuar.', 'TOTEAT_AUTH_REQUIRED', 409);
           // Reuse the authenticated SPA: a new tab can lose Toteat's in-memory session.
-          page = context.pages().filter(p => /^https:\/\/res\d*\.toteat\.com\//.test(p.url())).at(-1);
+          page ||= context.pages().filter(p => /^https:\/\/res\d*\.toteat\.com\//.test(p.url())).at(-1);
           if (!page) { page = await context.newPage(); ownsPage = true; }
           await selectRestaurantRecord(page, restaurant);
+          nativeLoginPages.delete(context);
           return await readNative(page, restaurant, options);
         } catch (error) {
-          if (error.code === 'TOTEAT_AUTH_REQUIRED' || (page && !page.isClosed() && await authenticationRequired(page).catch(() => false))) {
+          if (['TOTEAT_AUTH_REQUIRED', 'TOTEAT_BROWSER_UNAVAILABLE'].includes(error.code) || (page && !page.isClosed() && await authenticationRequired(page).catch(() => false))) {
             let opened = false;
             try {
               // A local persistent profile must be visible for the user to sign in.
               if (!browser && !contexts.has('master-downloads')) {
-                await context.close();
+                await context?.close().catch(() => {});
                 context = await launch('master-downloads', false);
                 contexts.set('master-downloads', context);
-                context.on('close', () => contexts.delete('master-downloads'));
+                const loginContext = context;
+                context.on('close', () => { if (contexts.get('master-downloads') === loginContext) contexts.delete('master-downloads'); });
                 page = context.pages()[0] || await context.newPage();
               }
-              await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-              await page.bringToFront();
+              if (!page || page.isClosed()) page = await context.newPage();
+              if (nativeLoginPages.get(context) !== page) {
+                await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                nativeLoginPages.set(context, page);
+              }
+              // Retain the login tab even if focusing it fails.
               ownsPage = false;
+              await page.bringToFront();
               opened = true;
             } catch { /* Still report authentication accurately if opening fails. */ }
+            if (error.code === 'TOTEAT_BROWSER_UNAVAILABLE' && !opened) throw error;
             const failure = automationError(require('../toteat-session').sessionMessage(opened), 'TOTEAT_AUTH_REQUIRED', 409);
             failure.loginOpened = opened;
             throw failure;
