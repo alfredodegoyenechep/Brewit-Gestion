@@ -360,7 +360,16 @@ function prepareWorksheetForConfiguredExport(sheet) {
       const address = XLSX.utils.encode_cell({ r: row, c: column });
       const cell = sheet[address];
       if (!cell || cell.f) continue;
+      if (sheet['!brewitTextColumns']?.includes(column)) continue;
       if (cell.t === 'n' && Number.isFinite(cell.v)) {
+        const columnFormat = sheet['!brewitColumnNumberFormats']?.[column];
+        if (columnFormat) {
+          cell.z = sheet['!brewitInventoryStyle']
+            ? columnFormat.integer ? '#,##0' : `#,##0.${'0'.repeat(columnFormat.decimalPlaces)}`
+            : configuredExcelNumberFormat(columnFormat);
+          delete cell.w;
+          continue;
+        }
         const existingFormat = String(cell.z || '');
         if (!/[dmyhs]/i.test(existingFormat)) {
           cell.z = configuredExcelNumberFormat({
@@ -393,7 +402,111 @@ function writeConfiguredExcelWorkbook(workbook, filename) {
     ...(workbook.Props || {}),
     Comments: `Sistema decimal de exportación: ${exportDecimalSystem === 'dot' ? '1,234.56' : '1.234,56'}`
   };
-  XLSX.writeFile(workbook, filename, { compression: true, cellStyles: true });
+  if (workbook.SheetNames.some(name => workbook.Sheets[name]['!brewitInventoryStyle'])) {
+    writeInventoryExcelFile(workbook, filename);
+  } else {
+    XLSX.writeFile(workbook, filename, { compression: true, cellStyles: true });
+  }
+}
+
+// SheetJS's community writer does not emit font/alignment styles. Apply the
+// inventory presentation to the generated XLSX while retaining its values.
+function inventoryStyledExcelBytes(workbook) {
+  const bytes = new Uint8Array(XLSX.write(workbook, { type: 'array', bookType: 'xlsx', cellStyles: true }));
+  const zip = XLSX.CFB.read(bytes, { type: 'array' });
+  const decoder = new TextDecoder(), encoder = new TextEncoder();
+  const parse = name => {
+    const entry = XLSX.CFB.find(zip, '/' + name);
+    if (!entry) throw new Error(`Falta ${name} en el archivo Excel.`);
+    const doc = new DOMParser().parseFromString(decoder.decode(new Uint8Array(entry.content)), 'application/xml');
+    if (doc.querySelector('parsererror')) throw new Error('No fue posible preparar el formato Excel.');
+    return doc;
+  };
+  const save = (name, doc) => XLSX.CFB.utils.cfb_add(zip, '/' + name,
+    encoder.encode(new XMLSerializer().serializeToString(doc)));
+  const styles = parse('xl/styles.xml');
+  const ns = styles.documentElement.namespaceURI;
+  const element = (name, attributes = {}) => {
+    const node = styles.createElementNS(ns, name);
+    Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+    return node;
+  };
+  const append = (table, node) => {
+    const id = table.children.length;
+    table.appendChild(node);
+    table.setAttribute('count', String(table.children.length));
+    return id;
+  };
+  const fonts = styles.getElementsByTagNameNS(ns, 'fonts')[0];
+  const fontIds = [false, true].map(bold => {
+    const font = element('font');
+    if (bold) font.appendChild(element('b'));
+    font.appendChild(element('sz', { val: 11 }));
+    font.appendChild(element('color', { rgb: 'FF000000' }));
+    font.appendChild(element('name', { val: 'Calibri' }));
+    font.appendChild(element('family', { val: 2 }));
+    return append(fonts, font);
+  });
+  const border = element('border');
+  ['left', 'right', 'top', 'bottom'].forEach(side => {
+    const edge = element(side, { style: 'thin' });
+    edge.appendChild(element('color', { rgb: 'FFD4D4D4' }));
+    border.appendChild(edge);
+  });
+  border.appendChild(element('diagonal'));
+  const borderId = append(styles.getElementsByTagNameNS(ns, 'borders')[0], border);
+  const xfs = styles.getElementsByTagNameNS(ns, 'cellXfs')[0];
+  const formats = new Map();
+  workbook.SheetNames.forEach((name, index) => {
+    const sheet = workbook.Sheets[name];
+    if (!sheet['!brewitInventoryStyle']) return;
+    const file = `xl/worksheets/sheet${index + 1}.xml`;
+    const doc = parse(file);
+    const lastRow = XLSX.utils.decode_range(sheet['!ref']).e.r + 1;
+    [...doc.getElementsByTagNameNS(ns, 'c')].forEach(cell => {
+      const address = cell.getAttribute('r');
+      const row = XLSX.utils.decode_cell(address).r + 1;
+      const bold = row === 1 || row === lastRow;
+      const numeric = sheet[address]?.t === 'n';
+      const original = Number(cell.getAttribute('s') || 0);
+      const key = `${original}:${bold}:${numeric}`;
+      if (!formats.has(key)) {
+        const xf = xfs.children[original].cloneNode(true);
+        Object.entries({ fontId: fontIds[Number(bold)], borderId, fillId: 0,
+          applyFont: 1, applyBorder: 1, applyFill: 1, applyAlignment: 1 })
+          .forEach(([key, value]) => xf.setAttribute(key, String(value)));
+        [...xf.getElementsByTagNameNS(ns, 'alignment')].forEach(node => node.remove());
+        xf.appendChild(element('alignment', { horizontal: numeric ? 'right' : 'left',
+          vertical: 'center', wrapText: 0 }));
+        formats.set(key, append(xfs, xf));
+      }
+      cell.setAttribute('s', String(formats.get(key)));
+    });
+    [...doc.getElementsByTagNameNS(ns, 'row')].forEach(row => {
+      row.setAttribute('ht', '15');
+      row.setAttribute('customHeight', '1');
+    });
+    [...doc.getElementsByTagNameNS(ns, 'sheetView')].forEach(view => {
+      view.setAttribute('zoomScale', '80');
+      view.setAttribute('showGridLines', '1');
+    });
+    save(file, doc);
+  });
+  save('xl/styles.xml', styles);
+  return XLSX.CFB.write(zip, { type: 'array', fileType: 'zip', compression: true });
+}
+
+function writeInventoryExcelFile(workbook, filename) {
+  const blob = new Blob([inventoryStyledExcelBytes(workbook)],
+    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function dateFromKey(value) {
@@ -9801,6 +9914,7 @@ function renderCurrentInventoryTables() {
       || left.code.localeCompare(right.code, 'es', { numeric: true })) * (direction === 'desc' ? -1 : 1);
   };
   const visibleItems = data.report.items.filter(matches).sort(compareItems);
+  currentInventoryTableState.visibleItems = visibleItems;
   const valuedItems = visibleItems.filter(item => item.costAvailable);
   const missingItems = visibleItems.filter(item => !item.costAvailable);
   renderCurrentInventoryTable(document.getElementById('current-inventory-table'), valuedItems);
@@ -10609,7 +10723,8 @@ function exportInventoryReport(sectionId) {
       ['Alcance de las fuentes', section.querySelector('#inventory-report-provenance:not([hidden])')?.textContent || 'Archivos cargados'],
       ['Exportado', new Date().toLocaleString('es-CL')]
     ]);
-    XLSX.utils.book_append_sheet(workbook, information, 'Información');
+    const currentInventory = sectionId === 'current-inventory-results';
+    if (!currentInventory) XLSX.utils.book_append_sheet(workbook, information, 'Información');
     const usedNames = new Set(['Información']);
     if (sectionId === 'inventory-report-results' && inventoryProcessedProvenance?.mode === 'originals') {
       for (const [name, rows] of [['Productos excluidos', inventoryProcessedProvenance.excluded], ['Incidencias de captura', inventoryProcessedProvenance.issues]]) {
@@ -10619,14 +10734,52 @@ function exportInventoryReport(sectionId) {
     }
     const tables = [...section.querySelectorAll('table')].filter(table => !table.closest('[hidden]'));
     tables.forEach((table, index) => {
-      const sheet = XLSX.utils.table_to_sheet(table, { raw: true });
+      const sheet = currentInventory
+        ? currentInventoryExcelSheet(table.id === 'current-inventory-missing-cost-table')
+        : XLSX.utils.table_to_sheet(table, { raw: true });
       XLSX.utils.book_append_sheet(workbook, sheet, uniqueExcelSheetName(excelSheetLabel(table, index), usedNames));
     });
+    if (currentInventory) XLSX.utils.book_append_sheet(workbook, information, 'Información');
     writeConfiguredExcelWorkbook(workbook, inventoryReportFilename(title, 'xlsx'));
     setStatus(status, 'Reporte exportado a Excel correctamente.', 'success');
   } catch (error) {
     setStatus(status, `No fue posible exportar el reporte: ${error.message}`, 'error');
   }
+}
+
+function currentInventoryExcelSheet(missingCost = false) {
+  const items = (currentInventoryTableState?.visibleItems || [])
+    .filter(item => !item.costAvailable === missingCost)
+    .slice().sort((a, b) => (a.hierarchyPath || []).join(' › ').localeCompare((b.hierarchyPath || []).join(' › '), 'es')
+      || a.code.localeCompare(b.code, 'es', { numeric: true }));
+  const headers = ['Jerarquía', 'Código', 'Producto', 'Unidad', 'Inventario teórico',
+    'Inventario físico', 'Costo unitario', 'Origen costo', 'Valorización'];
+  const rows = items.map(item => [
+    (item.hierarchyPath || []).join(' › ') || 'Sin jerarquía', String(item.code), item.name, item.unit,
+    item.quantity, item.physicalInventory ?? 'Sin toma física',
+    item.costAvailable ? item.unitCost : 'Sin costo', costSourceShort(item),
+    item.costAvailable ? item.valuation : 'Sin costo'
+  ]);
+  const total = missingCost ? 'Sin valorizar' : items.reduce((sum, item) => sum + (Number(item.valuation) || 0), 0);
+  const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows,
+    [missingCost ? 'TOTAL SIN COSTO' : 'TOTAL VALORIZADO', '', '', '', '', '', '', '', total]]);
+  sheet['!cols'] = [565, 101, 300, 54, 118, 103, 100, 138, 90].map(wpx => ({ wpx }));
+  sheet['!autofilter'] = { ref: `A1:I${rows.length + 1}` };
+  const decimalPlaces = 2;
+  sheet['!brewitColumnNumberFormats'] = {
+    4: { decimalPlaces }, 5: { decimalPlaces }, 6: { integer: true }, 8: { integer: true }
+  };
+  sheet['!brewitTextColumns'] = [0, 1, 2, 3, 7];
+  sheet['!brewitInventoryStyle'] = true;
+  // Excel number formats use canonical separators; Excel displays them using
+  // the spreadsheet application's locale (35,00 / 25.517 in Spanish).
+  for (let row = 1; row <= rows.length + 1; row++) {
+    for (const column of [4, 5, 6, 8]) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      if (cell?.t === 'n') cell.z = column === 4 || column === 5 ? '#,##0.00' : '#,##0';
+    }
+  }
+  return sheet;
 }
 
 function showDeleteConfirmation(row, version, field, record) {

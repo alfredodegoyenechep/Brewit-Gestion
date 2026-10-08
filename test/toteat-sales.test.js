@@ -167,3 +167,108 @@ test('warning resolutions persist across synchronization and restart and stay sc
   restarted.resolveWarning('store-1', 'p1', false);
   assert.equal(sync.status('store-1').detailWarnings[0].resolved, false);
 });
+
+test('confirmed cancellations exclude money and products while preserving raw payment evidence', () => {
+  const cancelled = payment({ paymentId: 'cancelled', total: 4800, products: [] });
+  const active = payment({ paymentId: 'active', total: 4100, discounts: 0, products: [line({ payed: 4100 })] });
+  const source = [cancelled, active];
+  const rows = salesRows(source, { paymentClassifications: { cancelled: { cancelled: true } } });
+  assert.equal(rows.sales[0]['Pago total'], 4100);
+  assert.equal(rows.sales.length, 1);
+  assert.equal(rows.details[0]['A Pagar'], 4800);
+  assert.equal(rows.details[0]['Estado del pago'], 'Anulado');
+  assert.equal(rows.details[0]['API Incluir en ventas'], false);
+  assert.equal(rows.warnings[0].cancelled, true);
+  assert.equal(source[0].total, 4800);
+  assert.equal(salesRows([payment({ orderStatus: 'CANCELLED' })]).sales.length, 0);
+  assert.equal(salesRows([payment({ cancelled: true })]).sales.length, 0);
+  assert.equal(salesRows([cancelled]).sales[0]['Pago total'] + cancelled.discounts, 4800, 'missing products alone do not prove cancellation');
+});
+
+test('cancelled order with a credit note offsets the original exactly once', () => {
+  const original = payment({ orderStatus: 'CANCELLED', total: 3430, discounts: 0 });
+  const credit = payment({ orderStatus: 'CANCELLED', fiscalType: 'NC', paymentId: 'nc', total: -3430, discounts: 0 });
+  const rows = salesRows([original, credit]);
+  assert.equal(rows.sales[0]['Pago total'], 0);
+  assert.equal(rows.sales.reduce((s, r) => s + r['Precio a Pagar'], 0), 0);
+  assert.equal(rows.details.length, 2);
+});
+
+test('sync verifies missing-product order states, retains known cancellations on API failure and supports persistent confirmation', async t => {
+  let denied = false;
+  const { sync, options } = service(t, async (c, route, params) => {
+    if (route === 'shiftstatus') return { ok: true, data: { status: 'closed', localNumber: c.localId } };
+    if (route === 'orderstatus') {
+      if (denied) throw new Error('Not Authorized');
+      return { ok: true, data: { orderId: params.ic, orderStatus: 'CANCELLED' } };
+    }
+    return { ok: true, data: [payment({ products: [] })] };
+  });
+  await sync.synchronize('store-1');
+  assert.equal(sync.status('store-1').detailWarnings[0].cancelled, true);
+  assert.equal(sync.status('store-1').orderCount, 0);
+  assert.equal(XLSX.utils.sheet_to_json(XLSX.readFile(sync.source('store-1', 'sales')[0].filePath).Sheets['Ventas API']).length, 0);
+  denied = true;
+  await sync.synchronize('store-1');
+  assert.equal(sync.status('store-1').detailWarnings[0].cancelled, true);
+  await sync.synchronize('store-2');
+  assert.match(sync.status('store-2').cancellationCheckError, /No se pudieron verificar/);
+  assert.equal(sync.status('store-2').detailWarnings[0].cancelled, false);
+  assert.throws(() => sync.classifyPayment('store-2', 'missing', true), /No se encontró/);
+  assert.throws(() => sync.classifyPayment('store-2', 'p1', 'true'), /inválida/);
+  sync.classifyPayment('store-2', 'p1', true);
+  assert.equal(sync.status('store-2').detailWarnings[0].cancelled, true);
+  const detailFile = sync.source('store-2', 'payment-details')[0].filePath;
+  const details = XLSX.utils.sheet_to_json(XLSX.readFile(detailFile).Sheets['Detalle Pagos API']);
+  assert.equal(details[0]['A Pagar'], 3430);
+  assert.equal(sync.filterLegacy(detailFile, details).length, 0);
+  await sync.synchronize('store-2');
+  const restarted = createSalesSync(options);
+  assert.equal(restarted.status('store-2').detailWarnings[0].cancelled, true);
+  assert.equal(restarted.status('store-1').detailWarnings[0].cancelled, true);
+  restarted.classifyPayment('store-2', 'p1', false);
+  assert.equal(restarted.status('store-2').orderCount, 1);
+  assert.equal(restarted.status('store-1').orderCount, 0);
+});
+
+test('a linked credit note on another order retains the original to avoid reversing twice', () => {
+  const original = payment({ orderStatus: 'CANCELLED', total: 3430, discounts: 0 });
+  const credit = payment({ orderId: 'credit-order', fiscalType: 'NC', paymentId: 'nc', total: -3430, discounts: 0, referencedPayment: { id: 'p1' } });
+  const rows = salesRows([original, credit]);
+  assert.equal(rows.sales.filter(r => r['Pago total'] !== null).reduce((s, r) => s + r['Pago total'], 0), 0);
+});
+
+test('confirmation corrects daily and network reports immediately and survives resync', async t => {
+  const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-cancel-report-'));
+  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(uploadsRoot, '.integrations/toteat-api'), { recursive: true });
+  fs.writeFileSync(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), JSON.stringify({ 'store-2': { localId: '2', restaurantId: 'r', userId: 'u', token: 'secret' } }));
+  const payments = [10600, 5900, 4100, 4100, 4100, 3900, 4800].map((total, i) => payment({
+    orderId: `order-${i}`, paymentId: `pay-${i}`, total, discounts: 0,
+    dateOpen: '2026-10-08T11:00:00', dateClosed: '2026-10-08T11:05:00',
+    products: i === 6 ? [] : [line({ payed: total, discounts: 0 })]
+  }));
+  const app = createApp({ uploadsRoot, enableToteatSync: false, reportToday: '2026-10-08', toteatRequestSpacing: 0,
+    toteatSyncClock: () => '2026-10-08', toteatApiFetch: async url => Response.json(url.pathname.endsWith('orderstatus')
+      ? { ok: false } : { ok: true, data: url.pathname.endsWith('shiftstatus') ? { status: 'closed', localNumber: 2 } : payments }) });
+  app.locals.toteatSalesSync.configure('store-2', { from: '2026-10-08', enabled: false });
+  await app.locals.toteatSalesSync.synchronize('store-2');
+  const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+  t.after(async () => { server.closeAllConnections(); await new Promise(r => server.close(r)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const network = async () => (await (await fetch(`${base}/api/reports/network-sales`)).json()).rows.find(r => r.id === 'store-2').today;
+  assert.equal(Math.round((await network()).sales), 31513);
+  const classify = cancelled => fetch(`${base}/api/integrations/toteat/api/sales/payment-classification`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-2', paymentId: 'pay-6', cancelled })
+  });
+  assert.equal((await classify(true)).status, 200);
+  assert.equal(Math.round((await network()).sales), 27479);
+  assert.equal((await network()).transactions, 6);
+  const weekly = await (await fetch(`${base}/api/reports/weekly-sales?location=store-2&includeToday=true`)).json();
+  assert.equal(Math.round(weekly.previousDay.netSales), 27479);
+  assert.equal(weekly.previousDay.grossSales, 32700);
+  await app.locals.toteatSalesSync.synchronize('store-2');
+  assert.equal(Math.round((await network()).sales), 27479);
+  assert.equal((await classify(false)).status, 200);
+  assert.equal(Math.round((await network()).sales), 31513);
+});

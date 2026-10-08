@@ -26,6 +26,73 @@ async function inventoryPage(t) {
   return page;
 }
 
+test('theoretical inventory Excel exports numeric balances and costs with the reference columns', { skip: !fs.existsSync(chrome) }, async t => {
+  const page = await inventoryPage(t);
+  const base = { unit: 'KG', unitCost: 25517.25, costAvailable: true,
+    hierarchyPath: ['Ingredientes', 'Café'], costSource: 'master' };
+  const data = { referenceDate: '2026-10-06', report: {
+    date: '2026-10-06', balanceBasis: 'final', hierarchyCount: 2, itemCount: 3,
+    totalValue: 893103.75, itemsWithoutCost: ['M'], items: [
+      { ...base, code: '001.234', name: 'Café', quantity: 35, physicalInventory: null, valuation: 893103.75 },
+      { ...base, code: 'Z', name: 'Otro', hierarchyPath: ['Extras'], quantity: 0, physicalInventory: 0, valuation: 0 },
+      { ...base, code: 'M', name: 'Sin costo', costAvailable: false, quantity: 0.4, physicalInventory: null, valuation: null }
+    ]
+  } };
+  const encoded = await page.evaluate(data => {
+    renderCurrentInventoryReport(data);
+    writeInventoryExcelFile = workbook => { window.exportedInventory = workbook; };
+    exportInventoryReport('current-inventory-results');
+    return btoa(Array.from(inventoryStyledExcelBytes(window.exportedInventory), value => String.fromCharCode(value)).join(''));
+  }, data);
+  const XLSX = require('xlsx');
+  const book = XLSX.read(Buffer.from(encoded, 'base64'), { cellNF: true, cellStyles: true });
+  assert.deepEqual(book.SheetNames, ['Inventario valorizado', 'Productos sin costo', 'Información']);
+  const sheet = book.Sheets['Inventario valorizado'];
+  assert.deepEqual(XLSX.utils.sheet_to_json(sheet, { header: 1 })[0], [
+    'Jerarquía', 'Código', 'Producto', 'Unidad', 'Inventario teórico', 'Inventario físico',
+    'Costo unitario', 'Origen costo', 'Valorización'
+  ]);
+  assert.equal(sheet.A2.v, 'Extras');
+  assert.equal(sheet.B3.t, 's');
+  assert.equal(sheet.B3.v, '001.234');
+  assert.equal(sheet.E3.t, 'n');
+  assert.equal(sheet.E3.v, 35);
+  assert.equal(sheet.E3.z, '#,##0.00');
+  assert.equal(sheet.F2.v, 0);
+  assert.equal(sheet.F3.v, 'Sin toma física');
+  assert.equal(sheet.G3.v, 25517.25);
+  assert.equal(sheet.G3.z, '#,##0');
+  assert.equal(sheet.I3.v, 893103.75);
+  assert.equal(sheet['!autofilter'].ref, 'A1:I3');
+  assert.ok(sheet['!cols'][0].width > sheet['!cols'][3].width);
+  assert.equal(book.Sheets['Productos sin costo'].G2.v, 'Sin costo');
+  const zip = XLSX.CFB.read(Buffer.from(encoded, 'base64'), { type: 'buffer' });
+  const xml = file => Buffer.from(XLSX.CFB.find(zip, '/' + file).content).toString('utf8');
+  const styles = xml('xl/styles.xml');
+  const worksheet = xml('xl/worksheets/sheet1.xml');
+  const headerStyle = Number(worksheet.match(/<c\b[^>]*r="A1"[^>]*s="(\d+)"/)[1]);
+  const valueStyle = Number(worksheet.match(/<c\b[^>]*r="E3"[^>]*s="(\d+)"/)[1]);
+  const xfs = styles.match(/<cellXfs\b[^>]*>(.*?)<\/cellXfs>/s)[1].match(/<xf\b[^>]*\/>|<xf\b[^>]*>.*?<\/xf>/gs);
+  const fonts = styles.match(/<fonts\b[^>]*>(.*?)<\/fonts>/s)[1].match(/<font>.*?<\/font>/gs);
+  const headerFont = fonts[Number(xfs[headerStyle].match(/fontId="(\d+)"/)[1])];
+  assert.match(headerFont, /<b\s*\/>/);
+  assert.match(headerFont, /name val="Calibri"/);
+  assert.match(headerFont, /sz val="11"/);
+  assert.match(xfs[headerStyle], /horizontal="left"/);
+  assert.match(xfs[valueStyle], /horizontal="right"/);
+  assert.match(styles, /style="thin"/);
+  assert.match(worksheet, /zoomScale="80"/);
+  assert.match(worksheet, /ht="15"/);
+  const filtered = await page.evaluate(() => {
+    document.getElementById('current-inventory-search').value = '001.234';
+    renderCurrentInventoryTables();
+    exportInventoryReport('current-inventory-results');
+    return XLSX.utils.sheet_to_json(window.exportedInventory.Sheets['Inventario valorizado'], { header: 1 });
+  });
+  assert.equal(filtered.length, 3);
+  assert.equal(filtered[1][1], '001.234');
+});
+
 test('current inventory combines physical and theoretical filters with search and valuation', { skip: !fs.existsSync(chrome) }, async t => {
   const page = await inventoryPage(t);
   const base = { unit: 'UN', unitCost: 100, costAvailable: true, hierarchyPath: ['Insumos'], costSource: 'master' };

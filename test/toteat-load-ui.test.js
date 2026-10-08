@@ -42,6 +42,11 @@ test('el resumen abre el detalle de carga y permite revisar pagos sin productos'
     let body;
     if (url.endsWith('/api/config/locations')) body = { active: states.map(s => ({ id: s.location, name: s.name, type: 'store' })) };
     else if (url.includes('/sales/status')) body = { locations: states };
+    else if (url.includes('/sales/payment-classification')) {
+      const update = route.request().postDataJSON();
+      states.find(s => s.location === update.location).detailWarnings.find(w => w.paymentId === update.paymentId).cancelled = update.cancelled;
+      body = update;
+    }
     else if (url.includes('/sales/warning-resolution')) {
       const update = route.request().postDataJSON();
       states.find(s => s.location === update.location).detailWarnings.find(w => w.paymentId === update.paymentId).resolved = update.resolved;
@@ -60,7 +65,13 @@ test('el resumen abre el detalle de carga y permite revisar pagos sin productos'
   await dialog.waitFor({ state: 'visible' });
   assert.match(await dialog.innerText(), /2026-09-01 → 2026-09-23/);
   assert.match(await dialog.innerText(), /incluidos en los totales/);
-  assert.deepEqual(await dialog.locator('tbody td').allTextContents(), ['<orden>', 'p-12', '23-09-2026', '10:19:37', '$4.500', 'Sin productos asociados.', '']);
+  assert.deepEqual(await dialog.locator('tbody td').allTextContents(), ['<orden>', 'p-12', '23-09-2026', '10:19:37', '$4.500', 'Sin productos asociados.', '', 'Pendiente de verificar. Confirmar anulación']);
+  await dialog.getByRole('button', { name: 'Confirmar anulación' }).click();
+  await dialog.getByText('Anulado · excluido de ventas.', { exact: false }).waitFor();
+  assert.equal(states[0].detailWarnings[0].cancelled, true);
+  await dialog.getByRole('button', { name: 'Restituir como venta' }).click();
+  await dialog.getByRole('button', { name: 'Confirmar anulación' }).waitFor();
+  assert.equal(states[0].detailWarnings[0].cancelled, false);
   await dialog.getByRole('checkbox', { name: 'Resuelto: pago p-12' }).check();
   await page.getByText('No quedan pagos sin resolver.', { exact: false }).waitFor();
   await dialog.getByLabel('Filtrar pagos por resolución').selectOption('all');

@@ -26,7 +26,13 @@ function atomicJson(file, value) {
 }
 
 // Keep money in CLP, retain line identities, and never interpret a failed response as an empty day.
-function salesRows(payments) {
+function salesRows(payments, { paymentClassifications = {}, orderStatuses = {} } = {}) {
+  const cancelled = p => {
+    const classification = paymentClassifications[normalizeId(p.paymentId)];
+    if (classification) return classification.cancelled === true;
+    return p.cancelled === true || p.canceled === true
+      || ['CANCELLED', 'CANCELED'].includes(String(p.paymentStatus || p.orderStatus || orderStatuses[normalizeId(p.orderId)] || '').toUpperCase());
+  };
   const orders = new Map(), seenPayments = new Set(), warnings = [];
   const normalized = payments.map(p => {
     // Some NC responses repeat the original positive product amounts while the payment is negative.
@@ -36,6 +42,8 @@ function salesRows(payments) {
     }
     return p;
   });
+  const creditedPaymentIds = new Set(normalized.filter(p => p.fiscalType === 'NC' && p.total < 0)
+    .map(p => normalizeId(p.referencedPayment?.id)).filter(Boolean));
   for (const p of normalized) {
     if (!normalizeId(p.orderId) || !normalizeId(p.paymentId) || seenPayments.has(normalizeId(p.paymentId))) throw new Error('Identidades de pagos inválidas o repetidas.');
     seenPayments.add(normalizeId(p.paymentId));
@@ -49,8 +57,12 @@ function salesRows(payments) {
   }
   const sales = [], details = [];
   for (const [orderId, group] of orders) {
-    const sum = key => group.reduce((s, p) => s + p[key], 0);
-    const total = sum('total'), discount = sum('discounts'), tip = sum('gratuity'), paid = sum('payed');
+    // Fiscal reversals already offset the original payment: retain both sides once.
+    const hasCreditNote = group.some(p => p.fiscalType === 'NC' && p.total < 0);
+    const excluded = p => !hasCreditNote && !creditedPaymentIds.has(normalizeId(p.paymentId)) && p.fiscalType !== 'NC' && cancelled(p);
+    const active = group.filter(p => !excluded(p));
+    const activeSum = key => active.reduce((s, p) => s + p[key], 0);
+    const total = activeSum('total'), discount = activeSum('discounts'), tip = activeSum('gratuity'), paid = activeSum('payed');
     let first = true;
     const lineOwners = new Map();
     for (const p of group) {
@@ -63,7 +75,7 @@ function salesRows(payments) {
       for (const l of lines) visit(l);
       // Header-only records retain money, including reversals, without inventing a product or quantity.
       if (!ordered.length) ordered.push({ headerOnly: true });
-      for (const l of ordered) {
+      for (const l of excluded(p) ? [] : ordered) {
         if (!l.headerOnly) {
         for (const k of ['quantity', 'payed', 'discounts', 'taxes']) if (typeof l[k] !== 'number' || !Number.isFinite(l[k])) throw new Error(`Detalle inválido de producto: ${k}.`);
         if (!normalizeId(l.id) || !normalizeId(l.lineId)) throw new Error('Faltan códigos o IDs de línea: se requiere el detalle completo de ventas.');
@@ -77,11 +89,11 @@ function salesRows(payments) {
           'Fecha de cierre': closed.date, 'Hora de cierre': closed.time, 'Nombre de mesa': p.tableName === 'Virtual' ? p.tableId : p.tableName || '',
           'Numero de clientes': p.numberClients, 'Capacidad de la mesa': p.tableCapacity ?? p.tableCapaticy,
           Sector: p.zoneName || '', Origen: null, 'Nombre garzón apertura': p.waiterName || '',
-          'Impuestos totales': first ? sum('taxes') : null, 'Pago total': first ? total - discount : null,
+          'Impuestos totales': first ? activeSum('taxes') : null, 'Pago total': first ? total - discount : null,
           'ID Caja': p.registerId, 'Nombre de la caja': p.registerName, 'Total con propina': first ? total - discount + tip : null,
           'ID de Pago': normalizeId(p.paymentId), Folio: p.fiscalId, 'Valor de boleta': first ? total : null,
           'Tipo de documento': p.fiscalType, Descuentos: first ? discount : null, 'Total a pagar': first ? total - discount : null,
-          Propina: first ? tip : null, Pagado: first ? paid : null, Cambio: first ? sum('change') : null,
+          Propina: first ? tip : null, Pagado: first ? paid : null, Cambio: first ? activeSum('change') : null,
           'Diferencia a favor': p.difference || 0, Valor: first ? paid : null, 'Forma de Pago': p.paymentForms.map(f => f.name).join(' / '),
           'ID Producto': l.headerOnly ? '' : String(l.id), Nombre: l.name || '', Cantidad: l.quantity ?? null,
           'Precio a Pagar': l.payed, 'Precio Base': l.quantity ? (l.payed - l.discounts) / l.quantity : null, 'Precio Lista': l.headerOnly ? null : l.payed - l.discounts,
@@ -100,7 +112,7 @@ function salesRows(payments) {
         'A Pagar': p.total, Propina: p.gratuity, Pagos: p.payed, Cambio: p.change, Folio: p.fiscalId,
         'Tipo de documento': p.fiscalType, 'Comentario General': p.comment || '', 'Comentario Descuento': p.discountComment || '',
         'API Moneda': 'CLP', 'API Total Orden': total, 'API Pagado Orden': paid, 'API Propina Orden': tip,
-        'API Source': 'Toteat' };
+        'API Source': 'Toteat', 'Estado del pago': excluded(p) ? 'Anulado' : 'Vigente', 'API Incluir en ventas': !excluded(p) };
       for (const f of p.paymentForms) {
         if (!Number.isFinite(f.amount) || !Number.isFinite(f.tip)) throw new Error('Medio de pago con importes inválidos.');
         const label = `Medio ${f.id} · ${f.name}`;
@@ -109,7 +121,8 @@ function salesRows(payments) {
       details.push(detail);
     }
   }
-  return { sales, details, orders: orders.size, warnings };
+  return { sales, details, orders: new Set(sales.map(row => row['ID de orden'])).size,
+    warnings: warnings.map(w => ({ ...w, cancelled: details.some(d => d.Pago === w.paymentId && d['API Incluir en ventas'] === false) })) };
 }
 
 function createSalesSync({ uploadsRoot, activeLocation, credentials, request, clock = today }) {
@@ -150,7 +163,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       intervalMinutes: config?.intervalMinutes || 5, running: running.has(location),
       lastSuccess: s?.syncedAt || null, paymentCount: s?.payments.length || 0, orderCount: s?.orderCount || 0,
       completedWindows: Object.keys(s?.batches || {}).length, lastError: config?.lastError || null,
-      detailWarnings,
+      detailWarnings, cancellationCheckError: s?.cancellationCheckError || null,
       state: running.has(location) ? 'syncing' : config?.lastError ? 'error' : !s ? 'not-synced' : s.payments.length ? 'connected' : 'connected-empty',
       progress: running.get(location)?.progress || null };
   }
@@ -212,33 +225,31 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
         byPayment.set(key, p);
       }
       const payments = [...byPayment.values()];
-      const converted = salesRows(payments);
+      const paymentClassifications = previous?.paymentClassifications || {};
+      const orderStatuses = { ...(previous?.orderStatuses || {}) };
+      let cancellationCheckError = null;
+      const candidates = [...new Set(payments.filter(p => p.total > 0 && p.products?.length === 0
+        && !paymentClassifications[normalizeId(p.paymentId)] && !['CANCELLED', 'CANCELED'].includes(orderStatuses[normalizeId(p.orderId)]))
+        .map(p => normalizeId(p.orderId)))];
+      for (const orderId of candidates) {
+        job.progress = 'Verificando anulaciones…';
+        try {
+          const response = await request(credential, 'orderstatus', { ic: orderId, det: 'false' });
+          const data = response.data;
+          if (response.ok !== true || !data || normalizeId(data.orderId) !== orderId || !['OPEN', 'CLOSED', 'CANCELLED', 'CANCELED'].includes(data.orderStatus)) throw new Error('Estado no verificable');
+          orderStatuses[orderId] = data.orderStatus;
+        } catch {
+          cancellationCheckError = 'No se pudieron verificar las anulaciones en Toteat. Revisa los pagos sin productos y confirma su estado.';
+          break;
+        }
+      }
+      const converted = salesRows(payments, { paymentClassifications, orderStatuses });
       const currentCredential = credentials()[location];
       if (activeLocation(location)?.type !== 'store' || !currentCredential || ['restaurantId', 'localId', 'userId', 'token'].some(key => credential[key] !== currentCredential[key])) throw new Error('La conexión cambió durante la actualización. Vuelve a sincronizar.');
       const ownedOrders = [...new Set([...(previous?.ownedOrders || []), ...payments.map(p => normalizeId(p.orderId))])];
-      const syncedAt = new Date().toISOString(), version = crypto.randomUUID();
-      const dir = path.join(root, location, version);
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      try {
-        const state = { version, syncedAt, batches, payments, ownedOrders, warnings: converted.warnings, openShift: opened, orderCount: converted.orders, from: config.from, through: clock() };
-        atomicJson(path.join(dir, 'state.json'), state);
-        for (const [field, rows] of [['sales', converted.sales], ['payment-details', converted.details]]) {
-          const workbook = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), field === 'sales' ? 'Ventas API' : 'Detalle Pagos API');
-          XLSX.writeFile(workbook, path.join(dir, `${field}.xlsx`));
-          fs.chmodSync(path.join(dir, `${field}.xlsx`), 0o600);
-        }
-        // One pointer publishes both sources atomically. Failures never advance it.
-        atomicJson(path.join(root, location, 'current.json'), { version });
-        cache.delete(location);
-        // Keep the previous two complete generations for in-flight previews/downloads.
-        try {
-        const generations = fs.readdirSync(path.join(root, location), { withFileTypes: true }).filter(e => e.isDirectory())
-          .map(e => ({ dir: path.join(root, location, e.name), time: fs.statSync(path.join(root, location, e.name)).mtimeMs }))
-          .sort((a, b) => b.time - a.time);
-        for (const old of generations.slice(3)) fs.rmSync(old.dir, { recursive: true, force: true });
-        } catch { /* Cleanup must never roll back an already published pair of sources. */ }
-      } catch (error) { fs.rmSync(dir, { recursive: true, force: true }); throw error; }
+      const syncedAt = new Date().toISOString();
+      publish(location, { syncedAt, batches, payments, ownedOrders, paymentClassifications, orderStatuses,
+        cancellationCheckError, openShift: opened, from: config.from, through: clock() }, converted);
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
         lastFullSuccess: selected.length === allWindows.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
     })().catch(error => {
@@ -246,6 +257,43 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       throw error;
     }).finally(() => running.delete(location));
     return job.promise;
+  }
+  function publish(location, snapshot, converted) {
+    const version = crypto.randomUUID();
+    const dir = path.join(root, location, version);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      const state = { ...snapshot, version, warnings: converted.warnings, orderCount: converted.orders };
+      delete state.directory; delete state.ownedOrderSet;
+      atomicJson(path.join(dir, 'state.json'), state);
+      for (const [field, rows] of [['sales', converted.sales], ['payment-details', converted.details]]) {
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), field === 'sales' ? 'Ventas API' : 'Detalle Pagos API');
+        XLSX.writeFile(workbook, path.join(dir, `${field}.xlsx`));
+        fs.chmodSync(path.join(dir, `${field}.xlsx`), 0o600);
+      }
+      // One pointer publishes both sources atomically. Failures never advance it.
+      atomicJson(path.join(root, location, 'current.json'), { version });
+      cache.delete(location);
+      // Keep the previous two complete generations for in-flight previews/downloads.
+      try {
+      const generations = fs.readdirSync(path.join(root, location), { withFileTypes: true }).filter(e => e.isDirectory())
+        .map(e => ({ dir: path.join(root, location, e.name), time: fs.statSync(path.join(root, location, e.name)).mtimeMs }))
+        .sort((a, b) => b.time - a.time);
+      for (const old of generations.slice(3)) fs.rmSync(old.dir, { recursive: true, force: true });
+      } catch { /* Cleanup must never roll back an already published pair of sources. */ }
+    } catch (error) { fs.rmSync(dir, { recursive: true, force: true }); throw error; }
+  }
+  function classifyPayment(location, paymentId, cancelled) {
+    if (running.has(location)) throw new Error('Espera a que termine la actualización.');
+    if (activeLocation(location)?.type !== 'store' || typeof cancelled !== 'boolean') throw new Error('Clasificación inválida.');
+    const state = get(location), id = normalizeId(paymentId);
+    if (!state?.payments.some(p => normalizeId(p.paymentId) === id)) throw new Error('No se encontró el pago en esta cafetería.');
+    const paymentClassifications = { ...(state.paymentClassifications || {}),
+      [id]: { cancelled, source: 'user-confirmed', updatedAt: new Date().toISOString() } };
+    const snapshot = { ...state, paymentClassifications };
+    publish(location, snapshot, salesRows(state.payments, snapshot));
+    return { location, paymentId: id, cancelled };
   }
   function source(location, field) {
     if (!['sales', 'payment-details'].includes(field)) return [];
@@ -262,6 +310,9 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
   function filterLegacy(filePath, rows) {
     const relative = path.relative(uploadsRoot, filePath).split(path.sep);
     const location = relative[0] === 'transactions' ? relative[1] : relative[0] === 'weeks' ? relative[2] : null;
+    // Keep cancelled payments in exports, but exclude them from payment collections.
+    if (relative[0] === '.integrations' && relative[1] === 'toteat-api' && relative[2] === 'sales'
+      && path.basename(filePath) === 'payment-details.xlsx') return rows.filter(row => row['API Incluir en ventas'] !== false);
     if (!location || !activeLocation(location)) return rows;
     const state = get(location); if (!state) return rows;
     const owned = state.ownedOrderSet;
@@ -276,6 +327,6 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     } };
     timer = setInterval(tick, 30000); timer.unref(); tick();
   }
-  return { configure, synchronize, status, resolveWarning, source, filterLegacy, get, start, stop: () => { clearInterval(timer); timer = null; } };
+  return { configure, synchronize, status, resolveWarning, classifyPayment, source, filterLegacy, get, start, stop: () => { clearInterval(timer); timer = null; } };
 }
 module.exports = { createSalesSync, salesRows, windows, localTimestamp, atomicJson };

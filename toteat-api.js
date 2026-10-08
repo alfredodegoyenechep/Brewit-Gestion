@@ -68,6 +68,10 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     try { return res.json(sync.resolveWarning(String(req.body?.location || ''), req.body?.paymentId, req.body?.resolved)); }
     catch (error) { return res.status(400).json({ error: error.message }); }
   });
+  app.patch(`${base}/sales/payment-classification`, (req, res) => {
+    try { return res.json(sync.classifyPayment(String(req.body?.location || ''), req.body?.paymentId, req.body?.cancelled)); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
+  });
   app.put(`${base}/sales/settings`, (req, res) => {
     try { return res.json(sync.configure(String(req.body?.location || ''), req.body || {})); }
     catch (error) { return res.status(400).json({ error: error.message }); }

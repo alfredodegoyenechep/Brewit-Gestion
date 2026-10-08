@@ -43,6 +43,7 @@
     content.replaceChildren(summary);
     if (s.running) content.append(node('p', s.progress || 'Consultando ventas en Toteat…'));
     if (s.lastError) content.append(node('p', `No se pudo actualizar: ${s.lastError}`));
+    if (s.cancellationCheckError) content.append(node('p', s.cancellationCheckError));
     content.append(node('p', 'Los conteos y el detalle corresponden a la última carga exitosa de esta cafetería, independientemente del período seleccionado en el reporte.'));
     const warnings = s.detailWarnings || [];
     content.append(node('h3', `Pagos con importe sin productos (${warnings.length})`));
@@ -51,7 +52,7 @@
       return;
     }
     const money = value => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(value);
-    content.append(node('p', `Importe total informado: ${money(warnings.reduce((sum, item) => sum + item.total, 0))}. Estos pagos están incluidos en los totales de ventas. Toteat no entregó sus productos asociados; el desglose por producto queda incompleto.`));
+    content.append(node('p', `Importe total informado: ${money(warnings.reduce((sum, item) => sum + item.total, 0))}. Los pagos pendientes de verificar están incluidos en los totales; los anulados están excluidos. Toteat no entregó sus productos asociados.`));
     const filterLabel = node('label', 'Mostrar ');
     const filter = document.createElement('select'); filter.setAttribute('aria-label', 'Filtrar pagos por resolución');
     filter.append(new Option('Solo no resueltos', 'unresolved'), new Option('Todos los registros', 'all'));
@@ -66,7 +67,7 @@
     wrap.tabIndex = 0; wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Detalle de pagos sin productos');
     const table = document.createElement('table'); table.className = 'sales-dashboard-table';
     const head = document.createElement('thead'), row = document.createElement('tr');
-    for (const label of ['Orden', 'ID del pago', 'Fecha de cierre', 'Hora (Chile)', 'Importe informado (CLP)', 'Motivo', 'Resuelto']) { const th = node('th', label); th.scope = 'col'; row.append(th); }
+    for (const label of ['Orden', 'ID del pago', 'Fecha de cierre', 'Hora (Chile)', 'Importe informado (CLP)', 'Motivo', 'Resuelto', 'Anulación']) { const th = node('th', label); th.scope = 'col'; row.append(th); }
     head.append(row);
     const body = document.createElement('tbody');
     visible.forEach(item => {
@@ -96,6 +97,30 @@
         } finally { savingResolution = false; }
       });
       cell.append(checkbox); tr.append(cell);
+      const cancellationCell = document.createElement('td');
+      cancellationCell.append(node('span', item.cancelled ? 'Anulado · excluido de ventas. ' : 'Pendiente de verificar. '));
+      const classificationButton = node('button', item.cancelled ? 'Restituir como venta' : 'Confirmar anulación');
+      classificationButton.type = 'button';
+      classificationButton.addEventListener('click', async () => {
+        savingResolution = true;
+        content.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; });
+        saveStatus.textContent = 'Guardando estado del pago…';
+        try {
+          await request('/api/integrations/toteat/api/sales/payment-classification', {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location: s.location, paymentId: item.paymentId, cancelled: !item.cancelled })
+          });
+          resolutionRevision += 1;
+          const result = await request('/api/integrations/toteat/api/sales/status');
+          salesStates = result.locations;
+          renderLoadDetails();
+          window.dispatchEvent(new Event('brewit-sales-updated'));
+        } catch (error) {
+          saveStatus.textContent = `No se pudo guardar: ${error.message}`;
+          content.querySelectorAll('input, select, button').forEach(control => { control.disabled = false; });
+        } finally { savingResolution = false; }
+      });
+      cancellationCell.append(classificationButton); tr.append(cancellationCell);
       body.append(tr);
     });
     table.append(head, body); wrap.append(table); content.append(wrap);
@@ -212,7 +237,9 @@
         previousVersions.set(s.location, s.lastSuccess);
         const updated = s.lastSuccess ? ` · última actualización ${new Date(s.lastSuccess).toLocaleString('es-CL')}` : '';
         const message = s.running ? `Actualizando… ${s.progress || ''}` : s.lastError ? `No se pudo actualizar: ${s.lastError}` : !s.configured ? 'Falta conectar la API' : !s.lastSuccess ? 'Pendiente de sincronizar' : s.state === 'connected-empty' ? 'Conectado · sin ventas todavía' : `${s.orderCount} órdenes · ${s.paymentCount} pagos`;
-        const warning = s.detailWarnings?.length ? ` · Atención: ${s.detailWarnings.length} pagos con importe pero sin productos en Toteat; incluidos en totales, detalle pendiente.` : '';
+        const pending = s.detailWarnings?.filter(item => !item.cancelled).length || 0;
+        const cancelled = s.detailWarnings?.filter(item => item.cancelled).length || 0;
+        const warning = pending || cancelled ? ` · Sin productos: ${pending} pagos incluidos en totales, pendientes de verificar; ${cancelled} anulados excluidos.` : '';
         return `${s.name}: ${message}${updated}${warning}`;
       });
       document.querySelectorAll('[data-toteat-sales-status]').forEach(e => {
