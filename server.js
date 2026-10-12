@@ -5563,7 +5563,7 @@ function createApp(options = {}) {
       const name = classifyRecordedName(order.paymentComment);
       const instrumentDatesUntilToday = link.instrumentKey
         ? [...(instrumentDates.get(link.instrumentKey) || [])].filter(date => date <= payload.today) : [];
-      return { ...order, nameGenderSegment: name.segment, nameClassificationBasis: name.basis,
+      return { ...order, nameGenderSegment: name.segment, nameClassificationBasis: name.basis, nameClassificationMethod: name.method,
         paymentLinkStatus: link.status, paymentLinkConfidence: link.confidence || null,
         linkedPaymentDateTime: link.status === 'estimated-high' ? link.dateTime : null,
         recurrenceUnavailableReason: !paymentDates.has(`${order.locationId}|${order.date}`) ? 'no-payment-data'
@@ -5580,7 +5580,7 @@ function createApp(options = {}) {
   }
 
   function demandEnrichmentFingerprint(payload) {
-    const signatures = ['identity-santiago-v3', payload.source.fingerprint, payload.today, ...payload.stores.map(store => store.id).sort()];
+    const signatures = ['identity-santiago-v3', NAME_CLASSIFIER_VERSION, payload.source.fingerprint, payload.today, ...payload.stores.map(store => store.id).sort()];
     const visit = directory => {
       if (!fs.existsSync(directory)) return;
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -5784,7 +5784,8 @@ function createApp(options = {}) {
           date: order.date, time: order.time, ticketGross: order.netSales * 1.19,
           netSales: order.netSales, discountGross: order.orderDiscount, cost: order.costAvailable ? order.cost : null,
           costAvailable: order.costAvailable, mode: order.mode, channel: order.channel || null,
-          nameGenderSegment: order.nameGenderSegment, recurrenceGroup: order.recurrenceGroup,
+          nameGenderSegment: order.nameGenderSegment, nameClassificationMethod: order.nameClassificationMethod,
+          nameClassificationBasis: order.nameClassificationBasis, recurrenceGroup: order.recurrenceGroup,
           paymentLinkStatus: order.paymentLinkStatus,
           lines: order.lines.map(line => ({ code: line.code, name: line.name, quantity: line.quantity,
             paidGross: line.paidGross, netSales: line.netSales, cost: line.costAvailable ? line.cost : null,

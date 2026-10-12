@@ -71,14 +71,19 @@ function aggregateNameSegments(orders) {
     const values = orders.filter(order => order.nameGenderSegment === key);
     const metrics = basicMetrics(values);
     metrics.salesSharePercent = totalSales ? round(metrics.netSales / totalSales * 100, 1) : null;
-    return { key, label, ...metrics, mix: topMix(values) };
+    return { key, label, ...metrics,
+      dictionaryOrders: values.filter(order => order.nameClassificationMethod === 'dictionary').length,
+      inferredOrders: values.filter(order => order.nameClassificationMethod === 'inference').length,
+      mix: topMix(values) };
   });
   const classifiable = segments.filter(item => ['feminine-associated', 'masculine-associated'].includes(item.key))
     .reduce((total, item) => total + item.orders, 0);
   return { segments, classifiableOrders: classifiable,
+    dictionaryOrders: sum(segments.map(item => item.dictionaryOrders)),
+    inferredOrders: sum(segments.map(item => item.inferredOrders)),
     classifiedPercent: orders.length ? round(classifiable / orders.length * 100, 1) : 0,
     scope: `${orders.length} pedidos del período; la unidad analizada es el pedido, no una persona.`,
-    limitations: '“Género estimado por nombre” es una asociación lingüística orientativa y agregada. Un nombre no confirma identidad ni género, puede corresponder a quien retira o paga, y no permite contar clientes únicos. Entradas ambiguas, genéricas o fuera del diccionario quedan indeterminadas. No se generan recomendaciones basadas solo en este segmento.' };
+    limitations: '“Género estimado por nombre” es una asociación lingüística orientativa y agregada. Un nombre no confirma identidad ni género, puede corresponder a quien retira o paga, y no permite contar clientes únicos. Se prioriza un diccionario en español e inglés; sin coincidencia se prueban patrones de escritura de menor certeza, sin probabilidades calibradas. Entradas ambiguas, genéricas o sin patrón suficiente quedan indeterminadas. No se generan recomendaciones basadas solo en este segmento.' };
 }
 
 function parseTimeBands(filters = {}) {

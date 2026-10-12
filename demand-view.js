@@ -279,9 +279,11 @@ function renderDemandExploration() {
   } else if (demandView.tab === 'segments') {
     const segments = report.nameSegments;
     root.append(demandScopeAndLimits(segments.scope, segments.limitations),
-      demandEl('p', `Cobertura clasificable: ${segments.classifiableOrders}/${report.summary.orders} pedidos (${demandPercent(segments.classifiedPercent)}). Los porcentajes de penetración usan como denominador los pedidos de cada segmento y pueden sumar más de 100% entre categorías.`, 'demand-meta'));
+      demandEl('p', `Cobertura clasificable: ${segments.classifiableOrders}/${report.summary.orders} pedidos (${demandPercent(segments.classifiedPercent)}). Por diccionario: ${segments.dictionaryOrders ?? 0}; por inferencia de menor certeza: ${segments.inferredOrders ?? 0}. Los porcentajes de penetración usan como denominador los pedidos de cada segmento y pueden sumar más de 100% entre categorías.`, 'demand-meta'));
     root.append(demandTable([
       { label: 'Género estimado por nombre', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
+      { label: 'Por diccionario', value: item => item.dictionaryOrders ?? 0 },
+      { label: 'Por inferencia', value: item => item.inferredOrders ?? 0 },
       { label: 'Venta neta', value: item => demandMoney(item.netSales) }, { label: 'Part. venta', value: item => demandPercent(item.salesSharePercent) },
       { label: 'Ticket promedio', value: item => demandMoney(item.averageTicketGross) }, { label: 'Ticket mediano', value: item => demandMoney(item.medianTicketGross) },
       { label: 'Productos / pedido', value: item => demandNumber(item.productsPerOrder) }, { label: 'Para llevar', value: item => demandPercent(item.takeawayPercent) },

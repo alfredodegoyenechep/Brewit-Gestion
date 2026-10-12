@@ -50,7 +50,7 @@ test('clusters recibe la estimación de nombres de Detalle Pagos sin exponer com
   const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
   const rows = Array.from({ length: 40 }, (_, i) => ({ Comanda: `cluster-${i}`,
     FechaCierre: `2026-09-${String(1 + Math.floor(i / 2) % 10).padStart(2, '0')}`,
-    'Comentario General': i < 10 ? 'Camila' : i < 20 ? 'Pedro' : 'Cliente', Total: i % 2 ? 4760 : 1190 }));
+    'Comentario General': i < 5 ? 'Emily' : i < 10 ? 'Marcelina' : i < 20 ? 'Pedro' : 'Cliente', Total: i % 2 ? 4760 : 1190 }));
   const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Pagos');
   XLSX.writeFile(workbook, path.join(directory, 'identity-test.xlsx'));
   index.fields['payment-details'] = { files: [{ id: 'identity-test', name: 'identity-test.xlsx',
@@ -65,6 +65,14 @@ test('clusters recibe la estimación de nombres de Detalle Pagos sin exponer com
   const validatedGender = validated.coverage.find(d => d.key === 'gender');
   assert.equal(validatedGender.known, 0); assert.equal(validatedGender.nameKnown, 20);
   assert.equal(validated.identityDiagnostics.recurrence.noPaymentData, 40);
+  const report = await fetch(`${base}/api/demand-analysis?locations=store-1&mode=all`).then(r => r.json());
+  assert.equal(report.nameSegments.classifiableOrders, 20);
+  assert.equal(report.nameSegments.dictionaryOrders, 15);
+  assert.equal(report.nameSegments.inferredOrders, 5);
+  const orders = await fetch(`${base}/api/demand-analysis/orders?locations=store-1&mode=all`).then(r => r.json());
+  assert.equal(orders.orders.filter(o => o.nameClassificationMethod === 'inference').length, 5);
+  assert.ok(!JSON.stringify(orders).includes('Marcelina'));
+  assert.ok(!JSON.stringify(options).includes('Emily'));
 });
 
 test('recurrencia usa historia MercadoPago, identifica pagos sin tarjeta y explicita fechas sin fuente', async t => {

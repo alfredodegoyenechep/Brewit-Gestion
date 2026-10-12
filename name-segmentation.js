@@ -1,32 +1,50 @@
-const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  .toLowerCase().replace(/[^a-zñ\s-]/g, ' ').replace(/\s+/g, ' ').trim();
-
-// Diccionario conservador y versionado. Su finalidad es una asociación lingüística
-// agregada, nunca confirmar identidad ni género de una persona.
-const FEMININE = new Set(`adriana alejandra alicia amanda ana andrea angela antonia barbara beatriz camila carla carolina catalina cecilia claudia constanza daniela diana elena elisa emilia fernanda francisca gabriela gloria isabel javiera josefina karen karina laura lorena lucia macarena magdalena marcela maria mariana marisol martina melissa monica natalia nicole pamela paola patricia paulina pilar renata romina rosario sofia sonia susana tamara teresa valentina vanessa veronica victoria ximena`.split(' '));
-const MASCULINE = new Set(`adrian alejandro alfonso alvaro andres antonio benjamin bruno carlos cristian daniel david diego eduardo esteban fabian felipe fernando francisco gabriel gonzalo guillermo gustavo hernan ignacio jaime javier joaquin jorge jose juan leonardo luis manuel marcelo marco mario martin matias mauricio maximiliano miguel nicolas oscar pablo patricio pedro rafael raul ricardo roberto rodrigo sebastian sergio tomas vicente victor`.split(' '));
-const AMBIGUOUS = new Set('alex andy ariel camille chris cruz dominique fran gabriel guadalupe jean jesus mar jose maria paz sam sasha'.split(' '));
-const GENERIC = /\b(cliente|consumidor|empresa|sociedad|spa|ltda|eirl|factura|boleta|anonimo|sin nombre|mostrador|delivery|rappi|uber|pedidos? ya|llevar|servir|local|mesa|retiro|take away)\b/;
-const MODE_WORDS = new Set('para por llevar servir local mesa retiro take away aqui aca cliente'.split(' '));
+const { feminine, masculine, ambiguous } = require('./name-dictionary');
+const NAME_CLASSIFIER_VERSION = 'es-en-hybrid-v2';
+const normalize = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+const MODE_WORDS = new Set('para por llevar servir servirse local mesa retiro retirar take away takeaway dine in aqui aca en el la nombre cliente client name pedido order sr sra mr mrs miss'.split(' '));
+const GENERIC = /\b(empresa|sociedad|spa|ltda|eirl|factura|boleta|anonimo|sin nombre|sin comentario|consumidor|mostrador|delivery|rappi|uber|pedidos ya)\b/;
+const INSTRUCTIONS = /\b(sin|con|extra|leche|azucar|cafe|coffee|latte|te|tea|matcha|chai|avena|vainilla|avellana|canela|cocina|barra|caliente|frio|hielo|vaso|taza|grande|chico|doble|descafeinado|endulzante|sacarina|propina|oficina|esquina|mandarina|proteina|harina|maquina)\b/;
+const COMPOUND = new Map([
+  ['maria jose', 'feminine-associated'], ['maria jesus', 'feminine-associated'],
+  ['maria angel', 'feminine-associated'], ['jose maria', 'masculine-associated'],
+  ['juan maria', 'masculine-associated']
+]);
+const result = (segment, basis, method = 'none') => ({ segment, basis, method });
 
 function classifyRecordedName(comment) {
+  if (!String(comment ?? '').trim()) return result('unavailable', 'no-recorded-name');
   const text = normalize(comment);
-  if (!text) return { segment: 'unavailable', basis: 'no-recorded-name' };
-  if (GENERIC.test(text)) {
-    const tokensWithPossibleName = text.split(' ').filter(token => !MODE_WORDS.has(token));
-    if (!tokensWithPossibleName.some(token => FEMININE.has(token) || MASCULINE.has(token))) {
-      return { segment: 'indeterminate', basis: 'generic-or-business-entry' };
+  if (!text) return result('indeterminate', 'initial-or-empty');
+  if (GENERIC.test(text)) return result('indeterminate', 'generic-or-business-entry');
+  if (INSTRUCTIONS.test(text)) return result('indeterminate', 'instruction-or-product');
+  // Separadores explícitos no permiten atribuir el pedido a un único nombre.
+  if (/\b(?:y|and)\b/.test(text) || /[&+\/]/.test(String(comment))) {
+    return result('indeterminate', 'multiple-name-entry');
+  }
+  const tokens = text.split(' ').filter(token => !MODE_WORDS.has(token));
+  if (!tokens.length || tokens[0].length < 2) return result('indeterminate', 'initial-or-empty');
+  const compound = COMPOUND.get(tokens.slice(0, 2).join(' '));
+  if (tokens.some(token => ambiguous.has(token))) return result('indeterminate', 'ambiguous-name');
+  if (compound && tokens.length === 2) return result(compound, 'compound-name-v2', 'dictionary');
+  const known = tokens.filter(token => feminine.has(token) || masculine.has(token));
+  if (known.some(token => feminine.has(token)) && known.some(token => masculine.has(token))) {
+    return result('indeterminate', 'conflicting-or-ambiguous');
+  }
+  // El primer candidato debe ser un nombre; no buscar nombres dentro de texto libre.
+  if (feminine.has(tokens[0])) return result('feminine-associated', 'dictionary-es-en-v2', 'dictionary');
+  if (masculine.has(tokens[0])) return result('masculine-associated', 'dictionary-es-en-v2', 'dictionary');
+  // Respaldo de menor certeza, solo para un candidato aislado de 5–24 letras.
+  // Patrones lingüísticos explícitos: no son probabilidades calibradas y nunca
+  // se consideran información validada. No basta con terminar en «a» u «o».
+  if (tokens.length === 1 && /^[a-z]{5,24}$/.test(tokens[0])) {
+    if (/(?:iana|ina|ella|ette)$/.test(tokens[0])) {
+      return result('feminine-associated', 'suffix-feminine-v2', 'inference');
+    }
+    if (/(?:ardo|andro|aldo|bert|fred)$/.test(tokens[0])) {
+      return result('masculine-associated', 'suffix-masculine-v2', 'inference');
     }
   }
-  const tokens = text.split(' ').filter(token => token.length > 1 && !MODE_WORDS.has(token));
-  if (!tokens.length || tokens.every(token => token.length === 1)) return { segment: 'indeterminate', basis: 'initial-or-empty' };
-  const known = tokens.filter(token => FEMININE.has(token) || MASCULINE.has(token) || AMBIGUOUS.has(token));
-  if (!known.length) return { segment: 'indeterminate', basis: 'outside-dictionary' };
-  if (known.some(token => AMBIGUOUS.has(token))) return { segment: 'indeterminate', basis: 'ambiguous-name' };
-  const feminine = known.some(token => FEMININE.has(token));
-  const masculine = known.some(token => MASCULINE.has(token));
-  if (feminine === masculine) return { segment: 'indeterminate', basis: 'conflicting-or-ambiguous' };
-  return { segment: feminine ? 'feminine-associated' : 'masculine-associated', basis: 'conservative-dictionary-v1' };
+  return result('indeterminate', 'outside-dictionary-no-pattern');
 }
-
-module.exports = { classifyRecordedName, NAME_CLASSIFIER_VERSION: 'cl-conservative-v1' };
+module.exports = { classifyRecordedName, NAME_CLASSIFIER_VERSION };
