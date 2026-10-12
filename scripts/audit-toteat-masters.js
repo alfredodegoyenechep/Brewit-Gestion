@@ -1,6 +1,6 @@
 // Read-only comparison of previously captured Toteat masters; never publishes or modifies source masters.
 // Run from the repository root: node scripts/audit-toteat-masters.js
-const fs=require('fs'),path=require('path');const a=JSON.parse(fs.readFileSync('uploads/.integrations/toteat-api/master-audit/store-1.json')),b=JSON.parse(fs.readFileSync('uploads/.integrations/toteat-api/master-audit/store-2.json'));
+const fs=require('../record-store').fs,path=require('path');const a=JSON.parse(fs.readFileSync('uploads/.integrations/toteat-api/master-audit/store-1.json')),b=JSON.parse(fs.readFileSync('uploads/.integrations/toteat-api/master-audit/store-2.json'));
 const omit=new Set(['id','local','legacy_id','last_version_id','version_id','created_at','updated_at','created_by','updated_by','log_entries','multilocal_source','master_local','source_document']);
 function context(s){const refs=new Map();for(const [type,items] of [['product',s.products],['warehouse',s.warehouses],['supplier',s.suppliers]])for(const p of items)refs.set(p.id,`${type}:${p.custom_id}`);for(const [kind,groups]of Object.entries(s.hierarchies))for(const g of groups)for(const row of g.listado)refs.set(row.at(-1),kind+':'+row[0]);return refs;}
 function canonical(v,refs){if(Array.isArray(v))return v.map(x=>canonical(x,refs)).sort((x,y)=>JSON.stringify(x).localeCompare(JSON.stringify(y)));if(v&&typeof v==='object')return Object.fromEntries(Object.keys(v).sort().filter(k=>!omit.has(k)).map(k=>[k,canonical(v[k],refs)]));return refs.get(v)||v;}
@@ -49,7 +49,7 @@ result.recipeDetail = {
 const output = path.resolve('uploads/reports/masters/audit-2026-09-21');
 fs.mkdirSync(output,{recursive:true});
 fs.writeFileSync(path.join(output,'comparison.json'), JSON.stringify(result,null,2));
-const XLSX = require('xlsx');
+const XLSX = require('../record-workbooks');
 const wb = XLSX.utils.book_new();
 function sheet(title, rows) {
   const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Resultado: 'Sin diferencias' }]);

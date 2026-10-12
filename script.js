@@ -8458,7 +8458,7 @@ async function loadInventorySources() {
         download.href = source.file.url;
         download.target = '_blank';
         download.rel = 'noopener';
-        download.textContent = 'Descargar';
+        download.textContent = 'Exportar datos';
         actions.append(preview, download);
         if (source.applicable && ['marketing', 'employees', 'calibrations'].includes(source.field)) {
           const remove = document.createElement('button');

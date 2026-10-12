@@ -1,7 +1,7 @@
-const fs = require('node:fs');
+const fs = require('./record-store').fs;
 const path = require('node:path');
 const crypto = require('node:crypto');
-const XLSX = require('xlsx');
+const XLSX = require('./record-workbooks');
 
 const dateKey = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value;
 const addDays = (value, days) => new Date(Date.parse(`${value}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
@@ -126,6 +126,7 @@ function salesRows(payments, { paymentClassifications = {}, orderStatuses = {} }
 }
 
 function createSalesSync({ uploadsRoot, activeLocation, credentials, request, clock = today }) {
+  require('./record-store').registerRoot(uploadsRoot);
   const root = path.join(uploadsRoot, '.integrations', 'toteat-api', 'sales');
   const settingsFile = path.join(root, 'settings.json');
   const running = new Map();
@@ -191,6 +192,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     atomicJson(settingsFile, all); return status(location);
   }
   async function synchronize(location, { full = false } = {}) {
+    if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     if (running.has(location)) return running.get(location).promise;
     const config = settings()[location];
     const credential = credentials()[location];
@@ -259,11 +261,13 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     return job.promise;
   }
   function publish(location, snapshot, converted) {
+    const inputFingerprint=require('./storage-retention').fingerprint({snapshot,converted});
+    if(get(location)?.inputFingerprint===inputFingerprint)return;
     const version = crypto.randomUUID();
     const dir = path.join(root, location, version);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     try {
-      const state = { ...snapshot, version, warnings: converted.warnings, orderCount: converted.orders };
+      const state = { ...snapshot, version, inputFingerprint, warnings: converted.warnings, orderCount: converted.orders };
       delete state.directory; delete state.ownedOrderSet;
       atomicJson(path.join(dir, 'state.json'), state);
       for (const [field, rows] of [['sales', converted.sales], ['payment-details', converted.details]]) {
@@ -275,13 +279,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       // One pointer publishes both sources atomically. Failures never advance it.
       atomicJson(path.join(root, location, 'current.json'), { version });
       cache.delete(location);
-      // Keep the previous two complete generations for in-flight previews/downloads.
-      try {
-      const generations = fs.readdirSync(path.join(root, location), { withFileTypes: true }).filter(e => e.isDirectory())
-        .map(e => ({ dir: path.join(root, location, e.name), time: fs.statSync(path.join(root, location, e.name)).mtimeMs }))
-        .sort((a, b) => b.time - a.time);
-      for (const old of generations.slice(3)) fs.rmSync(old.dir, { recursive: true, force: true });
-      } catch { /* Cleanup must never roll back an already published pair of sources. */ }
+      require('./storage-retention').safePrune(uploadsRoot,'sales',location);
     } catch (error) { fs.rmSync(dir, { recursive: true, force: true }); throw error; }
   }
   function classifyPayment(location, paymentId, cancelled) {

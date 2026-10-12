@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const XLSX = require('xlsx');
+const XLSX = require('../record-workbooks');
 const { salesRows, createSalesSync, localTimestamp, windows } = require('../toteat-sales');
 const { createApp } = require('../server');
 const line = (overrides = {}) => ({ id: 'B1', lineId: 'l1', lineReference: 0, quantity: 1, payed: 3430, discounts: -1470, taxes: 548, totalCost: 1200, netPrice: 4900, name: 'Café', hierarchyId: 'AB.01', ...overrides });

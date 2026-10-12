@@ -6,7 +6,7 @@ function createClusterSourceLoader({ uploadsRoot, sourceMode, today, workerPath 
   let worker = null, sequence = 0, disposed = false;
   const requests = new Map();
   function rejectAll(message) {
-    for (const entry of requests.values()) { clearTimeout(entry.timer); const error = new Error(message); error.status = 503; entry.reject(error); }
+    for (const entry of requests.values()) { clearTimeout(entry.timer); entry.release?.(); const error = new Error(message); error.status = 503; entry.reject(error); }
     requests.clear();
   }
   function start() {
@@ -14,7 +14,7 @@ function createClusterSourceLoader({ uploadsRoot, sourceMode, today, workerPath 
     const current = worker;
     current.on('message', message => {
       const entry = requests.get(message.id); if (!entry) return;
-      clearTimeout(entry.timer); requests.delete(message.id);
+      clearTimeout(entry.timer); entry.release?.(); requests.delete(message.id);
       if (message.error) { const error = new Error(message.error); error.status = message.status || 500; entry.reject(error); }
       else entry.resolve(message.source);
     });
@@ -33,7 +33,7 @@ function createClusterSourceLoader({ uploadsRoot, sourceMode, today, workerPath 
         rejectAll('La preparación de ventas superó el tiempo disponible. Intenta nuevamente con una cafetería.');
         current?.terminate().catch(() => {});
       }, 120000);
-      timer.unref(); requests.set(id, { resolve, reject, timer }); worker.postMessage({ id, query, today: today() });
+      timer.unref(); const release=require('./storage-retention').readLease(uploadsRoot); requests.set(id, { resolve, reject, timer, release }); worker.postMessage({ id, query, today: today() });
     });
   }
   function dispose() { disposed = true; rejectAll('La preparación de ventas fue cancelada.'); worker?.terminate().catch(() => {}); worker = null; }

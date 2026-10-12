@@ -1,7 +1,7 @@
-const fs = require('node:fs');
+const fs = require('./record-store').fs;
 const path = require('node:path');
 const crypto = require('node:crypto');
-const XLSX = require('xlsx');
+const XLSX = require('./record-workbooks');
 
 function normalizeMasters(source) {
   const products = source.products.map(p => ({
@@ -74,6 +74,7 @@ function writeViews(directory, source) {
 
 const SHARED_FIELDS = ['master-catalog', 'product-hierarchy', 'ingredient-hierarchy', 'extras-hierarchy', 'master-recipes', 'master-suppliers'];
 function publishSharedMasters(uploadsRoot, source, counts, clock = () => new Date(), sourceVersion = null) {
+  require('./record-store').registerRoot(uploadsRoot);
   if (!Array.isArray(source.suppliers)) throw Error('Falta el maestro de proveedores; no se actualizó ningún maestro compartido.');
   const root = path.join(uploadsRoot, 'masters'), staging = path.join(uploadsRoot, '.integrations', 'toteat-api', `shared-${crypto.randomUUID()}`);
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
@@ -82,6 +83,8 @@ function publishSharedMasters(uploadsRoot, source, counts, clock = () => new Dat
   try {
     writeViews(staging, source);
     const index = fs.existsSync(indexPath) ? JSON.parse(fs.readFileSync(indexPath, 'utf8')) : {};
+    const same=sourceVersion && Object.values(index).find(group=>SHARED_FIELDS.every(field=>group[field]?.sourceVersion===sourceVersion));
+    if(same)return same;
     let time = clock().getTime(); while (index[new Date(time).toISOString()]) time++;
     const version = new Date(time).toISOString(), group = {};
     const validFrom = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago' }).format(new Date(source.capturedAt));
@@ -102,6 +105,7 @@ function publishSharedMasters(uploadsRoot, source, counts, clock = () => new Dat
 }
 
 function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, clock = () => new Date() }) {
+  require('./record-store').registerRoot(uploadsRoot);
   const root = path.join(uploadsRoot, '.integrations', 'toteat-api', 'masters');
   const running = new Map(), errors = new Map();
   let sharedTask = null;
@@ -148,16 +152,20 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
     if (!Number.isFinite(Date.parse(source.capturedAt)) || source.products.some(p => !p.id || !p.custom_id || !Array.isArray(p.types))) throw Error('Formato de maestros inválido; se conserva la versión anterior.');
     const ids = new Set(source.products.map(p => p.id));
     if (ids.size !== source.products.length || source.items.some(p => !ids.has(p.m_id))) throw Error('Identidad o cobertura de maestros inconsistente.');
+    const normalized = normalizeMasters(source);
+    normalized.inputFingerprint = require('./storage-retention').fingerprint({ normalized, items: source.items });
+    if(current(location)?.inputFingerprint === normalized.inputFingerprint)return status(location);
     const base = dir(location), version = `${clock().toISOString().replace(/[:.]/g, '-')}-${crypto.randomBytes(4).toString('hex')}`;
     const directory = path.join(base, version);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const normalized = normalizeMasters(source);
-    for (const [name, data] of [['original', source], ['normalized', normalized]]) fs.writeFileSync(path.join(directory, `${name}.json`), JSON.stringify(data), { mode: 0o600 });
-    writeViews(directory, source);
     const pointer = path.join(base, `current-${crypto.randomBytes(4).toString('hex')}.tmp`);
+    try {
+    for (const [name, data] of [['normalized', normalized]]) fs.writeFileSync(path.join(directory, `${name}.json`), JSON.stringify(data), { mode: 0o600 });
+    writeViews(directory, source);
     const previous = read(path.join(base, 'current.json'));
     fs.writeFileSync(pointer, JSON.stringify({ version, versions: [...(previous?.versions || []), version] }), { mode: 0o600 });
     fs.renameSync(pointer, path.join(base, 'current.json'));
+    } catch(error) { fs.rmSync(directory,{recursive:true,force:true});fs.rmSync(pointer,{force:true});throw error; }
     return status(location);
   }
   function synchronize(location) {
@@ -202,6 +210,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
       observedAt: record?.observedAt || null, publishedAt: record?.savedAt || null, counts: record?.counts || null, warnings: [], shared: true };
   }
   function synchronizeShared() {
+    if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     if (sharedTask) return sharedTask;
     sharedTask = Promise.resolve().then(async () => {
       sharedError = null;

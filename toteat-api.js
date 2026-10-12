@@ -55,7 +55,7 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     const location = String(req.query.location || '');
     if (activeLocation(location)?.type !== 'store') return res.sendStatus(404);
     const source = purchases.source(location, 'purchases')[0];
-    return source ? res.download(source.filePath, `${location}-purchases-api.xlsx`) : res.sendStatus(404);
+    return source ? require('./record-store').download(res, source.filePath, `${location}-purchases-api.xlsx`) : res.sendStatus(404);
   });
   app.get(`${base}/sales/status`, (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -89,7 +89,7 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     const location = String(req.query.location || ''), field = String(req.query.field || '');
     if (activeLocation(location)?.type !== 'store') return res.sendStatus(404);
     const source = sync.source(location, field)[0];
-    return source ? res.download(source.filePath, `${location}-${field}-api.xlsx`) : res.sendStatus(404);
+    return source ? require('./record-store').download(res, source.filePath, `${location}-${field}-api.xlsx`) : res.sendStatus(404);
   });
   app.get(`${base}/config`, (req, res) => {
     res.set('Cache-Control', 'no-store');

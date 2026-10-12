@@ -1,8 +1,8 @@
-const fs = require('node:fs');
+const fs = require('../record-store').fs;
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const XLSX = require('xlsx');
+const XLSX = require('../record-workbooks');
 const { readNative } = require('../toteat-native');
 module.exports = function automationModule({ ensureDir, writeJsonAtomic, readJson, cellDate }) {
 const TOTEAT_REPORT_URL = 'https://res8.toteat.com/#/reportes/cierres';

@@ -1,5 +1,5 @@
 // Original physical count documents, independent of Toteat's aggregate Kardex.
-const fs = require('node:fs');
+const fs = require('./record-store').fs;
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { atomicJson } = require('./toteat-sales');
@@ -33,15 +33,25 @@ function createCountSync({ uploadsRoot, activeLocation, credentials, reader }) {
     const result = normalizeOperations({ ...source, operations: { counts: source.operations.counts, transfers: [], transformations: [] } }, source.products);
     const state = { ...result, location: key, range: source.range, capturedAt: source.capturedAt, warehouses: source.warehouses,
       source: 'Toteat /take-inventory/', boundaryPolicy: 'Conteo físico por fecha operativa. Solo APPROVED afecta inventario; los demás estados se conservan para revisión.' };
+    const inputFingerprint = require('./storage-retention').fingerprint(source);
+    if (current(key)?.inputFingerprint === inputFingerprint) {
+      atomicJson(path.join(root, key, 'attempt.json'), { error: null });
+      return status(key);
+    }
+    state.inputFingerprint = inputFingerprint;
     const version = crypto.randomUUID(), directory = path.join(root, key, version);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    try {
     atomicJson(path.join(directory, 'original.json'), source);
     atomicJson(path.join(directory, 'state.json'), state);
     atomicJson(path.join(root, key, 'current.json'), { version });
+    } catch(error) { fs.rmSync(directory,{recursive:true,force:true});throw error; }
+    require('./storage-retention').safePrune(uploadsRoot,'original-counts',key);
     atomicJson(path.join(root, key, 'attempt.json'), { error: null });
     return status(key);
   }
   function synchronize(id, range) {
+    if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     const key = keyFor(id);
     if (jobs.has(key)) return jobs.get(key);
     if (!validDate(range.from) || !validDate(range.to) || range.from > range.to || Date.parse(range.to) - Date.parse(range.from) > 366 * 86400000) throw Error('Selecciona un período de hasta un año.');

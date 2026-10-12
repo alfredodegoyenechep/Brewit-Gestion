@@ -1,5 +1,5 @@
 // Offline analysis: never publishes sources or changes credentials.
-const fs=require('fs'),path=require('path'),XLSX=require('xlsx');
+const fs=require('../record-store').fs,path=require('path'),XLSX=require('../record-workbooks');
 const {compareFiles}=require('./toteat-inventory-pilot');
 const root=path.resolve(__dirname,'../uploads'),dir=path.join(root,'reports/inventory/public-api-pilot-2026-08-23_2026-08-30');
 const payload=JSON.parse(fs.readFileSync(path.join(dir,'response.json')));

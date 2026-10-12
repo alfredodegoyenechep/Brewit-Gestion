@@ -1,8 +1,8 @@
 // Reproducible, read-only pilot. Existing snapshots are analyzed by default.
 // --capture reads a fresh snapshot through the authenticated Toteat browser.
-const fs = require('node:fs');
+const fs = require('../record-store').fs;
 const path = require('node:path');
-const XLSX = require('xlsx');
+const XLSX = require('../record-workbooks');
 const { reconcileInventory, recipePilot, transformationPilot } = require('../toteat-inventory');
 const { createMasterSync } = require('../toteat-masters');
 

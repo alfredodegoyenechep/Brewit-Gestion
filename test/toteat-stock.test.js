@@ -80,3 +80,23 @@ test('independent counts rebuild the ledger and close the next day without exten
  assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
  fresh.operations.counts.pop();counts.publish('store-1',fresh);assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
 });
+
+
+test('unchanged rebuilds do not create snapshots and real changes retain three generations',t=>{
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-retention-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const sync=createStockSync({uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))})});
+ const original=source();sync.publish('store-1',original);const base=path.join(uploadsRoot,'.integrations/toteat-api/stock/store-1');const dirs=()=>fs.readdirSync(base,{withFileTypes:true}).filter(e=>e.isDirectory()).length;
+ for(let i=0;i<5;i++)sync.rebuild('store-1');assert.equal(dirs(),1);
+ for(let i=0;i<5;i++){const changed=source();changed.capturedAt='2026-10-08T00:00:00Z';changed.operations.counts[0].take_inventory_products[0].quantity+=i+1;sync.publish('store-1',changed);}
+ assert.equal(dirs(),3);
+});
+
+
+test('disk failure while writing a replacement retains the current pointer and removes the partial generation',t=>{
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-disk-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const sync=createStockSync({uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))})});
+ sync.publish('store-1',source());const base=path.join(uploadsRoot,'.integrations/toteat-api/stock/store-1'),pointer=fs.readFileSync(path.join(base,'current.json'),'utf8');
+ const write=fs.writeFileSync;t.mock.method(fs,'writeFileSync',function(file,...args){if(String(file).includes('state.json.'))throw Error('disk unavailable');return write.call(this,file,...args);});
+ const changed=source();changed.operations.counts[0].take_inventory_products[0].quantity++;assert.throws(()=>sync.publish('store-1',changed),/disk unavailable/);
+ assert.equal(fs.readFileSync(path.join(base,'current.json'),'utf8'),pointer);assert.equal(fs.readdirSync(base,{withFileTypes:true}).filter(e=>e.isDirectory()).length,1);
+});

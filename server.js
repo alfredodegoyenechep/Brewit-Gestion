@@ -4,10 +4,10 @@ const { readNative } = require('./toteat-native');
 const { createMasterSync } = require('./toteat-masters');
 const { createStockSync } = require('./toteat-stock');
 const multer = require('multer');
-const XLSX = require('xlsx');
+const XLSX = require('./record-workbooks');
 const crypto = require('crypto');
 const path = require('path');
-const fs = require('fs');
+const fs = require('./record-store').fs;
 const os = require('os');
 const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
 const { reconcilePaymentDetail } = require('./payment-reconciliation');
@@ -2087,6 +2087,8 @@ function createApp(options = {}) {
     return toteatSalesSync ? toteatSalesSync.filterLegacy(filePath, rows) : rows;
   }
   const uploadsRoot = options.uploadsRoot || process.env.BREWIT_UPLOADS_ROOT || path.join(__dirname, 'uploads');
+  require('./record-store').registerRoot(uploadsRoot);
+  if (options.storageMaintenance !== false) require('./storage-retention').startup(uploadsRoot);
   const weeksRoot = path.join(uploadsRoot, 'weeks');
   const mastersRoot = path.join(uploadsRoot, 'masters');
   const stagingRoot = path.join(uploadsRoot, '.staging');
@@ -3064,6 +3066,10 @@ function createApp(options = {}) {
   const legacy = require('./legacy');
   app.disable('x-powered-by');
   app.use(express.json());
+  app.use((req,res,next)=>{
+    if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))return res.status(503).json({error:'Mantenimiento de almacenamiento en curso. Intenta nuevamente al terminar.'});
+    next();
+  });
   require('./operations/routes').registerOperations(app, {
     connectionString: options.operationsDatabaseUrl || process.env.BREWIT_DATABASE_URL,
     authKey: options.operationsAuthKey || process.env.BREWIT_AUTH_KEY,
@@ -3245,8 +3251,11 @@ function createApp(options = {}) {
     return fs.existsSync(file) ? res.download(file, 'Piloto_Kardex_Brewit_23-30_Agosto_2026.xlsx') : res.sendStatus(404);
   });
   });
+  app.use('/uploads/weeks', require('./record-store').middleware(weeksRoot));
   app.use('/uploads/weeks', express.static(weeksRoot, { fallthrough: false, dotfiles: 'deny' }));
+  app.use('/uploads/transactions', require('./record-store').middleware(transactionsRoot));
   app.use('/uploads/transactions', express.static(transactionsRoot, { fallthrough: false, dotfiles: 'deny' }));
+  app.use('/uploads/masters', require('./record-store').middleware(mastersRoot));
   app.use('/uploads/masters', express.static(mastersRoot, { fallthrough: false, dotfiles: 'deny' }));
 
   app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
@@ -10871,6 +10880,7 @@ function createApp(options = {}) {
             field: file.fieldname,
             filename: file.filename,
             originalName: file.originalname,
+            sourceHash: require('./record-store').hash(fs.readFileSync(file.path)),
             size: file.size,
             ...(assignments ? { location: targetLocation, locationLabel: activeLocation(targetLocation).name, storeId: file.storeId, rowCount: file.rowCount } : {}),
             detectedRange,
@@ -11012,6 +11022,9 @@ function createApp(options = {}) {
           id,
           name: stagedFile.filename,
           originalName: stagedFile.originalName,
+          sourceHash: staged.sourceHash || null,
+          storage: 'internal-records-v1',
+          importerVersion: 1,
           size: stagedFile.size,
           detectedRange: stagedFile.detectedRange || staged.detectedRange,
           confirmedRange: { from: dateFrom, to: dateTo },
@@ -11052,6 +11065,7 @@ function createApp(options = {}) {
         else fs.rmSync(transactionIndexPath(locationId), { force: true });
       }
       movedFiles.forEach(filePath => fs.rmSync(filePath, { force: true }));
+      fs.rmSync(stagingDirectory, { recursive: true, force: true });
       return res.status(500).json({ error: 'No se pudo guardar la carga transaccional confirmada.' });
     }
   });
@@ -11239,6 +11253,9 @@ function createApp(options = {}) {
         const record = {
           name: stagedFile.filename,
           originalName: stagedFile.originalName,
+          sourceHash: staged.sourceHash || null,
+          storage: 'internal-records-v1',
+          importerVersion: 1,
           size: stagedFile.size,
           detectedRange: stagedFile.detectedRange,
           confirmedRange: { from: dateFrom, to: dateTo },
@@ -11269,6 +11286,7 @@ function createApp(options = {}) {
       return res.json({ ok: true, week: manifest.week, location: manifest.location, meta: next, salesImport });
     } catch (confirmationError) {
       movedFiles.forEach(filePath => fs.rmSync(filePath, { force: true }));
+      fs.rmSync(stagingDirectory, { recursive: true, force: true });
       return res.status(500).json({ error: 'Could not save the confirmed weekly upload.' });
     }
   });
@@ -11423,8 +11441,17 @@ function createApp(options = {}) {
           delete group[conflict.field];
           if (Object.keys(group).length === 0) delete index[conflict.version];
         }
+        for(const file of files) {
+          const imported=require('./record-store').importFile(file.path);
+          saved[file.fieldname].sourceHash=imported.sourceHash;
+          saved[file.fieldname].storage='internal-records-v1';
+          saved[file.fieldname].importerVersion=1;
+        }
         index[new Date().toISOString()] = saved;
         writeJsonAtomic(indexPath, index);
+        for(const file of files) {
+          try { require('./record-store').removeOriginal(file.path); } catch { /* Published records remain valid; maintenance can retry source cleanup. */ }
+        }
         replacedRecords.forEach(record => removeStoredRecords(mastersRoot, record));
         return res.json({ ok: true, saved });
       } catch (writeError) {
@@ -11492,7 +11519,7 @@ if (require.main === module) {
   const envFile = path.join(__dirname, '.env');
   if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
   const port = Number(process.env.PORT) || DEFAULT_PORT;
-  createApp({ enableToteatSync: true }).listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
+  createApp({ enableToteatSync: process.env.BREWIT_DISABLE_SYNC !== '1' }).listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
 }
 
 module.exports = {

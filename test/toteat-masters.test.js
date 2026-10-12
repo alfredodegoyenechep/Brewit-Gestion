@@ -37,8 +37,10 @@ test('a session failure keeps masters and does not expose upstream credentials',
   assert.equal(sync.status('a').running, false);
   assert.equal(JSON.stringify(sync.status('a')).includes('sensitive-token'), false);
 });
-test('repeated captures preserve versions instead of replacing history', t => {
+test('unchanged captures reuse data; changed masters preserve their historical version', t => {
   const sync = setup(t); sync.publish('a', fixture()); sync.publish('a', fixture());
+  assert.equal(sync.files('a', 'master-catalog').length, 1);
+  const changed=fixture();changed.items[0].det.np='Changed product';sync.publish('a',changed);
   assert.equal(sync.files('a', 'master-catalog').length, 2);
 });
 
@@ -64,7 +66,7 @@ test('shared synchronization always reads La Concepcion and publishes all six ca
   assert.equal(Object.keys(group).length, 6);
   assert.equal(sync.sharedStatus().counts.suppliers, 1);
   assert.equal(sync.sharedCurrent().localId, '1');
-  const XLSX = require('xlsx');
+  const XLSX = require('../record-workbooks');
   const wb = XLSX.readFile(path.join(uploadsRoot, 'masters', group['master-catalog'].name));
   const rows = XLSX.utils.sheet_to_json(wb.Sheets.Prod, { header: 1 });
   assert.equal(rows[2][rows[0].indexOf('conv.0.cnum')], 12);

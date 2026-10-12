@@ -1,8 +1,8 @@
 // Independent inventory ledger: source documents + purchases + sales, never Kardex balances.
-const fs = require('node:fs');
+const fs = require('./record-store').fs;
 const path = require('node:path');
 const crypto = require('node:crypto');
-const XLSX = require('xlsx');
+const XLSX = require('./record-workbooks');
 const { atomicJson, localTimestamp } = require('./toteat-sales');
 const { convert, recipeConsumption } = require('./toteat-inventory');
 const read = file => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
@@ -125,6 +125,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));
     if(!pointer)return null;
     const state=read(path.join(root,key,pointer.version,'state.json'));
+    if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))return state;
     if(state?.sourceKind==='native-documents') {
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
       const dependencies={sales:version('sales'),purchases:version('purchases'),counts:version('original-counts'),master:masters()?.observedAt};
@@ -146,7 +147,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
   };
   const dependency=(kind,id)=>{const base=path.join(uploadsRoot,'.integrations/toteat-api',kind,id),pointer=read(path.join(base,'current.json'));return pointer?read(path.join(base,pointer.version,'state.json')):null;};
   function status(id){const key=locationKey(id),state=current(key);return {location:key,running:jobs.has(key),error:errors.get(key)||state?.rebuildError||null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],excluded:state?.excluded||[],range:state?.range||null,updatedAt:state?.sourceCapturedAt||null,sourceKind:state?.sourceKind||'native-documents',dailyRows:state?.daily.length||0,counts:state?Object.fromEntries(['counts','transfers','transformations'].map(kind=>[kind,state.sourceKind==='public-inventory'?{documents:null,approved:null,lines:state.daily.filter(r=>kind==='counts'?r.physicalCount:kind==='transfers'?[r.transfer_local_in,r.transfer_local_out,r.transfer_warehouse_in,r.transfer_warehouse_out].some(n=>n!==0):r.transformed_in!==0||r.transformed_out!==0).length}:{documents:state.documents.filter(d=>d.kind===kind).length,approved:state.documents.filter(d=>d.kind===kind&&d.status==='APPROVED').length,lines:state.operationLines.filter(l=>l.source===kind).length}])):null};}
-  function publish(id,source){const key=locationKey(id),config=credentials()[key];if(!config||source.restaurantId!==config.restaurantId||source.localId!==config.localId)throw Error('La fuente no corresponde al local.');
+  function publish(id,source){if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');const key=locationKey(id),config=credentials()[key];if(!config||source.restaurantId!==config.restaurantId||source.localId!==config.localId)throw Error('La fuente no corresponde al local.');
     const master=masters();if(!master)throw Error('Actualiza primero los maestros compartidos de La Concepción.');
     const products=master.products.map(p=>({...p,custom_id:p.code,stock_enabled:p.stockManaged,stock_unit:p.stockUnit,name:{translations:{default:p.name}}}));
     if(source.kind==='public-inventory')throw Error('El Kardex propio requiere documentos originales; no admite saldos agregados de Toteat.');
@@ -165,14 +166,23 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
       ledgerSource={...source,products:[...source.products,...countSource.products.filter(p=>!source.products.some(old=>old.id===p.id))],operations:{...source.operations,
         counts:[...source.operations.counts.filter(d=>!covered(d)&&!ids.has(String(d.id))),...fresh]}};
     }
+    const inputFingerprint=require('./storage-retention').fingerprint({source:ledgerSource,products,masterVersion:master.observedAt,salesVersion:sales?.version||null,purchaseVersion:purchases?.version||null,countVersion,schema:2});
+    const previousPointer=read(path.join(root,key,'current.json'));
+    const previous=previousPointer?read(path.join(root,key,previousPointer.version,'state.json')):null;
+    if(previous?.inputFingerprint===inputFingerprint) return status(key);
     const state=buildLedger(ledgerSource,products,sales,purchases);
+    state.inputFingerprint=inputFingerprint;
     state.countsCapturedAt=ledgerSource!==source?countSource.capturedAt:source.capturedAt;
     Object.assign(state,{detailSchemaVersion:2,location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
     const version=crypto.randomUUID(),directory=path.join(root,key,version);fs.mkdirSync(directory,{recursive:true,mode:0o700});
+    try {
     atomicJson(path.join(directory,'original.json'),source);atomicJson(path.join(directory,'state.json'),state);
     // Separate durable local tables, all committed by one pointer.
     for(const kind of ['counts','transfers','transformations'])atomicJson(path.join(directory,`${kind}.json`),{documents:state.documents.filter(d=>d.kind===kind),lines:state.operationLines.filter(l=>l.source===kind)});
-    atomicJson(path.join(root,key,'current.json'),{version});return status(key);
+      atomicJson(path.join(root,key,'current.json'),{version});
+    } catch(error) { fs.rmSync(directory,{recursive:true,force:true});throw error; }
+    require('./storage-retention').safePrune(uploadsRoot,'stock',key);
+    return status(key);
   }
   function synchronize(id,range){const key=locationKey(id);if(jobs.has(key))throw Error('Ya hay una actualización en curso.');const from=day(range.from),to=day(range.to);if(from>to||Date.parse(to)-Date.parse(from)>366*86400000)throw Error('Selecciona un período de hasta un año.');const c=credentials()[key];if(!c)throw Error('Configura la conexión Toteat de este local.');errors.delete(key);const job=Promise.resolve().then(async()=>{try{const source=await reader({restaurantId:c.restaurantId,localId:c.localId},{from,to,includeOperations:true});return publish(key,source);}catch(e){errors.set(key,e.code==='TOTEAT_AUTH_REQUIRED'?require('./toteat-session').sessionMessage(e.loginOpened):'No se pudo completar la actualización. Revisa los documentos originales y la sesión autorizada de Toteat; se conserva la versión anterior.');throw e;}finally{jobs.delete(key);}});jobs.set(key,job);return job;}
   function view(id) {

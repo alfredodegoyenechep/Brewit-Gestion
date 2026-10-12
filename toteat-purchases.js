@@ -1,7 +1,7 @@
-const fs = require('node:fs');
+const fs = require('./record-store').fs;
 const path = require('node:path');
 const crypto = require('node:crypto');
-const XLSX = require('xlsx');
+const XLSX = require('./record-workbooks');
 const { atomicJson, windows } = require('./toteat-sales');
 const { reconcilePurchaseWarehouses, receiptDay } = require('./purchase-warehouses');
 const { applyPurchaseReceiptWarehouses } = require('./purchase-receipts');
@@ -91,6 +91,7 @@ function purchaseRows(documents, localId) {
 }
 
 function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request, receiptReader, clock = today }) {
+  require('./record-store').registerRoot(uploadsRoot);
   const root = path.join(uploadsRoot, '.integrations/toteat-api/purchases');
   const settingsFile = path.join(root, 'settings.json'), jobs = new Map(), cache = new Map();
   const read = (file, fallback) => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback;
@@ -108,10 +109,14 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     }
   }
   function publish(location, state, converted) {
+    const inputFingerprint=require('./storage-retention').fingerprint({state,converted});
+    const oldPointer=read(path.join(root,location,'current.json'));
+    const oldState=oldPointer?read(path.join(root,location,oldPointer.version,'state.json')):null;
+    if(oldState?.inputFingerprint===inputFingerprint)return;
     const version = crypto.randomUUID(), directory = path.join(root, location, version);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     try {
-      atomicJson(path.join(directory, 'state.json'), {...state, version});
+      atomicJson(path.join(directory, 'state.json'), {...state, version, inputFingerprint});
       const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(converted.rows), 'Compras API');
       XLSX.writeFile(workbook, path.join(directory, 'purchases.xlsx')); fs.chmodSync(path.join(directory, 'purchases.xlsx'), 0o600);
       atomicJson(path.join(root, location, 'current.json'), {version}); cache.delete(location);
@@ -162,6 +167,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     atomicJson(settingsFile, all); return status(location);
   }
   async function synchronize(location, { full = false } = {}) {
+    if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     if (jobs.has(location)) return jobs.get(location).promise;
     const config = settings()[location], credential = credentials()[location];
     if (activeLocation(location)?.type !== 'store' || !config || !credential) throw new Error('Configura primero la conexión y el período de compras.');
@@ -219,11 +225,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
         owned: [...new Set([...(previous?.owned || []), ...converted.owned])]}, converted);
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
         lastFullSuccess: selected.length === ranges.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
-      try {
-        const dirs = fs.readdirSync(path.join(root, location), { withFileTypes: true }).filter(e => e.isDirectory())
-          .map(e => path.join(root, location, e.name)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-        for (const dir of dirs.slice(3)) fs.rmSync(dir, { recursive: true, force: true });
-      } catch { /* Retention failure does not invalidate published purchases. */ }
+      require('./storage-retention').safePrune(uploadsRoot,'purchases',location);
     })().catch(error => {
       const all = settings(); all[location] = { ...all[location], lastAttempt: new Date().toISOString(), lastError: error.message }; atomicJson(settingsFile, all); throw error;
     }).finally(() => jobs.delete(location));

@@ -2,7 +2,7 @@ const { parentPort, workerData } = require('node:worker_threads');
 const { createApp } = require('./server');
 let today;
 const app = createApp({ uploadsRoot: workerData.uploadsRoot, sourceMode: workerData.sourceMode,
-  reportToday: () => today, enableToteatSync: false, clusterSourceWorker: false, clusterCachePersistence: false });
+  reportToday: () => today, enableToteatSync: false, storageMaintenance: false, clusterSourceWorker: false, clusterCachePersistence: false });
 
 parentPort.on('message', message => {
   try {

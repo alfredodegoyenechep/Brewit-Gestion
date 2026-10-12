@@ -7,7 +7,9 @@
     "test": "node --test",
     "operations:migrate": "node scripts/operations-db.js",
     "operations:user": "node scripts/operations-user.js",
-    "test:operations": "node --test test/operations.test.js"
+    "test:operations": "node --test test/operations.test.js",
+    "storage:audit": "node scripts/storage-maintenance.js",
+    "storage:migrate": "node scripts/storage-maintenance.js --migrate"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",

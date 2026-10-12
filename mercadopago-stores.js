@@ -1,4 +1,4 @@
-const XLSX = require('xlsx');
+const XLSX = require('./record-workbooks');
 
 const DEFAULT_STORE_IDS = { 'store-1': '82010740', 'store-2': '81555097' };
 
