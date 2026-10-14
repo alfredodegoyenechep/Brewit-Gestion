@@ -2253,12 +2253,12 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
 
   const report = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1&includeToday=true`).then(response => response.json());
   assert.equal(report.intraday.today.date, '2026-08-14');
-  assert.equal(report.intraday.today.cutoffTime, '19:00:00');
+  assert.equal(report.intraday.today.cutoffTime, '23:59:59');
   assert.equal(Math.round(report.intraday.today.netSales), 400);
-  assert.deepEqual(report.intraday.today.generalRank, { position: 3, total: 6 });
+  assert.deepEqual(report.intraday.today.generalRank, { position: 4, total: 6 });
   assert.deepEqual(report.intraday.today.sameWeekdayRank, { position: 2, total: 2 });
-  assert.equal(Math.round(report.intraday.today.sameWeekdayAverage), 500);
-  assert.equal(Math.round(report.intraday.today.comparisonToAveragePercent), -20);
+  assert.equal(report.intraday.today.sameWeekdayAverage, null);
+  assert.equal(report.intraday.today.comparisonToAveragePercent, null);
   assert.equal(report.intraday.today.averageSampleSize, 1);
   assert.equal(report.intraday.references.sameWeekday.date, '2026-08-07');
   assert.equal(report.intraday.references.month.date, '2026-08-12');
@@ -2277,12 +2277,12 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
     .then(response => response.json());
   assert.equal(previousDayReport.includeToday, false);
   assert.equal(previousDayReport.intraday.today.date, '2026-08-13');
-  assert.equal(previousDayReport.intraday.today.cutoffTime, '10:00:00');
+  assert.equal(previousDayReport.intraday.today.cutoffTime, '23:59:59');
   assert.equal(Math.round(previousDayReport.intraday.today.netSales), 300);
-  assert.deepEqual(previousDayReport.intraday.today.generalRank, { position: 1, total: 5 });
+  assert.deepEqual(previousDayReport.intraday.today.generalRank, { position: 4, total: 5 });
   assert.deepEqual(previousDayReport.intraday.today.sameWeekdayRank, { position: 1, total: 2 });
-  assert.equal(Math.round(previousDayReport.intraday.today.sameWeekdayAverage), 100);
-  assert.equal(Math.round(previousDayReport.intraday.today.comparisonToAveragePercent), 200);
+  assert.equal(previousDayReport.intraday.today.sameWeekdayAverage, null);
+  assert.equal(previousDayReport.intraday.today.comparisonToAveragePercent, null);
   assert.equal(previousDayReport.intraday.today.averageSampleSize, 1);
   assert.equal(previousDayReport.intraday.references.sameWeekday.date, '2026-08-06');
   assert.equal(previousDayReport.intraday.references.month.date, '2026-08-12');

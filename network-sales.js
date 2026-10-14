@@ -1,5 +1,6 @@
 const DAY = 86400000;
 const { averageTicketWithVat } = require('./metric-policy');
+const { salesCalendar, equivalentDayComparison } = require('./equivalent-sales');
 
 function addDays(key, count) {
   return new Date(Date.parse(`${key}T12:00:00Z`) + count * DAY).toISOString().slice(0, 10);
@@ -61,28 +62,18 @@ function buildNetworkSalesDashboard({ stores, facts, today, cutoff = '23:59:59' 
   const previousMonthLast = previousMonthEnd(today);
   const byStore = new Map(stores.map(store => [store.id, []]));
   for (const fact of facts) if (byStore.has(fact.locationId)) byStore.get(fact.locationId).push(fact);
-  const observedDates = new Map(stores.map(store => [store.id, new Set((byStore.get(store.id) || []).map(fact => fact.date))]));
-  const firstObserved = new Map(stores.map(store => [store.id, [...observedDates.get(store.id)].sort()[0] || null]));
+  const calendar = salesCalendar(stores, facts);
+  const { operates, eligible } = calendar;
   const storeById = new Map(stores.map(store => [store.id, store]));
-  function operates(store, date) {
-    if (store.openingDate && date < store.openingDate) return false;
-    if (!store.openingDate && firstObserved.get(store.id) && date < firstObserved.get(store.id)) return false;
-    if (Array.isArray(store.operatingWeekdays) && store.operatingWeekdays.length) {
-      return store.operatingWeekdays.includes(weekday(date));
-    }
-    return observedDates.get(store.id)?.has(date) || false;
-  }
-  function eligible(storeIds, date) { return storeIds.some(id => operates(storeById.get(id), date)); }
   function metrics(storeIds, dates, timeCutoff = null) {
     const dateSet = new Set(dates);
     return aggregateNetworkMetrics(storeIds.flatMap(id => (byStore.get(id) || []).filter(fact =>
       dateSet.has(fact.date) && (!timeCutoff || fact.date !== dates[dates.length - 1] || fact.time <= timeCutoff))));
   }
   function singleDate(storeIds, date, timeCutoff = null) { return metrics(storeIds, [date], timeCutoff); }
-  function weekdayAverage(storeIds, date, timeCutoff = null) {
-    const dates = Array.from({ length: 8 }, (_, index) => addDays(date, -(index + 1) * 7));
-    if (!dates.every(key => eligible(storeIds, key))) return null;
-    return dates.reduce((sum, key) => sum + singleDate(storeIds, key, timeCutoff).sales, 0) / 8;
+  function weekdayComparison(storeIds, date, timeCutoff = null) {
+    return equivalentDayComparison({ date, storeIds, calendar, cutoff: timeCutoff,
+      salesAt: (day, cutoff) => singleDate(storeIds, day, cutoff).sales });
   }
   function priorFourWeeksDailyAverage(storeIds) {
     const dates = daysBetween(addDays(yesterday, -28), addDays(yesterday, -1)).filter(date => eligible(storeIds, date));
@@ -118,13 +109,15 @@ function buildNetworkSalesDashboard({ stores, facts, today, cutoff = '23:59:59' 
       daysBetween(previousMonday, addDays(previousMonday, (weekday(today) + 6) % 7)), cutoff);
     const currentMonth = metrics(storeIds, daysBetween(currentMonthStart, today), cutoff);
     const previousMonth = metrics(storeIds, daysBetween(previousMonthFirst, previousMonthLast));
+    const todayComparison = weekdayComparison(storeIds, today, cutoff);
+    const yesterdayComparison = weekdayComparison(storeIds, yesterday);
     return {
       id, name,
       today: { ...currentDay,
         vsYesterday: percentageChange(currentDay.sales, singleDate(storeIds, yesterday, cutoff).sales),
-        vsEquivalentDays: percentageChange(currentDay.sales, weekdayAverage(storeIds, today, cutoff)) },
+        vsEquivalentDays: percentageChange(todayComparison.referenceAvailable ? currentDay.sales : null, todayComparison.average), equivalentDays: todayComparison },
       yesterday: { ...previousDay,
-        vsEquivalentDays: percentageChange(previousDay.sales, weekdayAverage(storeIds, yesterday)),
+        vsEquivalentDays: percentageChange(yesterdayComparison.referenceAvailable ? previousDay.sales : null, yesterdayComparison.average), equivalentDays: yesterdayComparison,
         vsFourWeeks: percentageChange(previousDay.sales, priorFourWeeksDailyAverage(storeIds)) },
       currentWeek: { ...currentWeek,
         vsPreviousWeek: percentageChange(currentWeek.sales, previousWeekEquivalent.sales) },

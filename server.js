@@ -14,7 +14,8 @@ const { reconcilePaymentDetail } = require('./payment-reconciliation');
 const { toteatPaymentCollections } = require('./payment-collections');
 const { reversalSignals } = require('./transaction-signals');
 const { buildSourceDiagnostics } = require('./source-diagnostics');
-const { businessClock, buildNetworkSalesDashboard } = require('./network-sales');
+const { businessClock, buildNetworkSalesDashboard, percentageChange } = require('./network-sales');
+const { salesCalendar, equivalentDayComparison } = require('./equivalent-sales');
 const { averageTicketWithVat } = require('./metric-policy');
 const { buildDemandAnalysis, resolveDemandPeriod, orderMatches } = require('./demand-analysis');
 const { linkOrdersToSettlements } = require('./transaction-linkage');
@@ -1744,7 +1745,7 @@ function addDays(dateKey, amount) {
   return date.toISOString().slice(0, 10);
 }
 
-function buildSalesReport(dailySales, todayKey, includeToday = false) {
+function buildSalesReport(dailySales, todayKey, includeToday, comparison) {
   const referenceDate = includeToday ? todayKey : addDays(todayKey, -1);
   const referenceDayNumber = new Date(`${referenceDate}T00:00:00.000Z`).getUTCDay();
   const weekStart = addDays(referenceDate, -((referenceDayNumber + 6) % 7));
@@ -1753,10 +1754,7 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
   const hasReferenceDay = Object.hasOwn(dailySales, referenceDate);
   const reference = dailySales[referenceDate] || { gross: 0, discounts: 0, net: 0, orders: 0 };
   const sameWeekdayDates = historicalDates.filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceDayNumber);
-  const priorEight = sameWeekdayDates.filter(date => date < referenceDate).sort().reverse().slice(0, 8);
-  const sameWeekdayAverage = priorEight.length
-    ? priorEight.reduce((sum, date) => sum + dailySales[date].net, 0) / priorEight.length
-    : 0;
+  const sameWeekdayAverage = comparison.average;
   const rank = dates => ({
     position: hasReferenceDay && dates.length ? 1 + dates.filter(date => dailySales[date].net > reference.net).length : null,
     total: dates.length
@@ -1929,10 +1927,10 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
       generalRank: rank(historicalDates),
       sameWeekdayRank: rank(sameWeekdayDates),
       sameWeekdayAverage,
-      comparisonToAveragePercent: hasReferenceDay && sameWeekdayAverage
-        ? ((reference.net / sameWeekdayAverage) - 1) * 100
-        : null,
-      averageSampleSize: priorEight.length
+      comparisonToAveragePercent: percentageChange(comparison.referenceAvailable ? reference.net : null, sameWeekdayAverage),
+      averageSampleSize: comparison.sampleSize,
+      equivalentDays: comparison,
+      comparisonCutoffTime: comparison.cutoff
     },
     week: {
       from: weekStart,
@@ -1975,7 +1973,7 @@ function buildSalesReport(dailySales, todayKey, includeToday = false) {
   };
 }
 
-function buildIntradayReport(dailySales, transactionsByDate, referenceDate) {
+function buildIntradayReport(dailySales, transactionsByDate, referenceDate, comparison) {
   const referenceWeekday = new Date(`${referenceDate}T00:00:00.000Z`).getUTCDay();
   const completedDates = Object.keys(dailySales).filter(date => date < referenceDate);
   const bestDate = dates => dates.sort((left, right) => {
@@ -2001,24 +1999,19 @@ function buildIntradayReport(dailySales, transactionsByDate, referenceDate) {
       .filter(transaction => transaction.time <= end)
       .reduce((sum, transaction) => sum + transaction.net, 0);
   };
-  const referenceTransactions = transactionsByDate[referenceDate] || [];
-  const cutoffTime = referenceTransactions.reduce((latest, transaction) =>
-    !latest || transaction.time > latest ? transaction.time : latest, null);
+  const cutoffTime = comparison.cutoff;
   const referenceNetSales = cutoffTime ? cumulativeAt(referenceDate, cutoffTime) : 0;
   const rankingAtCutoff = dates => ({
-    position: cutoffTime
+    position: cutoffTime && comparison.referenceAvailable
       ? 1 + dates.filter(date => date !== referenceDate && cumulativeAt(date, cutoffTime) > referenceNetSales).length
       : null,
-    total: cutoffTime ? dates.length : 0
+    total: cutoffTime && comparison.referenceAvailable ? dates.length : 0
   });
   const priorSameWeekdays = completedDates
     .filter(date => new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceWeekday)
     .sort()
     .reverse();
-  const priorEight = priorSameWeekdays.slice(0, 8);
-  const sameWeekdayAverage = cutoffTime && priorEight.length
-    ? priorEight.reduce((sum, date) => sum + cumulativeAt(date, cutoffTime), 0) / priorEight.length
-    : 0;
+  const sameWeekdayAverage = comparison.average;
   return {
     today: {
       date: referenceDate,
@@ -2027,10 +2020,9 @@ function buildIntradayReport(dailySales, transactionsByDate, referenceDate) {
       generalRank: rankingAtCutoff([...completedDates, ...(cutoffTime ? [referenceDate] : [])]),
       sameWeekdayRank: rankingAtCutoff([...priorSameWeekdays, ...(cutoffTime ? [referenceDate] : [])]),
       sameWeekdayAverage,
-      comparisonToAveragePercent: cutoffTime && sameWeekdayAverage
-        ? ((referenceNetSales / sameWeekdayAverage) - 1) * 100
-        : null,
-      averageSampleSize: priorEight.length
+      comparisonToAveragePercent: percentageChange(comparison.referenceAvailable ? referenceNetSales : null, sameWeekdayAverage),
+      averageSampleSize: comparison.sampleSize,
+      equivalentDays: comparison
     },
     references: {
       sameWeekday: { date: sameWeekdayDate },
@@ -2204,6 +2196,11 @@ function createApp(options = {}) {
   function projectionToday() {
     const configured = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
     return configured || businessClock().today;
+  }
+
+  function salesReportClock() {
+    const configured = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
+    return configured ? { today: configured, cutoff: options.reportCutoff || '23:59:59' } : businessClock();
   }
 
   function transactionLocationRoot(locationId) {
@@ -4706,6 +4703,48 @@ function createApp(options = {}) {
     }
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
     return res.json({ ok: true, saved: requested.length });
+  });
+
+  app.get('/api/purchase-projections/policies/sources', (req, res) => {
+    const location = activeLocation(String(req.query.location || ''));
+    if (!location) return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
+    const registry = readPurchaseProjectionPolicies();
+    const sources = readLocations().locations
+      .filter(source => source.status === 'active' && source.type === 'store' && source.id !== location.id)
+      .map(source => ({ id: source.id, name: source.name, itemCount: Object.keys(registry.locations?.[source.id]?.items || {}).length }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'es'));
+    return res.json({ location: { id: location.id, name: location.name }, sources });
+  });
+
+  app.post('/api/purchase-projections/policies/copy', (req, res) => {
+    const location = activeLocation(String(req.body?.location || ''));
+    const source = activeLocation(String(req.body?.sourceLocation || ''));
+    if (!location || !source || source.type !== 'store' || source.id === location.id) {
+      return res.status(400).json({ error: 'Selecciona otra cafetería activa como origen y una ubicación válida como destino.' });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({ error: 'Confirma el reemplazo de los criterios existentes antes de continuar.' });
+    }
+    const registry = readPurchaseProjectionPolicies();
+    const sourceItems = Object.entries(registry.locations?.[source.id]?.items || {});
+    if (!sourceItems.length) return res.status(400).json({ error: 'La cafetería de origen no tiene criterios guardados para copiar.' });
+    const items = {};
+    const updatedAt = new Date().toISOString();
+    for (const [key, policy] of sourceItems) {
+      const minDays = Number(policy.minDays ?? 7), maxDays = Number(policy.maxDays ?? 14);
+      const unitsPerPackage = Number(policy.unitsPerPackage ?? 1);
+      if (!Number.isFinite(minDays) || !Number.isFinite(maxDays) || !Number.isFinite(unitsPerPackage)
+        || minDays < 0 || maxDays < minDays || maxDays > 365 || unitsPerPackage <= 0 || unitsPerPackage > 1000000) {
+        return res.status(400).json({ error: `Revisa los criterios guardados de ${key} en la cafetería de origen antes de copiarlos.` });
+      }
+      items[key] = { minDays, maxDays, unitsPerPackage, supplierKey: String(policy.supplierKey || 'unassigned').trim(),
+        managed: policy.managed === true, updatedAt };
+    }
+    registry.locations ||= {};
+    registry.locations[location.id] = { items };
+    writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
+    return res.json({ ok: true, copied: sourceItems.length, source: { id: source.id, name: source.name },
+      location: { id: location.id, name: location.name } });
   });
 
   function purchaseOrderPath(orderId) {
@@ -10713,6 +10752,7 @@ function createApp(options = {}) {
   });
 
   app.get('/api/reports/weekly-sales', (req, res) => {
+    const clock = salesReportClock();
     const dailySales = {};
     const transactionsByDate = {};
     const seenOrders = new Set();
@@ -10738,8 +10778,10 @@ function createApp(options = {}) {
             rows.forEach((row, rowIndex) => {
               const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
               if (gross === null) return;
-              const date = cellDate(rowValue(row, ['Fecha de creacion', 'Fecha de creación', 'Fecha de cierre']));
+              const dateTime = salesTransactionDateTime(row);
+              const date = dateTime?.slice(0, 10);
               if (!date) return;
+              if (date === clock.today && dateTime.slice(11) > clock.cutoff) return;
               if (dateIsExcluded(date, stored.excludedRanges)) return;
               const uniqueOrder = `${location.id}:${salesTransactionKey(row)}`;
               if (seenOrders.has(uniqueOrder)) return;
@@ -10752,8 +10794,7 @@ function createApp(options = {}) {
               dailySales[date].net += net;
               dailySales[date].orders += 1;
               if (!transactionsByDate[date]) transactionsByDate[date] = [];
-              const dateTime = salesTransactionDateTime(row);
-              transactionsByDate[date].push({ time: dateTime?.slice(11) || '00:00:00', net });
+              transactionsByDate[date].push({ locationId: location.id, date, time: dateTime.slice(11) || '00:00:00', net });
             });
             filesRead += 1;
           } catch (error) {
@@ -10762,12 +10803,17 @@ function createApp(options = {}) {
         }
       }
 
-      const todayKey = projectionToday();
+      const todayKey = clock.today;
       const includeToday = String(req.query.includeToday || '').toLowerCase() === 'true';
-      const report = buildSalesReport(dailySales, todayKey, includeToday);
+      const referenceDate = includeToday ? todayKey : addDays(todayKey, -1);
+      const calendar = salesCalendar(stores, Object.values(transactionsByDate).flat().filter(fact => fact.date <= todayKey));
+      const comparison = equivalentDayComparison({ date: referenceDate, storeIds: stores.map(store => store.id), calendar,
+        cutoff: includeToday ? clock.cutoff : null,
+        salesAt: (date, cutoff) => (transactionsByDate[date] || []).filter(fact => !cutoff || fact.time <= cutoff).reduce((sum, fact) => sum + fact.net, 0) });
+      const report = buildSalesReport(dailySales, todayKey, includeToday, comparison);
       return res.json({
         ...report,
-        intraday: buildIntradayReport(dailySales, transactionsByDate, report.previousDay.date),
+        intraday: buildIntradayReport(dailySales, transactionsByDate, report.previousDay.date, comparison),
         scope: selectedStore
           ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
           : { type: 'all', location: null, label: 'Todas las cafeterías' },
@@ -10787,8 +10833,7 @@ function createApp(options = {}) {
   app.get('/api/reports/network-sales', (req, res) => {
     try {
       const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
-      const configuredToday = typeof options.reportToday === 'function' ? options.reportToday() : options.reportToday;
-      const clock = configuredToday ? { today: configuredToday, cutoff: '23:59:59' } : businessClock();
+      const clock = salesReportClock();
       const costValuation = req.query.costValuation === 'historical' ? 'historical' : 'period-end';
       const catalogMaster = latestMasterFile('master-catalog', clock.today);
       let costCatalog = new Map();

@@ -2564,10 +2564,10 @@ function renderIntradayReport(intraday, includeToday = true) {
   const comparison = intraday.today.comparisonToAveragePercent;
   document.getElementById('intraday-average-comparison').textContent = comparison === null
     ? '—'
-    : `${comparison >= 0 ? '+' : ''}${comparison.toFixed(1)}%`;
-  document.getElementById('intraday-average-detail').textContent = intraday.today.averageSampleSize
-    ? `Promedio ${formatClp(intraday.today.sameWeekdayAverage)} · ${intraday.today.averageSampleSize} fechas`
-    : 'Sin fechas equivalentes';
+    : `${comparison >= 0 ? '+' : ''}${comparison.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+  document.getElementById('intraday-average-detail').textContent = intraday.today.sameWeekdayAverage != null
+    ? `Promedio ${formatClp(intraday.today.sameWeekdayAverage)} · 8 fechas · ${cutoffLabel}`
+    : `Referencia incompleta · ${intraday.today.averageSampleSize} de 8 fechas · ${cutoffLabel}`;
   const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(intraday.today.date));
   document.getElementById('intraday-weekday-title').textContent = `Mejor ${weekday}`;
   document.getElementById('intraday-weekday-date').textContent = referenceText(intraday.references.sameWeekday.date);
@@ -2745,17 +2745,19 @@ async function loadWeeklySalesReport() {
     document.getElementById('report-weekday-rank').textContent = rankText('Ranking mismo día', report.previousDay.sameWeekdayRank);
     const comparison = report.previousDay.comparisonToAveragePercent;
     document.getElementById('report-average-comparison').textContent = comparison === null
-      ? 'Vs. promedio 8 semanas: —'
-      : `Vs. promedio 8 semanas: ${comparison >= 0 ? '+' : ''}${comparison.toFixed(1)}%`;
+      ? 'Vs. promedio 8 días equivalentes: —'
+      : `Vs. promedio 8 días equivalentes: ${comparison >= 0 ? '+' : ''}${comparison.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
     document.getElementById('report-week-value').textContent = formatClp(report.week.netSales);
     document.getElementById('report-week-range').textContent = `${formatReportDate(report.week.from)} – ${formatReportDate(report.week.to)}`;
     document.getElementById('report-week-rank').textContent = rankText('Ranking semanas equivalentes', report.week.equivalentRank);
     document.getElementById('report-month-value').textContent = formatClp(report.month.netSales);
     document.getElementById('report-month-range').textContent = `${formatReportDate(report.month.from)} – ${formatReportDate(report.month.to)}`;
     document.getElementById('report-month-rank').textContent = rankText('Ranking meses equivalentes', report.month.equivalentRank);
-    document.getElementById('report-weekday-average').textContent = formatClp(report.previousDay.sameWeekdayAverage);
+    document.getElementById('report-weekday-average').textContent = report.previousDay.sameWeekdayAverage == null ? '—' : formatClp(report.previousDay.sameWeekdayAverage);
     const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long' }).format(dateFromKey(report.previousDay.date));
-    document.getElementById('report-weekday-label').textContent = `Promedio de ${weekday} · ${report.previousDay.averageSampleSize} observaciones`;
+    const comparisonCutoff = report.includeToday ? `Corte ${report.previousDay.comparisonCutoffTime.slice(0, 5)}` : 'Día completo';
+    document.getElementById('report-weekday-label').textContent = `${weekday} · ${report.previousDay.averageSampleSize} de 8 días · ${comparisonCutoff}${report.previousDay.sameWeekdayAverage == null ? ' · Referencia incompleta' : ''}`;
+    document.getElementById('report-weekday-label').title = `Fechas de referencia: ${report.previousDay.equivalentDays.dates.map(formatReportDate).join(', ')} · ${comparisonCutoff} · America/Santiago`;
     renderIntradayReport(report.intraday, report.includeToday);
     renderSalesStatistics(report.statistics, report.averageTicketStatistics, report.discountStatistics, report.orderCountStatistics);
     setReportChart('report-summary-day', {
@@ -2767,12 +2769,13 @@ async function loadWeeklySalesReport() {
     });
     const weekChart = reportChartRegistry.get('sales-statistics-weeks');
     const monthChart = reportChartRegistry.get('sales-statistics-months');
-    const equivalentChart = reportChartRegistry.get('sales-statistics-equivalent-days');
     if (weekChart) setReportChart('report-summary-week', { ...weekChart, title: 'Evolución de la venta semanal' });
     if (monthChart) setReportChart('report-summary-month', { ...monthChart, title: 'Evolución de la venta mensual' });
-    if (equivalentChart) setReportChart('report-summary-equivalent', {
-      ...equivalentChart,
-      title: `Venta de los últimos ${report.previousDay.averageSampleSize || 0} ${weekday}s comparables`
+    setReportChart('report-summary-equivalent', {
+      type: 'bar', title: 'Últimos 8 días equivalentes',
+      subtitle: `${weekday} · ${comparisonCutoff} · America/Santiago`,
+      labels: report.previousDay.equivalentDays.samples.map(sample => formatReportDate(sample.date)),
+      series: [{ name: 'Venta neta', values: report.previousDay.equivalentDays.samples.map(sample => sample.sales) }]
     });
     const coverage = report.sourceCoverage || {};
     const sourceSummary = `Última venta registrada: ${formatReportDate(coverage.latestSaleDate)}.`;
@@ -7439,14 +7442,83 @@ async function loadPurchaseProjection(options = {}) {
       ? ` El último inventario disponible corresponde al ${formatReportDate(data.period.dataThrough)}.`
       : '';
     setStatus(status,
-      `Consumo considerado: ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. ${data.consumptionCriteria}.${stale} ${(data.warnings||[]).join(' ')}`,
+      `${options.successMessage ? options.successMessage + ' ' : ''}Consumo considerado: ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. ${data.consumptionCriteria}.${stale} ${(data.warnings||[]).join(' ')}`,
       stale || data.warnings?.length ? 'muted' : 'success');
   } catch (error) {
     purchaseProjectionState = null;
     renderPurchaseProjection();
-    setStatus(status, error.message, 'error');
+    setStatus(status, `${options.successMessage ? options.successMessage + ' ' : ''}${error.message}`, 'error');
   } finally {
     button.disabled = false;
+  }
+}
+
+async function openCopyProjectionPolicies() {
+  const location = document.getElementById('projection-location-filter').value;
+  if (!location) return;
+  const dialog = document.getElementById('copy-projection-policies-dialog');
+  const sourceSelect = document.getElementById('copy-projection-policies-source');
+  const button = document.getElementById('confirm-copy-projection-policies');
+  const status = document.getElementById('copy-projection-policies-status');
+  dialog.dataset.location = location;
+  dialog.dataset.locationName = locationRegistry[location]?.name || location;
+  document.getElementById('copy-projection-policies-description').textContent = `Ubicación de destino: ${dialog.dataset.locationName}.`;
+  sourceSelect.replaceChildren(new Option('Selecciona una cafetería', ''));
+  sourceSelect.disabled = true;
+  button.disabled = true;
+  setStatus(status, 'Consultando criterios guardados…');
+  dialog.showModal();
+  try {
+    const data = await apiRequest(`/api/purchase-projections/policies/sources?location=${encodeURIComponent(location)}`);
+    if (!dialog.open || dialog.dataset.location !== location) return;
+    sourceSelect.replaceChildren(new Option('Selecciona una cafetería', ''), ...data.sources.map(source => {
+      const option = new Option(`${source.name} (${source.itemCount} ítems con criterios guardados)`, source.id);
+      option.disabled = source.itemCount === 0;
+      option.dataset.name = source.name;
+      return option;
+    }));
+    sourceSelect.disabled = !data.sources.some(source => source.itemCount > 0);
+    setStatus(status, sourceSelect.disabled ? 'No hay otra cafetería con criterios guardados. Guarda primero los criterios en la cafetería de origen.' : '', 'muted');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function copyProjectionPolicies() {
+  const dialog = document.getElementById('copy-projection-policies-dialog');
+  const sourceSelect = document.getElementById('copy-projection-policies-source');
+  const button = document.getElementById('confirm-copy-projection-policies');
+  const cancelButton = document.getElementById('cancel-copy-projection-policies');
+  const status = document.getElementById('copy-projection-policies-status');
+  const location = dialog.dataset.location;
+  const sourceLocation = sourceSelect.value;
+  if (button.disabled || !sourceLocation) return;
+  if (location !== document.getElementById('projection-location-filter').value) {
+    return setStatus(status, 'La ubicación seleccionada cambió. Cierra este diálogo y vuelve a abrirlo para el nuevo destino.', 'error');
+  }
+  const sourceName = sourceSelect.selectedOptions[0].dataset.name;
+  if (!window.confirm(`¿Cargar los criterios guardados de ${sourceName} en ${dialog.dataset.locationName}?\n\nSe reemplazarán los proveedores, las unidades por empaque, los días mínimos y máximos y el campo Administrar existentes. Los productos sin criterios en el origen volverán a sus valores predeterminados y quedarán sin administrar. También se descartarán los cambios sin guardar de la proyección actual.\n\n¿Confirmas el reemplazo?`)) return;
+  button.disabled = true;
+  cancelButton.disabled = true;
+  sourceSelect.disabled = true;
+  dialog.dataset.copying = 'true';
+  setStatus(status, 'Reemplazando criterios…');
+  try {
+    const result = await apiRequest('/api/purchase-projections/policies/copy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location, sourceLocation, confirmed: true })
+    });
+    dialog.close();
+    if (location === document.getElementById('projection-location-filter').value) {
+      await loadPurchaseProjection({ successMessage: `${result.copied} criterios cargados de ${result.source.name} y guardados en ${result.location.name}.` });
+    }
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    dialog.dataset.copying = 'false';
+    cancelButton.disabled = false;
+    sourceSelect.disabled = false;
+    button.disabled = !sourceSelect.value;
   }
 }
 
@@ -11239,6 +11311,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderPurchaseProjection();
   });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
+  document.getElementById('open-copy-projection-policies').addEventListener('click', openCopyProjectionPolicies);
+  document.getElementById('cancel-copy-projection-policies').addEventListener('click', () => {
+    document.getElementById('copy-projection-policies-dialog').close();
+  });
+  document.getElementById('copy-projection-policies-source').addEventListener('change', event => {
+    document.getElementById('confirm-copy-projection-policies').disabled = !event.target.value;
+  });
+  document.getElementById('confirm-copy-projection-policies').addEventListener('click', copyProjectionPolicies);
+  document.getElementById('copy-projection-policies-dialog').addEventListener('cancel', event => {
+    if (event.currentTarget.dataset.copying === 'true') event.preventDefault();
+  });
   document.getElementById('print-purchase-order').addEventListener('click', openPurchaseOrderEditor);
   document.getElementById('past-purchase-orders').addEventListener('click', openPastPurchaseOrders);
   document.getElementById('open-tentative-purchase-orders').addEventListener('click', openTentativePurchaseOrders);

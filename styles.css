@@ -5316,6 +5316,16 @@ body {
   border-radius: 12px;
 }
 
+#copy-projection-policies-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.copy-projection-policies-field {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
 .projection-branch-orders-table {
   width: 100%;
   border-collapse: collapse;

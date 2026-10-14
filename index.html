@@ -706,7 +706,7 @@
           <div class="report-card-details">
             <span id="report-general-rank">Ranking general: —</span>
             <span id="report-weekday-rank">Ranking mismo día: —</span>
-            <span id="report-average-comparison">Vs. promedio 8 semanas: —</span>
+            <span id="report-average-comparison">Vs. promedio 8 días equivalentes: —</span>
           </div>
           <label class="report-cutoff-toggle report-card-cutoff" for="report-include-today">
             <input id="report-include-today" type="checkbox" checked />
@@ -737,8 +737,8 @@
 
         <article class="summary-card">
           <div class="summary-head">
-            <span class="label">Promedio mismo día</span>
-            <span class="chip neutral">8 semanas</span>
+            <span class="label">Promedio 8 días equivalentes</span>
+            <span class="chip neutral">8 días</span>
           </div>
           <div id="report-weekday-average" class="value">$0</div>
           <div id="report-weekday-label" class="report-period">—</div>
@@ -764,7 +764,7 @@
               <small id="intraday-weekday-detail">Sin referencia</small>
             </article>
             <article class="intraday-indicator-card">
-              <span>Vs. promedio 8 semanas</span>
+              <span>Vs. promedio 8 días equivalentes</span>
               <strong id="intraday-average-comparison">—</strong>
               <small id="intraday-average-detail">Sin referencia</small>
             </article>
@@ -1413,6 +1413,7 @@
       <div id="purchase-projection-summary" class="products-summary"></div>
       <div class="purchase-projection-actions">
         <button id="save-projection-policies" class="icon-button" type="button" disabled>Guardar criterios</button>
+        <button id="open-copy-projection-policies" class="icon-button" type="button">Cargar criterios de otra cafetería</button>
         <button id="past-purchase-orders" class="icon-button" type="button">Órdenes de Compra Pasadas</button>
         <button id="open-tentative-purchase-orders" class="icon-button" type="button">Órdenes tentativas</button>
         <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
@@ -1431,6 +1432,25 @@
           <tbody id="purchase-projection-body"></tbody>
         </table>
       </div>
+      <dialog id="copy-projection-policies-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="copy-projection-policies-title" aria-describedby="copy-projection-policies-description">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Proyección de compras</div>
+            <h2 id="copy-projection-policies-title">Cargar criterios de otra cafetería</h2>
+            <p id="copy-projection-policies-description" class="panel-description"></p>
+          </div>
+          <button id="cancel-copy-projection-policies" class="icon-button" type="button">Cancelar</button>
+        </div>
+        <label class="copy-projection-policies-field" for="copy-projection-policies-source">Cafetería de origen
+          <select id="copy-projection-policies-source" disabled><option value="">Selecciona una cafetería</option></select>
+        </label>
+        <p class="form-status muted">Se reemplazarán los proveedores, las unidades por empaque, los días mínimos y máximos y el campo Administrar con los criterios guardados del origen, por código de producto. Los productos sin criterios en el origen volverán a sus valores predeterminados y quedarán sin administrar.</p>
+        <p class="form-status muted">También se descartarán los cambios de criterios que aún no hayas guardado en la proyección actual.</p>
+        <div id="copy-projection-policies-status" class="form-status" aria-live="polite"></div>
+        <div class="projection-branch-orders-actions">
+          <button id="confirm-copy-projection-policies" class="primary" type="button" disabled>Reemplazar criterios…</button>
+        </div>
+      </dialog>
       <dialog id="projection-branch-orders-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-branch-orders-title">
         <div class="purchase-order-dialog-head">
           <div>

@@ -9,6 +9,7 @@ La zona horaria de negocio es **America/Santiago**. Las fechas de períodos y el
 | Margen de contribución comercial | Venta neta menos costo directo disponible; el porcentaje divide ese margen monetario entre venta neta. Nunca se promedian márgenes porcentuales de locales o transacciones. | **Sin IVA** |
 | Ticket promedio | Venta **con IVA y después de descuentos** dividida entre número de pedidos/transacciones únicos. El denominador y el período deben coincidir con los de la venta. | **Con IVA** |
 | Descuento % | Descuentos concedidos divididos entre la venta bruta antes de descuentos. El factor de IVA se cancela si numerador y denominador usan la misma base. | Porcentaje |
+| Comparación con 8 días equivalentes | Compara la venta neta del día con el promedio de ese mismo día de la semana en las ocho semanas inmediatamente anteriores. Para hoy, ambas ventas usan la misma hora de consulta en Santiago; para ayer, se usan días completos. Vista clásica, grilla e indicador intradía comparten fechas, calendario y corte. | Requiere ocho fechas válidas; incluye ceros de días abiertos según calendario. Sin ocho fechas válidas o con promedio cero, el porcentaje se muestra como «—». |
 | Precio para análisis de sensibilidad | Precio efectivo pagado por el cliente, con IVA. La asociación observada entre precio y unidades no demuestra causalidad. | **Con IVA** |
 | Resultado operacional parcial | Margen comercial menos los gastos operacionales conocidos y cubiertos por los archivos disponibles. No es un estado de resultados completo ni EBITDA. | **Sin IVA** |
 
