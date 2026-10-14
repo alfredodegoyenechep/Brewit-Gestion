@@ -8995,33 +8995,6 @@ button:disabled {
   .weekly-results-amount { min-width: 130px; }
   .weekly-results-table { --weekly-results-row-size: 13px; }
 }
-.financial-weekly-table-wrap { overflow-x: auto; }
-.financial-weekly-table { width: 100%; min-width: 1050px; border-collapse: collapse; }
-.financial-weekly-table th, .financial-weekly-table td { padding: 14px 10px; border-bottom: 1px solid var(--border); text-align: right; }
-.financial-weekly-table th:first-child { text-align: left; min-width: 180px; }
-.financial-weekly-table thead th { font-size: 12px; }
-.financial-weekly-table tbody tr:last-child, .financial-weekly-table td:last-child { font-weight: 800; background: var(--bg-soft); }
-#financial-weekly-progress { width: min(100%, 640px); height: 18px; margin-top: 16px; accent-color: var(--accent); }
-#financial-weekly-form { flex-wrap: wrap; margin-bottom: 14px; }
-
-.financial-weekly-table .weekly-net-sales th,
-.financial-weekly-table .weekly-net-sales td,
-.financial-weekly-table .weekly-gross-sales th,
-.financial-weekly-table .weekly-gross-sales td { font-size: calc(1em + 1px); }
-.financial-weekly-table .weekly-net-sales td,
-.financial-weekly-table .weekly-gross-sales td { color: #4c9aff; }
-.financial-weekly-table .weekly-reconciliation th,
-.financial-weekly-table .weekly-reconciliation td { font-size: calc(1em - 3px); }
-.financial-weekly-table .weekly-reconciliation td { color: #4c9aff; }
-.financial-weekly-table .weekly-collection-difference th,
-.financial-weekly-table .weekly-collection-difference td { font-weight: 800; border-bottom: 2px solid var(--border); }
-.financial-weekly-table .weekly-reconciliation .weekly-balanced { color: var(--green); }
-.financial-weekly-table .weekly-reconciliation .weekly-difference { color: var(--red); }
-.financial-weekly-table .weekly-reconciliation .weekly-unavailable,
-.financial-weekly-table .weekly-gross-sales .weekly-unavailable { color: var(--text-muted); }
-.weekly-reconciliation-note { font-size: calc(1em - 3px); color: var(--text-muted); }
-.financial-weekly-table .weekly-expense td { color: var(--red); font-size: calc(1em - 3px); }
-
 /* Separate supplier groups in the consolidated purchase summary, including PDF. */
 .master-summary .purchase-master-table .master-subtotal td {
   border-bottom: 3px solid var(--border);
@@ -9037,21 +9010,6 @@ button:disabled {
 @media print {
   body.printing-purchase-master .master-summary .master-subtotal td { border-bottom: 3px solid #ccc; }
   body.printing-purchase-master .master-summary .master-group-gap td { height: 12px; padding: 0; border: 0; }
-}
-
-.financial-weekly-table .weekly-percent { font-size: calc(1em + 2px); }
-
-.financial-weekly-table .weekly-net-sales-note { font-size: calc(1em - 2px); }
-.financial-weekly-table .weekly-discounts th,
-.financial-weekly-table .weekly-discounts td { color: #8ec5ff; }
-
-.financial-weekly-table .weekly-expense:not(.weekly-discounts) td {
-  color: #808080;
-  font-style: italic;
-}
-.financial-weekly-table .weekly-expense:not(.weekly-discounts) .weekly-percent {
-  color: var(--red);
-  font-size: calc(1em + 3px);
 }
 
 .financial-warning-detail-button { color: inherit; font: inherit; text-align: left; background: transparent; border: 0; padding: 5px 0; width: 100%; cursor: pointer; line-height: 1.5; }
@@ -9080,7 +9038,6 @@ button:disabled {
 #financial-results-workspace button { font-size: calc(13.333333px + 3px); }
 #financial-results-workspace .workspace-tabs button { font-size: inherit; }
 #financial-results-workspace .financial-warning-detail-button { font-size: inherit; }
-#financial-results-workspace .financial-weekly-table thead th { font-size: 15px; }
 #financial-results-workspace .financial-results-heading h2 { font-size: calc(30px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-results-filters label { font-size: calc(10px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-summary-card span { font-size: calc(10px * var(--font-scale) + 3px); }

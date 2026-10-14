@@ -34,9 +34,9 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   const base = `http://127.0.0.1:${server.address().port}`;
   const form = new FormData();
   form.append('mercadopago', new Blob([[
-    'TRANSACTION_DATE\tSOURCE_ID\tTRANSACTION_TYPE\tTRANSACTION_AMOUNT',
-    '2026-09-21T12:00:00-03:00\tcard\tSETTLEMENT\t1100',
-    '2026-09-28T12:00:00-03:00\tnext\tSETTLEMENT\t1200'
+    'TRANSACTION_DATE\tSOURCE_ID\tTRANSACTION_TYPE\tTRANSACTION_AMOUNT\tFEE_AMOUNT\tREAL_AMOUNT',
+    '2026-09-21T12:00:00-03:00\tcard\tSETTLEMENT\t1100\t20\t1080',
+    '2026-09-28T12:00:00-03:00\tnext\tSETTLEMENT\t1200\t20\t1180'
   ].join('\n')]), 'settlements.csv');
   const inspectionResponse = await fetch(`${base}/api/uploads/transactions/inspect?location=store-1`, { method: 'POST', body: form });
   assert.equal(inspectionResponse.status, 200);
@@ -44,25 +44,25 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   const confirmed = await fetch(`${base}/api/uploads/transactions/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: inspection.token, dateFrom: inspection.detectedRange.from, dateTo: inspection.detectedRange.to, confirmed: true, categoryConfirmed: true, overlapAction: 'keep' }) });
   assert.equal(confirmed.status, 200);
-  const response = await fetch(`${base}/api/financial-results/weekly?location=store-1`);
+  const response = await fetch(`${base}/api/weekly-results?includeInventory=false`);
   assert.equal(response.status, 200);
   const report = await response.json();
-  const week = report.weeks[3].values;
-  assert.equal(week.grossSales.amount, 1190);
+  const branch = week => week.locations.find(location => location.locationId === 'store-1').values;
+  const week = branch(report.weeks[1]);
+  assert.ok(Math.abs(week.grossSalesAfterDiscounts.amount - 1190) < 1e-8);
   assert.equal(week.mercadoPagoTips.amount, 100);
-  assert.equal(week.cashSales.amount, 190);
-  assert.equal(week.mercadoPagoNet.amount, 1000);
-  assert.equal(week.mercadoPagoDifference.amount, -190);
-  assert.equal(week.collectedSales.amount, 1190);
-  assert.equal(week.collectionDifference.amount, 0);
+  assert.equal(week.cashTips.amount, 10);
+  assert.equal(week.tips.amount, 110);
+  assert.equal(week.cashCollection.amount, 200);
+  assert.equal(week.mercadoPagoFee.amount, 20);
+  assert.equal(week.mercadoPagoCollection.amount, 1080);
+  assert.ok(Math.abs(week.mercadoPagoTheoretical.amount - 1080) < 1e-8);
+  assert.ok(Math.abs(week.collectionDifference.amount) < 1e-8);
   assert.equal(week.collectionDifference.complete, true);
-  assert.equal(report.weeks[4].values.collectionDifference.amount, 100);
-  assert.equal(report.total.grossSales.amount, 2190);
-  assert.equal(report.total.mercadoPagoCollection.amount, 2300);
-  assert.equal(report.total.mercadoPagoCollection.available, true);
-  assert.equal(report.total.mercadoPagoTips.amount, 200);
-  assert.equal(report.total.cashSales.amount, 190);
-  const otherStore = await fetch(`${base}/api/financial-results/weekly?location=store-2`).then(response => response.json());
-  assert.equal(otherStore.total.cashSales.available, false);
-  assert.equal(otherStore.total.collectionDifference.complete, false);
+  assert.ok(Math.abs(branch(report.weeks[0]).collectionDifference.amount - 100) < 1e-8);
+  assert.ok(Math.abs(report.weeks.reduce((sum, period) => sum + branch(period).grossSalesAfterDiscounts.amount, 0) - 2190) < 1e-8);
+  assert.equal(report.weeks.reduce((sum, period) => sum + branch(period).mercadoPagoCollection.amount, 0), 2260);
+  const otherStore = report.weeks[1].locations.find(location => location.locationId === 'store-2').values;
+  assert.equal(otherStore.cashCollection.amount, null);
+  assert.equal(otherStore.collectionDifference.complete, false);
 });

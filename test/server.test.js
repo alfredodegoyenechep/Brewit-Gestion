@@ -1720,17 +1720,9 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   const differences=manualReport.statement.expenses.filter(item=>item.key==='inventoryDifference');
   assert.equal(differences.length,1);assert.equal(differences[0].amount,-15000);assert.equal(differences[0].available,true);
   assert.equal(manualReport.statement.expenses.some(item=>item.key==='general:inventoryDifference'),false);
-  const weeklyResponse = await fetch(`${baseUrl}/api/financial-results/weekly?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15`);
-  assert.equal(weeklyResponse.status, 200);
-  const weekly = await weeklyResponse.json();
-  assert.equal(weekly.weeks.length, 5);
-  assert.deepEqual(weekly.weeks[4].period, { from: '2026-08-10', to: '2026-08-16' });
-  assert.equal(weekly.total.inventoryDifference, undefined);
-  assert.ok(weekly.metrics.some(([key]) => key === 'otherConsumables'));
-  assert.ok(weekly.metrics.some(([key]) => key === 'adjustedKardexTotalCost'));
-  assert.equal(Math.round(weekly.total.netSales.amount), Math.round(manualReport.statement.netSales));
-  assert.equal(weekly.total.mercadoPagoCollection.amount, 2380);
-  assert.equal(weekly.weeks[4].values.mercadoPagoCollection.amount, 2380);
+  for (const route of ['/api/financial-results/weekly', '/api/financial-results/weekly/stream']) {
+    assert.equal((await fetch(`${baseUrl}${route}?location=store-1`)).status, 404);
+  }
 
 
 });

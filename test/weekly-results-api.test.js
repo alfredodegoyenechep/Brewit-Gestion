@@ -186,7 +186,7 @@ test('daily valuation uses the weekly closing cost even when the catalog changes
   assert.equal((await response.json()).revenue.total.contributionMargin, 980);
 });
 
-test('weekly API distinguishes calendar consumption from count intervals, matches Kardex and preserves old report', async t => {
+test('weekly API distinguishes calendar consumption from count intervals, matches Kardex and retires old weekly endpoints', async t => {
   const { base } = await fixture(t);
   const data = await getReport(base);
   assert.deepEqual(data.locations.map(location => location.id), ['store-1', 'store-2', 'store-3']);
@@ -248,11 +248,9 @@ test('weekly API distinguishes calendar consumption from count intervals, matche
   const events = stream.trim().split('\n').map(JSON.parse);
   assert.deepEqual(events.at(-1).data, data);
   assert.equal(events.at(-2).completed, 12);
-  const legacy = await fetch(`${base}/api/financial-results/weekly?location=store-1`).then(response => response.json());
-  assert.equal(legacy.weeks.length, 5);
-  assert.equal(legacy.total.netSales.amount, 1100);
-  assert.equal(legacy.weeks.find(week => week.period.from === '2026-10-05').values.mercadoPagoCollection.amount, 1100);
-  assert.equal(legacy.weeks.find(week => week.period.from === '2026-10-05').values.discounts.amount, 1000);
+  for (const route of ['/api/financial-results/weekly', '/api/financial-results/weekly/stream']) {
+    assert.equal((await fetch(`${base}${route}?location=store-1`)).status, 404);
+  }
 });
 
 test('known partial costs and count coverage contribute to the displayed total without inventing missing amounts', async t => {

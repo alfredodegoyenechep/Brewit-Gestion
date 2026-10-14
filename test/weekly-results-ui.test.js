@@ -88,7 +88,7 @@ test('daily popup loads on demand, keeps weekly inventory totals, switches branc
   assert.equal(await popup.isVisible(), false);
 });
 
-test('independent weekly screen waits for Actualizar, groups dynamic stores, exposes dates and keeps legacy tabs', { skip: !fs.existsSync(chrome) }, async t => {
+test('independent weekly screen waits for Actualizar, groups dynamic stores, exposes dates and keeps the remaining financial tabs', { skip: !fs.existsSync(chrome) }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-weekly-results-ui-'));
   const server = createApp({ enableLegacyTools: true, uploadsRoot: root, reportToday: '2026-10-13' }).listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -196,9 +196,15 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   });
   assert.equal(sticky.position, 'sticky'); assert.equal(sticky.before, sticky.after); assert.equal(sticky.horizontal, true);
   await page.locator('[data-view="financial-results"]').click();
-  assert.equal(await page.getByRole('tab', { name: 'Resultados Semanales', exact: true }).isVisible(), true);
-  await page.getByRole('tab', { name: 'Resultados Semanales', exact: true }).click();
-  assert.equal(await page.getByRole('button', { name: 'Procesar vista', exact: true }).isVisible(), true);
+  assert.equal(await page.getByRole('tab', { name: 'Resultados Semanales', exact: true }).count(), 0);
+  assert.equal(await page.locator('#financial-weekly-form').count(), 0);
+  assert.deepEqual(await page.locator('#financial-results-workspace [role="tab"]').allTextContents(), ['Estado de resultados', 'Gastos generales', 'Participación', 'Jerarquías y margen', 'Revisión de costos']);
+  await page.getByRole('tab', { name: 'Gastos generales', exact: true }).click();
+  assert.equal(await page.locator('#financial-results-workspace-panel-expenses').isVisible(), true);
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();
+  const financialRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/api/financial-results');
+  await page.locator('#financial-results-filters button[type="submit"]').click();
+  await financialRequest;
   const requestsBeforeReturn = requests;
   await page.locator('[data-view="weekly-results"]').click();
   assert.equal(requests, requestsBeforeReturn);

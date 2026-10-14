@@ -46,21 +46,20 @@ test('weekly consumption survives incomplete inventory coverage across monthly s
   form.append('master-catalog', new Blob([XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' })]), 'catalog.xlsx');
   form.append('master-catalog-from', '2026-09-01');
   assert.equal((await fetch(`${base}/upload/master`, { method: 'POST', body: form })).status, 200);
-  const request = `${base}/api/financial-results/weekly?location=store-1`;
+  const request = `${base}/api/weekly-results`;
   const response = await fetch(request);
   const data = await response.json();
   assert.equal(response.status, 200, JSON.stringify(data));
-  const week = data.weeks.find(week => week.period.from === '2026-09-28');
-  assert.equal(week.values.marketingConsumption.amount, -230);
-  assert.equal(week.values.marketingConsumption.complete, true);
-  assert.equal(week.values.employeeConsumption.amount, -690);
-  assert.equal(week.values.employeeConsumption.complete, true);
-  assert.equal(week.values.adjustedKardexTotalCost.complete, false);
-  assert.equal(week.values.calibrationConsumption.complete, false);
-  assert.match(data.warnings.join('\n'), /2026-09-28 al 2026-10-04.*cubrir todos los días/);
-  assert.equal(data.total.marketingConsumption.amount, -230);
-  assert.equal(data.total.employeeConsumption.amount, -690);
-  const streamed = await fetch(request.replace('/weekly?', '/weekly/stream?')).then(response => response.text());
+  const week = data.weeks.find(week => week.period.from === '2026-09-28').locations.find(location => location.locationId === 'store-1');
+  assert.equal(week.values.marketing.amount, -230);
+  assert.equal(week.values.marketing.status, 'partial');
+  assert.equal(week.values.employees.amount, -690);
+  assert.equal(week.values.employees.status, 'partial');
+  assert.equal(week.inventory.initialDate, '2026-09-29');
+  assert.equal(week.inventory.finalDate, '2026-09-30');
+  assert.equal(week.values.waste.available, false);
+  assert.match(data.warnings.join('\n'), /2026-09-28 al 2026-10-04.*cobertura.*parcial/);
+  const streamed = await fetch(`${request}/stream`).then(response => response.text());
   assert.deepEqual(JSON.parse(streamed.trim().split('\n').at(-1)).data, data);
   // Direct Kardex processing still requires complete inventory sources.
   const direct = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },

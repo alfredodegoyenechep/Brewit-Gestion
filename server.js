@@ -7285,63 +7285,7 @@ function createApp(options = {}) {
     };
   }
 
-  function buildWeeklyFinancialPayload(query) {
-    const payload = buildFinancialResultsPayload({ ...query, skipInventory: true });
-    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store'
-      && (!query.location || query.location === 'all' || query.location === location.id));
-    const payments = toteatPaymentCollections(stores.map(location => ({ location, state: toteatSalesSync.get(location.id) })), query.dateFrom, query.dateTo);
-    payload.statement.mercadoPagoTips = payments.mercadoPagoTips;
-    payload.statement.cashSales = payments.cashSales;
-    payload.warnings.push(...payments.warnings);
-    if (!payload.statement.mercadoPagoCollection.complete) payload.warnings.push(`MercadoPago no tiene cobertura completa para las cafeterías seleccionadas del ${query.dateFrom} al ${query.dateTo}; la conciliación queda pendiente.`);
-    payload.inventorySummaries = stores.map(location => {
-      try {
-        // Use the same original sources and count boundaries as Procesar Kardex Propio.
-        // The next day's opening is the inclusive week's closing balance.
-        return buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
-          initialInventoryDate: query.dateFrom, finalInventoryDate: addDays(query.dateTo, 1) }).executiveSummary;
-      } catch (error) {
-        payload.warnings.push(`${location.name} (${query.dateFrom} al ${query.dateTo}): ${error.message}`);
-        try {
-          // Uploaded consumption and waste do not require complete count boundaries.
-          const independent = buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
-            initialInventoryDate: query.dateFrom, finalInventoryDate: addDays(query.dateTo, 1) }, { independentMetricsOnly: true });
-          payload.warnings.push(...independent.warnings);
-          return independent.executiveSummary;
-        } catch (independentError) {
-          payload.warnings.push(`${location.name}: ${independentError.message}`);
-          return null;
-        }
-      }
-    });
-    return payload;
-  }
-
-  app.get('/api/financial-results/weekly/stream', async (req, res) => {
-    const location = String(req.query.location || 'all');
-    if (location !== 'all' && !readLocations().locations.some(item => item.id === location && item.status === 'active' && item.type === 'store')) {
-      return res.status(400).json({ error: 'Selecciona una cafetería válida.' });
-    }
-    const query = { ...req.query, today: projectionToday() };
-    res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
-    res.flushHeaders();
-    const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
-    try {
-      const data = await require('./weekly-financial-results').buildWeeklyResultsWithProgress(query, buildWeeklyFinancialPayload,
-        progress => send({ type: 'progress', ...progress }), () => res.destroyed);
-      if (data) send({ type: 'result', data });
-    } catch (error) { send({ type: 'error', error: error.message || 'No se pudo procesar la vista.' }); }
-    finally { res.end(); }
-  });
-
-  app.get('/api/financial-results/weekly', (req, res) => {
-    try {
-      return res.json(require('./weekly-financial-results').buildWeeklyResults({ ...req.query, today: projectionToday() }, buildWeeklyFinancialPayload));
-    } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
-  });
-
-  // The independent weekly report has its own contract. The legacy weekly
-  // report above retains its five-week consolidated calculations.
+  // Weekly results are provided by the dedicated sidebar report.
   function weeklyResultsContext(query = {}) {
     const options = require('./weekly-results').reportOptions(query);
     const stocks = new Map();
@@ -7882,7 +7826,7 @@ function createApp(options = {}) {
     res.set('Cache-Control','no-store').json(require('./inventory-item-detail').buildItemDetail(snapshot.stock, snapshot.location, snapshot.report, item, {consumption:snapshot.consumption,convertQuantity:convertQuantityUnit}));
   });
 
-  function buildInventoryProcessPayload(body = {}, { independentMetricsOnly = false, stockState = null, retainDetails = true } = {}) {
+  function buildInventoryProcessPayload(body = {}, { stockState = null, retainDetails = true } = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
     const originalMode = synchronizedOnly || body?.source === 'originals';
@@ -7976,16 +7920,6 @@ function createApp(options = {}) {
         } catch (error) {
           waste = { label: 'Merma', available: true, error: error.message };
         }
-      }
-      if (independentMetricsOnly) {
-        const metrics = Object.fromEntries([
-          ['marketingConsumption', 'marketing'], ['employeeConsumption', 'employees'], ['calibrationConsumption', 'calibrations']
-        ].map(([key, field]) => [key, inventoryConsumptionMetric(consumption[field])]));
-        metrics.waste = { available: waste.available === true && !waste.error, amount: waste.report?.totalCost ?? null };
-        const warnings = Object.values(consumption).filter(entry => entry.error)
-          .map(entry => `${location.name} (${movementDateFrom} al ${movementDateTo}): ${entry.label}: ${entry.error}`);
-        if (waste.error) warnings.push(`${location.name} (${movementDateFrom} al ${movementDateTo}): Merma: ${waste.error}`);
-        return { executiveSummary: { metrics }, warnings };
       }
       let boundaryReport=null;
       if(boundaryMode) {

@@ -1587,10 +1587,6 @@ function openFinancialWarningDetail(detail, period) {
 }
 
 async function loadFinancialResults() {
-  if (!document.getElementById('financial-results-workspace-panel-weekly')?.hidden) {
-    document.querySelector('#financial-weekly-form button').focus();
-    return;
-  }
   const status = document.getElementById('financial-results-status');
   const form = document.getElementById('financial-results-filters');
   const button = form.querySelector('button[type="submit"]');
@@ -11748,7 +11744,6 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
 ]);
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
   ['statement', 'Estado de resultados', ['#financial-results-summary', '.financial-statement-panel']],
-  ['weekly', 'Resultados Semanales', ['.financial-weekly-panel']],
   ['expenses', 'Gastos generales', ['.financial-general-expenses-panel']],
   ['breakdowns', 'Participación', ['.financial-breakdowns-grid']],
   ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
@@ -11900,148 +11895,3 @@ demandNavigationRow.append(demandNavigation, document.getElementById('sales-clus
     try { window.print(); } finally { document.body.classList.remove('printing-purchase-master'); document.title = title; }
   });
 })();
-
-let weeklyFinancialRequest = 0;
-let weeklyFinancialController = null;
-async function loadWeeklyFinancialResults() {
-  const form = document.getElementById('financial-weekly-form');
-  if (!form.reportValidity()) return;
-  weeklyFinancialController?.abort();
-  const controller = new AbortController(); weeklyFinancialController = controller;
-  const request = ++weeklyFinancialRequest;
-  const progress = document.getElementById('financial-weekly-progress');
-  progress.hidden = false; progress.value = 0;
-  [...form.elements].forEach(element => { element.disabled = true; });
-  form.setAttribute('aria-busy', 'true');
-  const status = document.getElementById('financial-weekly-status');
-  const container = document.getElementById('financial-weekly-results');
-  container.replaceChildren();
-  const params = new URLSearchParams({
-    location: document.getElementById('financial-results-location').value || 'all',
-    costValuation: document.getElementById('financial-cost-valuation').value
-  });
-  setStatus(status, 'Calculando resultados semanales…');
-  try {
-    const response = await fetch(`/api/financial-results/weekly/stream?${params}`, { signal: controller.signal });
-    if (!response.ok) {
-      const failure = await response.json().catch(() => ({}));
-      throw new Error(failure.error || `La solicitud falló (${response.status}).`);
-    }
-    const reader = response.body.getReader(), decoder = new TextDecoder();
-    let pending = '', data = null;
-    const receive = line => {
-      if (!line.trim() || request !== weeklyFinancialRequest) return;
-      const event = JSON.parse(line);
-      if (event.type === 'error') throw new Error(event.error);
-      if (event.type === 'progress') {
-        progress.value = event.completed / event.total * 100;
-        setStatus(status, `${Math.round(progress.value)}% · ${event.completed} de ${event.total} semanas calculadas · Semana ${event.week} (${formatReportDate(event.period.from)} – ${formatReportDate(event.period.to)})${event.completed === event.total ? ' · Preparando reporte…' : ' · Procesando…'}`);
-      }
-      if (event.type === 'result') data = event.data;
-    };
-    while (true) {
-      const chunk = await reader.read();
-      pending += decoder.decode(chunk.value, { stream: !chunk.done });
-      const lines = pending.split('\n'); pending = lines.pop(); lines.forEach(receive);
-      if (chunk.done) break;
-    }
-    if (pending.trim()) receive(pending);
-    if (!data) throw new Error('Se interrumpió el procesamiento. Vuelve a pulsar Procesar vista.');
-    if (request !== weeklyFinancialRequest) return;
-    const context = document.createElement('p');
-    context.textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Semanas de lunes a domingo`;
-    container.append(context);
-    const reconciliationTitles = {
-      grossSales: 'Venta Neta × 1,19: incluye IVA y considera los descuentos.',
-      mercadoPagoCollection: 'Cobros registrados en MercadoPago antes de comisiones, en el mismo período.',
-      mercadoPagoTips: 'Propinas registradas en TotEat para los pagos por MercadoPago. Excluye las propinas en efectivo.',
-      mercadoPagoNet: 'Recaudación MercadoPago − propinas de MercadoPago.',
-      mercadoPagoDifference: 'MercadoPago menos propinas − Venta Bruta. Un valor negativo indica cuánto falta cubrir.',
-      cashSales: 'Efectivo registrado en TotEat, descontando vuelto y propinas en efectivo.',
-      collectedSales: 'Recaudación MercadoPago − propinas de MercadoPago + venta en efectivo.',
-      collectionDifference: 'MercadoPago − propinas + efectivo − Venta Bruta. $0 indica que los montos cuadran; positivo indica exceso y negativo, faltante.'
-    };
-    const comparisonKeys = new Set(['mercadoPagoNet', 'mercadoPagoDifference', 'collectedSales', 'collectionDifference']);
-    const fillCell = (cell, value, showPercent = true, reconciliationKey = null) => {
-      const amount = document.createElement('span'); amount.className = 'weekly-amount';
-      if (reconciliationKey && !value?.available) {
-        amount.textContent = comparisonKeys.has(reconciliationKey) ? 'Pendiente' : 'Sin datos';
-        cell.classList.add('weekly-unavailable');
-        cell.title = 'Faltan datos para comparar todas las fuentes del período.';
-        cell.append(amount);
-        return;
-      }
-      amount.textContent = formatClp(value?.amount ?? 0);
-      cell.append(amount);
-      if (reconciliationKey && !value.complete) cell.title = 'Cobertura incompleta: monto disponible para este período.';
-      if (comparisonKeys.has(reconciliationKey) && !value.complete) {
-        const pending = document.createElement('span'); pending.className = 'weekly-pending'; pending.textContent = 'Pendiente';
-        cell.classList.add('weekly-unavailable');
-        cell.append(' · ', pending);
-        return;
-      }
-      if (reconciliationKey === 'collectionDifference') cell.classList.add(Math.round(value.amount) === 0 ? 'weekly-balanced' : 'weekly-difference');
-      if (!showPercent) return;
-      const percent = document.createElement('span'); percent.className = 'weekly-percent';
-      percent.textContent = `${(value?.percent ?? 0).toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
-      cell.append(' · ', percent);
-    };
-    {
-      const wrap = document.createElement('div'); wrap.className = 'financial-weekly-table-wrap';
-      const table = document.createElement('table'); table.className = 'financial-weekly-table';
-      const head = table.createTHead().insertRow();
-      ['Concepto', ...data.weeks.map((week, index) => `${index === 4 ? 'Semana actual' : `Hace ${4 - index} semana${index === 3 ? '' : 's'}`}${week ? ` · ${formatReportDate(week.period.from)} – ${formatReportDate(week.period.to)}` : ' · Fuera del rango'}`), 'Total'].forEach(label => {
-        const th = document.createElement('th'); th.textContent = label; head.append(th);
-      });
-      const body = table.createTBody();
-      data.metrics.forEach(([key, label]) => {
-        const row = body.insertRow(); const th = document.createElement('th'); th.scope = 'row'; th.textContent = label; row.append(th);
-        const isReconciliation = Object.hasOwn(reconciliationTitles, key);
-        row.className = key === 'netSales' ? 'weekly-net-sales' : key === 'grossSales' ? 'weekly-gross-sales' : isReconciliation ? 'weekly-reconciliation' : key === 'discounts' ? 'weekly-expense weekly-discounts' : 'weekly-expense';
-        if (key === 'mercadoPagoCollection') row.classList.add('weekly-mercadopago');
-        if (key === 'collectionDifference') row.classList.add('weekly-collection-difference');
-        if (isReconciliation) th.title = reconciliationTitles[key];
-        if (key === 'netSales' || key === 'grossSales') {
-          const note = document.createElement('span'); note.className = 'weekly-net-sales-note';
-          note.textContent = '(descuentos considerados)'; th.append(' ', note);
-        }
-        const showPercent = key !== 'netSales' && !isReconciliation;
-        data.weeks.forEach(week => fillCell(row.insertCell(), week?.values[key], showPercent, isReconciliation ? key : null));
-        fillCell(row.insertCell(), data.total[key], showPercent, isReconciliation ? key : null);
-      });
-      wrap.append(table); container.append(wrap);
-      const reconciliationNote = document.createElement('p'); reconciliationNote.className = 'weekly-reconciliation-note';
-      reconciliationNote.textContent = 'La venta bruta debe ser igual a MercadoPago menos sus propinas más la venta en efectivo de TotEat. La diferencia final debe ser $0; «Pendiente» indica que faltan datos para completar la comparación.';
-      container.append(reconciliationNote);
-    }
-    if (data.warnings.length) {
-      const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'Cobertura y criterios de cálculo'; details.append(summary);
-      data.warnings.forEach(message => { const p = document.createElement('p'); p.textContent = message; details.append(p); }); container.append(details);
-    }
-    progress.value = 100;
-    setStatus(status, 'Resultados semanales actualizados.', 'success');
-  } catch (error) {
-    controller.abort();
-    if (request === weeklyFinancialRequest && error.name !== 'AbortError') setStatus(status, error.message, 'error');
-  } finally {
-    if (request === weeklyFinancialRequest) {
-      [...form.elements].forEach(element => { element.disabled = false; });
-      form.setAttribute('aria-busy', 'false'); weeklyFinancialController = null;
-    }
-  }
-}
-
-document.getElementById('financial-weekly-form').addEventListener('submit', event => {
-  event.preventDefault(); loadWeeklyFinancialResults();
-});
-function invalidateWeeklyFinancialResults() {
-  weeklyFinancialController?.abort(); weeklyFinancialController = null; weeklyFinancialRequest++;
-  const form = document.getElementById('financial-weekly-form');
-  [...form.elements].forEach(element => { element.disabled = false; }); form.setAttribute('aria-busy', 'false');
-  document.getElementById('financial-weekly-progress').hidden = true;
-  document.getElementById('financial-weekly-results').replaceChildren();
-  setStatus(document.getElementById('financial-weekly-status'), 'Pulsa Procesar vista para ver la semana actual y las cuatro anteriores.');
-}
-document.getElementById('financial-weekly-form').addEventListener('change', invalidateWeeklyFinancialResults);
-for (const id of ['financial-results-location', 'financial-cost-valuation']) document.getElementById(id).addEventListener('change', invalidateWeeklyFinancialResults);
-invalidateWeeklyFinancialResults();

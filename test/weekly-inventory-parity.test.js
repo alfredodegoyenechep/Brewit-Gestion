@@ -41,13 +41,13 @@ test('weekly inventory matches original Kardex and only stores separate other co
   form.append('ingredient-hierarchy', new Blob([XLSX.write(hierarchies, {type:'buffer',bookType:'xlsx'})]), 'hierarchies.xlsx');
   form.append('ingredient-hierarchy-from', '2026-08-01');
   const upload = await fetch(`${base}/upload/master`, { method: 'POST', body: form }); assert.equal(upload.status, 200, await upload.text());
-  const response = await fetch(`${base}/api/financial-results/weekly?location=store-1`);
+  const response = await fetch(`${base}/api/weekly-results`);
   const weekly = await response.json(); assert.equal(response.status, 200, JSON.stringify(weekly));
   for (const week of weekly.weeks) {
-    const end = week.period.to < '2026-09-28' ? week.period.to : '2026-09-28';
-    const finalDate = new Date(Date.parse(end) + 86400000).toISOString().slice(0, 10);
+    const result = week.locations.find(location => location.locationId === 'store-1');
+    const { initialDate, finalDate } = result.inventory;
     const directResponse = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: 'store-1', source: 'originals', criteriaMode: 'count-boundaries', initialInventoryDate: week.period.from, finalInventoryDate: finalDate }) });
+      body: JSON.stringify({ location: 'store-1', source: 'originals', criteriaMode: 'count-boundaries', initialInventoryDate: initialDate, finalInventoryDate: finalDate }) });
     const direct = await directResponse.json(); assert.equal(directResponse.status, 200, JSON.stringify(direct));
     assert.deepEqual(direct.report.items.map(item => item.code), ['A']);
     assert.deepEqual(direct.otherConsumables.items.map(item => item.code), ['PAC014']);
@@ -55,7 +55,7 @@ test('weekly inventory matches original Kardex and only stores separate other co
       const metric = direct.executiveSummary.metrics[key];
       assert.equal(metric.available, true, key);
       assert.notEqual(metric.amount, 0, key);
-      assert.equal(week.values[key].amount, key === 'adjustedKardexTotalCost' ? Math.round(metric.amount) : -Math.round(Math.abs(metric.amount)), `${week.period.from}: ${key}`);
+      assert.equal(result.values[key === 'adjustedKardexTotalCost' ? 'inventoryShortage' : key].amount, key === 'adjustedKardexTotalCost' ? metric.amount : -Math.abs(metric.amount), `${week.period.from}: ${key}`);
     }
   }
   const centralResponse = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
