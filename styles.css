@@ -8954,8 +8954,13 @@ button:disabled {
 .weekly-results-table .weekly-results-unavailable { color: var(--text-muted); font-size: 13px; }
 .weekly-results-partial { display: block; font-size: 11px; font-weight: 500; color: var(--text-muted); margin-top: 3px; }
 .weekly-results-inventory-dates { display: block; font-size: 11px; font-weight: 500; color: var(--text-muted); margin-top: 3px; }
-.weekly-results-table .weekly-results-tip-breakdown > * { font-size: calc(var(--weekly-results-row-size) - 3px); }
-.weekly-results-table .weekly-results-tip-breakdown th { padding-left: 24px; font-weight: 500; }
+.weekly-results-table [data-metric="tips"] > *, .weekly-results-table [data-metric="mercadoPagoTips"] > *,
+.weekly-results-table [data-metric="netSales"] > *, .weekly-results-table [data-metric="grossSales"] > *,
+.weekly-results-table [data-metric="discounts"] > * { border-bottom: 0; }
+.weekly-results-table .weekly-results-breakdown > * { font-size: calc(var(--weekly-results-row-size) - 4px); padding-top: 4px; padding-bottom: 4px; }
+.weekly-results-table .weekly-results-breakdown td { color: var(--text-muted); }
+.weekly-results-breakdown .weekly-results-partial { font-size: 10px; margin-top: 2px; }
+.weekly-results-table .weekly-results-breakdown th { padding-left: 24px; font-weight: 500; }
 .weekly-results-review { display: block; margin: 4px auto 0; padding: 2px 6px; border: 0; background: transparent; color: var(--clay); text-decoration: underline; cursor: pointer; font-size: 11px; }
 .weekly-results-balanced { color: var(--green); }
 .weekly-results-difference { color: var(--red); }
@@ -8967,6 +8972,15 @@ button:disabled {
 .weekly-results-daily-button { padding: 4px 8px; font: inherit; font-size: 11px; white-space: nowrap; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--clay); cursor: pointer; }
 .weekly-results-daily { width: min(1600px, 94vw); box-sizing: border-box; }
 .weekly-results-daily::backdrop { background: rgba(46, 32, 21, .6); }
+.weekly-results-export { width: min(1500px, 94vw); box-sizing: border-box; }
+.weekly-results-export::backdrop { background: rgba(46, 32, 21, .6); }
+.weekly-results-export-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.weekly-results-export-button, .weekly-results-export-actions button { padding: 8px 12px; font: inherit; font-weight: 700; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); color: var(--text); cursor: pointer; }
+.weekly-results-export-actions .primary { background: var(--coffee); color: var(--cream); }
+.weekly-results-export-button:disabled { cursor: default; }
+.weekly-results-pdf-preview { width: 100%; height: 65vh; border: 1px solid var(--border); border-radius: 10px; }
+.weekly-results-export .weekly-results-table-wrap { max-height: 65vh; }
+.weekly-results-export-context { margin: 12px 0; color: var(--text-muted); }
 .weekly-results-daily > label { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
 .weekly-results-daily select { min-width: 0; max-width: 100%; padding: 8px 10px; font: inherit; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); color: var(--text); }
 #weekly-results-daily-close { padding: 8px 12px; font: inherit; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); color: var(--text); cursor: pointer; }

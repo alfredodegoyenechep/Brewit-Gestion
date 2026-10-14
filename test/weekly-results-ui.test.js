@@ -155,7 +155,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.equal(await page.locator('[data-metric="mercadoPagoTips"] .weekly-results-amount').first().innerText(), '$80');
   assert.equal(await page.locator('[data-metric="cashTips"] .weekly-results-amount').first().innerText(), '$20');
   assert.deepEqual(await page.locator('[data-metric="tips"], [data-metric="tips"] + tr, [data-metric="tips"] + tr + tr').evaluateAll(rows => rows.map(row => row.dataset.metric)), ['tips', 'mercadoPagoTips', 'cashTips']);
-  assert.deepEqual(await page.locator('[data-metric="netSales"], [data-metric="netSales"] + tr, [data-metric="netSales"] + tr + tr').evaluateAll(rows => rows.map(row => row.dataset.metric)), ['netSales', 'margin', 'tips']);
+  assert.deepEqual(await page.locator('#weekly-results-table tbody tr').evaluateAll(rows => rows.slice(0, 6).map(row => row.dataset.metric)), ['netSales', 'grossSales', 'discounts', 'grossSalesAfterDiscounts', 'margin', 'tips']);
   assert.equal(await page.locator('[data-metric="cashTips"] + tr').getAttribute('data-metric'), 'mercadoPagoFee');
   assert.equal(await page.locator('[data-metric="mercadoPagoFee"] th').innerText(), 'Comision Mercadopago');
   assert.equal(await page.locator('[data-metric="mercadoPagoFee"] .weekly-results-amount').first().innerText(), '$35');
@@ -175,7 +175,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
     return [size('[data-metric="tips"] th') - size('[data-metric="mercadoPagoTips"] th'),
       size('[data-metric="tips"] td') - size('[data-metric="cashTips"] td')];
   });
-  assert.deepEqual(sizes, [3, 3]);
+  assert.deepEqual(sizes, [4, 4]);
   assert.equal(await page.locator('[data-metric="collectionDifference"] .weekly-results-amount').first().innerText(), '$-65');
   assert.equal(await page.locator('[data-metric="collectionDifference"] .weekly-results-percent').first().innerText(), '-6,5%');
   assert.match(await page.locator('.weekly-results-note').innerText(), /Control de diferencias = Mercado Pago − MP Teorico/);

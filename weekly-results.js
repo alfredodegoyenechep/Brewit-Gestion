@@ -1,8 +1,8 @@
 const { advance } = require('./inventory-boundaries');
 
 const metrics = [
-  ['grossSales', 'Venta bruta'], ['discounts', 'Descuentos'],
-  ['grossSalesAfterDiscounts', 'Venta Bruta post Dsctos'], ['netSales', 'Venta neta'], ['margin', 'Margen'], ['tips', 'Propinas'],
+  ['netSales', 'Venta neta'], ['grossSales', 'Venta bruta'], ['discounts', 'Descuentos'],
+  ['grossSalesAfterDiscounts', 'Venta Bruta post Dsctos'], ['margin', 'Margen'], ['tips', 'Propinas'],
   ['mercadoPagoTips', 'MercadoPago'], ['cashTips', 'Efectivo'],
   ['mercadoPagoFee', 'Comision Mercadopago'], ['cashCollection', 'Efectivo'], ['mercadoPagoTheoretical', 'MP Teorico'],
   ['mercadoPagoCollection', 'Mercado Pago'],

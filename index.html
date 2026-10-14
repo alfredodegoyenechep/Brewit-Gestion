@@ -1602,6 +1602,8 @@
             </select>
           </label>
           <button id="weekly-results-refresh" class="primary" type="submit">Actualizar</button>
+          <button id="weekly-results-pdf" class="secondary weekly-results-export-button" type="button" disabled>PDF</button>
+          <button id="weekly-results-xlsx" class="secondary weekly-results-export-button" type="button" disabled>XLSX</button>
         </form>
       </div>
       <div id="weekly-results-status" class="form-status" aria-live="polite"></div>
@@ -1635,6 +1637,17 @@
         <p class="panel-description">Los porcentajes diarios se calculan sobre la venta neta del día. El total corresponde al reporte semanal. Inventario faltante, consumibles y su total combinado se muestran únicamente en el total semanal. Los costos diarios usan la misma valorización al cierre de la semana.</p>
         <div id="weekly-results-daily-status" class="form-status" aria-live="polite"></div>
         <div id="weekly-results-daily-body"></div>
+      </dialog>
+      <dialog id="weekly-results-export" class="weekly-results-detail weekly-results-export" aria-labelledby="weekly-results-export-title">
+        <div class="panel-head">
+          <h3 id="weekly-results-export-title">Previsualización</h3>
+          <div class="weekly-results-export-actions">
+            <button id="weekly-results-export-download" class="primary" type="button" disabled>Descargar</button>
+            <button id="weekly-results-export-close" class="secondary" type="button">Cerrar</button>
+          </div>
+        </div>
+        <div id="weekly-results-export-status" class="form-status" aria-live="polite"></div>
+        <div id="weekly-results-export-body"></div>
       </dialog>
     </section>
 
@@ -2501,6 +2514,8 @@
   <script src="upload-records-view.js"></script>
   <script src="sales-insight-filters.js"></script>
   <script src="script.js"></script>
+  <script src="/vendor/jspdf.umd.min.js"></script>
+  <script src="weekly-results-export.js"></script>
   <script src="weekly-results-view.js"></script>
   <script src="toteat-api-view.js"></script>
   <script src="toteat-purchases-view.js"></script>

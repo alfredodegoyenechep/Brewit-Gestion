@@ -14,6 +14,12 @@
   const dailyLocation = document.getElementById('weekly-results-daily-location');
   const dailyStatus = document.getElementById('weekly-results-daily-status');
   const dailyBody = document.getElementById('weekly-results-daily-body');
+  const pdfButton = document.getElementById('weekly-results-pdf');
+  const xlsxButton = document.getElementById('weekly-results-xlsx');
+  const exportDialog = document.getElementById('weekly-results-export');
+  const exportBody = document.getElementById('weekly-results-export-body');
+  const exportStatus = document.getElementById('weekly-results-export-status');
+  const exportDownload = document.getElementById('weekly-results-export-download');
   const states = { 'no-data': 'Sin datos', 'no-physical-count': 'Sin toma física',
     'no-opening-inventory': 'Sin inventario inicial', incomplete: 'Incompleto', pending: 'Pendiente', partial: 'Parcial', 'not-included': 'No incluido',
     'weekly-only': 'Solo total semanal', future: 'Sin transcurrir' };
@@ -22,12 +28,69 @@
   let controller = null, generation = 0;
   let dailyController = null, dailyGeneration = 0, dailyReport = null;
   const dailyCache = new Map();
+  let exportData = null, exportUrl = null, exportFilename = null, exportGeneration = 0;
   const paragraph = (parent, content) => {
     const p = document.createElement('p'); p.textContent = content; parent.append(p); return p;
   };
   const partialTag = cell => {
     const tag = document.createElement('span'); tag.className = 'weekly-results-partial'; tag.textContent = 'Parcial'; cell.append(tag);
   };
+  function closeExport() {
+    exportGeneration++;
+    if (exportUrl) URL.revokeObjectURL(exportUrl);
+    exportUrl = null; exportFilename = null; exportDownload.disabled = true;
+    exportBody.replaceChildren(); exportDialog.setAttribute('aria-busy', 'false');
+  }
+  function resetExport() {
+    exportData = null; pdfButton.disabled = true; xlsxButton.disabled = true;
+    if (exportDialog.open) exportDialog.close();
+    closeExport();
+  }
+  async function openExport(format) {
+    if (!exportData) return;
+    closeExport();
+    const snapshot = exportData, request = exportGeneration;
+    document.getElementById('weekly-results-export-title').textContent = `Previsualización ${format.toUpperCase()} · Resultados Semanales`;
+    exportDownload.textContent = `Descargar ${format.toUpperCase()}`;
+    exportDialog.showModal(); exportDialog.setAttribute('aria-busy', 'true'); setStatus(exportStatus, 'Preparando previsualización…');
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (snapshot !== exportData || request !== exportGeneration || !exportDialog.open) return;
+    try {
+      const api = window.WeeklyResultsExport;
+      if (!api) throw Error('No se pudo cargar el módulo de exportación. Recarga la página.');
+      const computed = getComputedStyle(workspace), color = variable => {
+        // Resolve theme colors to RGB before serializing them into the files.
+        const probe = document.createElement('span'); probe.style.color = computed.getPropertyValue(variable).trim(); workspace.append(probe);
+        const rgb = getComputedStyle(probe).color.match(/\d+/g); probe.remove();
+        return rgb?.length >= 3 ? '#' + rgb.slice(0, 3).map(channel => Number(channel).toString(16).padStart(2, '0')).join('') : undefined;
+      };
+      const palette = Object.fromEntries(Object.entries({ bg: '--bg', soft: '--bg-soft', text: '--text', muted: '--text-muted', border: '--border', positive: '--green', difference: '--red' })
+        .map(([key, variable]) => [key, color(variable)]).filter(([, value]) => value));
+      const fontSize = parseFloat(getComputedStyle(container.querySelector('table')).fontSize) * .75;
+      const report = api.model(snapshot, palette, Math.max(9, fontSize));
+      let blob;
+      if (format === 'pdf') {
+        if (!window.jspdf?.jsPDF) throw Error('No se pudo cargar el generador PDF. Recarga la página.');
+        blob = api.pdf(report, window.jspdf.jsPDF).output('blob');
+      } else {
+        const book = api.workbook(report, XLSX);
+        blob = new Blob([api.styledWorkbookBytes(book, XLSX)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      }
+      exportUrl = URL.createObjectURL(blob); exportFilename = `Resultados_Semanales_${snapshot.date}_${snapshot.weeks.length}_semanas.${format}`;
+      if (format === 'pdf') {
+        const frame = document.createElement('iframe'); frame.className = 'weekly-results-pdf-preview'; frame.title = 'Previsualización PDF de Resultados Semanales'; frame.src = exportUrl; exportBody.append(frame);
+      } else {
+        const context = paragraph(exportBody, report.context); context.className = 'weekly-results-export-context';
+        const preview = container.firstElementChild.cloneNode(true);
+        preview.querySelectorAll('button').forEach(button => button.remove());
+        preview.setAttribute('aria-label', 'Previsualización XLSX de Resultados Semanales'); exportBody.append(preview);
+        report.notes.forEach(note => paragraph(exportBody, note));
+      }
+      exportDownload.disabled = false;
+      setStatus(exportStatus, format === 'pdf' ? 'PDF horizontal listo. Conceptos y encabezados se repiten en cada página.' : 'XLSX listo. Primera columna y encabezados fijos; valores numéricos y formato del reporte conservados.', 'success');
+    } catch (error) { setStatus(exportStatus, error.message, 'error'); }
+    finally { exportDialog.setAttribute('aria-busy', 'false'); }
+  }
   async function readStream(response, receive) {
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
@@ -71,6 +134,7 @@
   function metricRow(body, key, label) {
     const row = body.insertRow(); row.dataset.metric = key;
     if (['mercadoPagoTips', 'cashTips'].includes(key)) row.className = 'weekly-results-tip-breakdown';
+    if (['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'mercadoPagoTips', 'cashTips'].includes(key)) row.classList.add('weekly-results-breakdown');
     if (['netSales', 'inventoryConsumptionTotal'].includes(key)) row.className = 'weekly-results-subtotal';
     const th = document.createElement('th'); th.scope = 'row'; th.textContent = label; row.append(th);
     return row;
@@ -202,6 +266,7 @@
     dialog.showModal();
   }
   function render(data) {
+    exportData = data; pdfButton.disabled = !data.locations.length; xlsxButton.disabled = !data.locations.length;
     document.getElementById('weekly-results-context').textContent = `Consulta: ${date(data.date)} · ${data.locations.length} sucursales · ${data.weeks.length} semanas · Inventario ${data.options?.includeInventory === false ? 'no incluido' : 'incluido'} · Semana actual acumulada hasta ${date(data.date)}`;
     if (!data.locations.length) { paragraph(container, 'No hay cafeterías activas para mostrar.'); return; }
     const wrap = document.createElement('div'); wrap.className = 'weekly-results-table-wrap';
@@ -250,6 +315,8 @@
     }
   }
   window.cancelCafeWeeklyResults = () => {
+    if (exportDialog.open) exportDialog.close();
+    closeExport();
     cancelDaily(true); dailyCache.clear();
     controller?.abort(); controller = null; generation++;
     refresh.disabled = false; workspace.setAttribute('aria-busy', 'false'); progress.hidden = true;
@@ -257,6 +324,7 @@
   window.loadCafeWeeklyResults = async () => {
     if (!form.reportValidity()) return;
     window.cancelCafeWeeklyResults();
+    resetExport();
     const active = new AbortController(), request = generation;
     controller = active; refresh.disabled = true; workspace.setAttribute('aria-busy', 'true');
     progress.hidden = false; progress.value = 0;
@@ -293,6 +361,7 @@
   form.addEventListener('submit', event => { event.preventDefault(); window.loadCafeWeeklyResults(); });
   form.addEventListener('change', () => {
     window.cancelCafeWeeklyResults();
+    resetExport();
     if (dialog.open) dialog.close();
     container.replaceChildren(); warnings.replaceChildren();
     document.getElementById('weekly-results-context').textContent = '';
@@ -302,5 +371,14 @@
   document.getElementById('weekly-results-daily-close').addEventListener('click', () => dailyDialog.close());
   dailyDialog.addEventListener('close', () => cancelDaily());
   dailyLocation.addEventListener('change', () => loadDaily());
+  pdfButton.addEventListener('click', () => openExport('pdf'));
+  xlsxButton.addEventListener('click', () => openExport('xlsx'));
+  document.getElementById('weekly-results-export-close').addEventListener('click', () => exportDialog.close());
+  exportDialog.addEventListener('close', closeExport);
+  exportDownload.addEventListener('click', () => {
+    if (!exportUrl || !exportFilename) return;
+    const link = document.createElement('a'); link.href = exportUrl; link.download = exportFilename;
+    document.body.append(link); link.click(); link.remove();
+  });
   window.openCafeWeeklyResults();
 })();
