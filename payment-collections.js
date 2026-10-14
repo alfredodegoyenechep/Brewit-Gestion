@@ -2,8 +2,9 @@ const { localTimestamp } = require('./toteat-sales');
 
 // TotEat identifies cash as 1000 and MercadoPago POS as 5008. Use each
 // payment form's tip so cash tips never get subtracted from MercadoPago.
-function toteatPaymentCollections(sources, dateFrom, dateTo) {
+function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollectionTotals = false } = {}) {
   let mercadoPagoTips = 0, cashSales = 0, coveredLocations = 0, complete = sources.length > 0;
+  let tips = 0, cashTips = 0, cashCollection = 0, collectionCoveredLocations = 0;
   const warnings = [];
   for (const { location, state } of sources) {
     if (!state) {
@@ -12,6 +13,7 @@ function toteatPaymentCollections(sources, dateFrom, dateTo) {
       continue;
     }
     coveredLocations++;
+    if (state.from <= dateTo && state.through >= dateFrom) collectionCoveredLocations++;
     if (!state.from || !state.through || state.from > dateFrom || state.through < dateTo) {
       complete = false;
       warnings.push(`El detalle de pagos de TotEat para ${location.name} no cubre todo el período ${dateFrom} al ${dateTo}.`);
@@ -34,19 +36,27 @@ function toteatPaymentCollections(sources, dateFrom, dateTo) {
       }
       let hasCash = false;
       for (const form of payment.paymentForms) {
+        tips += form.tip;
         if (Number(form.id) === 5008) mercadoPagoTips += form.tip;
         if (Number(form.id) === 1000) {
           hasCash = true;
           cashSales += form.amount - form.tip;
+          cashTips += form.tip;
+          cashCollection += form.amount;
         }
       }
-      if (hasCash) cashSales -= payment.change;
+      if (hasCash) { cashSales -= payment.change; cashCollection -= payment.change; }
     }
   }
   const coverage = { available: coveredLocations > 0, complete, coveredLocations, totalLocations: sources.length };
   return {
     mercadoPagoTips: { amount: mercadoPagoTips, ...coverage },
     cashSales: { amount: cashSales, ...coverage },
+    ...(includeCollectionTotals ? {
+      tips: { amount: tips, ...coverage, available: collectionCoveredLocations > 0 },
+      cashTips: { amount: cashTips, ...coverage, available: collectionCoveredLocations > 0 },
+      cashCollection: { amount: cashCollection, ...coverage, available: collectionCoveredLocations > 0 }
+    } : {}),
     warnings
   };
 }

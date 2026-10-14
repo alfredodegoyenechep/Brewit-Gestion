@@ -91,7 +91,7 @@ function organizeWorkspaceNavigation() {
     .map(link => [link.dataset.view, link]));
   const operationsLink = navigation.querySelector('a[href="/operaciones"]');
   const groups = [
-    { label: 'Visión ejecutiva', views: ['report', 'financial-results'] },
+    { label: 'Visión ejecutiva', views: ['report', 'financial-results', 'weekly-results'] },
     { label: 'Inteligencia comercial', views: ['sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients'] },
     { label: 'Operación y costos', views: ['products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings'] },
     { label: 'Administración', views: ['uploads', 'config'] }
@@ -192,6 +192,7 @@ window.addEventListener('brewit-purchases-updated', () => {
 });
 
 function setView(view) {
+  if (view !== 'weekly-results') window.cancelCafeWeeklyResults?.();
   document.querySelectorAll('.main-content > section').forEach(section => {
     section.hidden = true;
     section.style.display = 'none';
@@ -242,6 +243,13 @@ function setView(view) {
     salesIngredients.hidden = false;
     salesIngredients.style.display = '';
     loadSalesIngredientsView();
+    return;
+  }
+  if (view === 'weekly-results') {
+    const weekly = document.getElementById('weekly-results-workspace');
+    weekly.hidden = false;
+    weekly.style.display = '';
+    window.openCafeWeeklyResults();
     return;
   }
   if (view === 'financial-results') {

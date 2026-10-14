@@ -67,7 +67,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.deepEqual(await page.locator('.navigation .nav-group-label').allTextContents(),
     ['Visión ejecutiva', 'Inteligencia comercial', 'Operación y costos', 'Administración']);
   assert.deepEqual(await page.locator('.navigation .nav-link').evaluateAll(links => links.map(link => link.dataset.view)), [
-    'report', 'financial-results',
+    'report', 'financial-results', 'weekly-results',
     'sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients',
     'products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings',
     'uploads', 'config'

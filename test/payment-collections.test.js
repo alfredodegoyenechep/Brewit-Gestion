@@ -52,3 +52,22 @@ test('known empty periods are zero; absent, partial or invalid sources are incom
   assert.equal(invalid.mercadoPagoTips.complete, false);
   assert.equal(invalid.mercadoPagoTips.amount, 0);
 });
+
+test('optional weekly collection totals include all tips and cash tips, keeping legacy amounts unchanged', () => {
+  const mixed = payment({ paymentId: 'mixed', change: 500, paymentForms: [
+    { id: 5008, amount: 5500, tip: 500 }, { id: 1000, amount: 3300, tip: 300 },
+    { id: 1000, amount: 2200, tip: 200 }, { id: 50001, amount: 1000, tip: 100 }
+  ] });
+  const sources = [{ location, state: state([payment(), mixed, mixed]) }];
+  const legacy = toteatPaymentCollections(sources, '2026-09-21', '2026-09-27');
+  const extended = toteatPaymentCollections(sources, '2026-09-21', '2026-09-27', { includeCollectionTotals: true });
+  const { tips, cashTips, cashCollection, ...old } = extended;
+  assert.deepEqual(old, legacy);
+  assert.equal(tips.amount, 2100);
+  assert.equal(cashCollection.amount, 5000);
+  assert.equal(cashTips.amount, 500);
+  assert.equal(cashTips.complete, true);
+  assert.equal(tips.complete, true);
+  const outside = toteatPaymentCollections([{ location, state: state([]) }], '2026-11-01', '2026-11-07', { includeCollectionTotals: true });
+  assert.equal(outside.tips.available, false);
+});

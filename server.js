@@ -2668,7 +2668,7 @@ function createApp(options = {}) {
     return { sheetName: 'Consolidado', groups, movementDefinitions, products, sources };
   }
 
-  function mergedConsumptionProducts(locationId, field, dateFrom, dateTo) {
+  function mergedConsumptionProducts(locationId, field, dateFrom, dateTo, { allowEmpty = false } = {}) {
     const sources = chronologicalSources(locationId, field);
     const dailyProducts = new Map();
     const datesProcessed = new Set();
@@ -2695,7 +2695,7 @@ function createApp(options = {}) {
         }
       }
     }
-    if (!dailyProducts.size) throw new Error(`No product sheet contains dates between ${dateFrom} and ${dateTo}.`);
+    if (!dailyProducts.size && (!allowEmpty || !datesProcessed.size)) throw new Error(`No product sheet contains dates between ${dateFrom} and ${dateTo}.`);
     const products = new Map();
     dailyProducts.forEach(product => {
       const key = `${product.code || normalizeHeader(product.name)}|${product.unit}`;
@@ -3271,6 +3271,7 @@ function createApp(options = {}) {
   app.get('/toteat-stock-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-stock-view.js')));
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
   app.get('/sales-clusters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-clusters-view.js')));
+  app.get('/weekly-results-view.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-view.js')));
   app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
   app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -6834,7 +6835,7 @@ function createApp(options = {}) {
     return result;
   }
 
-  function mercadoPagoFeesForPeriod(stores, dateFrom, dateTo) {
+  function mercadoPagoFeesForPeriod(stores, dateFrom, dateTo, { collectionField = 'TRANSACTION_AMOUNT' } = {}) {
     const vatFactor = 1.18;
     const facts = [];
     const seen = new Set();
@@ -6864,7 +6865,7 @@ function createApp(options = {}) {
               const fee = field ? numericValue(rowValue(row, [field])) : null;
               if (field) fields.add(field);
               if (fee !== null) locationsWithFee.add(location.id);
-              const collectedAmount = numericValue(rowValue(row, ['TRANSACTION_AMOUNT']));
+              const collectedAmount = numericValue(rowValue(row, [collectionField]));
               if (collectedAmount !== null) locationsWithCollection.add(location.id);
               facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee), collectedAmount });
             }
@@ -6951,7 +6952,7 @@ function createApp(options = {}) {
     });
   }
 
-  function buildFinancialResultsPayload(query = {}) {
+  function buildFinancialResultsPayload(query = {}, { costCutoff = null } = {}) {
     const today = projectionToday();
     const dateTo = String(query.dateTo || today);
     const dateFrom = String(query.dateFrom || addDays(dateTo, -29));
@@ -6974,10 +6975,11 @@ function createApp(options = {}) {
     const warnings = [];
     const weeklyOrderDiscounts = new Map();
     const weeklyLineDiscounts = new Map();
-    const catalogMaster = latestMasterFile('master-catalog', dateTo);
+    const valuationDate = costCutoff || dateTo;
+    const catalogMaster = latestMasterFile('master-catalog', valuationDate);
     const productHierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
     const extrasHierarchyMaster = latestMasterFile('extras-hierarchy', dateTo);
-    const recipeResolution = resolveRecipes(dateTo);
+    const recipeResolution = resolveRecipes(valuationDate);
     const recipes = new Map([...recipeResolution.recipes].map(([code, lines]) => [String(code).toUpperCase(), lines]));
     let analysisCatalog = { products: new Map(), ingredients: new Map(), recipeExtras: new Map() };
     let costCatalog = new Map();
@@ -7004,7 +7006,7 @@ function createApp(options = {}) {
     const hotIds = extrasLookup?.descendantIds('BA.001') || new Set(['BA.001']);
     const coldIds = extrasLookup?.descendantIds('BA.002') || new Set(['BA.002']);
     const periodEndCostResolver = costValuation === 'period-end'
-      ? buildCostResolver(dateTo, selectedStores.map(location => location.id)) : null;
+      ? buildCostResolver(valuationDate, selectedStores.map(location => location.id)) : null;
     const historicalCostResolvers = costValuation === 'historical'
       ? new Map(selectedStores.map(location => [location.id, buildHistoricalCostResolver(dateTo, [location.id])])) : null;
     const facts = [];
@@ -7336,6 +7338,221 @@ function createApp(options = {}) {
     } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
   });
 
+  // The independent weekly report has its own contract. The legacy weekly
+  // report above retains its five-week consolidated calculations.
+  function weeklyResultsContext(query = {}) {
+    const options = require('./weekly-results').reportOptions(query);
+    const stocks = new Map();
+    return {
+      today: projectionToday(),
+      ...options,
+      locations: readLocations().locations.filter(location => location.status === 'active' && location.type === 'store')
+        .map(location => ({ id: location.id, name: location.name })),
+      stock(location) {
+        if (!stocks.has(location.id)) {
+          try {
+            const state = synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id);
+            if (!state || state.rebuildError) throw Error(state?.rebuildError || 'Actualiza las fuentes originales de inventario.');
+            stocks.set(location.id, { state });
+          } catch (error) { stocks.set(location.id, { error: error.message }); }
+        }
+        const result = stocks.get(location.id);
+        if (result.error) throw Error(result.error);
+        return result.state;
+      }
+    };
+  }
+
+  function buildCafeWeeklyResults(context, cafe, period) {
+    const { value, fromMetric, derived, selectInventoryDates } = require('./weekly-results');
+    const location = activeLocation(cafe.id);
+    const values = {}, warnings = [], sources = {};
+    const { from, through } = period;
+    const costCutoff = period.valuationThrough || through;
+    const sourceInfo = source => ({ name: source.record?.originalName || source.record?.name || source.originalName,
+      range: source.record?.confirmedRange || source.record?.detectedRange || source.confirmedRange || null });
+    const covers = dates => {
+      for (let date = from; date <= through; date = addDays(date, 1)) if (!dates.has(date)) return false;
+      return true;
+    };
+    const fileCoverage = files => {
+      const dates = new Set();
+      for (const file of files) {
+        const range = file.record?.confirmedRange || file.record?.detectedRange;
+        if (!range?.from || !range?.to) continue;
+        for (let date = from; date <= through; date = addDays(date, 1)) {
+          if (date >= range.from && date <= range.to && !dateIsExcluded(date, file.excludedRanges || [])) dates.add(date);
+        }
+      }
+      return { available: dates.size > 0, complete: covers(dates) };
+    };
+    const failure = (label, error) => warnings.push(`${label}: ${error.message}`);
+    try {
+      const payload = buildFinancialResultsPayload({ location: location.id, dateFrom: from, dateTo: through,
+        costValuation: 'period-end', skipInventory: true }, { costCutoff });
+      const files = storedSalesFiles(location.id), coverage = fileCoverage(files);
+      const available = payload.revenue.filesRead > 0 && (coverage.available || payload.revenue.lineCount > 0);
+      const status = coverage.complete && payload.revenue.filesRead === files.length ? 'complete' : 'partial';
+      sources.sales = files.map(sourceInfo);
+      sources.margin = { costCutoff, costSources: payload.revenue.costSources,
+        missingCostProducts: payload.revenue.missingCostProducts };
+      values.netSales = available ? value(payload.revenue.total.netSales, status) : value();
+      values.discounts = available ? value(payload.revenue.discountsNet * 1.19, status) : value();
+      // The pre-discount sales basis remains net; the displayed discount is VAT-inclusive.
+      values.salesWithoutVat = available
+        ? value(payload.revenue.total.netSales + payload.revenue.discountsNet, status) : value(null, 'incomplete');
+      values.grossSales = derived(values, ['salesWithoutVat'], net => net * 1.19);
+      values.margin = available && payload.revenue.total.costAvailable
+        ? value(payload.revenue.total.contributionMargin, status) : value();
+      if (available && status === 'partial') warnings.push('Ventas: cobertura incompleta; se muestran subtotales conocidos.');
+      warnings.push(...payload.warnings);
+    } catch (error) { failure('Ventas y margen', error); }
+    try {
+      const state = toteatSalesSync.get(location.id);
+      const payments = toteatPaymentCollections([{ location, state }], from, through, { includeCollectionTotals: true });
+      values.tips = fromMetric(payments.tips);
+      values.mercadoPagoTips = fromMetric({ ...payments.mercadoPagoTips, available: payments.tips.available });
+      values.cashTips = fromMetric(payments.cashTips);
+      values.cashCollection = fromMetric(payments.cashCollection);
+      sources.payments = state ? { name: 'Detalle de pagos TotEat', range: { from: state.from, to: state.through } } : null;
+      warnings.push(...payments.warnings);
+    } catch (error) { failure('Propinas y efectivo', error); }
+    try {
+      const mp = mercadoPagoFeesForPeriod([location], from, through, { collectionField: 'REAL_AMOUNT' });
+      const files = storedTransactionFiles(location.id, 'mercadopago'), coverage = fileCoverage(files);
+      const mercadoPagoSources = files.map(sourceInfo);
+      sources.mercadoPago = { name: 'Mercado Pago · REAL_AMOUNT (después de fees)', files: mercadoPagoSources };
+      // A declared, readable empty interval is a verified zero, not missing data.
+      const knownEmpty = mp.transactions === 0 && coverage.available && mp.filesRead === files.length
+        && files.every(file => readGenericTransactionSheets(file.filePath).some(sheet => {
+          const headers = (sheet.rows[0] || []).map(normalizeHeader);
+          return headers.includes(normalizeHeader('TRANSACTION_DATE')) && headers.includes(normalizeHeader('REAL_AMOUNT'));
+        }));
+      values.mercadoPagoCollection = fromMetric({ ...mp.collection,
+        available: mp.collection.available || knownEmpty,
+        complete: coverage.complete && mp.filesRead === files.length && (mp.collection.complete || knownEmpty) });
+      const feeFields = ['FEE_AMOUNT', 'MP_FEE', 'COMMISSION_AMOUNT', 'COMISION', 'COMISIÓN', 'FEE'].map(normalizeHeader);
+      const knownEmptyFees = mp.transactions === 0 && coverage.available && mp.filesRead === files.length
+        && files.every(file => readGenericTransactionSheets(file.filePath).some(sheet => {
+          const headers = (sheet.rows[0] || []).map(normalizeHeader);
+          return headers.includes(normalizeHeader('TRANSACTION_DATE')) && feeFields.some(field => headers.includes(field));
+        }));
+      values.mercadoPagoFee = fromMetric({ amount: mp.grossAmount, available: mp.available || knownEmptyFees,
+        complete: coverage.complete && mp.filesRead === files.length && mp.transactionsWithFee === mp.transactions });
+      sources.mercadoPagoFee = { name: 'Fees cobrados por Mercado Pago', files: mercadoPagoSources,
+        detectedFields: mp.detectedFields, transactionsWithFee: mp.transactionsWithFee, transactions: mp.transactions };
+      if (values.mercadoPagoCollection.status === 'partial') warnings.push('Mercado Pago: cobertura incompleta; se muestra el subtotal conocido.');
+      if (files.length && !values.mercadoPagoCollection.available) warnings.push('Mercado Pago: no hay importes REAL_AMOUNT calculables para este período.');
+      if (values.mercadoPagoFee.status === 'partial') warnings.push('Comisión MercadoPago: cobertura incompleta o movimientos sin comisión; se muestra el subtotal conocido.');
+      if (mp.transactions && !values.mercadoPagoFee.available) warnings.push('Comisión MercadoPago: los movimientos del período no contienen fees calculables.');
+    } catch (error) { failure('Mercado Pago', error); }
+
+    // Calendar consumption never depends on the physical-count interval.
+    for (const [key, field] of [['marketing', 'marketing'], ['employees', 'employees'], ['waste', 'waste']]) {
+      try {
+        const catalogMaster = latestMasterFile('master-catalog', costCutoff, location.id);
+        if (!catalogMaster) throw Error('No hay un catálogo maestro vigente para valorizar los consumos.');
+        const catalog = parseIngredientCatalog(catalogMaster.filePath);
+        const resolver = buildCostResolver(costCutoff, [location.id]);
+        let amount, partial, missingCostCodes, dates;
+        if (field === 'waste') {
+          const parsed = mergedKardexData(location.id, 'waste');
+          if (!parsed) throw Error('No hay registros de merma disponibles.');
+          const summary = buildWasteSummary(parsed, from, through, catalog, resolver);
+          dates = new Set(parsed.groups.map(group => group.date));
+          amount = summary.totalCost;
+          missingCostCodes = summary.itemsWithoutCost;
+          if (missingCostCodes.length && summary.items.every(item => !item.costAvailable)) throw Error('No hay costos disponibles para valorizar la merma.');
+          partial = missingCostCodes.length > 0 || !covers(dates);
+        } else {
+          const products = applyCatalogProductCosts(mergedConsumptionProducts(location.id, field, from, through, { allowEmpty: true }), catalog, resolver);
+          dates = new Set(products.datesProcessed);
+          amount = products.totalCost;
+          missingCostCodes = products.productsWithoutMasterCost || [];
+          if (missingCostCodes.length && products.products.every(product => product.costIncomplete)) throw Error('No hay costos completos disponibles para valorizar el consumo.');
+          partial = missingCostCodes.length > 0 || !covers(dates);
+        }
+        values[key] = value(-Math.abs(amount), partial ? 'partial' : 'complete', { missingCostCodes });
+        sources[key] = { files: chronologicalSources(location.id, field).map(sourceInfo),
+          dates: [...dates].filter(date => date >= from && date <= through).sort(),
+          costCutoff, catalog: { name: catalogMaster.originalName || catalogMaster.name, validFrom: catalogMaster.validFrom } };
+        if (synchronizedOnly && field === 'waste') sources[key].name = 'Movimientos originales de bodega de merma';
+        if (partial) warnings.push(`${key === 'employees' ? 'Consumo personal' : key === 'marketing' ? 'Marketing' : 'Merma'}: cobertura o valorización parcial.`);
+      } catch (error) { failure(key === 'employees' ? 'Consumo personal' : key === 'marketing' ? 'Marketing' : 'Merma', error); }
+    }
+    let inventory;
+    if (context.includeInventory) try {
+      const state = context.stock(location);
+      const warehouse = state.warehouses.find(item => Number(item.custom_id) === 2);
+      if (!warehouse) throw Error('No está disponible la bodega operativa de la sucursal.');
+      inventory = selectInventoryDates(state.daily.filter(row => row.warehouse === warehouse.id && row.physicalCount).map(row => row.date), period);
+      if (inventory.status !== 'complete') {
+        values.inventoryShortage = value(null, inventory.status);
+        values.otherConsumables = value(null, inventory.status);
+      } else {
+        const result = buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
+          initialInventoryDate: inventory.initialDate, finalInventoryDate: inventory.finalDate }, { stockState: state, retainDetails: false });
+        values.inventoryShortage = fromMetric(result.executiveSummary.metrics.adjustedKardexTotalCost);
+        values.otherConsumables = fromMetric(result.executiveSummary.metrics.otherConsumables, { expense: true });
+        inventory.status = values.inventoryShortage.status;
+        inventory.coverage = result.executiveSummary.metrics.adjustedKardexTotalCost;
+        sources.inventory = result.provenance;
+        warnings.push(...(result.warnings || []));
+      }
+    } catch (error) {
+      inventory = { ...inventory, status: 'no-data', error: error.message };
+      failure('Inventario', error);
+    }
+    return { values, inventory, sources, warnings: [...new Set(warnings)] };
+  }
+
+  app.get('/api/weekly-results/daily/stream', async (req, res) => {
+    const { currentWeeks, buildDailyResultsWithProgress } = require('./weekly-results');
+    let context, period, location;
+    try {
+      context = weeklyResultsContext({ includeInventory: false });
+      const date = String(req.query.date || context.today);
+      if (!isValidDate(date) || date > context.today) throw Object.assign(Error('Fecha de consulta inválida.'), { status: 400 });
+      period = currentWeeks(date).find(week => week.from === req.query.from);
+      location = context.locations.find(item => item.id === req.query.location);
+      if (!period || !location) throw Object.assign(Error('Selecciona una semana y cafetería válidas.'), { status: 400 });
+      context.today = date;
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+    res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
+    try {
+      const data = await buildDailyResultsWithProgress({ today: context.today, period, location },
+        (cafe, day) => buildCafeWeeklyResults(context, cafe, day),
+        progress => send({ type: 'progress', ...progress }), () => res.destroyed);
+      if (data) send({ type: 'result', data });
+    } catch (error) { send({ type: 'error', error: error.message || 'No se pudo calcular el detalle diario.' }); }
+    finally { res.end(); }
+  });
+
+  app.get('/api/weekly-results', (req, res) => {
+    try {
+      const context = weeklyResultsContext(req.query);
+      res.set('Cache-Control', 'no-store').json(require('./weekly-results').buildWeeklyResults(context,
+        (location, period) => buildCafeWeeklyResults(context, location, period)));
+    } catch (error) { res.status(error.status || 500).json({ error: error.message }); }
+  });
+  app.get('/api/weekly-results/stream', async (req, res) => {
+    let context;
+    try { context = weeklyResultsContext(req.query); }
+    catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+    res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
+    try {
+      const data = await require('./weekly-results').buildWeeklyResultsWithProgress(context,
+        (location, period) => buildCafeWeeklyResults(context, location, period),
+        progress => send({ type: 'progress', ...progress }), () => res.destroyed);
+      if (data) send({ type: 'result', data });
+    } catch (error) { send({ type: 'error', error: error.message || 'No se pudo calcular el reporte semanal.' }); }
+    finally { res.end(); }
+  });
+
   app.get('/api/financial-results', (req, res) => {
     try {
       const payload = buildFinancialResultsPayload(req.query);
@@ -7663,7 +7880,7 @@ function createApp(options = {}) {
     res.set('Cache-Control','no-store').json(require('./inventory-item-detail').buildItemDetail(snapshot.stock, snapshot.location, snapshot.report, item, {consumption:snapshot.consumption,convertQuantity:convertQuantityUnit}));
   });
 
-  function buildInventoryProcessPayload(body = {}, { independentMetricsOnly = false } = {}) {
+  function buildInventoryProcessPayload(body = {}, { independentMetricsOnly = false, stockState = null, retainDetails = true } = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
     const originalMode = synchronizedOnly || body?.source === 'originals';
@@ -7681,7 +7898,7 @@ function createApp(options = {}) {
         finalDate: body?.finalInventoryDate,
         finalBasis: boundaryMode?'initial':body?.finalInventoryBasis
       } : null;
-      const stock = originalMode ? (synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null;
+      const stock = stockState || (originalMode ? (synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null);
       const original = originalMode ? (boundaryMode ? { parsed:null, excluded:[],physicalFinalItems:0 } : require('./inventory-original-report').originalReportData(stock, location, selection, movementDateFrom, movementDateTo)) : null;
       const parsed = originalMode ? original.parsed : mergedKardexData(location.id, 'kardex');
       const balanceDate = selection?.finalDate
@@ -7885,10 +8102,13 @@ function createApp(options = {}) {
         : require('./other-consumables').separateOtherConsumables(report, executiveSummary, location.type === 'warehouse' || !!salesData.filesRead);
       // Keep detail tied to the exact report snapshot even if sources refresh
       // before the user opens a row. Load document lines only on demand.
-      for (const [id, snapshot] of inventoryDetailReports) if (Date.now()-snapshot.createdAt>3600000) inventoryDetailReports.delete(id);
-      while (inventoryDetailReports.size >= 10) inventoryDetailReports.delete(inventoryDetailReports.keys().next().value);
-      const itemDetailReportId = crypto.randomUUID();
-      inventoryDetailReports.set(itemDetailReportId, { createdAt: Date.now(), stock: originalMode ? stock : null, consumption, location, report, items: [...report.items, ...(otherConsumables?.items || [])] });
+      let itemDetailReportId = null;
+      if (retainDetails) {
+        for (const [id, snapshot] of inventoryDetailReports) if (Date.now()-snapshot.createdAt>3600000) inventoryDetailReports.delete(id);
+        while (inventoryDetailReports.size >= 10) inventoryDetailReports.delete(inventoryDetailReports.keys().next().value);
+        itemDetailReportId = crypto.randomUUID();
+        inventoryDetailReports.set(itemDetailReportId, { createdAt: Date.now(), stock: originalMode ? stock : null, consumption, location, report, items: [...report.items, ...(otherConsumables?.items || [])] });
+      }
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;
       return {
