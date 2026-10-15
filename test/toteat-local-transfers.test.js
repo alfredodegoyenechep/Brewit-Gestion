@@ -7,8 +7,15 @@ test('received transfer debits dispatch warehouse and credits receiving warehous
  const out=normalizeLocalTransfers(source(),products),incoming=normalizeLocalTransfers(source('2'),products);
  assert.equal(out.lines[0].column,'transfer_local_out');assert.equal(out.lines[0].warehouse,'central');assert.equal(out.lines[0].quantity,1);assert.equal(out.lines[0].date,'2026-09-29');
  assert.equal(incoming.lines[0].column,'transfer_local_in');assert.equal(incoming.lines[0].warehouse,'local');assert.equal(incoming.lines[0].quantity,1);
+ assert.equal(incoming.lines[0].originWarehouseCode,1);assert.deepEqual(incoming.documents[0].originIdentity,{restaurantId:'r',localId:'1'});
  assert.equal(out.documents[0].origin,'Restaurante r · Local 1');assert.equal(out.documents[0].destination,'Restaurante r · Local 2');
  assert.throws(()=>normalizeLocalTransfers(source('1',[doc(),doc()]),products),/única/);
+});
+test('origin warehouse follows dispatch product identity even if receipt order changes; mixed origins remain unknown',()=>{
+ const d=doc();d.det.listas[2].push({...d.det.listas[2][0],plProv:'OTHER',plRecep:'OTHER',w:2});
+ assert.equal(normalizeLocalTransfers(source('2',[d]),products).lines[0].originWarehouseCode,1);
+ d.det.listas[2].push({...d.det.listas[2][0],w:2});
+ assert.equal(normalizeLocalTransfers(source('2',[d]),products).lines[0].originWarehouseCode,null);
 });
 test('pending and cancelled requests do not move stock; confirmed dispatch uses its own date',()=>{
  for(const st of [0,1,10,11,20,-1,-2,-3]){const d=doc();d.st=st;assert.equal(normalizeLocalTransfers(source('1',[d]),products).lines.length,0);}

@@ -29,7 +29,7 @@ test('export model preserves the calculated snapshot, amounts, percentages, cove
   assert.equal(report.rows.find(row => row.key === 'grossSales').compact, true);
   assert.equal(report.rows.find(row => row.key === 'grossSales').separator, false);
   assert.equal(report.rows.find(row => row.key === 'discounts').cells[0].color, report.colors.muted);
-  assert.equal(report.rows.find(row => row.key === 'expenseIncome').cells[0].text, 'Pendiente');
+  assert.equal(report.rows.find(row => row.key === 'centralWarehouseInbound').cells[0].text, 'Sin datos');
   const row = report.rows.find(row => row.key === 'collectionDifference');
   assert.equal(row.cells[0].color, report.colors.difference);
 });
@@ -61,4 +61,22 @@ test('XLSX preserves numeric cells, merged headers, supplemental dates, print ti
   const compact = Object.entries(sheet).find(([, cell]) => cell?.v === 'Venta bruta')[0];
   assert.equal(sheet['!weeklyStyles'][compact].size, 9);
   assert.equal(sheet['!weeklyStyles'][compact].indent, 1);
+});
+
+test('monthly and prior-week exports label periods, cutoffs and spreadsheet print titles correctly', () => {
+  for (const period of ['week', 'month']) for (const includeCurrent of [true, false]) {
+    const data = buildWeeklyResults({ today: '2026-10-14', locations: [{ id: 'store-1', name: 'Lyon' }],
+      period, includeCurrent, weeks: 2 }, () => ({ values: { netSales: value(1000, 'complete') } }));
+    const report = exporter.model(data), monthly = period === 'month';
+    assert.equal(report.title, monthly ? 'Resultados Mensuales' : 'Resultados Semanales');
+    assert.ok(report.context.includes(monthly ? '2 meses' : '2 semanas'));
+    assert.ok(report.columns[0].week.startsWith(includeCurrent ? (monthly ? 'Mes actual' : 'Semana actual') : (monthly ? 'Hace 1 mes' : 'Hace 1 semana')));
+    assert.ok(report.context.endsWith(`Datos hasta ${data.weeks[0].period.through.split('-').reverse().join('-')}`));
+    const book = exporter.workbook(report, XLSX);
+    assert.deepEqual(book.SheetNames, [report.title]);
+    assert.ok(book.Workbook.Names[0].Ref.includes(`'${report.title}'!`));
+    assert.equal(book.Sheets[report.title].B6.v, 1000);
+    const doc = exporter.pdf(report, jsPDF);
+    assert.ok(doc.internal.pages[1].join('\n').includes(report.title));
+  }
 });

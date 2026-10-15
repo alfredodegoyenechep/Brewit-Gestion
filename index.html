@@ -109,7 +109,7 @@
       </a>
       <a href="#" class="nav-link" data-view="weekly-results">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4zM8 3v4m8-4v4M4 10h16M8 14h2m4 0h2m-8 3h2" /></svg>
-        <span class="nav-text">Resultados Semanales</span>
+        <span class="nav-text">Resultados Semanales / Mensuales</span>
       </a>
       <a href="#" class="nav-link" data-view="demand-analysis">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
@@ -1604,8 +1604,8 @@
       <div class="financial-results-heading">
         <div>
           <div class="panel-eyebrow">Visión ejecutiva</div>
-          <h2>Resultados Semanales</h2>
-          <p class="panel-description">Selecciona cuántas semanas mostrar desde la semana actual, de lunes a domingo. Cada porcentaje se calcula sobre la venta neta de la misma sucursal y semana.</p>
+          <h2 id="weekly-results-title">Resultados Semanales</h2>
+          <p class="panel-description">Selecciona 2, 3 o 4 semanas (lunes a domingo) o meses calendario, incluyendo o excluyendo el período actual. El período actual acumula hasta hoy. Cada porcentaje se calcula sobre la venta neta de la misma sucursal y período.</p>
         </div>
         <form id="weekly-results-form" class="financial-results-filters">
           <label for="weekly-results-inventory">Incluir inventario faltante y otros gastos / consumibles
@@ -1614,11 +1614,23 @@
               <option value="false">No</option>
             </select>
           </label>
-          <label for="weekly-results-weeks">Semanas
+          <label for="weekly-results-period">Período
+            <select id="weekly-results-period" required>
+              <option value="week" selected>Semanas</option>
+              <option value="month">Meses</option>
+            </select>
+          </label>
+          <label for="weekly-results-weeks"><span id="weekly-results-count-label">Cantidad de semanas</span>
             <select id="weekly-results-weeks" required>
               <option value="2">2 semanas</option>
               <option value="3">3 semanas</option>
               <option value="4" selected>4 semanas</option>
+            </select>
+          </label>
+          <label for="weekly-results-current"><span id="weekly-results-current-label">Incluir semana actual</span>
+            <select id="weekly-results-current" required>
+              <option value="true" selected>Sí</option>
+              <option value="false">No</option>
             </select>
           </label>
           <button id="weekly-results-refresh" class="primary" type="submit">Actualizar</button>
@@ -1635,8 +1647,9 @@
         <p class="panel-description">MP Teorico = venta bruta − descuentos + propinas totales − comisión MercadoPago − efectivo.</p>
         <p class="panel-description">Comision Mercadopago muestra los fees cobrados del período, según los archivos cargados, sin conversión de IVA.</p>
         <p class="panel-description">Mercado Pago muestra REAL_AMOUNT, el importe recibido después del fee. El control de diferencias usa ese mismo importe.</p>
-        <p class="panel-description">Inventario faltante conserva el signo de Kardex; los consumos y consumibles se muestran como gastos negativos. Inventario y consumibles usan el intervalo entre tomas físicas; merma, marketing y consumo personal usan la semana calendario.</p>
+        <p class="panel-description">Inventario faltante conserva el signo de Kardex; los consumos y consumibles se muestran como gastos negativos. Inventario y consumibles usan el intervalo entre tomas físicas; merma, marketing y consumo personal usan el período calendario seleccionado.</p>
         <p class="panel-description">El total suma inventario faltante, merma, marketing, consumo personal y otros gastos / consumibles.</p>
+        <p class="panel-description">Entradas Bodega Central: ingredientes y SUB005 recibidos desde Bodega Central Local 001 La Concepcion. Entradas Proveedores Directos: compras recibidas en la bodega operativa, excluyendo transferencias. Ambas filas usan las fechas del período y el costeo del Kardex al cierre, aunque se excluya el cálculo de faltantes de inventario.</p>
         <div id="weekly-results-warnings"></div>
       </section>
       <dialog id="weekly-results-detail" class="weekly-results-detail" aria-labelledby="weekly-results-detail-title">
@@ -1657,6 +1670,14 @@
         <p class="panel-description">Los porcentajes diarios se calculan sobre la venta neta del día. El total corresponde al reporte semanal. Inventario faltante, consumibles y su total combinado se muestran únicamente en el total semanal. Los costos diarios usan la misma valorización al cierre de la semana.</p>
         <div id="weekly-results-daily-status" class="form-status" aria-live="polite"></div>
         <div id="weekly-results-daily-body"></div>
+      </dialog>
+      <dialog id="weekly-results-inbound" class="weekly-results-detail weekly-results-inbound" aria-labelledby="weekly-results-inbound-title" aria-describedby="weekly-results-inbound-context">
+        <div class="panel-head">
+          <h3 id="weekly-results-inbound-title">Detalle de entradas</h3>
+          <button id="weekly-results-inbound-close" class="secondary" type="button" autofocus>Cerrar</button>
+        </div>
+        <p id="weekly-results-inbound-context" class="panel-description"></p>
+        <div id="weekly-results-inbound-body"></div>
       </dialog>
       <dialog id="weekly-results-export" class="weekly-results-detail weekly-results-export" aria-labelledby="weekly-results-export-title">
         <div class="panel-head">

@@ -44,7 +44,7 @@ function normalizeOperations(source, canonicalProducts) {
       seen.add(String(d.id));
       if (d.local_ref && d.local_ref !== source.localRef) throw Error('Documento de otro local.');
       const doc={key:`${source.restaurantId}:${source.localId}:${kind}:${d.id}`,id:d.id,kind,status:d.status,date:day(d.registration_date),createdAt:d.created_at,approvedAt:d.approved_at||null,observation:d.observation||d.comments||''};
-      if (kind === 'transfers') Object.assign(doc, { origin: source.warehouses.find(w=>w.id===d.warehouse_ref)?.name || null, destination: source.warehouses.find(w=>w.id===d.warehouse_receive_ref)?.name || null });
+      if (kind === 'transfers') Object.assign(doc, { origin: source.warehouses.find(w=>w.id===d.warehouse_ref)?.name || null, destination: source.warehouses.find(w=>w.id===d.warehouse_receive_ref)?.name || null, originWarehouse:d.warehouse_ref, destinationWarehouse:d.warehouse_receive_ref });
       documents.push(doc);
       if (!['APPROVED','CREATED','REVERSED','CANCELLED','CANCELED','REJECTED'].includes(d.status)) issues.push({kind:'unknown-status',document:doc.key,message:`Estado no contabilizado: ${d.status}`});
       const detail=kind==='transformations'?d.transformation_details:d.take_inventory_products;
@@ -72,7 +72,7 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
     const received=p.received_date||p.recieived_date;
     if(!received){issues.push({kind:'purchase-date',document:p.movement_id,message:'Compra sin fecha de recepción; excluida.'});continue;}
     const date=day(received);if(!inRange(date))continue;
-    for(const [i,l]of p.products.entries())try{add({id:`purchase:${p.movement_id}:${i}`,document:String(p.movement_id),source:'purchases',date,code:l.sku,warehouse:warehouseByCode.get(String(l.warehouse)),quantity:l.received_quantity,unit:l.received_measurement,column:'purchase'});}catch(e){issues.push({kind:e.code==='TOTEAT_UNIT_CONVERSION_REQUIRED'?'unit-conversion':'purchase-line',code:e.productCode,document:p.movement_id,message:e.message});}
+    for(const [i,l]of p.products.entries())try{add({id:`purchase:${p.movement_id}:${i}`,document:String(p.movement_id),source:'purchases',date,code:l.sku,warehouse:warehouseByCode.get(String(l.warehouse)),quantity:l.received_quantity,unit:l.received_measurement,column:'purchase'});}catch(e){issues.push({kind:e.code==='TOTEAT_UNIT_CONVERSION_REQUIRED'?'unit-conversion':'purchase-line',source:'purchases',date,code:e.productCode||l.sku,document:p.movement_id,message:e.message});}
   }
   // Work per order, not per payment, and retain ambiguities instead of doubling split bills.
   const orders=new Map(),includedOrders=[];
@@ -116,7 +116,9 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
   return {documents:data.documents,operationLines:data.lines,movements:accountedLines.filter(l=>inRange(l.date)),daily,issues,
     excluded:[...blockedCodes].map(code=>({code,name:byCode.get(code)?.name?.translations?.default||code,reason:'Cambio de unidad sin conversión definida. Los registros originales se conservan; el saldo y costo de este ítem no se calculan.'})),
     sourceKind:'native-documents',salesConsumptionPolicy:'base-plus-extras-before-compensation-v1',includedOrders,mode:'independent',assumptions:['Recetas compartidas de La Concepción observadas actualmente; consumo de ventas estimado, sin historia de recetas.', 'Consumo base incluye producto y extras; las sustituciones y envases se compensan una sola vez en el informe consolidado.', 'Ventas asignadas a bodega operativa código 2; confirmar configuración para nuevos locales.', 'Tomas aplicadas al inicio de su fecha operativa; documentos conservan fecha de registro y aprobación.', 'Compras por cantidad y fecha recibidas; las fechas sin hora se concilian por día.', 'Consumo de transformación redondeado por línea a tres decimales de stock, verificado en el piloto; se conserva también la cantidad exacta original.', 'Transferencias entre locales según documentos de despacho y recepción; pendientes y canceladas no contabilizadas. No se infieren reversos de consumo faltantes.', 'Esta tabla reconstruye cantidades. Los reportes valorizan con compras y maestros; no utilizan saldos ni costos del Kardex de Toteat.'],
-    range:source.range,sourceCapturedAt:source.capturedAt};
+    range:source.range,sourceCapturedAt:source.capturedAt,
+    sourceIdentity:{restaurantId:String(source.restaurantId),localId:String(source.localId)},
+    sourceCoverage:{transfers:source.range,localTransfers:source.localTransfers?source.range:null,purchases:purchases?{from:purchases.from,to:purchases.through}:null}};
 }
 function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}){
   const root=path.join(uploadsRoot,'.integrations/toteat-api/stock'),jobs=new Map(),errors=new Map(),rebuildFailures=new Map();
@@ -129,7 +131,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     if(state?.sourceKind==='native-documents') {
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
       const dependencies={sales:version('sales'),purchases:version('purchases'),counts:version('original-counts'),master:masters()?.observedAt};
-      if(state.detailSchemaVersion!==2 || state.dependencies?.sales!==dependencies.sales || state.dependencies?.purchases!==dependencies.purchases || state.dependencies?.counts!==dependencies.counts || state.masterObservedAt!==dependencies.master) {
+      if(state.detailSchemaVersion!==3 || state.dependencies?.sales!==dependencies.sales || state.dependencies?.purchases!==dependencies.purchases || state.dependencies?.counts!==dependencies.counts || state.masterObservedAt!==dependencies.master) {
         const signature=JSON.stringify({version:pointer.version,...dependencies});
         if(rebuildFailures.get(key)?.signature!==signature) {
           try {
@@ -166,14 +168,14 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
       ledgerSource={...source,products:[...source.products,...countSource.products.filter(p=>!source.products.some(old=>old.id===p.id))],operations:{...source.operations,
         counts:[...source.operations.counts.filter(d=>!covered(d)&&!ids.has(String(d.id))),...fresh]}};
     }
-    const inputFingerprint=require('./storage-retention').fingerprint({source:ledgerSource,products,masterVersion:master.observedAt,salesVersion:sales?.version||null,purchaseVersion:purchases?.version||null,countVersion,schema:2});
+    const inputFingerprint=require('./storage-retention').fingerprint({source:ledgerSource,products,masterVersion:master.observedAt,salesVersion:sales?.version||null,purchaseVersion:purchases?.version||null,countVersion,schema:3});
     const previousPointer=read(path.join(root,key,'current.json'));
     const previous=previousPointer?read(path.join(root,key,previousPointer.version,'state.json')):null;
     if(previous?.inputFingerprint===inputFingerprint) return status(key);
     const state=buildLedger(ledgerSource,products,sales,purchases);
     state.inputFingerprint=inputFingerprint;
     state.countsCapturedAt=ledgerSource!==source?countSource.capturedAt:source.capturedAt;
-    Object.assign(state,{detailSchemaVersion:2,location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
+    Object.assign(state,{detailSchemaVersion:3,location:key,warehouses:state.warehouses||source.warehouses,masterObservedAt:master.observedAt,dependencies:{sales:sales?.version||null,purchases:purchases?.version||null,counts:countVersion}});
     const version=crypto.randomUUID(),directory=path.join(root,key,version);fs.mkdirSync(directory,{recursive:true,mode:0o700});
     try {
     atomicJson(path.join(directory,'original.json'),source);atomicJson(path.join(directory,'state.json'),state);

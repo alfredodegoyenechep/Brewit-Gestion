@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { currentWeeks, selectInventoryDates, value, fromMetric, finalizeCell,
+const { advance } = require('../inventory-boundaries');
+const { currentWeeks, currentPeriods, selectInventoryDates, value, fromMetric, finalizeCell,
   reportOptions, buildWeeklyResults, buildWeeklyResultsWithProgress, buildDailyResultsWithProgress } = require('../weekly-results');
 const locations = [{ id: 'store-1', name: 'La Concepción' }, { id: 'store-2', name: 'Lyon' }];
 
@@ -73,8 +74,8 @@ test('percentages share the branch/week denominator and signed totals include co
   assert.equal(values.inventoryConsumptionTotal.amount, -150);
   assert.equal(values.inventoryConsumptionTotal.percent, -15);
   assert.equal(values.otherConsumables.percent, -4);
-  assert.equal(values.expenseIncome.status, 'pending');
-  assert.equal(values.headOfficeSupplyIncome.percent, null);
+  assert.equal(values.centralWarehouseInbound.status, 'no-data');
+  assert.equal(values.directSupplierInbound.percent, null);
   assert.equal(finalizeCell(cell(1100)).values.collectionDifference.amount, -165);
   assert.equal(finalizeCell(cell(900)).values.collectionDifference.amount, 35);
 });
@@ -211,8 +212,8 @@ test('MP Teorico adds all tips, subtracts charged commission and cash, and requi
 });
 
 test('report options default to four weeks with inventory and reject unsupported selections', async () => {
-  assert.deepEqual(reportOptions(), { weeks: 4, includeInventory: true });
-  assert.deepEqual(reportOptions({ weeks: '2', includeInventory: 'false' }), { weeks: 2, includeInventory: false });
+  assert.deepEqual(reportOptions(), { weeks: 4, includeInventory: true, period: 'week', includeCurrent: true });
+  assert.deepEqual(reportOptions({ weeks: '2', includeInventory: 'false' }), { weeks: 2, includeInventory: false, period: 'week', includeCurrent: true });
   for (const weeks of [2, 3, 4]) {
     const options = { today: '2026-10-13', locations, weeks, includeInventory: false };
     const result = buildWeeklyResults(options, () => cell()), events = [];
@@ -226,6 +227,58 @@ test('report options default to four weeks with inventory and reject unsupported
   }
   for (const weeks of [1, 5, 2.5, 'x', [], null]) assert.throws(() => reportOptions({ weeks }), { status: 400 });
   assert.throws(() => reportOptions({ includeInventory: 'yes' }), { status: 400 });
+  for (const period of ['year', '', null, []]) assert.throws(() => reportOptions({ period }), { status: 400 });
+  for (const includeCurrent of ['yes', '', null, []]) assert.throws(() => reportOptions({ includeCurrent }), { status: 400 });
   const excluded = cell(); excluded.values.inventoryShortage = value(null, 'not-included');
   assert.equal(finalizeCell(excluded).values.inventoryConsumptionTotal.status, 'not-included');
+});
+
+test('excluding the current week returns the requested number of complete previous weeks', () => {
+  for (const today of ['2026-10-12', '2026-10-18', '2027-01-01']) for (const weeks of [2, 3, 4]) {
+    const previous = currentPeriods(today, { weeks, includeCurrent: false });
+    assert.equal(previous.length, weeks);
+    assert.deepEqual(previous, currentWeeks(today, weeks + 1).slice(1));
+    assert.ok(previous.every(period => period.to < today && period.through === period.to));
+  }
+  assert.deepEqual(currentWeeks('2026-10-13', 4, false).map(period => period.from),
+    ['2026-10-05', '2026-09-28', '2026-09-21', '2026-09-14']);
+});
+
+test('calendar months cross years and leap February and include or exclude the current month', async () => {
+  for (const today of ['2026-10-13', '2027-01-01', '2028-03-01', '2028-02-29']) {
+    for (const count of [2, 3, 4]) for (const includeCurrent of [true, false]) {
+      const options = { today, locations, count, period: 'month', includeCurrent, includeInventory: false };
+      const result = buildWeeklyResults(options, () => cell());
+      assert.equal(result.weeks.length, count);
+      assert.equal(result.weeks[0].period.through, includeCurrent ? today : result.weeks[0].period.to);
+      result.weeks.forEach(({ period }, index) => {
+        assert.equal(period.from.slice(-2), '01');
+        assert.equal(new Date(advance(period.to, 1)).getUTCDate(), 1);
+        if (index) assert.equal(advance(period.to, 1), result.weeks[index - 1].period.from);
+        assert.ok(period.through <= today);
+      });
+      assert.deepEqual(await buildWeeklyResultsWithProgress(options, () => cell(), () => {}), result);
+    }
+  }
+  assert.deepEqual(currentPeriods('2028-03-01', { weeks: 2, period: 'month', includeCurrent: false }), [
+    { from: '2028-02-01', to: '2028-02-29', through: '2028-02-29' },
+    { from: '2028-01-01', to: '2028-01-31', through: '2028-01-31' }
+  ]);
+});
+
+test('monthly daily detail covers every calendar day, uses the period valuation and skips future calculations', async () => {
+  for (const today of ['2028-02-29', '2026-04-15', '2026-10-13']) {
+    const period = currentPeriods(today, { period: 'month' })[0], calls = [], events = [];
+    const data = await buildDailyResultsWithProgress({ today, period, periodType: 'month', location: locations[0] }, (_, day) => {
+      calls.push(day); return cell();
+    }, event => events.push(event));
+    assert.equal(data.days.length, Number(period.to.slice(-2)));
+    assert.equal(data.days.at(-1).date, period.to);
+    assert.equal(calls.length, Number(today.slice(-2)));
+    assert.ok(calls.every(day => day.valuationThrough === today));
+    assert.equal(events.at(-1).total, data.days.length);
+    assert.equal(events.at(-1).completed, data.days.length);
+    assert.ok(data.days.every(day => day.values.inventoryShortage.status === 'monthly-only'));
+    if (today < period.to) assert.equal(data.days.at(-1).values.netSales.status, 'future');
+  }
 });

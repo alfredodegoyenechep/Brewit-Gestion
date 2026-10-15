@@ -63,7 +63,8 @@ function normalizeLocalTransfers(source, canonicalProducts) {
     if(!Array.isArray(detail))throw Error('Transferencia entre locales sin detalle de despacho o recepción.');
     const key=`${source.restaurantId}:${source.localId}:local-transfers:${d.key}`;
     const partyLabel = role => { const p=d.det[role]; return p.name || p.np || p.nombre || `Restaurante ${p.ir} · Local ${p.il}`; };
-    documents.push({key,id:d.key,kind:'transfers',transferKind:'local',status:'APPROVED',originalStatus:status,date:movementDate,createdAt:d.fc,approvedAt:d.det.fechas?.[phase]||null,origin:partyLabel('proveedor'),destination:partyLabel('receptor'),observation:d.observation||d.comments||''});
+    const identity = role => ({restaurantId:String(d.det[role].ir),localId:String(d.det[role].il)});
+    documents.push({key,id:d.key,kind:'transfers',transferKind:'local',status:'APPROVED',originalStatus:status,date:movementDate,createdAt:d.fc,approvedAt:d.det.fechas?.[phase]||null,origin:partyLabel('proveedor'),destination:partyLabel('receptor'),originIdentity:identity('proveedor'),destinationIdentity:identity('receptor'),observation:d.observation||d.comments||''});
     detail.forEach((line,index)=>{
       if(typeof line.cant!=='number'||!Number.isFinite(line.cant)||line.cant<0)throw Error('Cantidad de transferencia entre locales inválida.');
       if(line.cant===0)return;
@@ -73,7 +74,11 @@ function normalizeLocalTransfers(source, canonicalProducts) {
       const unit=line.unit_select||line.ub;let quantity=line.cant,normalizedUnit=unit,conversionPending=false;
       try {quantity=convert(line.cant,unit,p.stock_unit,p);normalizedUnit=p.stock_unit;}
       catch(error){if(error.code!=='TOTEAT_UNIT_CONVERSION_REQUIRED')throw error;conversionPending=true;issues.push({kind:'unit-conversion',code,document:key,message:error.message+' Se conserva la cantidad original.'});}
-      lines.push({id:`${key}:${phase}:${index}`,document:key,source:'transfers',transferKind:'local',date:movementDate,status:'APPROVED',warehouse,code,name:p.name?.translations?.default||code,unit:normalizedUnit,quantity,exactQuantity:quantity,originalQuantity:line.cant,originalUnit:unit,column:outgoing?'transfer_local_out':'transfer_local_in',active:!conversionPending,conversionPending,cost:line.costo??null});
+      // Receipt and dispatch lists may use different order and quantities. Only
+      // a unique origin warehouse for this product establishes its provenance.
+      const origins = new Set((d.det.listas?.[2] || []).filter(item => item.plProv === line.plProv && item.plRecep === line.plRecep && item.cant > 0).map(item => Number(item.w)));
+      const originWarehouseCode = outgoing ? Number(line.w) : origins.size === 1 ? [...origins][0] : null;
+      lines.push({id:`${key}:${phase}:${index}`,document:key,source:'transfers',transferKind:'local',date:movementDate,status:'APPROVED',warehouse,code,name:p.name?.translations?.default||code,unit:normalizedUnit,quantity,exactQuantity:quantity,originalQuantity:line.cant,originalUnit:unit,column:outgoing?'transfer_local_out':'transfer_local_in',active:!conversionPending,conversionPending,cost:line.costo??null,originWarehouseCode});
     });
   }
   return {documents,lines,issues};

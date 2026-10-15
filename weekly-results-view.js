@@ -3,6 +3,8 @@
   const refresh = document.getElementById('weekly-results-refresh');
   const form = document.getElementById('weekly-results-form');
   const weeks = document.getElementById('weekly-results-weeks');
+  const periodType = document.getElementById('weekly-results-period');
+  const includeCurrent = document.getElementById('weekly-results-current');
   const includeInventory = document.getElementById('weekly-results-inventory');
   const status = document.getElementById('weekly-results-status');
   const progress = document.getElementById('weekly-results-progress');
@@ -14,6 +16,9 @@
   const dailyLocation = document.getElementById('weekly-results-daily-location');
   const dailyStatus = document.getElementById('weekly-results-daily-status');
   const dailyBody = document.getElementById('weekly-results-daily-body');
+  const inboundDialog = document.getElementById('weekly-results-inbound');
+  const inboundBody = document.getElementById('weekly-results-inbound-body');
+  const inboundLabels = { centralWarehouseInbound: 'Entradas Bodega Central', directSupplierInbound: 'Entradas Proveedores Directos' };
   const pdfButton = document.getElementById('weekly-results-pdf');
   const xlsxButton = document.getElementById('weekly-results-xlsx');
   const exportDialog = document.getElementById('weekly-results-export');
@@ -22,7 +27,7 @@
   const exportDownload = document.getElementById('weekly-results-export-download');
   const states = { 'no-data': 'Sin datos', 'no-physical-count': 'Sin toma física',
     'no-opening-inventory': 'Sin inventario inicial', incomplete: 'Incompleto', pending: 'Pendiente', partial: 'Parcial', 'not-included': 'No incluido',
-    'weekly-only': 'Solo total semanal', future: 'Sin transcurrir' };
+    'weekly-only': 'Solo total semanal', 'monthly-only': 'Solo total mensual', future: 'Sin transcurrir' };
   const date = iso => iso ? new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })
     .format(new Date(`${iso}T12:00:00Z`)) : '—';
   let controller = null, generation = 0;
@@ -50,7 +55,7 @@
     if (!exportData) return;
     closeExport();
     const snapshot = exportData, request = exportGeneration;
-    document.getElementById('weekly-results-export-title').textContent = `Previsualización ${format.toUpperCase()} · Resultados Semanales`;
+    document.getElementById('weekly-results-export-title').textContent = `Previsualización ${format.toUpperCase()} · ${window.WeeklyResultsExport.reportTitle(snapshot)}`;
     exportDownload.textContent = `Descargar ${format.toUpperCase()}`;
     exportDialog.showModal(); exportDialog.setAttribute('aria-busy', 'true'); setStatus(exportStatus, 'Preparando previsualización…');
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -76,14 +81,16 @@
         const book = api.workbook(report, XLSX);
         blob = new Blob([api.styledWorkbookBytes(book, XLSX)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       }
-      exportUrl = URL.createObjectURL(blob); exportFilename = `Resultados_Semanales_${snapshot.date}_${snapshot.weeks.length}_semanas.${format}`;
+      const monthly = snapshot.options?.period === 'month';
+      exportUrl = URL.createObjectURL(blob); exportFilename = `Resultados_${monthly ? 'Mensuales' : 'Semanales'}_${snapshot.date}_${snapshot.weeks.length}_${monthly ? 'meses' : 'semanas'}${snapshot.options?.includeCurrent === false ? '_sin_actual' : ''}.${format}`;
       if (format === 'pdf') {
-        const frame = document.createElement('iframe'); frame.className = 'weekly-results-pdf-preview'; frame.title = 'Previsualización PDF de Resultados Semanales'; frame.src = exportUrl; exportBody.append(frame);
+        const frame = document.createElement('iframe'); frame.className = 'weekly-results-pdf-preview'; frame.title = `Previsualización PDF de ${report.title}`; frame.src = exportUrl; exportBody.append(frame);
       } else {
         const context = paragraph(exportBody, report.context); context.className = 'weekly-results-export-context';
         const preview = container.firstElementChild.cloneNode(true);
+        preview.querySelectorAll('.weekly-results-inbound-button').forEach(button => button.replaceWith(...button.childNodes));
         preview.querySelectorAll('button').forEach(button => button.remove());
-        preview.setAttribute('aria-label', 'Previsualización XLSX de Resultados Semanales'); exportBody.append(preview);
+        preview.setAttribute('aria-label', `Previsualización XLSX de ${report.title}`); exportBody.append(preview);
         report.notes.forEach(note => paragraph(exportBody, note));
       }
       exportDownload.disabled = false;
@@ -107,7 +114,70 @@
     }
     if (pending.trim()) receive(JSON.parse(pending));
   }
-  function metricCells(row, key, result, weekStart = false) {
+  function closeInbound() {
+    if (inboundDialog.open) inboundDialog.close();
+    inboundBody.replaceChildren();
+  }
+  function openInbound(key, result, { location, period }) {
+    const source = result.sources[key], metric = result.values[key], items = source.items;
+    document.getElementById('weekly-results-inbound-title').textContent = inboundLabels[key];
+    document.getElementById('weekly-results-inbound-context').textContent = `${location.name} · ${date(period.from)} – ${date(period.through)} · Costeo al ${date(source.costCutoff)}`;
+    inboundBody.replaceChildren();
+    if (!metric.complete) {
+      const note = paragraph(inboundBody, 'Detalle parcial: el total corresponde únicamente a los importes conocidos.');
+      note.className = 'weekly-results-inbound-notice';
+    }
+    if (source.unresolvedOriginCount) paragraph(inboundBody, `${source.unresolvedOriginCount} entradas con origen sin confirmar no se incluyen en el total.`);
+    (source.issues || []).forEach(message => paragraph(inboundBody, message));
+    paragraph(inboundBody, `${metric.complete ? 'Total de entradas' : 'Subtotal conocido'}: ${metric.available ? formatClp(metric.amount) : 'Sin datos'}`)
+      .className = 'weekly-results-inbound-total';
+    const quantity = amount => amount.toLocaleString('es-CL', { maximumFractionDigits: 6 });
+    const unitCost = amount => amount.toLocaleString('es-CL', { style: 'currency', currency: 'CLP', minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    const groups = new Map();
+    for (const item of items) {
+      const identity = JSON.stringify([item.code, item.unit]);
+      const group = groups.get(identity) || { code: item.code, name: item.name, unit: item.unit, quantity: 0, amount: 0, known: 0, count: 0, costs: new Set() };
+      group.quantity += item.quantity; group.count++;
+      if (item.available) { group.amount += item.amount; group.known++; group.costs.add(item.unitCost); }
+      groups.set(identity, group);
+    }
+    const tableFor = (headers, rows, className) => {
+      const wrap = document.createElement('div'); wrap.className = 'weekly-results-inbound-table-wrap'; wrap.tabIndex = 0;
+      wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', className === 'weekly-results-inbound-summary' ? 'Entradas por ingrediente; tabla desplazable' : 'Movimientos de entradas; tabla desplazable');
+      const table = document.createElement('table'); table.className = `weekly-results-inbound-table ${className}`;
+      const head = table.createTHead().insertRow();
+      for (const label of headers) { const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; head.append(cell); }
+      const body = table.createTBody();
+      for (const values of rows) { const row = body.insertRow(); for (const text of values) row.insertCell().textContent = text; }
+      wrap.append(table); return { wrap, table };
+    };
+    if (items.length) {
+      const rows = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'es') || a.code.localeCompare(b.code));
+      const summary = tableFor(['Código', 'Ingrediente / artículo', 'Cantidad', 'Unidad', 'Costo unitario', 'Importe'], rows.map(item => [
+        item.code, item.name, quantity(item.quantity), item.unit,
+        !item.known ? 'Sin costo' : item.costs.size === 1 ? unitCost([...item.costs][0]) : 'Variable',
+        !item.known ? 'Sin costo' : `${formatClp(item.amount)}${item.known < item.count ? ' · Parcial' : ''}`
+      ]), 'weekly-results-inbound-summary');
+      const total = summary.table.createTFoot().insertRow();
+      const label = document.createElement('th'); label.scope = 'row'; label.colSpan = 5;
+      label.textContent = metric.complete ? 'Total de entradas' : 'Subtotal conocido'; total.append(label);
+      total.insertCell().textContent = metric.available ? formatClp(metric.amount) : 'Sin costo';
+      inboundBody.append(summary.wrap);
+      const details = document.createElement('details'), heading = document.createElement('summary');
+      heading.textContent = `Ver movimientos (${items.length})`; details.append(heading);
+      const movements = tableFor(['Fecha', 'Documento', 'Código', 'Ingrediente / artículo', 'Cantidad', 'Unidad', 'Costo unitario', 'Importe'],
+        [...items].sort((a, b) => a.date.localeCompare(b.date) || a.document.localeCompare(b.document, 'es', { numeric: true })).map(item => [
+          date(item.date), item.document, item.code, item.name, quantity(item.quantity), item.unit,
+          item.available ? unitCost(item.unitCost) : 'Sin costo', item.available ? formatClp(item.amount) : 'Sin costo'
+        ]), 'weekly-results-inbound-movements');
+      details.append(movements.wrap); inboundBody.append(details);
+    } else {
+      paragraph(inboundBody, metric.complete ? 'No se registraron entradas de este tipo en el período seleccionado.' : 'No hay entradas con detalle disponible para el período seleccionado.');
+    }
+    if (source.missingCostCodes?.length) paragraph(inboundBody, `Sin costo completo: ${source.missingCostCodes.join(', ')}.`);
+    inboundDialog.showModal();
+  }
+  function metricCells(row, key, result, weekStart = false, detailContext = null) {
     const metric = result?.values[key], showPercent = metric?.showPercent !== false;
     const amount = row.insertCell(), percent = row.insertCell();
     if (weekStart) amount.classList.add('weekly-results-week-start');
@@ -130,6 +200,14 @@
       if (showPercent && metric.percentPartial && metric.percent != null && key !== 'inventoryShortage') partialTag(percent);
       if (key === 'collectionDifference') amount.classList.add(metric.amount === 0 ? 'weekly-results-balanced' : 'weekly-results-difference');
     }
+    if (inboundLabels[key] && detailContext && Array.isArray(result?.sources?.[key]?.items)) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'weekly-results-inbound-button';
+      button.textContent = amount.firstChild.textContent;
+      button.title = 'Ver ingredientes, cantidades e importes'; button.setAttribute('aria-haspopup', 'dialog');
+      button.setAttribute('aria-label', `Ver detalle de ${inboundLabels[key]}: ${button.textContent} · ${detailContext.location.name} · ${date(detailContext.period.from)}`);
+      button.addEventListener('click', () => openInbound(key, result, detailContext));
+      amount.firstChild.replaceWith(button);
+    }
   }
   function metricRow(body, key, label) {
     const row = body.insertRow(); row.dataset.metric = key;
@@ -140,19 +218,21 @@
     return row;
   }
   function cancelDaily(close = false) {
+    closeInbound();
     dailyController?.abort(); dailyController = null; dailyGeneration++;
     dailyDialog.setAttribute('aria-busy', 'false');
     if (close && dailyDialog.open) dailyDialog.close();
   }
   function renderDaily(detail, weeklyResult) {
+    const totalLabel = detail.periodType === 'month' ? 'Total mes' : 'Total semana';
     const wrap = document.createElement('div'); wrap.className = 'weekly-results-table-wrap'; wrap.tabIndex = 0;
-    wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Detalle diario y total semanal; tabla desplazable');
+    wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', `Detalle diario y ${totalLabel.toLowerCase()}; tabla desplazable`);
     const table = document.createElement('table'); table.className = 'weekly-results-table weekly-results-daily-table';
     const head = table.createTHead(), daysRow = head.insertRow(), unitsRow = head.insertRow();
     const concept = document.createElement('th'); concept.textContent = 'Concepto'; concept.rowSpan = 2; concept.scope = 'col'; daysRow.append(concept);
     for (const day of [...detail.days, null]) {
       const th = document.createElement('th'); th.colSpan = 2; th.scope = 'colgroup';
-      th.textContent = day ? `${new Intl.DateTimeFormat('es-CL', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${day.date}T12:00:00Z`))} · ${date(day.date)}` : 'Total semana';
+      th.textContent = day ? `${new Intl.DateTimeFormat('es-CL', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${day.date}T12:00:00Z`))} · ${date(day.date)}` : totalLabel;
       if (!day) th.className = 'weekly-results-weekly-total';
       daysRow.append(th);
       for (const unit of ['Importe', '%']) {
@@ -162,8 +242,8 @@
     const body = table.createTBody();
     for (const [key, label] of detail.metrics) {
       const row = metricRow(body, key, label);
-      for (const day of detail.days) metricCells(row, key, day);
-      metricCells(row, key, weeklyResult, true);
+      for (const day of detail.days) metricCells(row, key, day, false, { location: detail.location, period: { from: day.date, through: day.date } });
+      metricCells(row, key, weeklyResult, true, { location: detail.location, period: detail.period });
       row.cells[row.cells.length - 2].classList.add('weekly-results-weekly-total');
     }
     wrap.append(table); dailyBody.replaceChildren(wrap);
@@ -179,7 +259,7 @@
     const { data, week } = dailyReport;
     const location = data.locations.find(item => item.id === dailyLocation.value);
     const weeklyResult = week.locations.find(item => item.locationId === location.id);
-    const key = `${data.date}:${week.period.from}:${location.id}`, request = dailyGeneration;
+    const key = `${data.date}:${data.options?.period || 'week'}:${week.period.from}:${location.id}`, request = dailyGeneration;
     dailyBody.replaceChildren();
     if (dailyCache.has(key)) {
       renderDaily(dailyCache.get(key), weeklyResult); setStatus(dailyStatus, 'Detalle diario actualizado.', 'success'); return;
@@ -187,7 +267,8 @@
     const active = new AbortController(); dailyController = active;
     dailyDialog.setAttribute('aria-busy', 'true'); setStatus(dailyStatus, 'Calculando detalle diario…');
     try {
-      const params = new URLSearchParams({ from: week.period.from, date: data.date, location: location.id });
+      const params = new URLSearchParams({ from: week.period.from, date: data.date, location: location.id,
+        period: data.options?.period || 'week', weeks: data.weeks.length, includeCurrent: data.options?.includeCurrent !== false });
       const response = await fetch(`/api/weekly-results/daily/stream?${params}`, { signal: active.signal });
       let result = null;
       await readStream(response, event => {
@@ -232,7 +313,8 @@
       }
     }
     const labels = { sales: 'Ventas', margin: 'Margen', payments: 'Pagos TotEat', mercadoPago: 'Mercado Pago', mercadoPagoFee: 'Comision Mercadopago',
-      marketing: 'Marketing', employees: 'Consumo personal', waste: 'Merma', inventory: 'Inventario' };
+      marketing: 'Marketing', employees: 'Consumo personal', waste: 'Merma', inventory: 'Inventario',
+      centralWarehouseInbound: 'Entradas Bodega Central', directSupplierInbound: 'Entradas Proveedores Directos' };
     for (const [key, label] of Object.entries(labels)) {
       const source = result?.sources?.[key];
       const heading = document.createElement('h4'); heading.textContent = label; detailBody.append(heading);
@@ -245,6 +327,13 @@
       for (const file of files) paragraph(detailBody, `${file.name || 'Archivo'}${file.range ? ` · ${date(file.range.from)} – ${date(file.range.to)}` : ''}`);
       if (source.dates) paragraph(detailBody, `Fechas registradas: ${source.dates.map(date).join(', ') || '—'}`);
       if (source.costCutoff) paragraph(detailBody, `Valorización al corte: ${date(source.costCutoff)}`);
+      if (source.items) {
+        paragraph(detailBody, `${source.items.filter(item => item.available).length} de ${source.items.length} entradas costeadas.`);
+        for (const item of source.items) paragraph(detailBody,
+          `${date(item.date)} · Documento ${item.document} · ${item.code} ${item.name} · ${item.quantity.toLocaleString('es-CL')} ${item.unit} · ${item.available ? `${formatClp(item.unitCost)} por unidad = ${formatClp(item.amount)}` : 'Sin costo completo'}${item.costSource ? ` · Fuente de costo: ${item.costSource === 'purchase' ? 'Compra' : item.costSource === 'recipe' ? 'Receta' : item.costSource === 'master' ? 'Maestro' : 'Sin costo'}` : ''}${item.costSourceDate ? ` (${date(item.costSourceDate)})` : ''}`);
+        if (source.unresolvedOriginCount) paragraph(detailBody, `${source.unresolvedOriginCount} entradas con origen sin confirmar; no se suman al subtotal.`);
+        (source.issues || []).forEach(message => paragraph(detailBody, message));
+      }
       if (source.detectedFields) {
         paragraph(detailBody, `Columnas de comisión: ${source.detectedFields.join(', ') || 'Sin columna reconocida'}`);
         paragraph(detailBody, `Movimientos con fees: ${source.transactionsWithFee} de ${source.transactions}. Importe cobrado sin conversión de IVA.`);
@@ -267,10 +356,10 @@
   }
   function render(data) {
     exportData = data; pdfButton.disabled = !data.locations.length; xlsxButton.disabled = !data.locations.length;
-    document.getElementById('weekly-results-context').textContent = `Consulta: ${date(data.date)} · ${data.locations.length} sucursales · ${data.weeks.length} semanas · Inventario ${data.options?.includeInventory === false ? 'no incluido' : 'incluido'} · Semana actual acumulada hasta ${date(data.date)}`;
+    document.getElementById('weekly-results-context').textContent = window.WeeklyResultsExport.reportContext(data);
     if (!data.locations.length) { paragraph(container, 'No hay cafeterías activas para mostrar.'); return; }
     const wrap = document.createElement('div'); wrap.className = 'weekly-results-table-wrap';
-    wrap.tabIndex = 0; wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', 'Resultados semanales por sucursal; tabla desplazable');
+    wrap.tabIndex = 0; wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', `${window.WeeklyResultsExport.reportTitle(data)} por sucursal; tabla desplazable`);
     const table = document.createElement('table'); table.className = 'weekly-results-table';
     const head = table.createTHead(), weeksRow = head.insertRow(), storesRow = head.insertRow(), unitsRow = head.insertRow();
     const concept = document.createElement('th'); concept.textContent = 'Concepto'; concept.rowSpan = 3; concept.scope = 'col'; weeksRow.append(concept);
@@ -278,9 +367,9 @@
       const th = document.createElement('th'); th.colSpan = data.locations.length * 2; th.scope = 'colgroup'; th.className = 'weekly-results-week-start';
       const heading = document.createElement('div'); heading.className = 'weekly-results-week-heading';
       const weekLabel = document.createElement('span');
-      weekLabel.textContent = `${index === 0 ? 'Semana actual' : `Hace ${index} semana${index === 1 ? '' : 's'}`} · ${date(week.period.from)} – ${date(week.period.to)}`;
+      weekLabel.textContent = `${window.WeeklyResultsExport.periodLabel(data, index)} · ${date(week.period.from)} – ${date(week.period.to)}`;
       const dailyButton = document.createElement('button'); dailyButton.type = 'button'; dailyButton.className = 'secondary weekly-results-daily-button'; dailyButton.textContent = 'Detalle Diario';
-      dailyButton.setAttribute('aria-label', `Detalle Diario de la semana del ${date(week.period.from)}`);
+      dailyButton.setAttribute('aria-label', `Detalle Diario ${data.options?.period === 'month' ? 'del mes' : 'de la semana'} del ${date(week.period.from)}`);
       dailyButton.addEventListener('click', () => openDaily(data, week));
       heading.append(weekLabel, dailyButton); th.append(heading);
       weeksRow.append(th);
@@ -290,7 +379,7 @@
         if (!storeIndex) store.className = 'weekly-results-week-start';
         const label = document.createElement('span'); label.textContent = location.name; store.append(label);
         const button = document.createElement('button'); button.type = 'button'; button.className = 'weekly-results-review'; button.textContent = 'Fechas y fuentes';
-        button.setAttribute('aria-label', `Revisar fechas y fuentes de ${location.name}, semana del ${date(week.period.from)}`);
+        button.setAttribute('aria-label', `Revisar fechas y fuentes de ${location.name}, ${data.options?.period === 'month' ? 'mes' : 'semana'} del ${date(week.period.from)}`);
         button.addEventListener('click', () => openDetail(data, week, location, result)); store.append(button); storesRow.append(store);
         for (const unit of ['Importe', '%']) {
           const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = unit;
@@ -304,7 +393,7 @@
       const row = metricRow(body, key, label);
       for (const week of data.weeks) for (const [storeIndex, location] of data.locations.entries()) {
         const result = week.locations.find(item => item.locationId === location.id);
-        metricCells(row, key, result, !storeIndex);
+        metricCells(row, key, result, !storeIndex, { location, period: week.period });
       }
     }
     wrap.append(table); container.append(wrap);
@@ -330,8 +419,9 @@
     progress.hidden = false; progress.value = 0;
     container.replaceChildren(); warnings.replaceChildren();
     document.getElementById('weekly-results-context').textContent = '';
-    setStatus(status, 'Calculando resultados semanales…');
-    const params = new URLSearchParams({ weeks: weeks.value, includeInventory: includeInventory.value });
+    const monthly = periodType.value === 'month';
+    setStatus(status, `Calculando resultados ${monthly ? 'mensuales' : 'semanales'}…`);
+    const params = new URLSearchParams({ weeks: weeks.value, period: periodType.value, includeCurrent: includeCurrent.value, includeInventory: includeInventory.value });
     try {
       const response = await fetch(`/api/weekly-results/stream?${params}`, { signal: active.signal });
       let data = null;
@@ -347,7 +437,7 @@
       await readStream(response, receive);
       if (request !== generation) return;
       if (!data) throw Error('Se interrumpió el cálculo. Pulsa Actualizar para volver a intentarlo.');
-      render(data); progress.value = 100; setStatus(status, 'Resultados semanales actualizados.', 'success');
+      render(data); progress.value = 100; setStatus(status, `Resultados ${monthly ? 'mensuales' : 'semanales'} actualizados.`, 'success');
     } catch (error) {
       active.abort();
       if (request === generation && error.name !== 'AbortError') setStatus(status, error.message, 'error');
@@ -360,6 +450,12 @@
   };
   form.addEventListener('submit', event => { event.preventDefault(); window.loadCafeWeeklyResults(); });
   form.addEventListener('change', () => {
+    const monthly = periodType.value === 'month';
+    document.getElementById('weekly-results-title').textContent = monthly ? 'Resultados Mensuales' : 'Resultados Semanales';
+    document.getElementById('weekly-results-count-label').textContent = monthly ? 'Cantidad de meses' : 'Cantidad de semanas';
+    document.getElementById('weekly-results-current-label').textContent = monthly ? 'Incluir mes actual' : 'Incluir semana actual';
+    for (const option of weeks.options) option.textContent = `${option.value} ${monthly ? 'meses' : 'semanas'}`;
+    progress.setAttribute('aria-label', `Avance de Resultados ${monthly ? 'Mensuales' : 'Semanales'}`);
     window.cancelCafeWeeklyResults();
     resetExport();
     if (dialog.open) dialog.close();
@@ -368,6 +464,7 @@
     setStatus(status, 'Pulsa Actualizar para aplicar las opciones seleccionadas.');
   });
   document.getElementById('weekly-results-detail-close').addEventListener('click', () => dialog.close());
+  document.getElementById('weekly-results-inbound-close').addEventListener('click', () => inboundDialog.close());
   document.getElementById('weekly-results-daily-close').addEventListener('click', () => dailyDialog.close());
   dailyDialog.addEventListener('close', () => cancelDaily());
   dailyLocation.addEventListener('change', () => loadDaily());

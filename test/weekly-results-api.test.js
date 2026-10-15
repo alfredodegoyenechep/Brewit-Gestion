@@ -463,7 +463,7 @@ test('options select 2/3/4 weeks, skip inventory processing and preserve calenda
     const options = { weeks, includeInventory: false };
     const data = await getReport(base, options);
     assert.equal(data.weeks.length, weeks);
-    assert.deepEqual(data.options, options);
+    assert.deepEqual(data.options, { ...options, period: 'week', includeCurrent: true });
     assert.equal(rebuilds, 0);
     const previous = data.weeks[1].locations[0];
     assert.equal(previous.values.waste.amount, -70);
@@ -482,7 +482,7 @@ test('options select 2/3/4 weeks, skip inventory processing and preserve calenda
     assert.equal(rebuilds, 0);
   }
   const defaults = await getReport(base);
-  assert.deepEqual(defaults.options, { weeks: 4, includeInventory: true });
+  assert.deepEqual(defaults.options, { weeks: 4, includeInventory: true, period: 'week', includeCurrent: true });
   assert.equal(rebuilds, 3);
   assert.equal(defaults.weeks[1].locations[0].inventory.initialDate, '2026-10-04');
 });
@@ -491,10 +491,84 @@ test('invalid report options fail before calculations on both endpoints', async 
   const { base, app } = await fixture(t);
   let rebuilds = 0;
   app.locals.toteatStockSync.rebuild = () => { rebuilds++; throw Error('Must not calculate'); };
-  for (const route of ['/api/weekly-results', '/api/weekly-results/stream']) for (const query of ['weeks=1', 'weeks=5', 'weeks=x', 'includeInventory=yes']) {
+  for (const route of ['/api/weekly-results', '/api/weekly-results/stream']) for (const query of ['weeks=1', 'weeks=5', 'weeks=x', 'includeInventory=yes', 'period=year', 'includeCurrent=yes', 'count=1']) {
     const response = await fetch(`${base}${route}?${query}`);
     assert.equal(response.status, 400);
     assert.ok((await response.json()).error);
   }
   assert.equal(rebuilds, 0);
+});
+
+test('weekly and monthly endpoints select prior periods and monthly daily amounts match the report', async t => {
+  const { base } = await fixture(t);
+  const priorWeeks = await getReport(base, { weeks: 4, includeCurrent: false, includeInventory: false });
+  assert.deepEqual(priorWeeks.weeks.map(week => week.period.from), ['2026-10-05', '2026-09-28', '2026-09-21', '2026-09-14']);
+  const oldestDaily = await getDaily(base, { from: '2026-09-14', includeCurrent: false });
+  assert.equal(oldestDaily.days[6].date, '2026-09-20');
+  for (const includeCurrent of [true, false]) {
+    const options = { count: 2, period: 'month', includeCurrent, includeInventory: false };
+    const data = await getReport(base, options);
+    assert.deepEqual(data.weeks.map(week => week.period.from), includeCurrent ? ['2026-10-01', '2026-09-01'] : ['2026-09-01', '2026-08-01']);
+    const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams(options)}`).then(response => response.text());
+    assert.deepEqual(stream.trim().split('\n').map(JSON.parse).at(-1).data, data);
+    const period = data.weeks[0].period;
+    const response = await fetch(`${base}/api/weekly-results/daily/stream?${new URLSearchParams({
+      ...options, from: period.from, date: data.date, location: 'store-1'
+    })}`);
+    assert.equal(response.status, 200);
+    const events = (await response.text()).trim().split('\n').map(JSON.parse), daily = events.at(-1).data;
+    assert.equal(daily.periodType, 'month');
+    assert.equal(daily.days.length, includeCurrent ? 31 : 30);
+    assert.equal(events.at(-2).completed, daily.days.length);
+    assert.ok(daily.days.every(day => day.values.inventoryShortage.status === 'monthly-only'));
+    for (const key of ['netSales', 'grossSales', 'discounts', 'marketing', 'employees', 'waste']) {
+      const known = daily.days.filter(day => day.values[key].available);
+      assert.ok(known.length, key);
+      const total = known.reduce((sum, day) => sum + day.values[key].amount, 0);
+      assert.ok(Math.abs(total - data.weeks[0].locations[0].values[key].amount) < 1e-8, key);
+    }
+    if (includeCurrent) {
+      assert.equal(data.weeks[0].locations[0].values.netSales.amount, 1100);
+      assert.equal(daily.days[13].values.netSales.status, 'future');
+    }
+  }
+});
+
+test('calendar inbound rows cost central ingredients and direct purchases independently of inventory and match daily/monthly reports', async t => {
+  const { base, app } = await fixture(t);
+  const stock = app.locals.toteatStockSync.current;
+  const transfers = [{ id: 't1', date: '2026-10-05', quantity: 1 }, { id: 't2', date: '2026-10-06', quantity: 2 }];
+  const purchases = [{ id: 'p1', date: '2026-10-05', quantity: 2 }, { id: 'p2', date: '2026-10-06', quantity: 3 },
+    { id: 'future', date: '2026-10-14', quantity: 100 }];
+  const makeState = id => ({ ...stock(id),
+    warehouses: [...stock(id).warehouses, { id: 'central', custom_id: 1 }],
+    sourceCoverage: { transfers: { from: '2026-09-01', to: '2026-10-15' }, purchases: { from: '2026-09-01', to: '2026-10-15' } },
+    movements: [...transfers.map(line => ({ ...line, document: line.id, warehouse: 'oper', code: 'A', unit: 'UN', column: 'transfer_warehouse_in', active: true })),
+      ...purchases.map(line => ({ ...line, document: line.id, warehouse: 'oper', code: 'A', unit: 'UN', column: 'purchase', active: true }))],
+    documents: transfers.map(line => ({ key: line.id, id: line.id, status: 'APPROVED', originWarehouse: 'central' })) });
+  app.locals.toteatStockSync.current = makeState;
+  let rebuilds = 0;
+  app.locals.toteatStockSync.rebuild = () => { rebuilds++; throw Error('No physical inventory calculation requested'); };
+  const options = { weeks: 2, includeInventory: false };
+  const weekly = await getReport(base, options), result = weekly.weeks[1].locations[0];
+  assert.equal(result.values.centralWarehouseInbound.amount, 30);
+  assert.equal(result.values.centralWarehouseInbound.percent, 3);
+  assert.equal(result.values.directSupplierInbound.amount, 50);
+  assert.equal(result.values.directSupplierInbound.percent, 5);
+  assert.equal(result.values.inventoryShortage.status, 'not-included');
+  assert.equal(result.sources.centralWarehouseInbound.items[0].unitCost, 10);
+  assert.equal(result.sources.centralWarehouseInbound.items[0].costSource, 'master');
+  assert.equal(result.sources.centralWarehouseInbound.costCutoff, '2026-10-11');
+  const daily = await getDaily(base);
+  for (const key of ['centralWarehouseInbound', 'directSupplierInbound']) {
+    assert.equal(daily.days.reduce((sum, day) => sum + day.values[key].amount, 0), result.values[key].amount);
+    assert.equal(daily.days[0].sources[key].costCutoff, '2026-10-11');
+  }
+  const monthly = await getReport(base, { ...options, period: 'month' });
+  assert.equal(monthly.weeks[0].locations[0].values.centralWarehouseInbound.amount, 30);
+  assert.equal(monthly.weeks[0].locations[0].values.directSupplierInbound.amount, 50);
+  const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams(options)}`).then(response => response.text());
+  assert.deepEqual(stream.trim().split('\n').map(JSON.parse).at(-1).data, weekly);
+  assert.equal(rebuilds, 0);
+  assert.deepEqual(weekly.metrics.slice(-2), [['centralWarehouseInbound', 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos']]);
 });

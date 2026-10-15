@@ -7328,15 +7328,28 @@ function createApp(options = {}) {
   function weeklyResultsContext(query = {}) {
     const options = require('./weekly-results').reportOptions(query);
     const stocks = new Map();
+    const inboundValuations = new Map();
+    const central = readJson(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), {})['store-1'];
     return {
       today: projectionToday(),
       ...options,
+      centralIdentity: central ? { restaurantId: central.restaurantId, localId: central.localId } : null,
       locations: readLocations().locations.filter(location => location.status === 'active' && location.type === 'store')
         .map(location => ({ id: location.id, name: location.name })),
-      stock(location) {
+      inboundValuation(location, state, cutoff) {
+        const key = `${location.id}:${cutoff}`;
+        if (!inboundValuations.has(key)) {
+          const master = latestMasterFile('master-catalog', cutoff, location.id);
+          if (!master) throw Error('No hay un catálogo maestro vigente para costear las entradas.');
+          const catalog = parseIngredientCatalog(master.filePath);
+          inboundValuations.set(key, { catalog, costResolver: buildInventoryPurchaseCostResolver(cutoff, location, state, { catalog }) });
+        }
+        return inboundValuations.get(key);
+      },
+      stock(location, currentOnly = false) {
         if (!stocks.has(location.id)) {
           try {
-            const state = synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id);
+            const state = synchronizedOnly ? synchronizedStock(location.id) : currentOnly ? stockSync.current(location.id) : stockSync.rebuild(location.id);
             if (!state || state.rebuildError) throw Error(state?.rebuildError || 'Actualiza las fuentes originales de inventario.');
             stocks.set(location.id, { state });
           } catch (error) { stocks.set(location.id, { error: error.message }); }
@@ -7488,26 +7501,36 @@ function createApp(options = {}) {
       inventory = { ...inventory, status: 'no-data', error: error.message };
       failure('Inventario', error);
     }
+    try {
+      const state = context.stock(location, true);
+      const inbound = require('./inventory-inbound').inboundResults({ state, location, period,
+        centralIdentity: context.centralIdentity || (location.id === 'store-1' ? state.sourceIdentity : null),
+        ...context.inboundValuation(location, state, costCutoff) });
+      Object.assign(values, inbound.values); Object.assign(sources, inbound.sources);
+      for (const [key, label] of [['centralWarehouseInbound', 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos']]) {
+        if (values[key].status !== 'complete') warnings.push(`${label}: cobertura, origen o costeo incompleto; se muestra el subtotal conocido cuando está disponible.`);
+      }
+    } catch (error) { failure('Entradas al Kardex', error); }
     return { values, inventory, sources, warnings: [...new Set(warnings)] };
   }
 
   app.get('/api/weekly-results/daily/stream', async (req, res) => {
-    const { currentWeeks, buildDailyResultsWithProgress } = require('./weekly-results');
+    const { currentPeriods, buildDailyResultsWithProgress } = require('./weekly-results');
     let context, period, location;
     try {
-      context = weeklyResultsContext({ includeInventory: false });
+      context = weeklyResultsContext({ ...req.query, includeInventory: false });
       const date = String(req.query.date || context.today);
       if (!isValidDate(date) || date > context.today) throw Object.assign(Error('Fecha de consulta inválida.'), { status: 400 });
-      period = currentWeeks(date).find(week => week.from === req.query.from);
+      period = currentPeriods(date, context).find(week => week.from === req.query.from);
       location = context.locations.find(item => item.id === req.query.location);
-      if (!period || !location) throw Object.assign(Error('Selecciona una semana y cafetería válidas.'), { status: 400 });
+      if (!period || !location) throw Object.assign(Error('Selecciona un período y cafetería válidos.'), { status: 400 });
       context.today = date;
     } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
     res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
     try {
-      const data = await buildDailyResultsWithProgress({ today: context.today, period, location },
+      const data = await buildDailyResultsWithProgress({ today: context.today, period, location, periodType: context.period },
         (cafe, day) => buildCafeWeeklyResults(context, cafe, day),
         progress => send({ type: 'progress', ...progress }), () => res.destroyed);
       if (data) send({ type: 'result', data });

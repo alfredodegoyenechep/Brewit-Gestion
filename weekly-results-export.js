@@ -13,12 +13,22 @@
   const date = iso => iso ? iso.split('-').reverse().join('-') : '—';
   const clp = amount => `$${amount.toLocaleString('es-CL', { maximumFractionDigits: 0 })}`;
   const percent = amount => `${amount.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+  const reportTitle = data => data.options?.period === 'month' ? 'Resultados Mensuales' : 'Resultados Semanales';
+  function periodLabel(data, index) {
+    const monthly = data.options?.period === 'month', offset = index + (data.options?.includeCurrent === false ? 1 : 0);
+    return offset === 0 ? (monthly ? 'Mes actual' : 'Semana actual')
+      : `Hace ${offset} ${monthly ? (offset === 1 ? 'mes' : 'meses') : (offset === 1 ? 'semana' : 'semanas')}`;
+  }
+  function reportContext(data) {
+    const monthly = data.options?.period === 'month', cutoff = data.weeks[0]?.period.through || data.date;
+    return `Consulta: ${date(data.date)} · ${data.locations.length} sucursales · ${data.weeks.length} ${monthly ? 'meses' : 'semanas'} · Inventario ${data.options?.includeInventory === false ? 'no incluido' : 'incluido'} · ${data.options?.includeCurrent === false ? (monthly ? 'Mes actual excluido' : 'Semana actual excluida') : (monthly ? 'Mes actual incluido' : 'Semana actual incluida')} · Datos hasta ${date(cutoff)}`;
+  }
 
   function model(data, palette = {}, fontSize = 12) {
     const colors = { ...defaults, ...palette };
     const columns = data.weeks.flatMap((week, weekIndex) => data.locations.map((location, storeIndex) => ({
       weekIndex, weekStart: storeIndex === 0, location: location.name,
-      week: `${weekIndex === 0 ? 'Semana actual' : `Hace ${weekIndex} semana${weekIndex === 1 ? '' : 's'}`} · ${date(week.period.from)} – ${date(week.period.to)}`,
+      week: `${periodLabel(data, weekIndex)} · ${date(week.period.from)} – ${date(week.period.to)}`,
       result: week.locations.find(result => result.locationId === location.id)
     })));
     const rows = data.metrics.map(([key, label]) => {
@@ -42,10 +52,10 @@
       });
       return { key, label, compact, subtotal, separator: !borderlessKeys.has(key), cells };
     });
-    return { title: 'Resultados Semanales', date: data.date, colors, fontSize, columns, rows,
-      context: `Consulta: ${date(data.date)} · ${data.locations.length} sucursales · ${data.weeks.length} semanas · Inventario ${data.options?.includeInventory === false ? 'no incluido' : 'incluido'} · Acumulado hasta ${date(data.date)}`,
+    return { title: reportTitle(data), date: data.date, colors, fontSize, columns, rows,
+      context: reportContext(data),
       notes: ['Control de diferencias = Mercado Pago − MP Teorico. Descuentos incluye IVA.',
-        'Inventario y consumibles: intervalo entre tomas físicas. Merma, marketing y consumo personal: semana calendario.'],
+        `Inventario y consumibles: intervalo entre tomas físicas. Merma, marketing y consumo personal: ${data.options?.period === 'month' ? 'mes' : 'semana'} calendario.`],
       warnings: data.warnings || [] };
   }
 
@@ -244,10 +254,10 @@
     sheet['!margins'] = { left: .25, right: .25, top: .35, bottom: .35, header: .15, footer: .15 };
     sheet['!weeklyStyles'] = styles;
     sheet['!weeklyPalette'] = report.colors;
-    const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, 'Resultados Semanales');
+    const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, report.title);
     book.Props = { Title: report.title, Subject: report.context, Author: 'Brewit' };
     book.Workbook = { Names: [{ Name: '_xlnm.Print_Titles', Sheet: 0,
-      Ref: "'Resultados Semanales'!$A:$A,'Resultados Semanales'!$1:$5" }] };
+      Ref: `'${report.title}'!$A:$A,'${report.title}'!$1:$5` }] };
     return book;
   }
 
@@ -307,11 +317,21 @@
       element(sheetDocument, 'selection', { pane: 'bottomRight', activeCell: 'B6', sqref: 'B6' }));
     let properties = sheetDocument.getElementsByTagNameNS(ns, 'sheetPr')[0];
     if (!properties) { properties = element(sheetDocument, 'sheetPr'); sheetDocument.documentElement.insertBefore(properties, sheetDocument.documentElement.firstChild); }
-    properties.appendChild(element(sheetDocument, 'pageSetUpPr', { fitToPage: 0 }));
-    sheetDocument.documentElement.appendChild(element(sheetDocument, 'pageSetup', { paperSize: 9, orientation: 'landscape', scale: 80, fitToWidth: 0, fitToHeight: 0 }));
+    const setupProperties = properties.getElementsByTagNameNS(ns, 'pageSetUpPr')[0] || element(sheetDocument, 'pageSetUpPr');
+    setupProperties.setAttribute('fitToPage', '0'); properties.appendChild(setupProperties);
+    const pageSetup = sheetDocument.getElementsByTagNameNS(ns, 'pageSetup')[0] || element(sheetDocument, 'pageSetup');
+    Object.entries({ paperSize: 9, orientation: 'landscape', scale: 80, fitToWidth: 0, fitToHeight: 0 })
+      .forEach(([key, val]) => pageSetup.setAttribute(key, String(val)));
+    // CT_Worksheet requires pageSetup after pageMargins and before ignoredErrors
+    // and the remaining trailing elements. Appending it makes Excel repair the file.
+    const following = new Set(['headerFooter', 'rowBreaks', 'colBreaks', 'customProperties', 'cellWatches',
+      'ignoredErrors', 'smartTags', 'drawing', 'legacyDrawing', 'legacyDrawingHF', 'drawingHF', 'picture',
+      'oleObjects', 'controls', 'webPublishItems', 'tableParts', 'extLst']);
+    const root = sheetDocument.documentElement;
+    root.insertBefore(pageSetup, [...root.children].find(child => following.has(child.localName)) || null);
     save('xl/worksheets/sheet1.xml', sheetDocument); save('xl/styles.xml', document);
     return XLSX.CFB.write(zip, { type: 'array', fileType: 'zip', compression: true });
   }
   function reportColor(book, key) { return book.Sheets[book.SheetNames[0]]['!weeklyPalette']?.[key] || defaults[key]; }
-  return { model, pdf, workbook, styledWorkbookBytes };
+  return { model, pdf, workbook, styledWorkbookBytes, reportTitle, periodLabel, reportContext };
 });

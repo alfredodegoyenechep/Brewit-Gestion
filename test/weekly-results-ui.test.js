@@ -98,7 +98,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   const labels = await page.locator('.nav-group').first().locator('.nav-text').allTextContents();
-  assert.deepEqual(labels.slice(-2), ['Resultados Financieros', 'Resultados Semanales']);
+  assert.deepEqual(labels.slice(-2), ['Resultados Financieros', 'Resultados Semanales / Mensuales']);
   let requests = 0;
   page.on('request', request => { if (new URL(request.url()).pathname === '/api/weekly-results/stream') requests++; });
   await page.locator('[data-view="weekly-results"]').click();
@@ -119,7 +119,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 16);
   assert.equal(await page.locator('#weekly-results-progress').getAttribute('value'), '100');
   assert.ok((await page.locator('[data-metric="netSales"] .weekly-results-percent').allTextContents()).every(text => text === '—'));
-  assert.ok((await page.locator('[data-metric="expenseIncome"] .weekly-results-amount').allTextContents()).every(text => text === 'Pendiente'));
+  assert.ok((await page.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').allTextContents()).every(text => text === 'Sin datos'));
   assert.ok((await page.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').allTextContents()).every(text => text === 'Incompleto'));
   assert.match(await page.locator('.weekly-results-table thead tr').first().innerText(), /12-10-2026.*18-10-2026/);
 
@@ -129,12 +129,15 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
       grossSales: value(1200, 'complete'), discounts: value(100, 'complete'),
       mercadoPagoTips: value(80, 'complete'), cashTips: value(20, 'complete'),
       mercadoPagoFee: value(35, 'complete'),
+      centralWarehouseInbound: value(30, 'complete'), directSupplierInbound: value(50, 'complete'),
       cashCollection: value(200, 'complete'), mercadoPagoCollection: value(900, 'complete'),
       inventoryShortage: period.from === '2026-10-12' ? value(null, 'no-physical-count') : value(-50, 'partial'),
       waste: value(-10, 'complete'), marketing: value(-20, 'complete'), employees: value(-30, 'complete'),
       otherConsumables: period.from === '2026-10-12' ? value(null, 'no-physical-count') : value(-40, 'complete') },
     inventory: { status: 'partial', initialDate: '2026-10-04', finalDate: '2026-10-11', movements: { from: '2026-10-04', to: '2026-10-10' } },
-    sources: { marketing: { dates: ['2026-10-05', '2026-10-11'], costCutoff: '2026-10-11', files: [{ name: 'marketing.xlsx' }] } },
+    sources: { marketing: { dates: ['2026-10-05', '2026-10-11'], costCutoff: '2026-10-11', files: [{ name: 'marketing.xlsx' }] },
+      centralWarehouseInbound: { name: 'Entradas desde Bodega Central Local 001 La Concepcion', costCutoff: '2026-10-11',
+        items: [{ document: 't1', date: '2026-10-05', code: 'SUB005', name: 'Café', quantity: 3, unit: 'KG', unitCost: 10, amount: 30, available: true, costSource: 'purchase', costSourceDate: '2026-10-04' }] } },
     warnings: ['Costo parcial de inventario']
   }));
   await page.route('**/api/weekly-results/stream?*', route => route.fulfill({ contentType: 'application/x-ndjson',
@@ -186,6 +189,9 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.match(detail, /Movimientos: 04-10-2026 – 10-10-2026/);
   assert.match(detail, /Datos calendario: 05-10-2026 – 11-10-2026/);
   assert.match(detail, /marketing.xlsx/);
+  assert.match(detail, /Entradas Bodega Central/);
+  assert.match(detail, /Documento t1 · SUB005 Café · 3 KG · \$10 por unidad = \$30/);
+  assert.match(detail, /Fuente de costo: Compra \(04-10-2026\)/);
   await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
 
   const sticky = await page.locator('.weekly-results-table-wrap').evaluate(wrap => {
@@ -299,4 +305,49 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   assert.equal(requests, 2);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 4);
   assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 12);
+
+  await page.locator('#weekly-results-current').selectOption('false');
+  await page.locator('#weekly-results-weeks').selectOption('4');
+  assert.equal(requests, 2);
+  assert.equal(await page.locator('.weekly-results-table').count(), 0);
+  await page.locator('#weekly-results-refresh').click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  let headings = await page.locator('.weekly-results-week-heading span').allTextContents();
+  assert.match(headings[0], /^Hace 1 semana.*05-10-2026.*11-10-2026/);
+  assert.match(headings[3], /^Hace 4 semanas.*14-09-2026.*20-09-2026/);
+  assert.match(await page.locator('#weekly-results-context').innerText(), /Semana actual excluida.*Datos hasta 11-10-2026/);
+
+  await page.locator('#weekly-results-period').selectOption('month');
+  await page.locator('#weekly-results-weeks').selectOption('2');
+  assert.equal(requests, 3);
+  assert.equal(await page.locator('#weekly-results-title').innerText(), 'Resultados Mensuales');
+  assert.equal(await page.locator('#weekly-results-current-label').textContent(), 'Incluir mes actual');
+  assert.deepEqual(await page.locator('#weekly-results-weeks option').allTextContents(), ['2 meses', '3 meses', '4 meses']);
+  const monthlyRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/api/weekly-results/stream');
+  await page.locator('#weekly-results-refresh').click();
+  const monthlyUrl = new URL((await monthlyRequest).url());
+  assert.equal(monthlyUrl.searchParams.get('period'), 'month');
+  assert.equal(monthlyUrl.searchParams.get('includeCurrent'), 'false');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados mensuales actualizados.');
+  headings = await page.locator('.weekly-results-week-heading span').allTextContents();
+  assert.match(headings[0], /^Hace 1 mes.*01-09-2026.*30-09-2026/);
+  assert.match(headings[1], /^Hace 2 meses.*01-08-2026.*31-08-2026/);
+  assert.match(await page.locator('#weekly-results-context').innerText(), /2 meses.*Mes actual excluido.*Datos hasta 30-09-2026/);
+
+  await page.locator('#weekly-results-current').selectOption('true');
+  await page.locator('#weekly-results-refresh').click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados mensuales actualizados.');
+  assert.match(await page.locator('.weekly-results-week-heading span').first().innerText(), /^Mes actual.*01-10-2026.*31-10-2026/);
+  await page.getByRole('button', { name: 'Detalle Diario del mes del 01-10-2026', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-daily-status').textContent === 'Detalle diario actualizado.');
+  const popup = page.locator('#weekly-results-daily');
+  assert.equal(await popup.locator('thead tr').first().locator('th').count(), 33);
+  assert.match(await popup.locator('thead tr').first().locator('th').last().innerText(), /Total mes/);
+  assert.equal(await popup.locator('[data-metric="netSales"] .weekly-results-amount').nth(13).innerText(), 'Sin transcurrir');
+  assert.equal(await popup.locator('[data-metric="inventoryShortage"] .weekly-results-amount').first().innerText(), 'Solo total mensual');
+  await page.locator('#weekly-results-daily-close').click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.main-content')).marginLeft === '0px');
+  assert.ok(await page.locator('#weekly-results-form').evaluate(form => form.getBoundingClientRect().right <= innerWidth));
+  await page.screenshot({ path: '/private/tmp/brewit-monthly-results.png' });
 });
