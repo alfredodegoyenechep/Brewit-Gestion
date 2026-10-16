@@ -14,7 +14,7 @@ const metrics = [
   ['centralWarehouseInbound', 'Entradas Bodega Central'],
   ['directSupplierInbound', 'Entradas Proveedores Directos']
 ];
-const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips', 'finalInventory']);
+const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']);
 
 function reportOptions({ weeks = 2, count = weeks, period = 'week', includeCurrent = false, includeInventory = true } = {}) {
   if (!['week', 'month'].includes(period)) throw Object.assign(Error('Selecciona semanas o meses.'), { status: 400 });

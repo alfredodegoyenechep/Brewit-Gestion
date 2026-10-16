@@ -30,7 +30,7 @@ test('export model preserves the calculated snapshot, amounts, percentages, cove
   const final = report.rows.find(row => row.key === 'finalInventory');
   assert.equal(final.cells[0].value, 1800);
   assert.equal(final.cells[0].note, 'Físico · 11-10-2026');
-  assert.equal(final.cells[1].value, '');
+  assert.equal(final.cells[1].value, 1800 / 1000.25);
   source.weeks[0].locations[0].values.finalInventory = value(1700, 'partial', { basis: 'theoretical', date: '2026-10-14', showPercent: false });
   assert.equal(exporter.model(source).rows.find(row => row.key === 'finalInventory').cells[0].note, 'Inventario teórico · 14-10-2026 · Parcial');
   assert.equal(report.rows.find(row => row.key === 'grossSales').compact, true);

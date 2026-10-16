@@ -39,6 +39,13 @@ let costReviewState = null;
 let purchasesViewState = null;
 let purchaseCostVariationState = null;
 let purchaseProjectionState = null;
+let purchaseProjectionLoadSequence = 0;
+let purchaseProjectionController = null;
+let purchaseProjectionProgressTimer = null;
+let consumptionReferenceConfiguration = null;
+let ingredientPurchaseMasterState = null;
+let ingredientPurchaseMasterDrafts = new Map();
+let ingredientPurchaseMasterRequest = 0;
 let purchaseOrderEditorState = null;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
@@ -192,6 +199,7 @@ window.addEventListener('brewit-purchases-updated', () => {
 });
 
 function setView(view) {
+  if (view !== 'purchase-projection') cancelPurchaseProjectionLoad();
   if (view !== 'weekly-results') window.cancelCafeWeeklyResults?.();
   document.querySelectorAll('.main-content > section').forEach(section => {
     section.hidden = true;
@@ -307,7 +315,7 @@ function setView(view) {
     const projection = document.getElementById('purchase-projection-workspace');
     projection.hidden = false;
     projection.style.display = '';
-    loadPurchaseProjection();
+    resetPurchaseProjection();
     return;
   }
 }
@@ -4908,6 +4916,7 @@ function refreshProjectionLocationFilter() {
     .map(location => new Option(location.name, location.id));
   select.replaceChildren(...options);
   select.value = options.some(option => option.value === previous) ? previous : options[0]?.value || '';
+  updateConsumptionReferenceButton();
 }
 
 function formatProductUnits(value) {
@@ -7037,12 +7046,11 @@ function recalculatePurchaseProjectionItem(item) {
   item.ownNeedsPurchase = item.averageDailyConsumption > 0 && item.currentInventory <= item.minimumStock;
   item.ownSuggestedInternalQuantity = item.ownNeedsPurchase
     ? Math.max(0, item.maximumStock - item.currentInventory) : 0;
-  item.inventoryAfterBranchOrders = item.currentInventory - item.branchOrderInternalQuantity;
   item.rawSuggestedInternalQuantity = item.averageDailyConsumption > 0
-    ? (item.inventoryAfterBranchOrders <= item.minimumStock
-      ? Math.max(0, item.maximumStock - item.inventoryAfterBranchOrders)
+    ? (item.currentInventory <= item.minimumStock
+      ? Math.max(0, item.maximumStock - item.currentInventory)
       : 0)
-    : Math.max(0, -item.inventoryAfterBranchOrders);
+    : Math.max(0, -item.currentInventory);
   item.needsPurchase = item.rawSuggestedInternalQuantity > 0;
   item.suggestedInternalQuantity = roundUpToPackageMultiple(item.rawSuggestedInternalQuantity, item.unitsPerPackage);
   item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(
@@ -7054,25 +7062,351 @@ function recalculatePurchaseProjectionItem(item) {
     ? null : item.suggestedPurchaseUnits * item.estimatedPurchaseUnitCost;
 }
 
+function updateConsumptionReferenceButton() {
+  const location = document.getElementById('projection-location-filter').value;
+  document.getElementById('configure-consumption-reference').disabled = locationRegistry[location]?.type !== 'store';
+}
+
+function renderConsumptionReferenceConfiguration() {
+  const data = consumptionReferenceConfiguration;
+  if (!data) return;
+  const enabled = document.getElementById('consumption-reference-enabled').checked;
+  const source = document.getElementById('consumption-reference-source');
+  const curve = data.curves.find(item => item.id === document.getElementById('consumption-reference-curve').value);
+  source.disabled = !enabled;
+  document.getElementById('consumption-reference-curve').disabled = !enabled;
+  document.getElementById('consumption-reference-opening').textContent = data.reference.openingDate
+    ? formatReportDate(data.reference.openingDate) : 'Sin configurar';
+  document.getElementById('consumption-reference-end').textContent = curve?.endsAt ? formatReportDate(curve.endsAt) : 'Requiere fecha de apertura';
+  const stage = curve?.stages.filter(item => item.startsAt <= data.today).at(-1);
+  const expired = curve?.endsAt && data.today >= curve.endsAt;
+  document.getElementById('consumption-reference-stage').textContent = !enabled
+    ? 'Función desactivada: se utiliza el consumo propio.'
+    : !data.reference.openingDate ? 'Configura la fecha de apertura en Configuración antes de activar la referencia.'
+    : expired ? 'La curva ya terminó. Se utilizará el consumo propio automáticamente.'
+    : !stage ? 'La regla comenzará en la fecha de apertura.'
+    : `Tramo vigente: ${stage.percentage}% del consumo de referencia. Después del término se utiliza el consumo propio.`;
+  document.getElementById('save-consumption-reference').disabled = document.getElementById('consumption-reference-dialog').dataset.saving === 'true'
+    || (enabled && (!source.value || !curve || !data.reference.openingDate));
+}
+
+async function openConsumptionReferenceConfiguration() {
+  const location = document.getElementById('projection-location-filter').value;
+  if (locationRegistry[location]?.type !== 'store') return;
+  const dialog = document.getElementById('consumption-reference-dialog');
+  const status = document.getElementById('consumption-reference-status');
+  consumptionReferenceConfiguration = null;
+  dialog.dataset.location = location;
+  document.getElementById('consumption-reference-location').textContent = locationRegistry[location].name;
+  document.getElementById('consumption-reference-enabled').checked = false;
+  ['consumption-reference-enabled', 'consumption-reference-source', 'consumption-reference-curve', 'save-consumption-reference'].forEach(id => {
+    document.getElementById(id).disabled = true;
+  });
+  document.getElementById('consumption-reference-source').replaceChildren();
+  document.getElementById('consumption-reference-curve').replaceChildren();
+  ['consumption-reference-opening', 'consumption-reference-end', 'consumption-reference-stage'].forEach(id => {
+    document.getElementById(id).textContent = '';
+  });
+  setStatus(status, 'Cargando configuración…');
+  dialog.showModal();
+  try {
+    const data = await apiRequest(`/api/purchase-projections/consumption-reference?location=${encodeURIComponent(location)}`);
+    if (!dialog.open || dialog.dataset.location !== location) return;
+    consumptionReferenceConfiguration = data;
+    const source = document.getElementById('consumption-reference-source');
+    source.replaceChildren(new Option('Selecciona una cafetería estable', ''),
+      ...data.sources.map(item => new Option(item.name, item.id)));
+    source.value = data.reference.sourceLocationId;
+    const curve = document.getElementById('consumption-reference-curve');
+    curve.replaceChildren(...data.curves.map(item => new Option(item.label, item.id)));
+    curve.value = data.reference.curveId;
+    document.getElementById('consumption-reference-enabled').disabled = false;
+    document.getElementById('consumption-reference-enabled').checked = data.reference.enabled;
+    renderConsumptionReferenceConfiguration();
+    setStatus(status, '');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function saveConsumptionReferenceConfiguration() {
+  const dialog = document.getElementById('consumption-reference-dialog');
+  const status = document.getElementById('consumption-reference-status');
+  const button = document.getElementById('save-consumption-reference');
+  if (button.disabled || !consumptionReferenceConfiguration) return;
+  const location = dialog.dataset.location;
+  if (location !== document.getElementById('projection-location-filter').value) return;
+  button.disabled = true;
+  document.getElementById('cancel-consumption-reference').disabled = true;
+  dialog.dataset.saving = 'true';
+  setStatus(status, 'Guardando configuración…');
+  try {
+    await apiRequest('/api/purchase-projections/consumption-reference', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location,
+        enabled: document.getElementById('consumption-reference-enabled').checked,
+        sourceLocationId: document.getElementById('consumption-reference-source').value,
+        curveId: document.getElementById('consumption-reference-curve').value
+      })
+    });
+    dialog.close();
+    resetPurchaseProjection();
+    setStatus(document.getElementById('purchase-projection-status'),
+      'Configuración de consumo de referencia guardada. Presiona Actualizar para cargar la proyección.', 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    dialog.dataset.saving = 'false';
+    document.getElementById('cancel-consumption-reference').disabled = false;
+    renderConsumptionReferenceConfiguration();
+  }
+}
+
+function ingredientMasterEquivalence(row, item, draft) {
+  const unit = draft.purchaseUnit || item.masterPurchaseUnit;
+  const content = draft.purchaseUnit ? Number(draft.unitsPerPurchaseUnit) : item.masterContent;
+  row.querySelector('.ingredient-master-equivalence').textContent = unit && Number.isFinite(content) && content > 0
+    ? `1 ${unit} = ${formatProjectionQuantity(content)} ${item.internalUnit}` : 'Sin equivalencia';
+}
+
+function renderIngredientPurchaseMaster() {
+  const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const query = normalize(document.getElementById('ingredient-purchase-master-search').value);
+  const items = ingredientPurchaseMasterState?.items || [];
+  document.getElementById('ingredient-purchase-master-body').replaceChildren(...items.filter(item =>
+    normalize(`${item.code} ${item.name}`).includes(query)).map(item => {
+    const draft = ingredientPurchaseMasterDrafts.get(item.code) || item;
+    const row = document.createElement('tr');
+    row.dataset.code = item.code;
+    for (const value of [item.code, item.name, item.internalUnit || 'Sin unidad interna']) {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+    const unitCell = document.createElement('td');
+    const select = document.createElement('select');
+    select.className = 'ingredient-master-purchase-unit';
+    select.setAttribute('aria-label', `Unidad de compra de ${item.name}`);
+    select.replaceChildren(new Option('Usar valores del maestro', ''),
+      ...item.allowedPurchaseUnits.map(unit => new Option(unit, unit)));
+    select.value = draft.purchaseUnit;
+    select.disabled = !item.internalUnit;
+    unitCell.appendChild(select);
+    row.appendChild(unitCell);
+    const contentCell = document.createElement('td');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = 'any';
+    input.max = '1000000000';
+    input.className = 'ingredient-master-content';
+    input.value = draft.unitsPerPurchaseUnit ?? '';
+    input.disabled = !draft.purchaseUnit || !item.internalUnit;
+    input.setAttribute('aria-label', `Contenido en ${item.internalUnit} de ${item.name}`);
+    contentCell.append(input, ` ${item.internalUnit}`);
+    row.appendChild(contentCell);
+    const equivalence = document.createElement('td');
+    equivalence.className = 'ingredient-master-equivalence';
+    row.appendChild(equivalence);
+    ingredientMasterEquivalence(row, item, draft);
+    return row;
+  }));
+  document.getElementById('save-ingredient-purchase-master').disabled = !ingredientPurchaseMasterDrafts.size;
+}
+
+function editIngredientPurchaseMaster(event) {
+  const row = event.target.closest('tr[data-code]');
+  if (!row || !ingredientPurchaseMasterState) return;
+  const item = ingredientPurchaseMasterState.items.find(item => item.code === row.dataset.code);
+  const purchaseUnit = row.querySelector('select').value;
+  const input = row.querySelector('input');
+  if (!purchaseUnit) input.value = '';
+  input.disabled = !purchaseUnit;
+  const draft = { code: item.code, internalUnit: item.internalUnit, purchaseUnit,
+    unitsPerPurchaseUnit: purchaseUnit ? input.value : null };
+  ingredientPurchaseMasterDrafts.set(item.code, draft);
+  ingredientMasterEquivalence(row, item, draft);
+  document.getElementById('save-ingredient-purchase-master').disabled = false;
+}
+
+async function openIngredientPurchaseMaster() {
+  const dialog = document.getElementById('ingredient-purchase-master-dialog');
+  const status = document.getElementById('ingredient-purchase-master-status');
+  const request = ++ingredientPurchaseMasterRequest;
+  ingredientPurchaseMasterState = null;
+  ingredientPurchaseMasterDrafts.clear();
+  document.getElementById('ingredient-purchase-master-search').value = '';
+  renderIngredientPurchaseMaster();
+  setStatus(status, 'Cargando maestro de ingredientes…');
+  dialog.showModal();
+  try {
+    const data = await apiRequest('/api/purchase-projections/ingredient-master');
+    if (request !== ingredientPurchaseMasterRequest || !dialog.open) return;
+    ingredientPurchaseMasterState = data;
+    renderIngredientPurchaseMaster();
+    setStatus(status, `${data.items.length} ingredientes. Las unidades de compra se comparten entre todas las ubicaciones.`, 'muted');
+  } catch (error) {
+    if (request === ingredientPurchaseMasterRequest && dialog.open) setStatus(status, error.message, 'error');
+  }
+}
+
+async function saveIngredientPurchaseMaster() {
+  const dialog = document.getElementById('ingredient-purchase-master-dialog');
+  const status = document.getElementById('ingredient-purchase-master-status');
+  const button = document.getElementById('save-ingredient-purchase-master');
+  if (button.disabled || !ingredientPurchaseMasterState) return;
+  const items = [...ingredientPurchaseMasterDrafts.values()];
+  const invalid = items.find(item => item.purchaseUnit && (!Number.isFinite(Number(item.unitsPerPurchaseUnit))
+    || Number(item.unitsPerPurchaseUnit) <= 0 || Number(item.unitsPerPurchaseUnit) > 1e9));
+  if (invalid) {
+    setStatus(status, `${invalid.code}: ingresa un contenido mayor que 0, expresado en ${invalid.internalUnit}.`, 'error');
+    return;
+  }
+  dialog.dataset.saving = 'true';
+  button.disabled = true;
+  document.getElementById('close-ingredient-purchase-master').disabled = true;
+  document.getElementById('ingredient-purchase-master-search').disabled = true;
+  dialog.querySelectorAll('tbody input, tbody select').forEach(control => { control.disabled = true; });
+  setStatus(status, 'Guardando unidades de compra…');
+  try {
+    await apiRequest('/api/purchase-projections/ingredient-master', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
+    });
+    dialog.close();
+    ingredientPurchaseMasterDrafts.clear();
+    resetPurchaseProjection();
+    setStatus(document.getElementById('purchase-projection-status'),
+      'Unidades de compra guardadas. Presiona Actualizar para cargar la proyección.', 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    dialog.dataset.saving = 'false';
+    document.getElementById('close-ingredient-purchase-master').disabled = false;
+    document.getElementById('ingredient-purchase-master-search').disabled = false;
+    renderIngredientPurchaseMaster();
+  }
+}
+
+function resetPurchaseProjection() {
+  cancelPurchaseProjectionLoad();
+  purchaseProjectionState = null;
+  document.getElementById('projection-supplier-filter').replaceChildren(new Option('Todos los proveedores', 'all'));
+  document.getElementById('refresh-purchase-projection').disabled = false;
+  updateConsumptionReferenceButton();
+  renderPurchaseProjection();
+  setStatus(document.getElementById('purchase-projection-status'),
+    'Presiona Actualizar para cargar la proyección de compras.', 'muted');
+}
+
+function projectionLocalMetric(item, field, subtotalField) {
+  return formatProjectionMetric(item[field] ?? item[subtotalField] ?? 0);
+}
+
+function openProjectionLocalDetail(key, kind) {
+  const item = purchaseProjectionState?.items.find(candidate => candidate.key === key);
+  if (!item?.locals) return;
+  const inventory = kind === 'inventory';
+  const dialog = document.getElementById('projection-local-detail-dialog');
+  document.getElementById('projection-local-detail-title').textContent = inventory ? 'Detalle de Inventario Locales' : 'Detalle de Consumo Diario Locales';
+  document.getElementById('projection-local-detail-product').textContent = `${item.code} · ${item.name} · Unidad consolidada: ${item.internalUnit}`;
+  document.getElementById('projection-local-detail-description').textContent = inventory
+    ? 'Suma de los inventarios de todas las cafeterías activas, convertidos a la unidad interna del ingrediente. Cuando no hay datos, se considera 0. Se muestra la fecha del último inventario disponible en cada local.'
+    : 'Suma del promedio diario utilizado para reposición solo en las cafeterías donde este ingrediente está administrado. Si hay referencia vigente, se usa el mayor entre el promedio propio y el promedio de referencia multiplicado por su porcentaje. Cada promedio utiliza los días de historial disponibles desde la apertura. Los ingredientes no administrados y los valores sin datos aportan 0.';
+  const header = document.createElement('tr');
+  const labels = inventory
+    ? ['Cafetería', 'Inventario de origen', 'Unidad de origen', `Inventario (${item.internalUnit})`, 'Fecha de inventario', 'Observaciones']
+    : ['Cafetería', 'Promedio propio', 'Prom Diario Sustitutivo', 'Promedio utilizado', 'Administrado', 'Aporte al total', 'Historial propio', 'Referencia vigente', 'Observaciones'];
+  for (const label of labels) {
+    const cell = document.createElement('th');
+    cell.textContent = label;
+    header.appendChild(cell);
+  }
+  document.getElementById('projection-local-detail-head').replaceChildren(header);
+  const metric = value => formatProjectionMetric(value ?? 0);
+  document.getElementById('projection-local-detail-body').replaceChildren(...item.locals.map(local => {
+    const row = document.createElement('tr');
+    row.dataset.locationId = local.locationId;
+    const values = inventory
+      ? [local.locationName, metric(local.sourceInventory), local.sourceUnit || '—', metric(local.inventory),
+        local.inventoryDate ? formatReportDate(local.inventoryDate) : '—', local.inventoryIssue || (local.inventoryIncluded ? 'Incluido' : 'Contado en Inventario Actual')]
+      : [local.locationName, metric(local.ownDailyConsumption), local.substituteDailyConsumption === null ? '—' : metric(local.substituteDailyConsumption),
+        metric(local.replenishmentDailyConsumption), local.managed ? 'Sí' : 'No', metric(local.dailyConsumption),
+        local.consumptionFrom ? `${formatReportDate(local.consumptionFrom)} – ${formatReportDate(local.inventoryDate)} · ${local.consumptionDays} días` : '—',
+        local.reference ? `${local.reference.source?.name || 'No disponible'} × ${local.reference.percentage}%` : 'Consumo propio',
+        local.consumptionIssue || 'Incluido'];
+    for (const value of values) {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+    return row;
+  }));
+  const sumTerms = item.locals.filter(local => inventory ? local.inventoryIncluded && local.inventory !== null : local.consumptionIncluded && local.dailyConsumption !== null)
+    .map(local => `${formatProjectionMetric(inventory ? local.inventory : local.dailyConsumption)} (${local.locationName})`);
+  const complete = inventory ? item.localsInventoryComplete : item.localsConsumptionComplete;
+  const subtotal = inventory ? item.localsInventorySubtotal : item.localsDailyConsumptionSubtotal;
+  const unit = inventory ? item.internalUnit : `${item.internalUnit}/día`;
+  const sum = `${sumTerms.join(' + ') || '0'} = ${formatProjectionMetric(subtotal)} ${unit}${complete ? '' : ' (subtotal; faltan datos)'}.`;
+  const coverage = item.coverageUnavailableReason
+    ? `Cobertura actual no disponible: ${item.coverageUnavailableReason}`
+    : `Cobertura actual = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit} ÷ ${formatProjectionMetric(item.localsDailyConsumption)} ${item.internalUnit}/día = ${formatProjectionOneDecimal(item.currentCoverageDays)} días.`;
+  const total = item.totalInventory === null ? 'Inventario Total no disponible: falta inventario de alguna cafetería.'
+    : `Inventario Total = ${formatProjectionMetric(item.currentInventory)} (${purchaseProjectionState.location.name}) + ${formatProjectionMetric(item.localsInventory)} (cafeterías) = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit}.`;
+  document.getElementById('projection-local-detail-calculation').textContent = `${inventory ? 'Inventario Locales' : 'Consumo Diario Locales'} = ${sum}\n${inventory ? `${total}\n` : ''}${coverage}`;
+  dialog.showModal();
+}
+
+function initializePurchaseProjectionStickyColumns() {
+  const table = document.querySelector('.purchase-projection-table');
+  const headers = [...table.tHead.rows[0].cells].slice(0, 4);
+  const updateOffsets = () => {
+    const widths = headers.map(header => header.getBoundingClientRect().width);
+    if (widths.some(width => width === 0)) return;
+    let offset = 0;
+    widths.forEach((width, index) => {
+      table.style.setProperty(`--projection-sticky-left-${index + 1}`, `${offset}px`);
+      offset += width;
+    });
+  };
+  const observer = new ResizeObserver(updateOffsets);
+  headers.forEach(header => observer.observe(header, { box: 'border-box' }));
+  updateOffsets();
+}
+
 function renderPurchaseProjection() {
   const body = document.getElementById('purchase-projection-body');
   const summary = document.getElementById('purchase-projection-summary');
   const saveButton = document.getElementById('save-projection-policies');
-  const branchOrdersHeader = document.getElementById('projection-branch-orders-header');
   const newCoverageHeader = document.getElementById('projection-new-coverage-header');
+  const reference = purchaseProjectionState?.consumptionReference;
+  const showsReference = reference?.active === true;
+  const showsLocals = purchaseProjectionState?.localsConsolidation?.available === true;
+  const showsOwnDaily = (purchaseProjectionState?.location || locationRegistry[document.getElementById('projection-location-filter').value])?.type !== 'warehouse';
+  document.getElementById('projection-own-daily-header').hidden = !showsOwnDaily;
+  ['projection-locals-inventory-header', 'projection-total-inventory-header', 'projection-locals-daily-header', 'purchase-projection-locals-description'].forEach(id => {
+    document.getElementById(id).hidden = !showsLocals;
+  });
+  const ownHeader = document.getElementById('projection-own-consumption-header');
+  ownHeader.dataset.headerLines = showsReference ? 'Consumo y salidas|propios del período' : 'Consumo y salidas|del período';
+  markSortableHeader(ownHeader, 'consumption30', purchaseProjectionSort, ownHeader.dataset.headerLines.replace('|', ' '));
+  document.getElementById('projection-reference-daily-header').hidden = !showsReference;
+  document.getElementById('projection-used-daily-header').hidden = !showsReference;
+  const referenceDescription = document.getElementById('purchase-projection-reference');
+  referenceDescription.hidden = !reference?.enabled;
+  referenceDescription.textContent = reference?.enabled
+    ? `Referencia: ${reference.source?.name || 'Sucursal no disponible'} · ${reference.active ? `${reference.percentage}% vigente (mes ${reference.month})` : reference.status === 'expired' ? 'Regla finalizada; consumo propio' : 'Regla pendiente; consumo propio'} · Apertura: ${reference.openingDate ? formatReportDate(reference.openingDate) : 'Sin configurar'} · Término: ${reference.endsAt ? formatReportDate(reference.endsAt) : 'Sin configurar'}. El promedio sustitutivo aplica el porcentaje vigente al promedio diario de referencia; para reponer se utiliza el mayor entre el promedio propio y el sustitutivo.`
+    : '';
   if (!purchaseProjectionState) {
     body.replaceChildren();
     summary.replaceChildren();
-    branchOrdersHeader.hidden = true;
     newCoverageHeader.hidden = true;
     saveButton.disabled = true;
     updatePurchaseOrderButton();
     return;
   }
   const data = purchaseProjectionState;
-  const showsBranchOrders = data.branchOrders?.available === true;
-  branchOrdersHeader.hidden = !showsBranchOrders;
-  newCoverageHeader.hidden = !showsBranchOrders;
+  const showsWarehouseCoverage = data.location.type === 'warehouse';
+  newCoverageHeader.hidden = !showsWarehouseCoverage;
   document.querySelectorAll('.purchase-projection-table thead th[data-sort-key]').forEach(cell => {
     markSortableHeader(cell, cell.dataset.sortKey, purchaseProjectionSort, cell.textContent.replace(/ [▲▼]$/, ''));
   });
@@ -7088,12 +7422,6 @@ function renderPurchaseProjection() {
     `${managedPurchaseItems.filter(item => item.estimatedPurchaseUnitCost === null).length} sin costo histórico`,
     `${managedPurchaseItems.filter(item => item.supplierKey === 'unassigned').length} sin proveedor`
   ];
-  if (showsBranchOrders) {
-    summaryTexts.push(`${data.branchOrders.selectedOrderCount} OC suc. incluidas`);
-    if (data.branchOrders.unconvertedItemCount) {
-      summaryTexts.push(`${data.branchOrders.unconvertedItemCount} OC suc. sin conversión`);
-    }
-  }
   if (data.purchaseOrders.selectedOrderCount) {
     summaryTexts.push(`${data.purchaseOrders.selectedOrderCount} OC seleccionada(s)`);
     if (data.purchaseOrders.unconvertedItemCount) {
@@ -7145,6 +7473,13 @@ function renderPurchaseProjection() {
     const internalUnitCell = document.createElement('td');
     internalUnitCell.textContent = item.internalUnit || '—';
     row.appendChild(internalUnitCell);
+    const purchaseUnitCell = document.createElement('td');
+    purchaseUnitCell.textContent = item.purchaseUnit || '—';
+    row.appendChild(purchaseUnitCell);
+    const purchaseContentCell = document.createElement('td');
+    purchaseContentCell.textContent = item.conversionAvailable
+      ? `${formatProjectionQuantity(item.unitsPerPurchaseUnit)} ${item.internalUnit}` : 'Sin conversión';
+    row.appendChild(purchaseContentCell);
     const packageCell = document.createElement('td');
     const packageInput = document.createElement('input');
     packageInput.type = 'number';
@@ -7158,16 +7493,34 @@ function renderPurchaseProjection() {
     row.appendChild(packageCell);
     const plainValues = [
       { value: formatProjectionMetric(item.currentInventory) },
-      { value: formatProjectionMetric(item.consumption30), title: item.consumptionBreakdown ? `Período: ${item.consumptionFrom} · ${item.consumptionDays} días. Ventas: ${formatProjectionMetric(item.consumptionBreakdown.sales)} · Transferencias salida: ${formatProjectionMetric(item.consumptionBreakdown.transfersOut)} · Transformaciones salida: ${formatProjectionMetric(item.consumptionBreakdown.transformationsOut)} · Compensaciones menos internos: ${formatProjectionMetric(item.consumptionBreakdown.netCompensationsAndInternal)}` : '' },
-      { value: formatProjectionMetric(item.averageDailyConsumption) },
+      ...(showsLocals ? [
+        { value: projectionLocalMetric(item, 'localsInventory', 'localsInventorySubtotal'), detail: 'inventory' },
+        { value: item.totalInventory === null ? 'Sin datos completos' : formatProjectionMetric(item.totalInventory), title: 'Inventario Actual de bodega + Inventario Locales.' }
+      ] : []),
+      { value: formatProjectionMetric(item.consumption30), title: `Período propio: ${item.consumptionFrom} · ${item.consumptionDays} días.${item.consumptionBreakdown ? ` Ventas: ${formatProjectionMetric(item.consumptionBreakdown.sales)} · Transferencias salida: ${formatProjectionMetric(item.consumptionBreakdown.transfersOut)} · Transformaciones salida: ${formatProjectionMetric(item.consumptionBreakdown.transformationsOut)} · Compensaciones menos internos: ${formatProjectionMetric(item.consumptionBreakdown.netCompensationsAndInternal)}` : ''}` },
+      ...(showsLocals ? [{ value: projectionLocalMetric(item, 'localsDailyConsumption', 'localsDailyConsumptionSubtotal'), detail: 'consumption' }] : []),
+      ...(showsOwnDaily ? [{ value: formatProjectionMetric(item.ownAverageDailyConsumption ?? item.averageDailyConsumption), title: `Promedio diario propio sobre ${item.consumptionDays} días de historial disponible. Unidad: ${item.internalUnit}.` }] : []),
+      ...(showsReference ? [
+        { value: item.projectedAverageDailyConsumption === null ? 'Sin referencia' : formatProjectionMetric(item.projectedAverageDailyConsumption), title: item.referenceIssue || `${reference.source.name}: promedio diario × ${reference.percentage}%. Referencia desde ${item.referenceConsumptionFrom}, ${item.referenceConsumptionDays} días. Unidad: ${item.internalUnit} por día.` },
+        { value: formatProjectionMetric(item.averageDailyConsumption), title: `Máximo entre el promedio diario propio y el sustitutivo. Base de cobertura y reposición en ${item.internalUnit} por día.` }
+      ] : []),
       {
-        value: item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
+        value: item.currentCoverageDays === null ? (showsLocals && item.coverageUnavailableReason !== 'Sin consumo diario en las cafeterías.' ? 'Sin datos completos' : 'Sin consumo') : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
+        title: showsLocals ? item.coverageUnavailableReason || 'Inventario Total ÷ Consumo Diario Locales.' : '',
         lowCoverage: item.currentCoverageDays !== null && item.currentCoverageDays < item.minDays
       }
     ];
     plainValues.forEach(entry => {
       const cell = document.createElement('td');
-      cell.textContent = entry.value;
+      if (entry.detail) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'projection-value-detail';
+        button.dataset.localDetail = entry.detail;
+        button.textContent = entry.value;
+        button.setAttribute('aria-label', `Ver detalle de ${entry.detail === 'inventory' ? 'Inventario Locales' : 'Consumo Diario Locales'} de ${item.name}`);
+        cell.appendChild(button);
+      } else cell.textContent = entry.value;
       if (entry.title) cell.title=entry.title;
       if (entry.lowCoverage) cell.classList.add('projection-coverage-low');
       row.appendChild(cell);
@@ -7185,19 +7538,8 @@ function renderPurchaseProjection() {
       cell.appendChild(input);
       row.appendChild(cell);
     }
-    if (showsBranchOrders) {
-      const branchOrdersCell = document.createElement('td');
-      branchOrdersCell.className = 'projection-branch-order-quantity';
-      branchOrdersCell.textContent = `${formatProjectionQuantity(item.branchOrderInternalQuantity)} ${item.internalUnit || ''}`.trim();
-      if (item.branchOrderConversionMissing) {
-        branchOrdersCell.classList.add('projection-branch-order-warning');
-        branchOrdersCell.title = 'Hay cantidades de sucursales cuya unidad no se pudo convertir.';
-      }
-      row.appendChild(branchOrdersCell);
-    }
     const leadingResultValues = [
-      item.needsPurchase ? `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit}` : 'No comprar',
-      item.purchaseUnit || '—'
+      item.needsPurchase ? `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit}` : 'No comprar'
     ];
     leadingResultValues.forEach(value => {
       const cell = document.createElement('td');
@@ -7223,13 +7565,13 @@ function renderPurchaseProjection() {
       }
     }
     row.appendChild(purchaseOrderCell);
-    if (showsBranchOrders) {
+    if (showsWarehouseCoverage) {
       const newCoverageCell = document.createElement('td');
       newCoverageCell.className = 'projection-new-coverage';
       if (!data.purchaseOrders.selectedOrderCount) {
         newCoverageCell.textContent = '—';
         newCoverageCell.title = 'Selecciona órdenes de compra desde el botón OC.';
-      } else if (item.purchaseOrderConversionMissing || item.branchOrderConversionMissing) {
+      } else if (item.purchaseOrderConversionMissing) {
         newCoverageCell.textContent = 'Sin conversión';
         newCoverageCell.classList.add('projection-purchase-order-warning');
         newCoverageCell.title = 'No fue posible convertir todas las cantidades a la unidad interna.';
@@ -7238,7 +7580,7 @@ function renderPurchaseProjection() {
         newCoverageCell.title = 'No existe consumo diario para calcular la cobertura.';
       } else {
         newCoverageCell.textContent = `${formatProjectionOneDecimal(item.coverageAfterPurchaseOrdersDays)} días`;
-        newCoverageCell.title = 'Inventario actual + OC seleccionadas − OC Suc, dividido por el consumo diario.';
+        newCoverageCell.title = 'Inventario actual + OC seleccionadas, dividido por el consumo diario.';
         if (item.coverageAfterPurchaseOrdersDays < item.minDays) {
           newCoverageCell.classList.add('projection-coverage-low');
         }
@@ -7246,7 +7588,6 @@ function renderPurchaseProjection() {
       row.appendChild(newCoverageCell);
     }
     const trailingResultValues = [
-      item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión',
       item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits),
       item.estimatedPurchaseUnitCost === null ? '—' : formatClp(item.estimatedPurchaseUnitCost),
       item.estimatedTotal === null ? '—' : formatClp(item.estimatedTotal)
@@ -7261,7 +7602,7 @@ function renderPurchaseProjection() {
   if (!visibleItems.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = showsBranchOrders ? 21 : 19;
+    cell.colSpan = document.querySelectorAll('.purchase-projection-table thead th:not([hidden])').length;
     cell.className = 'projection-empty';
     cell.textContent = 'No hay ítems para los filtros seleccionados.';
     row.appendChild(cell);
@@ -7269,50 +7610,6 @@ function renderPurchaseProjection() {
   }
   saveButton.disabled = data.items.length === 0;
   updatePurchaseOrderButton();
-}
-
-function openProjectionBranchOrders() {
-  const branchOrders = purchaseProjectionState?.branchOrders;
-  if (!branchOrders?.available) return;
-  const dialog = document.getElementById('projection-branch-orders-dialog');
-  const description = document.getElementById('projection-branch-orders-description');
-  description.textContent = `Selecciona las sucursales cuyas órdenes dirigidas a ${branchOrders.companySupplier.name} se sumarán a la compra de Bodega Principal.`;
-  const body = document.getElementById('projection-branch-orders-body');
-  body.replaceChildren(...branchOrders.locations.map(location => {
-    const row = document.createElement('tr');
-    row.dataset.locationId = location.id;
-    const selectionCell = document.createElement('td');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'projection-branch-location-input';
-    checkbox.checked = location.selected;
-    checkbox.setAttribute('aria-label', `Incluir ${location.name}`);
-    selectionCell.appendChild(checkbox);
-    const locationCell = document.createElement('td');
-    locationCell.textContent = location.name;
-    const orderCell = document.createElement('td');
-    orderCell.textContent = location.latestOrder?.orderNumber || 'Sin órdenes a CODE SPA';
-    const dateCell = document.createElement('td');
-    dateCell.textContent = location.latestOrder ? formatReportDate(location.latestOrder.date) : '—';
-    if (location.latestOrder) {
-      dateCell.className = location.latestOrder.stale
-        ? 'projection-branch-order-date stale'
-        : 'projection-branch-order-date recent';
-    }
-    const countCell = document.createElement('td');
-    countCell.textContent = String(location.orderCount);
-    row.append(selectionCell, locationCell, orderCell, dateCell, countCell);
-    return row;
-  }));
-  dialog.showModal();
-}
-
-async function applyProjectionBranchOrders() {
-  const branchLocationIds = [...document.querySelectorAll('#projection-branch-orders-body tr[data-location-id]')]
-    .filter(row => row.querySelector('.projection-branch-location-input').checked)
-    .map(row => row.dataset.locationId);
-  document.getElementById('projection-branch-orders-dialog').close();
-  await loadPurchaseProjection({ branchLocationIds, preserveDraftCriteria: true });
 }
 
 async function openProjectionPurchaseOrders() {
@@ -7382,11 +7679,78 @@ async function applyProjectionPurchaseOrders() {
   await loadPurchaseProjection({ purchaseOrderIds, preserveDraftCriteria: true });
 }
 
+function cancelPurchaseProjectionLoad() {
+  purchaseProjectionLoadSequence += 1;
+  purchaseProjectionController?.abort();
+  purchaseProjectionController = null;
+  clearInterval(purchaseProjectionProgressTimer);
+  purchaseProjectionProgressTimer = null;
+  document.getElementById('purchase-projection-progress').hidden = true;
+  document.getElementById('purchase-projection-workspace').setAttribute('aria-busy', 'false');
+  const button = document.getElementById('refresh-purchase-projection');
+  button.disabled = false;
+  button.textContent = 'Actualizar';
+}
+
+function updatePurchaseProjectionProgress(event) {
+  const bar = document.getElementById('purchase-projection-progress-bar');
+  document.getElementById('purchase-projection-progress-stage').textContent = event.message
+    + (event.total > 0 ? ` · ${event.completed} de ${event.total} ${event.unit}` : '');
+  if (event.total > 0) bar.value = event.completed / event.total * 100;
+  else bar.removeAttribute('value');
+}
+
+async function requestPurchaseProjectionWithProgress(query, signal, onProgress) {
+  let response;
+  try {
+    response = await fetch(`/api/purchase-projections?${query}`, { signal });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw Error('No se pudo conectar con Brewit. Inicia la aplicación con npm start e intenta nuevamente.');
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw Error(data.error || `La solicitud falló (${response.status}).`);
+  }
+  // Retain compatibility with ordinary JSON responses during a server update.
+  if (!response.headers.get('Content-Type')?.includes('application/x-ndjson')) return response.json();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '', result = null;
+  const receive = line => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === 'error') throw Error(event.error || 'No se pudo calcular la proyección de compras.');
+    if (event.type === 'progress') onProgress(event);
+    if (event.type === 'result') result = event.data;
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      lines.forEach(receive);
+      if (done) break;
+    }
+    receive(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+  if (!result) throw Error('La carga se interrumpió. Presiona Actualizar para volver a intentarlo.');
+  return result;
+}
+
 async function loadPurchaseProjection(options = {}) {
   const status = document.getElementById('purchase-projection-status');
   const button = document.getElementById('refresh-purchase-projection');
   const location = document.getElementById('projection-location-filter').value;
   if (!location) return;
+  cancelPurchaseProjectionLoad();
+  const sequence = ++purchaseProjectionLoadSequence;
+  const controller = new AbortController();
+  purchaseProjectionController = controller;
+  let completed = false;
   const draftCriteria = options.preserveDraftCriteria && purchaseProjectionState?.location.id === location
     ? new Map(purchaseProjectionState.items.map(item => [item.key, {
       minDays: item.minDays,
@@ -7396,22 +7760,30 @@ async function loadPurchaseProjection(options = {}) {
       supplierKey: item.supplierKey
     }]))
     : null;
-  const requestedBranchLocationIds = Array.isArray(options.branchLocationIds)
-    ? options.branchLocationIds
-    : (purchaseProjectionState?.location.id === location && purchaseProjectionState.branchOrders?.available
-      ? purchaseProjectionState.branchOrders.selectedLocationIds : null);
   const requestedPurchaseOrderIds = Array.isArray(options.purchaseOrderIds)
     ? options.purchaseOrderIds
     : (purchaseProjectionState?.location.id === location && purchaseProjectionState.purchaseOrders?.available
       ? purchaseProjectionState.purchaseOrders.selectedOrderIds : null);
   button.disabled = true;
+  button.textContent = 'Actualizando…';
+  document.getElementById('purchase-projection-workspace').setAttribute('aria-busy', 'true');
+  document.getElementById('purchase-projection-progress').hidden = false;
+  updatePurchaseProjectionProgress({ message: 'Iniciando carga de datos…' });
+  const started = Date.now();
+  const updateElapsed = () => {
+    const seconds = Math.floor((Date.now() - started) / 1000);
+    document.getElementById('purchase-projection-progress-elapsed').textContent = `${seconds} s transcurridos`;
+  };
+  updateElapsed();
+  purchaseProjectionProgressTimer = setInterval(updateElapsed, 1000);
   setStatus(status, 'Calculando inventario, consumos y necesidades de compra…');
   try {
-    const query = new URLSearchParams({ location });
-    if (requestedBranchLocationIds !== null) query.set('branches', requestedBranchLocationIds.join(','));
+    const query = new URLSearchParams({ location, progress: '1' });
     if (requestedPurchaseOrderIds !== null) query.set('orders', requestedPurchaseOrderIds.join(','));
-    const data = await apiRequest(`/api/purchase-projections?${query}`);
-    if (location !== document.getElementById('projection-location-filter').value) return;
+    const data = await requestPurchaseProjectionWithProgress(query, controller.signal, event => {
+      if (sequence === purchaseProjectionLoadSequence) updatePurchaseProjectionProgress(event);
+    });
+    if (sequence !== purchaseProjectionLoadSequence || location !== document.getElementById('projection-location-filter').value) return;
     if (draftCriteria) {
       data.items.forEach(item => {
         const draft = draftCriteria.get(item.key);
@@ -7444,12 +7816,26 @@ async function loadPurchaseProjection(options = {}) {
     setStatus(status,
       `${options.successMessage ? options.successMessage + ' ' : ''}Consumo considerado: ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}. ${data.consumptionCriteria}.${stale} ${(data.warnings||[]).join(' ')}`,
       stale || data.warnings?.length ? 'muted' : 'success');
+    completed = true;
+    updateElapsed();
+    updatePurchaseProjectionProgress({ message: 'Carga completada', completed: data.items.length, total: data.items.length, unit: 'ingredientes' });
+    document.getElementById('purchase-projection-progress-bar').value = 100;
   } catch (error) {
+    if (sequence !== purchaseProjectionLoadSequence) return;
+    controller.abort();
     purchaseProjectionState = null;
     renderPurchaseProjection();
     setStatus(status, `${options.successMessage ? options.successMessage + ' ' : ''}${error.message}`, 'error');
   } finally {
-    button.disabled = false;
+    if (sequence === purchaseProjectionLoadSequence) {
+      clearInterval(purchaseProjectionProgressTimer);
+      purchaseProjectionProgressTimer = null;
+      purchaseProjectionController = null;
+      document.getElementById('purchase-projection-workspace').setAttribute('aria-busy', 'false');
+      if (!completed) document.getElementById('purchase-projection-progress').hidden = true;
+      button.disabled = false;
+      button.textContent = 'Actualizar';
+    }
   }
 }
 
@@ -7745,7 +8131,6 @@ function openPurchaseOrderEditor() {
     filters: {
       onlyRequired: document.getElementById('projection-only-required').checked,
       onlyManaged: document.getElementById('projection-only-managed').checked,
-      branchLocationIds: data.branchOrders?.selectedLocationIds || [],
       selectedPurchaseOrderIds: data.purchaseOrders?.selectedOrderIds || []
     },
     showAllSupplierItems: false,
@@ -8232,7 +8617,6 @@ async function generateTentativePurchaseOrders() {
       return {
         ...location,
         period: projection.period,
-        branchLocationIds: projection.branchOrders?.selectedLocationIds || [],
         groups: uniqueGroups
       };
     });
@@ -8292,7 +8676,7 @@ async function confirmTentativePurchaseOrder() {
       body: JSON.stringify({
         location: location.id,
         supplierKey: group.supplier.key,
-        filters: { onlyRequired: true, onlyManaged: true, branchLocationIds: location.branchLocationIds },
+        filters: { onlyRequired: true, onlyManaged: true },
         items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
       })
     });
@@ -10964,6 +11348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.body.appendChild(document.getElementById('report-chart-dialog'));
   installReportChartButtons();
   initializeAnalyticalTableCharts();
+  initializePurchaseProjectionStickyColumns();
   document.getElementById('weekly-report').addEventListener('click', event => {
     const button = event.target.closest('[data-report-chart]');
     if (button && !button.disabled) openReportChart(button.dataset.reportChart);
@@ -11299,20 +11684,43 @@ document.addEventListener('DOMContentLoaded', async () => {
       ['firstCost', 'minCost', 'maxCost', 'latestCost', 'netChangePercent', 'fluctuationCount', 'increaseCount', 'decreaseCount', 'maxIncreasePercent', 'maxDecreasePercent'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderPurchaseCostVariations();
   });
-  document.getElementById('projection-location-filter').addEventListener('change', () => {
-    document.getElementById('projection-supplier-filter').value = 'all';
-    purchaseProjectionState = null;
-    loadPurchaseProjection();
-  });
+  document.getElementById('projection-location-filter').addEventListener('change', resetPurchaseProjection);
   document.getElementById('projection-supplier-filter').addEventListener('change', renderPurchaseProjection);
   document.getElementById('projection-only-required').addEventListener('change', renderPurchaseProjection);
   document.getElementById('projection-only-managed').addEventListener('change', renderPurchaseProjection);
   document.getElementById('refresh-purchase-projection').addEventListener('click', loadPurchaseProjection);
-  document.getElementById('open-projection-branch-orders').addEventListener('click', openProjectionBranchOrders);
-  document.getElementById('cancel-projection-branch-orders').addEventListener('click', () => {
-    document.getElementById('projection-branch-orders-dialog').close();
+  document.getElementById('open-ingredient-purchase-master').addEventListener('click', openIngredientPurchaseMaster);
+  document.getElementById('close-ingredient-purchase-master').addEventListener('click', () => {
+    document.getElementById('ingredient-purchase-master-dialog').close();
   });
-  document.getElementById('apply-projection-branch-orders').addEventListener('click', applyProjectionBranchOrders);
+  document.getElementById('ingredient-purchase-master-dialog').addEventListener('cancel', event => {
+    if (event.currentTarget.dataset.saving === 'true') event.preventDefault();
+  });
+  document.getElementById('ingredient-purchase-master-dialog').addEventListener('close', () => {
+    ingredientPurchaseMasterRequest += 1;
+  });
+  document.getElementById('ingredient-purchase-master-search').addEventListener('input', renderIngredientPurchaseMaster);
+  document.getElementById('ingredient-purchase-master-body').addEventListener('input', editIngredientPurchaseMaster);
+  document.getElementById('ingredient-purchase-master-body').addEventListener('change', editIngredientPurchaseMaster);
+  document.getElementById('save-ingredient-purchase-master').addEventListener('click', saveIngredientPurchaseMaster);
+  document.getElementById('purchase-projection-body').addEventListener('click', event => {
+    const button = event.target.closest('button[data-local-detail]');
+    if (button) openProjectionLocalDetail(button.closest('tr[data-key]').dataset.key, button.dataset.localDetail);
+  });
+  document.getElementById('close-projection-local-detail').addEventListener('click', () => {
+    document.getElementById('projection-local-detail-dialog').close();
+  });
+  document.getElementById('configure-consumption-reference').addEventListener('click', openConsumptionReferenceConfiguration);
+  document.getElementById('cancel-consumption-reference').addEventListener('click', () => {
+    document.getElementById('consumption-reference-dialog').close();
+  });
+  document.getElementById('consumption-reference-dialog').addEventListener('cancel', event => {
+    if (event.currentTarget.dataset.saving === 'true') event.preventDefault();
+  });
+  ['consumption-reference-enabled', 'consumption-reference-source', 'consumption-reference-curve'].forEach(id => {
+    document.getElementById(id).addEventListener('change', renderConsumptionReferenceConfiguration);
+  });
+  document.getElementById('save-consumption-reference').addEventListener('click', saveConsumptionReferenceConfiguration);
   document.getElementById('open-projection-purchase-orders').addEventListener('click', openProjectionPurchaseOrders);
   document.getElementById('cancel-projection-purchase-orders').addEventListener('click', () => {
     document.getElementById('projection-purchase-orders-dialog').close();
@@ -11322,7 +11730,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
     applySort(purchaseProjectionSort, header.dataset.sortKey,
-      ['managed', 'unitsPerPackage', 'currentInventory', 'consumption30', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+      ['managed', 'unitsPerPackage', 'currentInventory', 'localsInventory', 'totalInventory', 'localsDailyConsumption', 'consumption30', 'ownAverageDailyConsumption', 'projectedAverageDailyConsumption', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderPurchaseProjection();
   });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
@@ -11737,10 +12145,58 @@ document.getElementById('resume-upload-api').addEventListener('click',async even
   try{await apiRequest('/api/uploads/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
   catch(error){setStatus(document.getElementById('upload-overview-status'),error.message,'error');event.currentTarget.disabled=false;}
 });
-setInterval(()=>{const view=document.getElementById('upload-overview');if(!view.hidden&&view.style.display!=='none')loadUploadOverview();},5000);
+setInterval(()=>{const view=document.getElementById('upload-overview');if(!view.hidden&&view.style.display!=='none'){loadUploadOverview();loadMercadoPagoWebStatus();}},5000);
 
 // The confirmation dialog is shared by both upload views.
 document.body.append(document.getElementById('date-confirmation'));
+let mercadoPagoWebBusy = false;
+let mercadoPagoScheduleBusy = false;
+function renderMercadoPagoWebStatus(data) {
+  const button = document.getElementById('sync-mercadopago-web');
+  button.disabled = data.running || mercadoPagoWebBusy;
+  button.textContent = data.running ? 'Actualizando MercadoPago…' : 'Actualizar MercadoPago desde web';
+  const daily = document.getElementById('mercadopago-daily');
+  if (!mercadoPagoScheduleBusy) daily.checked = data.enabled;
+  const auth = data.status === 'waiting-auth';
+  document.getElementById('resume-mercadopago-web').hidden = !auth;
+  document.getElementById('resume-mercadopago-web').disabled = data.running || mercadoPagoWebBusy;
+  document.getElementById('mercadopago-report-link').hidden = !auth && data.status !== 'error' && !(data.result?.reports === 0);
+  setStatus(document.getElementById('mercadopago-web-status'), data.message || '',
+    auth || data.status === 'error' ? 'error' : data.status === 'complete' && data.result?.reports > 0 ? 'success' : '');
+}
+async function loadMercadoPagoWebStatus() {
+  try { renderMercadoPagoWebStatus(await apiRequest('/api/integrations/mercadopago')); }
+  catch (error) { setStatus(document.getElementById('mercadopago-web-status'), error.message, 'error'); }
+}
+async function syncMercadoPagoWeb() {
+  if (mercadoPagoWebBusy) return;
+  mercadoPagoWebBusy = true;
+  document.getElementById('sync-mercadopago-web').disabled = true;
+  document.getElementById('resume-mercadopago-web').disabled = true;
+  try {
+    const data = await apiRequest('/api/integrations/mercadopago/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    mercadoPagoWebBusy = false;
+    renderMercadoPagoWebStatus(data);
+  } catch (error) {
+    setStatus(document.getElementById('mercadopago-web-status'), error.message, 'error');
+    document.getElementById('sync-mercadopago-web').disabled = false;
+    document.getElementById('resume-mercadopago-web').disabled = false;
+  } finally { mercadoPagoWebBusy = false; }
+}
+document.getElementById('sync-mercadopago-web').addEventListener('click', syncMercadoPagoWeb);
+document.getElementById('resume-mercadopago-web').addEventListener('click', syncMercadoPagoWeb);
+document.getElementById('mercadopago-daily').addEventListener('change', async event => {
+  const input = event.currentTarget;
+  mercadoPagoScheduleBusy = true; input.disabled = true;
+  try {
+    const data = await apiRequest('/api/integrations/mercadopago/schedule', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: input.checked }) });
+    mercadoPagoScheduleBusy = false; renderMercadoPagoWebStatus(data);
+  } catch (error) {
+    input.checked = !input.checked;
+    setStatus(document.getElementById('mercadopago-web-status'), error.message, 'error');
+  } finally { mercadoPagoScheduleBusy = false; input.disabled = false; }
+});
+loadMercadoPagoWebStatus();
 document.getElementById('upload-mercadopago-shared').addEventListener('click', () => {
   if (inspectionState) { document.getElementById('date-confirmation').showModal(); return; }
   uploadManualTarget = { field: 'mercadopago' };

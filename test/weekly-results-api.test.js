@@ -186,8 +186,8 @@ test('defaults show two completed weeks and final physical inventory uses the la
     assert.equal(metric.date, date);
     assert.equal(metric.basis, 'physical');
     assert.equal(metric.complete, true);
-    assert.equal(metric.showPercent, false);
-    assert.equal(metric.percent, null);
+    assert.equal(metric.showPercent, true);
+    assert.equal(metric.percent, index === 0 ? 180 : null);
   }
   assert.equal(cells[2].values.inventoryShortage.status, 'no-opening-inventory');
   const withoutShortage = await getReport(base, { includeInventory: false, includeCurrent: false });

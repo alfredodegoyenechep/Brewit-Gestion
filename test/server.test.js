@@ -2026,15 +2026,18 @@ test('accepts TotEat purchases with English headers and includes them in purchas
   assert.equal(report.rows[1].costBasisEvidence, 'unverified');
 });
 
-test('limits purchase projections to ingredients plus the SUB005 extra', async t => {
+test('limits purchase projections to ingredients and the five explicit exceptions', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-02' });
+  const productExceptions = ['B2860', 'B2850', 'B2840', 'B2830'];
   const catalog = XLSX.utils.book_new();
   const sheet = rows => XLSX.utils.aoa_to_sheet([
     ['ID Producto **', 'Nombre Producto *', 'Costo', 'Medida Base'],
     ...rows
   ]);
   XLSX.utils.book_append_sheet(catalog, sheet([
-    ['P100', 'Producto terminado', 1000, 'UN']
+    ['P100', 'Producto terminado', 1000, 'UN'],
+    ['B2820', 'Sandwich Baguette Serrano', 1000, 'UN'],
+    ...productExceptions.map(code => [code, `Producto permitido ${code}`, 1000, 'UN'])
   ]), 'Prod');
   XLSX.utils.book_append_sheet(catalog, sheet([
     ['I100', 'Ingrediente permitido', 100, 'UN']
@@ -2057,6 +2060,8 @@ test('limits purchase projections to ingredients plus the SUB005 extra', async t
     ['Código', 'Nombre', 'Unidad', '2026-08-01', '', '', '2026-08-02', '', ''],
     ['', '', '', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'IF - Inventario Final', 'II - Inventario Inicial', 'USO - Consumo por Ventas', 'IF - Inventario Final'],
     ['P100', 'Producto terminado', 'UN', 10, 1, 9, 9, 1, 8],
+    ['B2820', 'Sandwich Baguette Serrano', 'UN', 10, 1, 9, 9, 1, 8],
+    ...productExceptions.map(code => [code, `Producto permitido ${code}`, 'UN', 10, 1, 9, 9, 1, 8]),
     ['I100', 'Ingrediente permitido', 'UN', 4.161, 3.943, 0.218, 0.218, 0, 0.218],
     ['SUB005', 'Extra permitido por excepción', 'UN', 10, 1, 9, 9, 1, 8],
     ['EX100', 'Otro extra', 'UN', 10, 1, 9, 9, 1, 8]
@@ -2064,7 +2069,8 @@ test('limits purchase projections to ingredients plus the SUB005 extra', async t
   const purchases = [
     ['Fecha emisión', 'Tipo Documento', 'Documento', 'Proveedor/Para', 'Número identificador fiscal', 'Lin', 'Cod', 'PRODUCTO', 'Q.Rec', 'Um.Rec', 'Costo', 'Monto neto', 'Descuento', 'Monto total'],
     ['2026-08-01', 'Factura', '100', 'Proveedor Uno', '111', '1', 'I100', 'Ingrediente permitido', '1', 'UN', '100', '100', '0', '100'],
-    ['2026-08-01', 'Factura', '100', 'Proveedor Uno', '111', '2', 'SUB005', 'Extra permitido por excepción', '1', 'UN', '200', '200', '0', '200']
+    ['2026-08-01', 'Factura', '100', 'Proveedor Uno', '111', '2', 'SUB005', 'Extra permitido por excepción', '1', 'UN', '200', '200', '0', '200'],
+    ...productExceptions.map((code, index) => ['2026-08-01', 'Factura', '100', 'Proveedor Uno', '111', index + 3, code, `Producto permitido ${code}`, '1', 'UN', '200', '200', '0', '200'])
   ].map(row => row.join('\t')).join('\n');
   const inspection = await inspect(baseUrl, 'store-1', '2026-07-27', [
     { field: 'kardex', contents: kardex, filename: 'kardex-clasificado.xls' },
@@ -2075,9 +2081,10 @@ test('limits purchase projections to ingredients plus the SUB005 extra', async t
   const response = await fetch(`${baseUrl}/api/purchase-projections?location=store-1`);
   assert.equal(response.status, 200, await response.clone().text());
   const projection = await response.json();
-  assert.deepEqual(projection.items.map(item => item.code).sort(), ['I100', 'SUB005']);
-  assert.equal(projection.summary.itemCount, 2);
+  assert.deepEqual(projection.items.map(item => item.code).sort(), [...productExceptions, 'I100', 'SUB005'].sort());
+  assert.equal(projection.summary.itemCount, 6);
   assert.equal(projection.items.some(item => item.code === 'P100'), false);
+  assert.equal(projection.items.some(item => item.code === 'B2820'), false);
   assert.equal(projection.items.some(item => item.code === 'EX100'), false);
   assert.equal(projection.items.every(item => item.supplierKey === '111'), true);
 
@@ -2127,7 +2134,7 @@ test('limits purchase projections to ingredients plus the SUB005 extra', async t
   assert.equal(updated.total, 500);
 });
 
-test('consolidates selected branch orders to CODE SPA in the main warehouse projection', async t => {
+test('warehouse projection ignores cafeteria orders after removing OC Suc', async t => {
   const baseUrl = await startTestServer(t, {
     reportToday: '2026-08-26',
     beforeCreate(uploadsRoot) {
@@ -2200,32 +2207,15 @@ test('consolidates selected branch orders to CODE SPA in the main warehouse proj
   const projectionResponse = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`);
   assert.equal(projectionResponse.status, 200, await projectionResponse.clone().text());
   const projection = await projectionResponse.json();
-  assert.equal(projection.branchOrders.available, true);
-  assert.deepEqual(projection.branchOrders.selectedLocationIds.sort(), ['store-1', 'store-2']);
-  assert.equal(projection.branchOrders.selectedOrderCount, 2);
-  assert.equal(projection.items[0].branchOrderInternalQuantity, 29);
-  assert.equal(projection.items[0].ownSuggestedInternalQuantity, 0);
-  assert.equal(projection.items[0].inventoryAfterBranchOrders, -19);
-  assert.equal(projection.items[0].suggestedInternalQuantity, 19);
-  assert.equal(projection.items[0].suggestedPurchaseUnits, 19);
-  assert.equal(projection.branchOrders.locations.find(item => item.id === 'store-1').latestOrder.stale, true);
-  assert.equal(projection.branchOrders.locations.find(item => item.id === 'store-2').latestOrder.stale, false);
-
-  const selected = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse&branches=store-2`)
-    .then(response => response.json());
-  assert.deepEqual(selected.branchOrders.selectedLocationIds, ['store-2']);
-  assert.equal(selected.branchOrders.selectedOrderCount, 1);
-  assert.equal(selected.items[0].branchOrderInternalQuantity, 5);
-  assert.equal(selected.items[0].inventoryAfterBranchOrders, 5);
-  assert.equal(selected.items[0].suggestedInternalQuantity, 0);
-  assert.equal(selected.items[0].needsPurchase, false);
-
-  const none = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse&branches=`)
-    .then(response => response.json());
-  assert.deepEqual(none.branchOrders.selectedLocationIds, []);
-  assert.equal(none.branchOrders.selectedOrderCount, 0);
-  assert.equal(none.items[0].branchOrderInternalQuantity, 0);
-  assert.equal(none.items[0].needsPurchase, false);
+  assert.equal(projection.branchOrders, undefined);
+  assert.equal(projection.items[0].branchOrderInternalQuantity, undefined);
+  assert.equal(projection.items[0].currentInventory, 10);
+  assert.equal(projection.items[0].suggestedInternalQuantity, 0);
+  assert.equal(projection.items[0].needsPurchase, false);
+  for (const branches of ['store-2', '']) {
+    const selected = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse&branches=${branches}`).then(response => response.json());
+    assert.deepEqual(selected.items, projection.items);
+  }
 });
 
 test('builds cumulative intraday blocks with weekday, month, and historical reference days', async t => {

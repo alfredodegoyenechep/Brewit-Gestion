@@ -101,6 +101,55 @@ test('rejects unconfirmed replacement, invalid origins, empty or invalid source 
   assert.deepEqual(sources.sources, []);
 });
 
+test('UI loads projections only on refresh when opening the view or changing location', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base } = await setup(t);
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const requests = [];
+  await page.route('**/api/purchase-projections?*', route => {
+    const location = new URL(route.request().url()).searchParams.get('location');
+    requests.push(location);
+    return route.fulfill({ json: {
+      location: { id: location, name: location },
+      period: { from: '2026-09-15', to: '2026-10-14', dataThrough: '2026-10-14' },
+      consumptionCriteria: 'Consumo de ventas', warnings: [], suppliers: [],
+      purchaseOrders: { selectedOrderCount: 0 }, summary: { itemCount: 0 }, items: []
+    } });
+  });
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  const view = page.locator('[data-view="purchase-projection"]');
+  const location = page.locator('#projection-location-filter');
+  const status = page.locator('#purchase-projection-status');
+  const summary = page.locator('#purchase-projection-summary');
+  const refresh = page.locator('#refresh-purchase-projection');
+  await view.click();
+  assert.match(await status.innerText(), /Presiona Actualizar/);
+  assert.equal(await summary.innerText(), '');
+  assert.equal(await page.locator('#purchase-projection-body tr').count(), 0);
+  assert.deepEqual(requests, []);
+  await location.selectOption('store-2');
+  assert.match(await status.innerText(), /Presiona Actualizar/);
+  assert.deepEqual(requests, []);
+  await refresh.click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Consumo considerado'));
+  assert.deepEqual(requests, ['store-2']);
+  assert.match(await summary.innerText(), /0 ítem\(s\) disponibles/);
+  await location.selectOption('store-1');
+  assert.equal(await summary.innerText(), '');
+  assert.equal(await page.locator('#save-projection-policies').isDisabled(), true);
+  assert.deepEqual(requests, ['store-2']);
+  await refresh.click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Consumo considerado'));
+  assert.deepEqual(requests, ['store-2', 'store-1']);
+  await page.locator('[data-view="config"]').click();
+  await view.click();
+  assert.match(await status.innerText(), /Presiona Actualizar/);
+  assert.equal(await summary.innerText(), '');
+  assert.deepEqual(requests, ['store-2', 'store-1']);
+});
+
 test('UI requires an origin and confirmation, leaves data intact on cancellation, and copies to a location without inventory', { skip: !fs.existsSync(chrome) }, async t => {
   const { base, read, initial } = await setup(t);
   const browser = await chromium.launch({ executablePath: chrome, headless: true });

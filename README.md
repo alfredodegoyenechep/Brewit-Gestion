@@ -12,6 +12,8 @@ Brewit-Gestion is a management dashboard UI for the Brewit coffee shop, covering
 
 Install dependencies once, then start the application:
 
+Use Node.js 20 or later; the web report downloader uses Playwright Core.
+
 ```bash
 npm install
 npm start
@@ -31,6 +33,12 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 
 ## Upload rules
 
+MercadoPago también dispone de **Actualizar MercadoPago desde web**, a la derecha de **Cargar archivo único de MercadoPago**, en Datos y sincronización. Revisa el **Período de fechas** de los reportes CSV ya disponibles en [Todas las transacciones](https://www.mercadopago.cl/balance/reports/settlement_v2), incluyendo reportes solapados y páginas siguientes. Parte del último día realmente registrado de cada cafetería, inclusive; si no tiene registros, parte del 18 de mayo de 2026. Filtra los movimientos por ese rango y por `STORE_ID`. Los identificadores `SOURCE_ID`, `TRANSACTION_TYPE` y `TRANSACTION_DATE`, junto con la cafetería, evitan repetir un movimiento aunque cambien las columnas opcionales del CSV. Para archivos antiguos sin esos identificadores se conserva la comparación por fila completa.
+
+Si MercadoPago pide autenticación, inicia sesión en la ventana de Chrome que abre el servidor y pulsa **Ya inicié sesión, continuar**. La sesión queda en un perfil privado dentro de `uploads/.integrations/mercadopago/profile`; no se piden contraseñas en Brewit. El enlace a MercadoPago permite consultar los reportes, pero iniciar sesión en otro navegador no autentica ese perfil. Se requiere Chrome instalado en el equipo del servidor, o `BREWIT_CHROME_PATH` apuntando a su ejecutable, y una pantalla disponible para el inicio de sesión. La programación puede reutilizar la sesión en segundo plano.
+
+La casilla **Actualizar MercadoPago automáticamente todos los días a las 8:00** queda desactivada inicialmente. Usa `America/Santiago`, incluyendo los cambios de horario, y requiere que el servidor esté encendido. Si se enciende después de las 8:00, ejecuta la revisión pendiente de ese día. El estado y la preferencia sobreviven a reinicios. Si la sesión vence, la pantalla indica que debes autenticarte y continuar. Si no hay un reporte CSV para el período, debes crearlo en MercadoPago y reintentar; Brewit informa hasta qué fecha llegan los reportes descargados. Las filas sin cafetería asociada se omiten y se informa su cantidad. Se validan todos los CSV antes de guardar; una descarga o validación fallida conserva los registros existentes.
+
 - Choose a cafeteria or the main warehouse before selecting transaction files; no week key is required.
 - Transaction categories are updated one at a time. Each row shows the most recently uploaded file and provides equally sized, right-aligned Preview, Delete, and Upload New File actions; the former batch “Detect dates and review” action is no longer used.
 - “Último archivo subido” expands an inline history of every upload in that category, including filename, upload time, confirmed range, and whether it added records or replaced coincident dates. The separate latest-sales-transaction label is no longer shown on the upload screen.
@@ -48,7 +56,7 @@ The integration suite covers app delivery, location rules, XLS/XLSX/CSV date det
 - Kardex/Merma and marketing/employee consumption share structural families. Brewit uses standard filename and sheet-name signals to catch clear cross-selections while accepting genuinely ambiguous files only when their shared family matches the selected category.
 - When uploaded dates overlap existing data, Brewit explains the affected range and asks whether to preserve existing records while adding only new ones or replace the coincident days with the new data.
 - Delete offers two explicitly confirmed operations: revert the latest upload, which restores any older dates hidden by that upload, or remove every current and legacy upload for that location/category. The user must type `ELIMINAR` before either operation runs.
-- Sales and purchases are de-duplicated by their transaction/document identities. Detalle Pagos and MercadoPago omit exact repeated rows; MercadoPago is still accepted without structural validation until a reference export is available. Kardex, waste, and consumption processing combine all active source dates and honor replacement exclusions.
+- Sales and purchases are de-duplicated by their transaction/document identities. Detalle Pagos omits exact repeated rows. MercadoPago uses movement identities when available and exact rows for older exports; web downloads require STORE_ID, SOURCE_ID, TRANSACTION_TYPE and TRANSACTION_DATE. Kardex, waste, and consumption processing combine all active source dates and honor replacement exclusions.
 - “Descargar Ventas desde web” sequentially downloads, validates, de-duplicates, and saves both Ventas Totales and Detalle Pagos, while preserving authentication, restaurant-selection, route fallback, and diagnostics handling for each report.
 - The shared master categories are the combined Products / Ingredients / Extras workbook, product hierarchy, ingredient hierarchy, extras hierarchy, recipes, and suppliers.
 - Every master requires a “Válido desde” date. A duplicate category/date combination must be explicitly replaced or cancelled.

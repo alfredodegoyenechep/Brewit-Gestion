@@ -161,7 +161,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.equal(await page.locator('[data-metric="inventoryConsumptionTotal"] + tr').getAttribute('data-metric'), 'finalInventory');
   assert.equal(await page.locator('[data-metric="finalInventory"] .weekly-results-amount').first().innerText(), '$1.800\nInventario teórico · 13-10-2026');
   assert.equal(await page.locator('[data-metric="finalInventory"] .weekly-results-amount').nth(3).innerText(), '$1.800\nFísico · 11-10-2026');
-  assert.ok((await page.locator('[data-metric="finalInventory"] .weekly-results-percent').allTextContents()).every(text => text === ''));
+  assert.deepEqual((await page.locator('[data-metric="finalInventory"] .weekly-results-percent').allTextContents()).slice(0, 3), ['180,0%', '—', '180,0%']);
   assert.equal(await page.locator('[data-metric="employees"] + tr').getAttribute('data-metric'), 'otherConsumables');
   assert.equal(await page.locator('[data-metric="otherConsumables"] + tr').getAttribute('data-metric'), 'inventoryConsumptionTotal');
   assert.equal(await page.locator('[data-metric="mercadoPagoTips"] .weekly-results-amount').first().innerText(), '$80');

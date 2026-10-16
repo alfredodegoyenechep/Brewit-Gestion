@@ -5008,15 +5008,52 @@ body {
 
 .purchase-projection-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
 }
 
+.purchase-projection-progress {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  font-size: calc(13px * var(--font-scale));
+}
+
+.purchase-projection-progress[hidden] {
+  display: none;
+}
+
+.purchase-projection-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#purchase-projection-progress-elapsed {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+#purchase-projection-progress-bar {
+  display: block;
+  width: 100%;
+  height: 10px;
+  accent-color: var(--clay);
+}
+
 .purchase-projection-table-wrap {
   width: 100%;
+  max-height: 70vh;
   margin-top: 14px;
-  overflow-x: auto;
+  overflow: auto;
+  isolation: isolate;
   border: 1px solid var(--border);
   border-radius: 13px;
 }
@@ -5024,7 +5061,8 @@ body {
 .purchase-projection-table {
   width: 100%;
   min-width: 1740px;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   background: white;
   font-size: calc(12px * var(--font-scale));
 }
@@ -5038,9 +5076,43 @@ body {
 }
 
 .purchase-projection-table th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   color: var(--text-soft);
   background: #fcfaf6;
   font-size: calc(11px * var(--font-scale));
+}
+
+.purchase-projection-table tbody tr[data-key] td:nth-child(-n+4) {
+  position: sticky;
+  z-index: 2;
+  background: white;
+}
+
+.purchase-projection-table thead th:nth-child(-n+4) {
+  z-index: 4;
+}
+
+.purchase-projection-table th:nth-child(1),
+.purchase-projection-table tbody tr[data-key] td:nth-child(1) {
+  left: var(--projection-sticky-left-1, 0px);
+}
+
+.purchase-projection-table th:nth-child(2),
+.purchase-projection-table tbody tr[data-key] td:nth-child(2) {
+  left: var(--projection-sticky-left-2, 0px);
+}
+
+.purchase-projection-table th:nth-child(3),
+.purchase-projection-table tbody tr[data-key] td:nth-child(3) {
+  left: var(--projection-sticky-left-3, 0px);
+}
+
+.purchase-projection-table th:nth-child(4),
+.purchase-projection-table tbody tr[data-key] td:nth-child(4) {
+  left: var(--projection-sticky-left-4, 0px);
+  box-shadow: 1px 0 var(--border);
 }
 
 .purchase-projection-table th[data-header-lines] {
@@ -5066,6 +5138,62 @@ body {
 
 .projection-orders-header-button:hover {
   filter: brightness(0.97);
+}
+
+.projection-value-detail {
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--clay);
+  font: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.projection-value-detail:hover,
+.projection-value-detail:focus-visible {
+  background: var(--clay-soft);
+}
+
+#projection-local-detail-dialog {
+  width: min(1100px, calc(100vw - 32px));
+}
+
+#ingredient-purchase-master-dialog {
+  width: min(1200px, calc(100vw - 32px));
+}
+
+.ingredient-purchase-master-table-wrap {
+  max-height: 55vh;
+}
+
+.ingredient-purchase-master-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+
+.ingredient-purchase-master-table-wrap input,
+.ingredient-purchase-master-table-wrap select {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+}
+
+.ingredient-purchase-master-table-wrap input {
+  width: 120px;
+}
+
+#projection-local-detail-calculation {
+  margin-top: 18px;
+  white-space: pre-line;
 }
 
 .sortable-table-header {
@@ -5316,8 +5444,26 @@ body {
   border-radius: 12px;
 }
 
-#copy-projection-policies-dialog {
+#copy-projection-policies-dialog,
+#consumption-reference-dialog {
   width: min(680px, calc(100vw - 32px));
+}
+
+.consumption-reference-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.consumption-reference-dates dt {
+  color: var(--text-soft);
+  font-size: calc(12px * var(--font-scale));
+}
+
+.consumption-reference-dates dd {
+  margin: 5px 0 0;
+  font-weight: 800;
 }
 
 .copy-projection-policies-field {
@@ -9122,3 +9268,9 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
   #inventory-kardex-reduced-report th,
   #inventory-kardex-reduced-report td { overflow-wrap: anywhere; color: #111 !important; background: white !important; }
 }
+#manual-uploads-title { margin: 28px 0 16px; }
+.mercadopago-upload-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-start; margin-bottom: 12px; }
+.mercadopago-web-controls { margin: 12px 0 20px; }
+.mercadopago-web-controls > label { display: flex; align-items: center; gap: 8px; }
+.mercadopago-web-controls input[type="checkbox"] { width: auto; }
+.mercadopago-web-controls > a { margin-left: 12px; }

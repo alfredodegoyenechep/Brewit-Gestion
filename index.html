@@ -1410,10 +1410,21 @@
         </div>
       </div>
       <div id="purchase-projection-status" class="form-status" aria-live="polite"></div>
+      <div id="purchase-projection-progress" class="purchase-projection-progress" hidden>
+        <div class="purchase-projection-progress-heading">
+          <span id="purchase-projection-progress-stage" aria-live="polite"></span>
+          <span id="purchase-projection-progress-elapsed"></span>
+        </div>
+        <progress id="purchase-projection-progress-bar" max="100" aria-label="Avance de la carga de proyección de compras"></progress>
+      </div>
+      <div id="purchase-projection-reference" class="form-status muted" hidden></div>
+      <div id="purchase-projection-locals-description" class="form-status muted" hidden>Inventario Total = Inventario Actual de bodega + Inventario Locales. Cobertura actual = Inventario Total ÷ Consumo Diario Locales. El consumo incluye solo los ingredientes administrados en cada cafetería activa. Haz clic en Inventario Locales o Consumo Diario Locales para ver el detalle.</div>
       <div id="purchase-projection-summary" class="products-summary"></div>
       <div class="purchase-projection-actions">
         <button id="save-projection-policies" class="icon-button" type="button" disabled>Guardar criterios</button>
+        <button id="open-ingredient-purchase-master" class="icon-button" type="button">Maestro de ingredientes</button>
         <button id="open-copy-projection-policies" class="icon-button" type="button">Cargar criterios de otra cafetería</button>
+        <button id="configure-consumption-reference" class="icon-button" type="button">Configurar consumo de referencia</button>
         <button id="past-purchase-orders" class="icon-button" type="button">Órdenes de Compra Pasadas</button>
         <button id="open-tentative-purchase-orders" class="icon-button" type="button">Órdenes tentativas</button>
         <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
@@ -1423,15 +1434,87 @@
         <table class="purchase-projection-table">
           <thead>
             <tr>
-              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th><th data-sort-key="unitsPerPackage" data-header-lines="Unidades x|empaque">Unidades x<br />empaque</th>
-              <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th data-sort-key="consumption30" data-header-lines="Consumo y salidas|del período">Consumo y salidas<br />del período</th><th data-sort-key="averageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
-              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th id="projection-branch-orders-header" hidden><button id="open-projection-branch-orders" class="projection-orders-header-button" type="button" title="Seleccionar sucursales para consolidar">OC Suc</button></th><th data-sort-key="suggestedInternalQuantity" data-header-lines="Sugerencia|interna">Sugerencia<br />interna</th><th data-sort-key="purchaseUnit">UDC</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
-              <th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Unidades x|UDC">Unidades x<br />UDC</th><th data-sort-key="suggestedPurchaseUnits" data-header-lines="UDC|sugeridas">UDC<br />sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo UDC|estimado">Costo UDC<br />estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
+              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th><th data-sort-key="purchaseUnit" data-header-lines="Unidad de|compra">Unidad de<br />compra</th><th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Contenido en|Unidad Interna">Contenido en<br />Unidad Interna</th><th data-sort-key="unitsPerPackage" data-header-lines="Unidades x|empaque">Unidades x<br />empaque</th>
+              <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th id="projection-locals-inventory-header" data-sort-key="localsInventory" data-header-lines="Inventario|Locales" hidden>Inventario<br />Locales</th><th id="projection-total-inventory-header" data-sort-key="totalInventory" data-header-lines="Inventario|Total" hidden>Inventario<br />Total</th><th id="projection-own-consumption-header" data-sort-key="consumption30" data-header-lines="Consumo y salidas|del período">Consumo y salidas<br />del período</th><th id="projection-locals-daily-header" data-sort-key="localsDailyConsumption" data-header-lines="Consumo Diario|Locales" hidden>Consumo Diario<br />Locales</th><th id="projection-own-daily-header" data-sort-key="ownAverageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th id="projection-reference-daily-header" data-sort-key="projectedAverageDailyConsumption" data-header-lines="Prom Diario|Sustitutivo" hidden>Prom Diario<br />Sustitutivo</th><th id="projection-used-daily-header" data-sort-key="averageDailyConsumption" data-header-lines="Promedio Diario|utilizado para Reposición" hidden>Promedio Diario<br />utilizado para Reposición</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
+              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th data-sort-key="suggestedInternalQuantity" data-header-lines="Sugerencia|interna">Sugerencia<br />interna</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
+              <th data-sort-key="suggestedPurchaseUnits" data-header-lines="UDC|sugeridas">UDC<br />sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo UDC|estimado">Costo UDC<br />estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
             </tr>
           </thead>
           <tbody id="purchase-projection-body"></tbody>
         </table>
       </div>
+      <dialog id="ingredient-purchase-master-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="ingredient-purchase-master-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Abastecimiento · Maestro compartido</div>
+            <h2 id="ingredient-purchase-master-title">Maestro de ingredientes</h2>
+            <p class="panel-description">Unidad interna del maestro utilizada para expresar los consumos. Configura cuánto contiene una unidad de compra; estas equivalencias se comparten entre las sucursales.</p>
+          </div>
+          <button id="close-ingredient-purchase-master" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <label class="copy-projection-policies-field" for="ingredient-purchase-master-search">Buscar ingrediente o código
+          <input id="ingredient-purchase-master-search" type="search" placeholder="Ej.: syrup caramelo" />
+        </label>
+        <p class="form-status muted">Ejemplo: Botella de 750 ml = 0,75 L si la unidad interna es L, o 750 si es ML. La unidad interna se consulta aquí y conserva el valor del maestro.</p>
+        <div class="projection-branch-orders-table-wrap ingredient-purchase-master-table-wrap">
+          <table class="projection-branch-orders-table">
+            <thead><tr><th>Código</th><th>Ingrediente</th><th>Unidad interna</th><th>Unidad de compra</th><th>Contenido en Unidad Interna</th><th>Equivalencia</th></tr></thead>
+            <tbody id="ingredient-purchase-master-body"></tbody>
+          </table>
+        </div>
+        <div id="ingredient-purchase-master-status" class="form-status" aria-live="polite"></div>
+        <div class="projection-branch-orders-actions">
+          <button id="save-ingredient-purchase-master" class="primary" type="button" disabled>Guardar unidades de compra</button>
+        </div>
+      </dialog>
+      <dialog id="projection-local-detail-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-local-detail-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Proyección de compras</div>
+            <h2 id="projection-local-detail-title"></h2>
+            <p id="projection-local-detail-product" class="panel-description"></p>
+          </div>
+          <button id="close-projection-local-detail" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <p id="projection-local-detail-description" class="form-status muted"></p>
+        <div class="projection-branch-orders-table-wrap">
+          <table class="projection-branch-orders-table">
+            <thead id="projection-local-detail-head"></thead>
+            <tbody id="projection-local-detail-body"></tbody>
+          </table>
+        </div>
+        <p id="projection-local-detail-calculation" class="form-status"></p>
+      </dialog>
+      <dialog id="consumption-reference-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="consumption-reference-title">
+        <div class="purchase-order-dialog-head">
+          <div>
+            <div class="panel-eyebrow">Proyección de compras</div>
+            <h2 id="consumption-reference-title">Configurar consumo de referencia</h2>
+            <p id="consumption-reference-location" class="panel-description"></p>
+          </div>
+          <button id="cancel-consumption-reference" class="icon-button" type="button">Cancelar</button>
+        </div>
+        <label class="projection-checkbox" for="consumption-reference-enabled">
+          <input id="consumption-reference-enabled" type="checkbox" /> Activar consumo de referencia
+        </label>
+        <label class="copy-projection-policies-field" for="consumption-reference-source">Sucursal de referencia
+          <select id="consumption-reference-source"></select>
+        </label>
+        <label class="copy-projection-policies-field" for="consumption-reference-curve">Curva de crecimiento
+          <select id="consumption-reference-curve"></select>
+        </label>
+        <dl class="consumption-reference-dates">
+          <div><dt>Fecha de apertura</dt><dd id="consumption-reference-opening"></dd></div>
+          <div><dt>Término automático</dt><dd id="consumption-reference-end"></dd></div>
+        </dl>
+        <p id="consumption-reference-stage" class="form-status muted"></p>
+        <p class="form-status muted">Los meses se cuentan desde la apertura, por aniversarios mensuales. La fecha de apertura se administra en Configuración.</p>
+        <p class="form-status muted">El Prom Diario Sustitutivo es el promedio diario de la sucursal de referencia multiplicado por el porcentaje vigente. El Promedio Diario utilizado para Reposición es el mayor entre el propio y el sustitutivo, por ingrediente y en unidades equivalentes. Esta regla también alimenta los pedidos a bodega; los consumos históricos conservan sus valores reales.</p>
+        <div id="consumption-reference-status" class="form-status" aria-live="polite"></div>
+        <div class="projection-branch-orders-actions">
+          <button id="save-consumption-reference" class="primary" type="button" disabled>Guardar configuración</button>
+        </div>
+      </dialog>
       <dialog id="copy-projection-policies-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="copy-projection-policies-title" aria-describedby="copy-projection-policies-description">
         <div class="purchase-order-dialog-head">
           <div>
@@ -1449,26 +1532,6 @@
         <div id="copy-projection-policies-status" class="form-status" aria-live="polite"></div>
         <div class="projection-branch-orders-actions">
           <button id="confirm-copy-projection-policies" class="primary" type="button" disabled>Reemplazar criterios…</button>
-        </div>
-      </dialog>
-      <dialog id="projection-branch-orders-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-branch-orders-title">
-        <div class="purchase-order-dialog-head">
-          <div>
-            <div class="panel-eyebrow">Bodega principal</div>
-            <h2 id="projection-branch-orders-title">Órdenes de compra de sucursales</h2>
-            <p id="projection-branch-orders-description" class="panel-description"></p>
-          </div>
-          <button id="cancel-projection-branch-orders" class="icon-button" type="button">Cancelar</button>
-        </div>
-        <div class="projection-branch-orders-table-wrap">
-          <table class="projection-branch-orders-table">
-            <thead><tr><th>Incluir</th><th>Sucursal</th><th>Última orden de compra</th><th>Fecha</th><th>OC incluidas</th></tr></thead>
-            <tbody id="projection-branch-orders-body"></tbody>
-          </table>
-        </div>
-        <p class="form-status muted">Las fechas con más de 3 días de antigüedad se muestran en rojo; las más recientes, en azul.</p>
-        <div class="projection-branch-orders-actions">
-          <button id="apply-projection-branch-orders" class="primary" type="button">Aplicar y actualizar cálculo</button>
         </div>
       </dialog>
       <dialog id="projection-purchase-orders-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-purchase-orders-title">
@@ -2236,8 +2299,18 @@
       <h3>Fuentes sincronizadas</h3>
       <div class="inventory-results-table-wrap"><table id="upload-transaction-matrix" class="inventory-results-table"></table></div>
       <h3 id="manual-uploads-title">Cargas manuales</h3>
-      <div class="report-actions"><button id="upload-mercadopago-shared" class="icon-button" type="button">Cargar archivo único de MercadoPago</button></div>
+      <div class="report-actions mercadopago-upload-actions">
+        <button id="upload-mercadopago-shared" class="icon-button" type="button">Cargar archivo único de MercadoPago</button>
+        <button id="sync-mercadopago-web" class="icon-button" type="button">Actualizar MercadoPago desde web</button>
+      </div>
       <p class="panel-description">MercadoPago: carga un archivo con todos los locales. Cada registro se asigna a su cafetería por la columna STORE_ID, configurada en Configuración.</p>
+      <div class="mercadopago-web-controls">
+        <label><input id="mercadopago-daily" type="checkbox"> Actualizar MercadoPago automáticamente todos los días a las 8:00 (hora de Chile)</label>
+        <p class="panel-description">La actualización web revisa desde el último día registrado de cada cafetería, inclusive, y agrega solo transacciones nuevas. Requiere que el servidor esté encendido y existan reportes CSV en MercadoPago.</p>
+        <p id="mercadopago-web-status" class="form-status" role="status" aria-live="polite"></p>
+        <button id="resume-mercadopago-web" class="icon-button" type="button" hidden>Ya inicié sesión, continuar</button>
+        <a id="mercadopago-report-link" href="https://www.mercadopago.cl/balance/reports/settlement_v2" target="_blank" rel="noopener noreferrer" hidden>Ver reportes en MercadoPago</a>
+      </div>
       <div class="inventory-results-table-wrap"><table id="upload-manual-actions" class="inventory-results-table" aria-labelledby="manual-uploads-title"></table></div><p class="panel-description">Carga marketing, colaboradores y calibraciones y bebidas desechadas por local con los botones de esta sección. Las fuentes de la Bodega Principal se consultan en La Concepción.</p>
 <section class="panel" id="inventory-sync-panel"><h3>Inventario por API</h3><label>Ubicación <select id="location-select"><option value="store-1">La Concepción</option></select></label><section class="inventory-sources" aria-labelledby="stock-title">
             <h3 id="stock-title">Inventario sincronizado</h3>

@@ -25,6 +25,9 @@ const { createClusterSourceLoader } = require('./sales-clusters-source');
 const { normalizeConfig: clusterConfig, optionsFor: clusterOptions, recurrenceAsOf } = require('./sales-clusters');
 const { paymentLocalTimestamp } = require('./payment-timestamps');
 const mercadoPagoStores = require('./mercadopago-stores');
+const { CURVES: CONSUMPTION_REFERENCE_CURVES, monthlyAnniversary, referenceStatus, replenishmentConsumption } = require('./purchase-consumption-reference');
+const { consolidateLocalTotals } = require('./purchase-local-totals');
+const { PURCHASE_UNIT_OPTIONS, purchaseUnitLabel, configuredPurchaseUnits, configuredPurchaseCost } = require('./purchase-unit-config');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -2094,6 +2097,7 @@ function createApp(options = {}) {
   const companyProfilePath = path.join(configRoot, 'company-profile.json');
   const purchaseOrderCounterPath = path.join(configRoot, 'purchase-order-counter.json');
   const purchaseProjectionPoliciesPath = path.join(configRoot, 'purchase-projection-policies.json');
+  const purchaseUnitConfigurationPath = path.join(configRoot, 'purchase-unit-configuration.json');
   const findingsRegistryPath = path.join(configRoot, 'findings.json');
   const generalExpensesPath = path.join(configRoot, 'general-expenses.json');
   const sourcePolicyPath = path.join(configRoot, 'source-policy.json');
@@ -2184,6 +2188,54 @@ function createApp(options = {}) {
 
   function readPurchaseProjectionPolicies() {
     return readJson(purchaseProjectionPoliciesPath, { locations: {} });
+  }
+
+  function ingredientPurchaseMaster() {
+    const master = latestMasterFile('master-catalog', projectionToday());
+    if (!master) throw Object.assign(new Error('Actualiza el maestro de ingredientes antes de configurar las unidades de compra.'), { status: 404 });
+    const configurations = readJson(purchaseUnitConfigurationPath, { items: {} }).items;
+    const conversions = parsePurchaseUnitConversions(master.filePath);
+    const items = [...parseIngredientCatalog(master.filePath).values()].filter(item => item.type === 'ingredient').map(item => {
+      const key = item.code.toUpperCase();
+      const catalog = conversions.get(key);
+      const conversion = [...(catalog?.conversions.values() || [])].find(value => normalizedUnit(value.purchaseUnit) !== normalizedUnit(item.unit))
+        || [...(catalog?.conversions.values() || [])][0];
+      const masterPurchaseUnit = conversion?.purchaseUnit || item.unit;
+      const masterContent = conversion ? convertQuantityUnit(conversion.unitsPerPurchaseUnit, conversion.baseUnit, item.unit) : item.unit ? 1 : null;
+      const configured = configuredPurchaseUnits(configurations?.[key], item.unit, convertQuantityUnit);
+      return { code: key, name: item.name, internalUnit: item.unit, active: item.active,
+        purchaseUnit: purchaseUnitLabel(configured?.purchaseUnit || masterPurchaseUnit),
+        unitsPerPurchaseUnit: configured ? configured.unitsPerPurchaseUnit : masterContent,
+        configured: Boolean(configured), masterPurchaseUnit: purchaseUnitLabel(masterPurchaseUnit), masterContent,
+        allowedPurchaseUnits: [...new Set([...PURCHASE_UNIT_OPTIONS, item.unit, purchaseUnitLabel(configured?.purchaseUnit),
+          ...[...(catalog?.conversions.values() || [])].map(value => purchaseUnitLabel(value.purchaseUnit))].filter(Boolean))] };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    return { items, purchaseUnitOptions: PURCHASE_UNIT_OPTIONS, masterDate: master.validFrom };
+  }
+
+  function consumptionReferenceFor(location) {
+    const rule = readPurchaseProjectionPolicies().locations?.[location.id]?.consumptionReference;
+    const result = referenceStatus(rule, location.openingDate, projectionToday());
+    const source = activeLocation(result.sourceLocationId);
+    return { ...result, source: source ? { id: source.id, name: source.name } : null };
+  }
+
+  function consumptionReferenceConfiguration(location) {
+    return {
+      location: publicLocation(location),
+      reference: consumptionReferenceFor(location),
+      today: projectionToday(),
+      curves: CONSUMPTION_REFERENCE_CURVES.map(curve => ({ ...curve,
+        endsAt: isValidDate(location.openingDate) ? monthlyAnniversary(location.openingDate, curve.percentages.length) : null,
+        stages: isValidDate(location.openingDate) ? curve.percentages.map((percentage, month) => ({
+          percentage, startsAt: monthlyAnniversary(location.openingDate, month)
+        })) : []
+      })),
+      sources: readLocations().locations
+        .filter(source => source.status === 'active' && source.type === 'store' && source.id !== location.id)
+        .map(source => ({ id: source.id, name: source.name }))
+        .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+    };
   }
 
   function readFindingsRegistry() {
@@ -2898,6 +2950,19 @@ function createApp(options = {}) {
   }
 
   function genericTransactionRowKey(row, header = [], field = '') {
+    if (field === 'mercadopago') {
+      const values = Object.fromEntries(header.map((name, index) => [String(name ?? '').trim().toUpperCase(), row[index]]));
+      const source = mercadoPagoStores.storeId(values.SOURCE_ID);
+      const type = String(values.TRANSACTION_TYPE || '').trim().toUpperCase();
+      const date = values.TRANSACTION_DATE;
+      if (source && type && date) {
+        const instant = new Date(date);
+        return crypto.createHash('sha256').update(JSON.stringify([
+          source, type,
+          Number.isFinite(instant.getTime()) ? instant.toISOString() : String(date).trim()
+        ])).digest('hex');
+      }
+    }
     const values = row.map((value, column) => {
       if (field === 'mercadopago' && String(header[column] ?? '').trim().toUpperCase().replace(/[\s_]+/g, '_') === 'STORE_ID') {
         return mercadoPagoStores.storeId(value);
@@ -3055,6 +3120,85 @@ function createApp(options = {}) {
     );
   }
 
+  function mercadoPagoCheckpoints() {
+    return readLocations().locations.filter(location => location.status === 'active' && location.type === 'store' && location.mercadoPagoStoreId).map(location => {
+      let latest = null;
+      for (const stored of storedWeeklyFiles(location.id, 'mercadopago')) {
+        for (const sheet of readGenericTransactionSheets(stored.filePath)) {
+          const header = sheet.rows[0] || [];
+          for (const row of sheet.rows.slice(1)) {
+            const date = mercadoPagoDateTime(Object.fromEntries(header.map((name, index) => [name, row[index]])))?.slice(0, 10);
+            if (date && !dateIsExcluded(date, stored.excludedRanges) && (!latest || date > latest)) latest = date;
+          }
+        }
+      }
+      return { location: location.id, storeId: location.mercadoPagoStoreId, from: latest || FIRST_WEEK };
+    });
+  }
+
+  function importMercadoPagoReports(reports, checkpoints, to) {
+    const fromByStore = new Map(checkpoints.map(store => [store.storeId, store.from]));
+    const from = checkpoints.map(store => store.from).sort()[0];
+    // Validate every download before publishing any location's records.
+    const sheets = reports.flatMap((report, reportIndex) => readGenericTransactionSheets(report.path).map((sheet, index) => {
+      const header = (sheet.rows[0] || []).map(name => String(name ?? '').trim().toUpperCase());
+      for (const name of ['STORE_ID', 'SOURCE_ID', 'TRANSACTION_TYPE', 'TRANSACTION_DATE']) {
+        if (!header.includes(name)) throw Error(`Falta ${name} en el reporte.`);
+      }
+      const rows = sheet.rows.slice(1).filter(row => row.some(value => value !== null && value !== '')).filter(row => {
+        const record = Object.fromEntries(header.map((name, column) => [name, row[column]]));
+        const date = mercadoPagoDateTime(record)?.slice(0, 10);
+        if (!date || !isValidDate(date) || !mercadoPagoStores.storeId(record.SOURCE_ID) || !record.TRANSACTION_TYPE) throw Error('El reporte contiene transacciones sin identidad o fecha válida.');
+        return date >= (fromByStore.get(mercadoPagoStores.storeId(record.STORE_ID)) || from) && date <= to;
+      });
+      return { name: `Reporte ${reportIndex + 1}-${index + 1}`, rows: [header, ...rows] };
+    }));
+    if (!sheets.some(sheet => sheet.rows.length > 1)) return { newTransactions: 0, duplicateTransactions: 0, skippedCount: 0 };
+    const split = mercadoPagoStores.splitByStore(sheets, readLocations().locations);
+    const directory = fs.mkdtempSync(path.join(stagingRoot, 'mp-web-'));
+    const originals = new Map(), published = [], moved = [];
+    const result = { newTransactions: 0, duplicateTransactions: 0, skippedCount: split.summary.unassociatedCount };
+    try {
+      for (const group of split.groups) {
+        const locationId = group.location.id;
+        const filename = `mercadopago-web-${crypto.randomUUID()}.xlsx`;
+        const source = path.join(directory, filename);
+        mercadoPagoStores.writeStoreWorkbook(source, group.sheets);
+        const staged = { filename, originalName: 'Reportes web de MercadoPago.csv', detectedRange: detectFileDateRange({ path: source, originalname: filename, fieldname: 'mercadopago' }) };
+        const prepared = prepareIncrementalMercadoPago(staged, locationId, directory);
+        result.newTransactions += prepared.stats.newTransactions;
+        result.duplicateTransactions += prepared.stats.duplicateTransactions;
+        if (!prepared.staged) continue;
+        const indexPath = transactionIndexPath(locationId);
+        originals.set(locationId, readJson(indexPath, null));
+        const index = readTransactionIndex(locationId), destination = transactionLocationRoot(locationId);
+        ensureDir(destination);
+        const file = prepared.staged, target = path.join(destination, file.filename);
+        fs.renameSync(path.join(directory, file.filename), target); moved.push(target);
+        index.fields ||= {}; index.fields.mercadopago ||= { files: [] };
+        index.fields.mercadopago.files.push({
+          id: crypto.randomUUID(), name: file.filename, originalName: file.originalName,
+          storage: 'internal-records-v1', importerVersion: 1, source: 'mercadopago-web',
+          size: file.size, detectedRange: file.detectedRange, confirmedRange: file.detectedRange,
+          transactionCount: file.transactionCount, rowCount: file.rowCount, storeId: group.location.mercadoPagoStoreId,
+          overlapAction: 'keep', replacementEffects: [], savedAt: new Date().toISOString(),
+          url: `/uploads/transactions/${locationId}/${encodeURIComponent(file.filename)}`
+        });
+        index.updatedAt = new Date().toISOString();
+        writeTransactionIndex(locationId, index); published.push(locationId);
+      }
+      return result;
+    } catch (error) {
+      for (const locationId of published) {
+        const original = originals.get(locationId);
+        if (original) writeTransactionIndex(locationId, original);
+        else fs.rmSync(transactionIndexPath(locationId), { force: true });
+      }
+      for (const file of moved) fs.rmSync(file, { force: true });
+      throw error;
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  }
+
   function prepareIncrementalPaymentDetails(staged, locationId, stagingDirectory, additionalExcludedRanges = []) {
     return prepareIncrementalGenericTransactions(
       staged, locationId, stagingDirectory, 'payment-details', 'Detalle Pagos', additionalExcludedRanges
@@ -3075,10 +3219,25 @@ function createApp(options = {}) {
     masters: () => toteatMasterSync?.sharedCurrent(),
     protectLegacy: process.env.BREWIT_REQUIRE_AUTH === '1'
   });
+  const mercadoPagoSync = require('./mercadopago-sync').createMercadoPagoSync({
+    uploadsRoot, checkpoints: mercadoPagoCheckpoints, importReports: importMercadoPagoReports,
+    browser: options.mercadoPagoBrowser, clock: options.mercadoPagoClock,
+    enableScheduler: options.enableMercadoPagoSync !== false && options.enableToteatSync !== false
+  });
+  app.locals.mercadoPagoSync = mercadoPagoSync;
+  app.get('/api/integrations/mercadopago', (req, res) => res.json(mercadoPagoSync.status()));
+  app.put('/api/integrations/mercadopago/schedule', (req, res) => {
+    try { res.json(mercadoPagoSync.configure(req.body?.enabled)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post('/api/integrations/mercadopago/sync', (req, res) => {
+    mercadoPagoSync.synchronize().catch(() => {});
+    res.status(202).json(mercadoPagoSync.status());
+  });
   app.use('/api', (req,res,next)=>{
     if(!synchronizedOnly || !/^\/(reports\/|sales\/|products(?:\/|$)|ingredients$|sales-by-ingredients$|financial-results(?:\/weekly)?$|findings$|purchase-projections$|inventory\/)/.test(req.path))return next();
     const send=res.json.bind(res);
-    res.json=payload=>{
+    const decoratePayload=payload=>{
       if(payload && !Array.isArray(payload) && typeof payload==='object' && req.path !== '/masters') payload.sourcePolicy={mode:'synchronized',legacyFallback:false,
         masterHistory:'Se usa un maestro compartido observado; no se certifican recetas ni costos maestros históricos anteriores a la sincronización.',
         manualSources:['MercadoPago','Marketing','Colaboradores','Calibraciones y bebidas desechadas','Órdenes y gastos de Brewit']};
@@ -3099,8 +3258,10 @@ function createApp(options = {}) {
         if(Array.isArray(payload.warnings))payload.warnings.push(...coverageWarnings);
       }
       if (req.path.endsWith('/financial-results') && Array.isArray(payload?.warnings)) payload.warningDetails = payload.warnings.map(message => require('./financial-warning-details').warningDetails(message, payload));
-      return send(payload);
+      return payload;
     };
+    res.locals.decorateSourcePolicy = decoratePayload;
+    res.json=payload=>send(decoratePayload(payload));
     next();
   });
 
@@ -4277,79 +4438,6 @@ function createApp(options = {}) {
     return { local, global, bySupplier, suppliers };
   }
 
-  function normalizedTaxIdentifier(value) {
-    return String(value || '').replace(/[^0-9k]/gi, '').toLowerCase();
-  }
-
-  function supplierIsCompany(supplier, company) {
-    const supplierTaxId = normalizedTaxIdentifier(supplier?.taxId || supplier?.key);
-    const companyTaxId = normalizedTaxIdentifier(company?.taxId);
-    if (supplierTaxId && companyTaxId && supplierTaxId === companyTaxId) return true;
-    return Boolean(normalizeHeader(supplier?.name)
-      && normalizeHeader(supplier?.name) === normalizeHeader(company?.name));
-  }
-
-  function branchPurchaseOrderConsolidation(selectedLocationIds) {
-    const company = readCompanyProfile();
-    const stores = readLocations().locations
-      .filter(location => location.status === 'active' && location.type === 'store')
-      .sort((left, right) => left.name.localeCompare(right.name, 'es'));
-    const allowedIds = new Set(stores.map(store => store.id));
-    const selectedIds = selectedLocationIds === null
-      ? new Set(allowedIds)
-      : new Set(selectedLocationIds.filter(id => allowedIds.has(id)));
-    const orders = readPurchaseOrders().filter(order => order.status === 'confirmed'
-      && allowedIds.has(order.location?.id)
-      && supplierIsCompany(order.supplier, company));
-    const dateForOrder = order => order.confirmedAt || order.updatedAt || order.createdAt || '';
-    const demandByItem = new Map();
-    for (const order of orders.filter(order => selectedIds.has(order.location.id))) {
-      for (const item of order.items || []) {
-        const key = String(item.key || item.code || '').trim().toUpperCase();
-        const internalQuantity = item.internalQuantity === null || item.internalQuantity === undefined
-          ? null : Number(item.internalQuantity);
-        const unitsPerPurchaseUnit = item.unitsPerPurchaseUnit === null || item.unitsPerPurchaseUnit === undefined
-          ? null : Number(item.unitsPerPurchaseUnit);
-        const quantity = item.quantity === null || item.quantity === undefined ? null : Number(item.quantity);
-        const value = Number.isFinite(internalQuantity)
-          ? internalQuantity
-          : (Number.isFinite(quantity) && Number.isFinite(unitsPerPurchaseUnit)
-            ? quantity * unitsPerPurchaseUnit : null);
-        if (!key || value === null) continue;
-        if (!demandByItem.has(key)) demandByItem.set(key, []);
-        demandByItem.get(key).push({ quantity: value, unit: item.internalUnit || '' });
-      }
-    }
-    const staleBefore = addDays(projectionToday(), -3);
-    const locations = stores.map(store => {
-      const storeOrders = orders
-        .filter(order => order.location.id === store.id)
-        .sort((left, right) => dateForOrder(right).localeCompare(dateForOrder(left)));
-      const latestOrder = storeOrders[0] || null;
-      const latestAt = latestOrder ? dateForOrder(latestOrder) : null;
-      return {
-        id: store.id,
-        name: store.name,
-        selected: selectedIds.has(store.id),
-        orderCount: storeOrders.length,
-        latestOrder: latestOrder ? {
-          id: latestOrder.id,
-          orderNumber: latestOrder.orderNumber,
-          confirmedAt: latestAt,
-          date: latestAt.slice(0, 10),
-          stale: latestAt.slice(0, 10) < staleBefore
-        } : null
-      };
-    });
-    return {
-      companySupplier: { name: company.name, taxId: company.taxId || '' },
-      selectedLocationIds: [...selectedIds],
-      locations,
-      selectedOrderCount: orders.filter(order => selectedIds.has(order.location.id)).length,
-      demandByItem
-    };
-  }
-
   function projectionPurchaseOrderSelection(locationId, selectedOrderIds) {
     const dateForOrder = order => order.confirmedAt || order.updatedAt || order.createdAt || '';
     const orders = readPurchaseOrders()
@@ -4444,16 +4532,75 @@ function createApp(options = {}) {
     return require('./projection-inventory').projectionInventory(state,location,today,correction,periodFrom);
   }
 
-  function buildPurchaseProjection(locationId, selectedBranchLocationIds = null, selectedPurchaseOrderIds = null) {
+  function* cachedStoreProjection(locationId, cache, ignoreConsumptionReference = false) {
+    const key = `${locationId}|${ignoreConsumptionReference ? 'own' : 'effective'}`;
+    const equivalent = cache.get(`${locationId}|${ignoreConsumptionReference ? 'effective' : 'own'}`);
+    // Without a current reference, real and effective consumption are identical.
+    // Reuse the inventory calculation when this store is also another's origin.
+    if (!cache.has(key) && equivalent?.projection?.consumptionReference.status !== 'active'
+      && equivalent?.projection) cache.set(key, equivalent);
+    if (!cache.has(key)) {
+      try {
+        cache.set(key, { projection: yield* calculatePurchaseProjection(locationId, null,
+          { ignoreConsumptionReference, projectionCache: cache }) });
+      } catch (error) {
+        cache.set(key, { error });
+      }
+    }
+    const result = cache.get(key);
+    if (result.error) throw result.error;
+    return result.projection;
+  }
+
+  function* localProjectionSources(cache) {
+    const policies = readPurchaseProjectionPolicies().locations || {};
+    const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store')
+      .sort((left, right) => left.name.localeCompare(right.name, 'es'));
+    const sources = [];
+    for (const [index, location] of stores.entries()) {
+      yield { message: `Procesando ${location.name}`, completed: index, total: stores.length, unit: 'cafeterías' };
+      let projection = null, error = null, consumptionError = null;
+      try {
+        projection = yield* cachedStoreProjection(location.id, cache);
+      } catch (cause) {
+        // A missing reference can prevent demand calculation while the local
+        // inventory itself remains verifiable from its own movements.
+        consumptionError = cause.message;
+        try { projection = yield* cachedStoreProjection(location.id, cache, true); }
+        catch (inventoryError) { error = inventoryError.message; }
+      }
+      sources.push({ location, projection, error, consumptionError,
+        managedKeys: new Set(Object.entries(policies[location.id]?.items || {}).filter(([, policy]) => policy.managed === true).map(([key]) => key)),
+        itemsByKey: new Map((projection?.items || []).map(item => [item.key, item])) });
+      yield { message: `${location.name} procesada`, completed: index + 1, total: stores.length, unit: 'cafeterías' };
+    }
+    return sources;
+  }
+
+  function buildPurchaseProjection(locationId, selectedPurchaseOrderIds = null, options = {}) {
+    const calculation = calculatePurchaseProjection(locationId, selectedPurchaseOrderIds, options);
+    let step;
+    do { step = calculation.next(); } while (!step.done);
+    return step.value;
+  }
+
+  function* calculatePurchaseProjection(locationId, selectedPurchaseOrderIds = null, {
+    ignoreConsumptionReference = false, projectionCache = new Map()
+  } = {}) {
     const location = activeLocation(locationId);
     if (!location) {
       const error = new Error('Selecciona una cafetería o bodega válida.');
       error.status = 400;
       throw error;
     }
+    yield { message: `Leyendo inventario de ${location.name}` };
     const today = projectionToday();
+    const periodFrom = addDays(today, -29);
+    const consumptionFrom = isValidDate(location.openingDate) && location.openingDate > periodFrom
+      ? location.openingDate : periodFrom;
     const state=synchronizedOnly?synchronizedStock(location.id):stockSync.current(location.id);
-    const apiProjection=state?.sourceKind==='native-documents'?apiProjectionBasis(location,today,state):null;
+    yield { message: `Calculando inventario y consumo de ${location.name}` };
+    const apiProjection=state?.sourceKind==='native-documents'?apiProjectionBasis(location,today,state,consumptionFrom):null;
     const apiItems=new Map((apiProjection?.items||[]).map(r=>[r.code+'|'+r.unit,r]));
     const parsed = apiProjection?{products:apiProjection.items,groups:[{date:apiProjection.to,metrics:[]}]}:mergedKardexData(location.id, 'kardex');
     if (!parsed?.groups.length) {
@@ -4461,7 +4608,6 @@ function createApp(options = {}) {
       error.status = 404;
       throw error;
     }
-    const periodFrom = addDays(today, -29);
     const groups = parsed.groups.filter(group => group.date <= today);
     const latestGroup = groups.at(-1);
     if (!latestGroup) {
@@ -4469,12 +4615,32 @@ function createApp(options = {}) {
       error.status = 422;
       throw error;
     }
-    const consumptionGroups = groups.filter(group => group.date >= periodFrom);
+    const consumptionGroups = groups.filter(group => group.date >= consumptionFrom);
+    const consumptionReference = consumptionReferenceFor(location);
+    const warnings = [...(apiProjection?.warnings || [])];
+    let referenceProjection = null;
+    if (!ignoreConsumptionReference && location.type === 'store' && consumptionReference.active) {
+      if (!consumptionReference.source || consumptionReference.source.id === location.id
+        || activeLocation(consumptionReference.source.id)?.type !== 'store') {
+        const error = new Error('La cafetería de referencia ya no está disponible. Revisa la configuración de consumo de referencia.');
+        error.status = 422;
+        throw error;
+      }
+      try {
+        // A reference always uses real movements, even if that store has its own rule.
+        referenceProjection = yield* cachedStoreProjection(consumptionReference.source.id, projectionCache, true);
+      } catch (cause) {
+        const error = new Error(`No se pudo calcular el consumo de referencia de ${consumptionReference.source.name}: ${cause.message}`);
+        error.status = 422;
+        throw error;
+      }
+      warnings.push(...referenceProjection.warnings.map(warning => `Referencia (${consumptionReference.source.name}): ${warning}`));
+      if (referenceProjection.period.dataThrough < today) warnings.push(`Referencia (${consumptionReference.source.name}): datos disponibles hasta ${referenceProjection.period.dataThrough}.`);
+    }
+    const referenceItems = new Map((referenceProjection?.items || []).map(item => [item.key, item]));
     const policies = readPurchaseProjectionPolicies().locations?.[location.id]?.items || {};
+    yield { message: `Consultando proveedores, costos y criterios de ${location.name}` };
     const references = projectionPurchaseReferences(location.id, today);
-    const branchOrders = location.type === 'warehouse'
-      ? branchPurchaseOrderConsolidation(selectedBranchLocationIds)
-      : null;
     const purchaseOrders = projectionPurchaseOrderSelection(location.id, selectedPurchaseOrderIds);
     const catalogMaster = latestMasterFile('master-catalog', today);
     if (!catalogMaster) {
@@ -4483,16 +4649,21 @@ function createApp(options = {}) {
       throw error;
     }
     const catalogAssignments = parseInventoryHierarchyAssignments(catalogMaster.filePath);
+    const projectionExceptions = new Set(['SUB005', 'B2860', 'B2850', 'B2840', 'B2830']);
     const isProjectionItem = product => {
       const key = String(product.code || '').trim().toUpperCase();
-      return key === 'SUB005' || catalogAssignments.get(key)?.type === 'ingredient' || (apiProjection && toteatMasterSync.sharedCurrent()?.products.some(p=>p.code===key&&p.stockManaged===true));
+      return projectionExceptions.has(key) || catalogAssignments.get(key)?.type === 'ingredient';
     };
     const conversions = parsePurchaseUnitConversions(catalogMaster.filePath);
+    const purchaseUnitConfigurations = readJson(purchaseUnitConfigurationPath, { items: {} }).items || {};
     const costCatalog = parseIngredientCatalog(catalogMaster.filePath);
     const costResolver = apiProjection?buildInventoryPurchaseCostResolver(today,location,state,{catalog:costCatalog}):buildCostResolver(today, [location.id]);
     const supplierOptions = new Map(references.suppliers);
     supplierOptions.set('unassigned', { key: 'unassigned', name: 'Proveedor no asignado', taxId: '' });
-    const items = parsed.products.filter(product => (product.code || product.name) && isProjectionItem(product)).map(product => {
+    const products = parsed.products.filter(product => (product.code || product.name) && isProjectionItem(product));
+    const items = [];
+    yield { message: `Calculando sugerencias de ${location.name}`, completed: 0, total: products.length, unit: 'ingredientes' };
+    for (const product of products) {
       const key = (product.code || normalizeHeader(product.name)).toUpperCase();
       const policy = policies[key] || {};
       const minDays = Number.isFinite(Number(policy.minDays)) ? Number(policy.minDays) : 7;
@@ -4505,7 +4676,16 @@ function createApp(options = {}) {
       const apiItem=apiItems.get(product.code+'|'+product.unit);
       const consumption30 = apiItem?apiItem.consumption30:consumptionGroups.reduce((sum, group) =>
         sum + kardexMetricTotal(product, group, metricMatcher), 0);
-      const averageDailyConsumption = consumption30 / (apiItem?.consumptionDays || apiProjection?.days || 30);
+      const consumptionDays = apiItem?.consumptionDays ?? apiProjection?.days
+        ?? Math.max(0, Math.round((Date.parse(today) - Date.parse(consumptionFrom)) / 86400000) + 1);
+      const referenceItem = referenceItems.get(key);
+      const referenceDaily = referenceItem && referenceItem.internalUnit && product.unit
+        ? convertQuantityUnit(referenceItem.ownAverageDailyConsumption, referenceItem.internalUnit, product.unit) : null;
+      const consumption = replenishmentConsumption(consumption30, consumptionDays,
+        referenceProjection ? referenceDaily : null, consumptionReference.percentage);
+      const { averageDailyConsumption } = consumption;
+      const referenceIssue = referenceProjection && referenceDaily === null
+        ? (referenceItem ? 'Unidad de referencia incompatible o desconocida.' : 'Ingrediente sin consumo verificable en la sucursal de referencia.') : null;
       const hasFinal = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
       const currentInventory = apiItem?apiItem.currentInventory:kardexMetricValue(product, latestGroup,
         metric => metric.startsWith(hasFinal ? 'if -' : 'ii -'));
@@ -4521,12 +4701,15 @@ function createApp(options = {}) {
           || [...catalogItem.conversions.values()][0]
           || null;
       }
-      const purchaseUnit = latestPurchase?.unit || conversion?.purchaseUnit || product.unit;
+      const originalPurchaseUnit = latestPurchase?.unit || conversion?.purchaseUnit || product.unit;
       const rawUnitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit
-        ?? (normalizedUnit(purchaseUnit) === normalizedUnit(product.unit) ? 1 : null);
-      const unitsPerPurchaseUnit = rawUnitsPerPurchaseUnit === null
+        ?? (normalizedUnit(originalPurchaseUnit) === normalizedUnit(product.unit) ? 1 : null);
+      const originalUnitsPerPurchaseUnit = rawUnitsPerPurchaseUnit === null
         ? null
         : convertQuantityUnit(rawUnitsPerPurchaseUnit, conversion?.baseUnit || product.unit, product.unit);
+      const configuredUnits = configuredPurchaseUnits(purchaseUnitConfigurations[key], product.unit, convertQuantityUnit);
+      const purchaseUnit = configuredUnits?.purchaseUnit || originalPurchaseUnit;
+      const unitsPerPurchaseUnit = configuredUnits ? configuredUnits.unitsPerPurchaseUnit : originalUnitsPerPurchaseUnit;
       const inferredSupplier = latestPurchase
         ? { key: latestPurchase.supplierKey, name: latestPurchase.supplier, taxId: latestPurchase.supplierTaxId }
         : supplierOptions.get('unassigned');
@@ -4536,18 +4719,11 @@ function createApp(options = {}) {
       const maximumStock = averageDailyConsumption * maxDays;
       const ownNeedsPurchase = averageDailyConsumption > 0 && currentInventory <= minimumStock;
       const ownSuggestedInternalQuantity = ownNeedsPurchase ? Math.max(0, maximumStock - currentInventory) : 0;
-      let branchOrderConversionMissing = false;
-      const branchOrderInternalQuantity = (branchOrders?.demandByItem.get(key) || []).reduce((sum, demand) => {
-        const converted = convertQuantityUnit(demand.quantity, demand.unit, product.unit);
-        if (converted === null) branchOrderConversionMissing = true;
-        return sum + (converted ?? 0);
-      }, 0);
-      const inventoryAfterBranchOrders = currentInventory - branchOrderInternalQuantity;
       const rawSuggestedInternalQuantity = averageDailyConsumption > 0
-        ? (inventoryAfterBranchOrders <= minimumStock
-          ? Math.max(0, maximumStock - inventoryAfterBranchOrders)
+        ? (currentInventory <= minimumStock
+          ? Math.max(0, maximumStock - currentInventory)
           : 0)
-        : Math.max(0, -inventoryAfterBranchOrders);
+        : Math.max(0, -currentInventory);
       const needsPurchase = rawSuggestedInternalQuantity > 0;
       const suggestedInternalQuantity = roundUpToPackageMultiple(rawSuggestedInternalQuantity, unitsPerPackage);
       let purchaseOrderConversionMissing = false;
@@ -4556,9 +4732,7 @@ function createApp(options = {}) {
         if (converted === null) purchaseOrderConversionMissing = true;
         return sum + (converted ?? 0);
       }, 0);
-      const inventoryAfterPurchaseOrders = currentInventory
-        + purchaseOrderInternalQuantity
-        - branchOrderInternalQuantity;
+      const inventoryAfterPurchaseOrders = currentInventory + purchaseOrderInternalQuantity;
       const coverageAfterPurchaseOrdersDays = averageDailyConsumption > 0
         ? inventoryAfterPurchaseOrders / averageDailyConsumption
         : null;
@@ -4569,12 +4743,14 @@ function createApp(options = {}) {
         ? suggestedInternalQuantity
         : suggestedPurchaseUnits * unitsPerPurchaseUnit;
       const fallbackCostReference = costResolver.resolve(key, product.unit, costCatalog.get(key));
-      const estimatedPurchaseUnitCost = latestPurchase
+      const estimatedPurchaseUnitCost = configuredUnits
+        ? configuredPurchaseCost(latestPurchase, originalUnitsPerPurchaseUnit, configuredUnits, fallbackCostReference)
+        : latestPurchase
         ? latestPurchase.effectiveUnitPrice || latestPurchase.listedUnitPrice || 0
         : fallbackCostReference.source !== 'missing' && unitsPerPurchaseUnit
           ? fallbackCostReference.unitCost * unitsPerPurchaseUnit
           : null;
-      return {
+      items.push({
         key,
         code: product.code,
         name: product.name,
@@ -4582,11 +4758,14 @@ function createApp(options = {}) {
         currentInventory,
         currentInventoryBasis: apiItem?'Teórico API con compensaciones e internos':hasFinal ? 'Inventario Final' : 'Inventario Inicial',
         inventoryAnchorDate:apiItem?.anchorDate||null,
-        consumptionFrom:apiItem?.consumptionFrom||periodFrom,
-        consumptionDays:apiItem?.consumptionDays||30,
+        consumptionFrom:apiItem?.consumptionFrom||consumptionFrom,
+        consumptionDays,
         consumptionBreakdown:apiItem?{sales:apiItem.salesConsumption,transfersOut:apiItem.transferOut,transformationsOut:apiItem.transformationOut,netCompensationsAndInternal:apiItem.netCorrections}:null,
         consumption30,
-        averageDailyConsumption,
+        ...consumption,
+        referenceIssue,
+        referenceConsumptionFrom: referenceItem?.consumptionFrom || null,
+        referenceConsumptionDays: referenceItem?.consumptionDays ?? null,
         currentCoverageDays: averageDailyConsumption > 0 ? currentInventory / averageDailyConsumption : null,
         minDays,
         maxDays,
@@ -4597,9 +4776,6 @@ function createApp(options = {}) {
         ownNeedsPurchase,
         ownSuggestedInternalQuantity,
         rawSuggestedInternalQuantity,
-        branchOrderInternalQuantity,
-        branchOrderConversionMissing,
-        inventoryAfterBranchOrders,
         purchaseOrderInternalQuantity,
         purchaseOrderConversionMissing,
         inventoryAfterPurchaseOrders,
@@ -4623,26 +4799,42 @@ function createApp(options = {}) {
           : suggestedPurchaseUnits * estimatedPurchaseUnitCost,
         needsPurchase,
         conversionAvailable: unitsPerPurchaseUnit !== null && unitsPerPurchaseUnit > 0
-      };
-    }).sort((left, right) => left.supplier.localeCompare(right.supplier, 'es') || left.name.localeCompare(right.name, 'es'));
+      });
+      if (items.length % 10 === 0 || items.length === products.length) {
+        yield { message: `Calculando sugerencias de ${location.name}`, completed: items.length, total: products.length, unit: 'ingredientes' };
+      }
+    }
+    items.sort((left, right) => left.supplier.localeCompare(right.supplier, 'es') || left.name.localeCompare(right.name, 'es'));
+    if (location.type === 'warehouse') {
+      const sources = yield* localProjectionSources(projectionCache);
+      yield { message: 'Consolidando inventario, consumo y cobertura de las cafeterías', completed: 0, total: items.length, unit: 'ingredientes' };
+      for (const [index, item] of items.entries()) {
+        Object.assign(item, consolidateLocalTotals(item, sources, location.id, convertQuantityUnit));
+        if ((index + 1) % 25 === 0 || index + 1 === items.length) {
+          yield { message: 'Consolidando inventario, consumo y cobertura de las cafeterías', completed: index + 1, total: items.length, unit: 'ingredientes' };
+        }
+      }
+      const zeroDefaults = items.filter(item => item.locals.some(local => local.inventoryAssumedZero || local.consumptionAssumedZero)).length;
+      if (zeroDefaults) warnings.push(`${zeroDefaults} ingredientes incluyen valores sin datos considerados como 0 en las cafeterías. Consulta el detalle de Inventario Locales o Consumo Diario Locales.`);
+      for (const source of sources) {
+        if (source.projection?.period.dataThrough < today) warnings.push(`${source.location.name}: inventario de cafetería disponible hasta ${source.projection.period.dataThrough}.`);
+      }
+    }
+    yield { message: 'Preparando los resultados de la proyección' };
     return {
       location: publicLocation(location),
+      localsConsolidation: { available: location.type === 'warehouse', scope: 'all-active-stores' },
       company: readCompanyProfile(),
-      period: { from: apiProjection?.from||periodFrom, to: today, dataThrough: latestGroup.date, days: apiProjection?.days??30 },
+      period: { from: apiProjection?.from||consumptionFrom, to: today, dataThrough: latestGroup.date,
+        days: apiProjection?.days ?? Math.max(0, Math.round((Date.parse(today) - Date.parse(consumptionFrom)) / 86400000) + 1) },
       inventorySource:apiProjection?'toteat-api':'files',
       excluded:apiProjection?.excluded||[],
-      warnings:apiProjection?.warnings||[],
+      warnings: [...warnings,
+        ...(items.some(item => item.referenceIssue) ? [`${items.filter(item => item.referenceIssue).length} ingredientes sin referencia comparable; utilizan su consumo propio. Revisa el detalle de cada ingrediente.`] : [])],
+      consumptionReference: { ...consumptionReference, active: Boolean(referenceProjection) },
       consumptionCriteria: apiProjection ? 'Salidas API: ventas, transferencias y transformaciones, más consumos internos y menos compensaciones; inventario desde tomas y movimientos con el mismo criterio del informe' : location.type === 'warehouse'
         ? 'Transferencias y transformaciones salientes del Kardex'
         : 'Consumo por ventas, transferencias y transformaciones salientes del Kardex',
-      branchOrders: branchOrders ? {
-        available: true,
-        companySupplier: branchOrders.companySupplier,
-        selectedLocationIds: branchOrders.selectedLocationIds,
-        selectedOrderCount: branchOrders.selectedOrderCount,
-        locations: branchOrders.locations,
-        unconvertedItemCount: items.filter(item => item.branchOrderConversionMissing).length
-      } : { available: false, selectedLocationIds: [], selectedOrderCount: 0, locations: [] },
       purchaseOrders: {
         available: true,
         selectedOrderIds: purchaseOrders.selectedOrderIds,
@@ -4664,20 +4856,116 @@ function createApp(options = {}) {
     };
   }
 
-  app.get('/api/purchase-projections', (req, res) => {
+  app.get('/api/purchase-projections', async (req, res) => {
+    const stream = req.query.progress === '1';
+    const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
     try {
-      const selectedBranchLocationIds = Object.prototype.hasOwnProperty.call(req.query, 'branches')
-        ? String(req.query.branches || '').split(',').map(value => value.trim()).filter(Boolean)
-        : null;
       const selectedPurchaseOrderIds = Object.prototype.hasOwnProperty.call(req.query, 'orders')
         ? String(req.query.orders || '').split(',').map(value => value.trim()).filter(Boolean)
         : null;
-      return res.json(buildPurchaseProjection(
-        String(req.query.location || ''), selectedBranchLocationIds, selectedPurchaseOrderIds
-      ));
+      const locationId = String(req.query.location || '');
+      if (!stream) return res.json(buildPurchaseProjection(locationId, selectedPurchaseOrderIds));
+      if (!activeLocation(locationId)) return res.status(400).json({ error: 'Selecciona una cafetería o bodega válida.' });
+      res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      res.flushHeaders();
+      const calculation = calculatePurchaseProjection(locationId, selectedPurchaseOrderIds);
+      try {
+        while (!res.destroyed) {
+          const step = calculation.next();
+          if (step.done) {
+            const data = res.locals.decorateSourcePolicy ? res.locals.decorateSourcePolicy(step.value) : step.value;
+            send({ type: 'result', data });
+            break;
+          }
+          send({ type: 'progress', ...step.value });
+          // Flush each real stage before starting the next synchronous calculation.
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      } finally {
+        calculation.return();
+      }
+      res.end();
     } catch (error) {
+      if (stream && res.headersSent) {
+        send({ type: 'error', error: error.message || 'No se pudo calcular la proyección de compras.', status: error.status || 500 });
+        return res.end();
+      }
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo calcular la proyección de compras.' });
     }
+  });
+
+  app.get('/api/purchase-projections/ingredient-master', (req, res) => {
+    try { return res.json(ingredientPurchaseMaster()); }
+    catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+  });
+
+  app.put('/api/purchase-projections/ingredient-master', (req, res) => {
+    try {
+      const master = ingredientPurchaseMaster();
+      const byCode = new Map(master.items.map(item => [item.code, item]));
+      const requested = req.body?.items;
+      if (!Array.isArray(requested) || !requested.length) return res.status(400).json({ error: 'No se recibieron equivalencias para guardar.' });
+      const updates = new Map();
+      for (const item of requested) {
+        const code = String(item.code || '').trim().toUpperCase();
+        const ingredient = byCode.get(code);
+        if (!ingredient || updates.has(code)) return res.status(400).json({ error: 'Selecciona ingredientes válidos del maestro, sin códigos repetidos.' });
+        if (item.internalUnit !== ingredient.internalUnit) return res.status(409).json({ error: `La unidad interna de ${code} cambió. Cierra y vuelve a abrir el maestro para revisar la equivalencia.` });
+        const unit = purchaseUnitLabel(item.purchaseUnit);
+        if (!unit && (item.unitsPerPurchaseUnit === null || item.unitsPerPurchaseUnit === '')) { updates.set(code, null); continue; }
+        const quantity = Number(item.unitsPerPurchaseUnit);
+        if (!ingredient.internalUnit || !ingredient.allowedPurchaseUnits.includes(unit) || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1e9) {
+          return res.status(400).json({ error: `${code}: selecciona una unidad de compra válida y un contenido mayor que 0, expresado en ${ingredient.internalUnit}.` });
+        }
+        updates.set(code, { purchaseUnit: unit, unitsPerPurchaseUnit: quantity, internalUnit: ingredient.internalUnit, updatedAt: new Date().toISOString() });
+      }
+      const registry = readJson(purchaseUnitConfigurationPath, { items: {} });
+      registry.items ||= {};
+      for (const [code, configuration] of updates) {
+        if (configuration) registry.items[code] = configuration;
+        else delete registry.items[code];
+      }
+      writeJsonAtomic(purchaseUnitConfigurationPath, registry);
+      return res.json({ ok: true, saved: updates.size });
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
+  });
+
+  app.get('/api/purchase-projections/consumption-reference', (req, res) => {
+    const location = activeLocation(String(req.query.location || ''));
+    if (!location || location.type !== 'store') return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
+    return res.json(consumptionReferenceConfiguration(location));
+  });
+
+  app.put('/api/purchase-projections/consumption-reference', (req, res) => {
+    const location = activeLocation(String(req.body?.location || ''));
+    if (!location || location.type !== 'store') return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
+    if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'Indica si la referencia estará activada.' });
+    const enabled = req.body.enabled;
+    const sourceLocationId = String(req.body?.sourceLocationId || '');
+    const curveId = String(req.body?.curveId || '');
+    if (enabled) {
+      const source = activeLocation(sourceLocationId);
+      if (!source || source.type !== 'store' || source.id === location.id) {
+        return res.status(400).json({ error: 'Selecciona otra cafetería activa como referencia.' });
+      }
+      if (!CONSUMPTION_REFERENCE_CURVES.some(curve => curve.id === curveId)) {
+        return res.status(400).json({ error: 'Selecciona una curva de crecimiento válida.' });
+      }
+      if (!isValidDate(location.openingDate)) {
+        return res.status(400).json({ error: 'Configura primero la fecha de apertura de la cafetería en Configuración.' });
+      }
+    }
+    const registry = readPurchaseProjectionPolicies();
+    registry.locations ||= {};
+    registry.locations[location.id] ||= { items: {} };
+    const previous = registry.locations[location.id].consumptionReference || {};
+    registry.locations[location.id].consumptionReference = {
+      enabled, sourceLocationId: enabled ? sourceLocationId : previous.sourceLocationId || sourceLocationId,
+      curveId: enabled ? curveId : previous.curveId || curveId,
+      updatedAt: new Date().toISOString()
+    };
+    writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
+    return res.json(consumptionReferenceConfiguration(location));
   });
 
   app.put('/api/purchase-projections/policies', (req, res) => {
@@ -4743,7 +5031,7 @@ function createApp(options = {}) {
         managed: policy.managed === true, updatedAt };
     }
     registry.locations ||= {};
-    registry.locations[location.id] = { items };
+    registry.locations[location.id] = { ...registry.locations[location.id], items };
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
     return res.json({ ok: true, copied: sourceItems.length, source: { id: source.id, name: source.name },
       location: { id: location.id, name: location.name } });
@@ -4925,8 +5213,6 @@ function createApp(options = {}) {
         filters: {
           onlyRequired: req.body?.filters?.onlyRequired === true,
           onlyManaged: req.body?.filters?.onlyManaged === true,
-          branchLocationIds: Array.isArray(req.body?.filters?.branchLocationIds)
-            ? req.body.filters.branchLocationIds.map(value => String(value)) : [],
           selectedPurchaseOrderIds: Array.isArray(req.body?.filters?.selectedPurchaseOrderIds)
             ? req.body.filters.selectedPurchaseOrderIds.map(value => String(value)) : []
         },
