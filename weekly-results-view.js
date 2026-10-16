@@ -195,6 +195,11 @@
           dates.title = `Inventario inicial: ${date(inventory.initialDate)} · Inventario final: ${date(inventory.finalDate)}`;
           amount.append(dates);
         }
+      } else if (key === 'finalInventory' && metric.date) {
+        const note = document.createElement('span'); note.className = 'weekly-results-inventory-dates';
+        note.textContent = `${metric.basis === 'physical' ? 'Físico' : 'Inventario teórico'} · ${date(metric.date)}`;
+        amount.append(note);
+        if (metric.status === 'partial') partialTag(amount);
       } else if (metric.status === 'partial') partialTag(amount);
       percent.textContent = !showPercent ? '' : metric.percent == null ? '—' : `${metric.percent.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
       if (showPercent && metric.percentPartial && metric.percent != null && key !== 'inventoryShortage') partialTag(percent);

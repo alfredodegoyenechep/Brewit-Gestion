@@ -10,12 +10,13 @@ const metrics = [
   ['waste', 'Merma'], ['marketing', 'Marketing'], ['employees', 'Consumo personal'],
   ['otherConsumables', 'Otros gastos / consumibles'],
   ['inventoryConsumptionTotal', 'Total inventario faltante, merma, marketing, consumo personal y otros gastos / consumibles'],
+  ['finalInventory', 'Inventario Final'],
   ['centralWarehouseInbound', 'Entradas Bodega Central'],
   ['directSupplierInbound', 'Entradas Proveedores Directos']
 ];
-const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']);
+const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips', 'finalInventory']);
 
-function reportOptions({ weeks = 4, count = weeks, period = 'week', includeCurrent = true, includeInventory = true } = {}) {
+function reportOptions({ weeks = 2, count = weeks, period = 'week', includeCurrent = false, includeInventory = true } = {}) {
   if (!['week', 'month'].includes(period)) throw Object.assign(Error('Selecciona semanas o meses.'), { status: 400 });
   const selectedCount = Number(count);
   if (!['number', 'string'].includes(typeof count) || ![2, 3, 4].includes(selectedCount)) {
@@ -153,7 +154,7 @@ async function buildDailyResultsWithProgress({ today, period, location, periodTy
     if (date > period.through) for (const [key, metric] of Object.entries(result.values)) {
       result.values[key] = value(null, 'future', { showPercent: metric.showPercent });
     }
-    for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal']) {
+    for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal', 'finalInventory']) {
       result.values[key] = value(null, periodType === 'month' ? 'monthly-only' : 'weekly-only', { showPercent: false });
     }
     data.days.push({ ...result, date, locationId: location.id });

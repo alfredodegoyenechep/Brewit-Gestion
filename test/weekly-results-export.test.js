@@ -7,11 +7,12 @@ const exporter = require('../weekly-results-export');
 
 function fixture(count = 3, partial = false) {
   const locations = Array.from({ length: count }, (_, index) => ({ id: `store-${index}`, name: `Sucursal ${index + 1}` }));
-  return buildWeeklyResults({ today: '2026-10-14', locations }, () => ({
+  return buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-14', locations }, () => ({
     values: { netSales: value(1000.25, partial ? 'partial' : 'complete'),
       grossSales: value(1300.25, 'complete'), discounts: value(110.25, 'complete'),
       tips: value(100, 'complete'), mercadoPagoFee: value(35, 'complete'), cashCollection: value(200, 'complete'),
       mercadoPagoCollection: value(900, 'complete'), inventoryShortage: value(-50, 'partial'),
+      finalInventory: value(1800, 'complete', { basis: 'physical', date: '2026-10-11' }),
       otherConsumables: value(-40, 'complete'), waste: value(-10, 'complete'), marketing: value(-20, 'complete'), employees: value(-30, 'complete') },
     inventory: { initialDate: '2026-10-04', finalDate: '2026-10-11' }
   }));
@@ -26,6 +27,12 @@ test('export model preserves the calculated snapshot, amounts, percentages, cove
   assert.equal(report.rows[0].cells[1].value, 1);
   assert.equal(report.rows.find(row => row.key === 'inventoryShortage').cells[0].note, '04-10-2026 → 11-10-2026');
   assert.equal(report.rows.find(row => row.key === 'inventoryConsumptionTotal').cells[0].value, -150);
+  const final = report.rows.find(row => row.key === 'finalInventory');
+  assert.equal(final.cells[0].value, 1800);
+  assert.equal(final.cells[0].note, 'Físico · 11-10-2026');
+  assert.equal(final.cells[1].value, '');
+  source.weeks[0].locations[0].values.finalInventory = value(1700, 'partial', { basis: 'theoretical', date: '2026-10-14', showPercent: false });
+  assert.equal(exporter.model(source).rows.find(row => row.key === 'finalInventory').cells[0].note, 'Inventario teórico · 14-10-2026 · Parcial');
   assert.equal(report.rows.find(row => row.key === 'grossSales').compact, true);
   assert.equal(report.rows.find(row => row.key === 'grossSales').separator, false);
   assert.equal(report.rows.find(row => row.key === 'discounts').cells[0].color, report.colors.muted);
@@ -57,6 +64,7 @@ test('XLSX preserves numeric cells, merged headers, supplemental dates, print ti
   assert.match(book.Workbook.Names[0].Ref, /\$A:\$A/);
   assert.match(book.Workbook.Names[0].Ref, /\$1:\$5/);
   assert.ok(Object.values(sheet).some(cell => cell?.v === '04-10-2026 → 11-10-2026'));
+  assert.ok(Object.values(sheet).some(cell => cell?.v === 'Físico · 11-10-2026'));
   assert.ok(sheet['!merges'].some(merge => merge.s.r === 2 && merge.s.c === 1 && merge.e.c === 6));
   const compact = Object.entries(sheet).find(([, cell]) => cell?.v === 'Venta bruta')[0];
   assert.equal(sheet['!weeklyStyles'][compact].size, 9);
@@ -65,7 +73,7 @@ test('XLSX preserves numeric cells, merged headers, supplemental dates, print ti
 
 test('monthly and prior-week exports label periods, cutoffs and spreadsheet print titles correctly', () => {
   for (const period of ['week', 'month']) for (const includeCurrent of [true, false]) {
-    const data = buildWeeklyResults({ today: '2026-10-14', locations: [{ id: 'store-1', name: 'Lyon' }],
+    const data = buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-14', locations: [{ id: 'store-1', name: 'Lyon' }],
       period, includeCurrent, weeks: 2 }, () => ({ values: { netSales: value(1000, 'complete') } }));
     const report = exporter.model(data), monthly = period === 'month';
     assert.equal(report.title, monthly ? 'Resultados Mensuales' : 'Resultados Semanales');

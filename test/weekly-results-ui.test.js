@@ -22,7 +22,7 @@ test('daily popup loads on demand, keeps weekly inventory totals, switches branc
     waste: value(-10 * days, 'complete'), marketing: value(-20 * days, 'complete'), employees: value(-30 * days, 'complete'),
     inventoryShortage: value(-50, 'complete'), otherConsumables: value(-280, 'complete')
   }, inventory: { initialDate: '2026-10-04', finalDate: '2026-10-11' } });
-  const data = buildWeeklyResults({ today: '2026-10-13', locations }, (location, period) => source(location, period.from === '2026-10-12' ? 2 : 7));
+  const data = buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-13', locations }, (location, period) => source(location, period.from === '2026-10-12' ? 2 : 7));
   await page.route('**/api/weekly-results/stream?*', route => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data }) + '\n' }));
   let dailyRequests = 0, release, intercepted;
   const blocked = new Promise(resolve => { intercepted = resolve; });
@@ -104,27 +104,30 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   await page.locator('[data-view="weekly-results"]').click();
   assert.equal(requests, 0);
   assert.equal(await page.locator('#weekly-results-table table').count(), 0);
-  assert.equal(await page.locator('#weekly-results-weeks').inputValue(), '4');
+  assert.equal(await page.locator('#weekly-results-weeks').inputValue(), '2');
   assert.equal(await page.locator('#weekly-results-inventory').inputValue(), 'true');
+  assert.equal(await page.locator('#weekly-results-period').inputValue(), 'week');
+  assert.equal(await page.locator('#weekly-results-current').inputValue(), 'false');
   const request = page.waitForRequest(request => new URL(request.url()).pathname === '/api/weekly-results/stream');
   await page.locator('#weekly-results-refresh').click();
   const url = new URL((await request).url());
-  assert.equal(url.searchParams.get('weeks'), '4');
+  assert.equal(url.searchParams.get('weeks'), '2');
   assert.equal(url.searchParams.get('includeInventory'), 'true');
+  assert.equal(url.searchParams.get('includeCurrent'), 'false');
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(await page.locator('#weekly-results-workspace').isVisible(), true);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 21);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 22);
   assert.equal(await page.locator('.weekly-results-table thead tr').count(), 3);
-  assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 5);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 16);
+  assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 3);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 8);
   assert.equal(await page.locator('#weekly-results-progress').getAttribute('value'), '100');
   assert.ok((await page.locator('[data-metric="netSales"] .weekly-results-percent').allTextContents()).every(text => text === '—'));
   assert.ok((await page.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').allTextContents()).every(text => text === 'Sin datos'));
   assert.ok((await page.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').allTextContents()).every(text => text === 'Incompleto'));
-  assert.match(await page.locator('.weekly-results-table thead tr').first().innerText(), /12-10-2026.*18-10-2026/);
+  assert.match(await page.locator('.weekly-results-table thead tr').first().innerText(), /05-10-2026.*11-10-2026/);
 
   const locations = [{ id: 'store-1', name: 'La Concepción' }, { id: 'store-2', name: 'Lyon' }, { id: 'store-3', name: 'Nueva sucursal' }];
-  const data = buildWeeklyResults({ today: '2026-10-13', locations }, (location, period) => ({
+  const data = buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-13', locations }, (location, period) => ({
     values: { netSales: value(location.id === 'store-2' ? 0 : 1000, 'complete'), tips: value(100, 'complete'),
       grossSales: value(1200, 'complete'), discounts: value(100, 'complete'),
       mercadoPagoTips: value(80, 'complete'), cashTips: value(20, 'complete'),
@@ -132,6 +135,8 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
       centralWarehouseInbound: value(30, 'complete'), directSupplierInbound: value(50, 'complete'),
       cashCollection: value(200, 'complete'), mercadoPagoCollection: value(900, 'complete'),
       inventoryShortage: period.from === '2026-10-12' ? value(null, 'no-physical-count') : value(-50, 'partial'),
+      finalInventory: value(1800, 'complete', { basis: period.from === '2026-10-12' ? 'theoretical' : 'physical',
+        date: period.from === '2026-10-12' ? '2026-10-13' : '2026-10-11' }),
       waste: value(-10, 'complete'), marketing: value(-20, 'complete'), employees: value(-30, 'complete'),
       otherConsumables: period.from === '2026-10-12' ? value(null, 'no-physical-count') : value(-40, 'complete') },
     inventory: { status: 'partial', initialDate: '2026-10-04', finalDate: '2026-10-11', movements: { from: '2026-10-04', to: '2026-10-10' } },
@@ -153,6 +158,10 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.doesNotMatch(await page.locator('[data-metric="inventoryShortage"]').innerText(), /Parcial/);
   assert.match(await page.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').nth(3).innerText(), /\$-150/);
   assert.equal(await page.locator('[data-metric="inventoryConsumptionTotal"] th').innerText(), 'Total inventario faltante, merma, marketing, consumo personal y otros gastos / consumibles');
+  assert.equal(await page.locator('[data-metric="inventoryConsumptionTotal"] + tr').getAttribute('data-metric'), 'finalInventory');
+  assert.equal(await page.locator('[data-metric="finalInventory"] .weekly-results-amount').first().innerText(), '$1.800\nInventario teórico · 13-10-2026');
+  assert.equal(await page.locator('[data-metric="finalInventory"] .weekly-results-amount').nth(3).innerText(), '$1.800\nFísico · 11-10-2026');
+  assert.ok((await page.locator('[data-metric="finalInventory"] .weekly-results-percent').allTextContents()).every(text => text === ''));
   assert.equal(await page.locator('[data-metric="employees"] + tr').getAttribute('data-metric'), 'otherConsumables');
   assert.equal(await page.locator('[data-metric="otherConsumables"] + tr').getAttribute('data-metric'), 'inventoryConsumptionTotal');
   assert.equal(await page.locator('[data-metric="mercadoPagoTips"] .weekly-results-amount').first().innerText(), '$80');
@@ -241,7 +250,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   await page.evaluate(() => { window.loadCafeWeeklyResults(); });
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   release();
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 21);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 22);
 
   // Changing an option aborts the in-flight result and leaves manual generation pending.
   await page.unroute('**/api/weekly-results/stream?*');

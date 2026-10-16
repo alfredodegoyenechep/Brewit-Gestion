@@ -7361,6 +7361,49 @@ function createApp(options = {}) {
     };
   }
 
+  function buildCafeFinalInventory(context, location, period) {
+    const { value } = require('./weekly-results');
+    const { inventoryExclusion } = require('./inventory-exclusions');
+    const state = context.stock(location, true);
+    const warehouse = state.warehouses.find(item => Number(item.custom_id) === 2);
+    if (!warehouse) throw Error('No está disponible la bodega operativa de la sucursal.');
+    const rows = state.daily.filter(row => row.warehouse === warehouse.id && !inventoryExclusion(row.code));
+    const countDates = [...new Set(rows.filter(row => row.physicalCount).map(row => row.date))].sort();
+    const physicalDate = countDates.filter(date => date >= period.from && date <= period.through).at(-1);
+    const date = physicalDate || period.through, basis = physicalDate ? 'physical' : 'theoretical';
+    let items, excluded;
+    if (physicalDate) {
+      // A first physical count can be valued without an earlier opening count.
+      const master = latestMasterFile('master-catalog', date, location.id);
+      const catalog = master ? parseIngredientCatalog(master.filePath) : new Map();
+      const resolver = buildInventoryPurchaseCostResolver(date, location, state, { catalog });
+      items = rows.filter(row => row.date === date).map(row => {
+        const cost = resolver.resolve(row.code, row.unit, catalog.get(row.code));
+        return { code: row.code, quantity: row.physicalCount ? row.opening : null,
+          unitCost: cost.unitCost, costAvailable: cost.source !== 'missing' && !cost.costIncomplete };
+      });
+      const present = new Set(items.map(item => item.code));
+      excluded = rows.some(row => row.date <= date && !present.has(row.code));
+    } else {
+      const initialDate = countDates.filter(day => day <= date).at(-1)
+        || rows.filter(row => row.initialRecord && row.date <= date).map(row => row.date).sort()[0];
+      if (!initialDate) return value(null, 'no-opening-inventory', { basis, date });
+      // Count boundaries use opening balances: the next day's opening is the
+      // reported day's closing balance, including all of that day's movements.
+      const result = buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
+        initialInventoryDate: initialDate, finalInventoryDate: addDays(date, 1) }, { stockState: state, retainDetails: false, costCutoff: date });
+      items = [...result.report.items, ...(result.otherConsumables?.items || [])].map(item => ({
+        code: item.code, quantity: item.adjustedTheoreticalFinal, unitCost: item.unitCost, costAvailable: item.costAvailable
+      }));
+      excluded = !!(result.report.excluded?.length || result.otherConsumables?.excluded?.length);
+    }
+    const available = item => Number.isFinite(item.quantity) && item.costAvailable && Number.isFinite(item.unitCost);
+    const known = items.filter(available);
+    const missingCodes = items.filter(item => !available(item)).map(item => item.code);
+    return value(known.length ? known.reduce((sum, item) => sum + item.quantity * item.unitCost, 0) : null,
+      excluded || missingCodes.length ? 'partial' : 'complete', { basis, date, costCutoff: date, missingCodes });
+  }
+
   function buildCafeWeeklyResults(context, cafe, period) {
     const { value, fromMetric, derived, selectInventoryDates } = require('./weekly-results');
     const location = activeLocation(cafe.id);
@@ -7501,6 +7544,13 @@ function createApp(options = {}) {
       inventory = { ...inventory, status: 'no-data', error: error.message };
       failure('Inventario', error);
     }
+    // Daily detail keeps inventory balances exclusively in the period total.
+    if (!period.valuationThrough) try {
+      values.finalInventory = buildCafeFinalInventory(context, location, period);
+      sources.finalInventory = { basis: values.finalInventory.basis, date: values.finalInventory.date,
+        costCutoff: values.finalInventory.costCutoff, missingCodes: values.finalInventory.missingCodes };
+      if (values.finalInventory.status === 'partial') warnings.push('Inventario final: cobertura o valorización parcial; se muestra el subtotal conocido.');
+    } catch (error) { failure('Inventario final', error); }
     try {
       const state = context.stock(location, true);
       const inbound = require('./inventory-inbound').inboundResults({ state, location, period,
@@ -7888,7 +7938,7 @@ function createApp(options = {}) {
     res.set('Cache-Control','no-store').json(require('./inventory-item-detail').buildItemDetail(snapshot.stock, snapshot.location, snapshot.report, item, {consumption:snapshot.consumption,convertQuantity:convertQuantityUnit}));
   });
 
-  function buildInventoryProcessPayload(body = {}, { stockState = null, retainDetails = true } = {}) {
+  function buildInventoryProcessPayload(body = {}, { stockState = null, retainDetails = true, costCutoff = null } = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
     const originalMode = synchronizedOnly || body?.source === 'originals';
@@ -7909,7 +7959,7 @@ function createApp(options = {}) {
       const stock = stockState || (originalMode ? (synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null);
       const original = originalMode ? (boundaryMode ? { parsed:null, excluded:[],physicalFinalItems:0 } : require('./inventory-original-report').originalReportData(stock, location, selection, movementDateFrom, movementDateTo)) : null;
       const parsed = originalMode ? original.parsed : mergedKardexData(location.id, 'kardex');
-      const balanceDate = selection?.finalDate
+      const balanceDate = costCutoff || selection?.finalDate
         || parsed.groups.find(group => group.date > movementDateTo)?.date
         || movementDateTo;
       const recipeResolution = resolveRecipes(originalMode ? stock.masterObservedAt.slice(0,10) : balanceDate, location.id);

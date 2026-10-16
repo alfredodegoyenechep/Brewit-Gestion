@@ -44,7 +44,7 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   const confirmed = await fetch(`${base}/api/uploads/transactions/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: inspection.token, dateFrom: inspection.detectedRange.from, dateTo: inspection.detectedRange.to, confirmed: true, categoryConfirmed: true, overlapAction: 'keep' }) });
   assert.equal(confirmed.status, 200);
-  const response = await fetch(`${base}/api/weekly-results?includeInventory=false`);
+  const response = await fetch(`${base}/api/weekly-results?includeInventory=false&includeCurrent=true&weeks=4`);
   assert.equal(response.status, 200);
   const report = await response.json();
   const branch = week => week.locations.find(location => location.locationId === 'store-1').values;

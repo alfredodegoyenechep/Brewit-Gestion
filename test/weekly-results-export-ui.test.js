@@ -57,12 +57,14 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const locations = [{ id: 'store-1', name: 'La Concepción' }, { id: 'store-2', name: 'Lyon' }, { id: 'store-3', name: 'Nueva sucursal' }];
-  const data = buildWeeklyResults({ today: '2026-10-14', locations }, (location, period) => ({
+  const data = buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-14', locations }, (location, period) => ({
     values: { netSales: value(location.id === 'store-2' ? 0 : 1000.25, 'partial'), grossSales: value(1300.25, 'complete'),
       discounts: value(110.25, 'complete'), tips: value(100, 'complete'), mercadoPagoFee: value(35, 'partial'),
       cashCollection: value(200, 'complete'), mercadoPagoCollection: value(900, 'complete'),
       centralWarehouseInbound: value(30, 'complete'), directSupplierInbound: value(50, 'complete'),
       inventoryShortage: period.from === '2026-10-12' ? value(null, 'no-physical-count') : value(-50, 'partial'),
+      finalInventory: value(1800, 'complete', { basis: period.from === '2026-10-12' ? 'theoretical' : 'physical',
+        date: period.from === '2026-10-12' ? '2026-10-14' : '2026-10-11' }),
       otherConsumables: period.from === '2026-10-12' ? value(null, 'no-physical-count') : value(-40, 'complete'),
       waste: value(-10, 'complete'), marketing: value(-20, 'complete'), employees: value(-30, 'complete') },
     inventory: { initialDate: '2026-10-04', finalDate: '2026-10-11' }, warnings: ['Cobertura parcial de ejemplo'],
@@ -89,12 +91,14 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   assert.equal(await page.locator('#weekly-results-export-download').isEnabled(), true, await page.locator('#weekly-results-export-status').innerText());
   assert.equal(await popup.isVisible(), true);
   assert.match(await popup.locator('h3').innerText(), /Previsualización XLSX/);
-  assert.equal(await popup.locator('table tbody tr').count(), 21);
+  assert.equal(await popup.locator('table tbody tr').count(), 22);
   assert.equal(await popup.locator('table button').count(), 0);
   assert.equal(await popup.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').first().innerText(), '$30');
   assert.equal(await popup.locator('[data-metric="directSupplierInbound"] .weekly-results-amount').first().innerText(), '$50');
   assert.equal(await popup.locator('[data-metric="netSales"] .weekly-results-amount').first().innerText(), '$1.000\nParcial');
   assert.match(await popup.locator('[data-metric="inventoryShortage"] .weekly-results-amount').nth(3).innerText(), /04-10-2026 → 11-10-2026/);
+  assert.equal(await popup.locator('[data-metric="finalInventory"] .weekly-results-amount').first().innerText(), '$1.800\nInventario teórico · 14-10-2026');
+  assert.equal(await popup.locator('[data-metric="finalInventory"] .weekly-results-amount').nth(3).innerText(), '$1.800\nFísico · 11-10-2026');
   const xlsxDownloadPromise = page.waitForEvent('download');
   await page.locator('#weekly-results-export-download').click();
   const xlsxDownload = await xlsxDownloadPromise;

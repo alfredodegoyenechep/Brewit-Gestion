@@ -36,7 +36,9 @@
       const cells = columns.flatMap(column => {
         const metric = column.result?.values[key], available = metric?.available && Number.isFinite(metric.amount);
         const inventory = column.result?.inventory;
-        const note = available && key === 'inventoryShortage' && inventory?.initialDate && inventory?.finalDate
+        const note = available && key === 'finalInventory' && metric.date
+          ? `${metric.basis === 'physical' ? 'Físico' : 'Inventario teórico'} · ${date(metric.date)}${metric.status === 'partial' ? ' · Parcial' : ''}`
+          : available && key === 'inventoryShortage' && inventory?.initialDate && inventory?.finalDate
           ? `${date(inventory.initialDate)} → ${date(inventory.finalDate)}`
           : available && metric.status === 'partial' && key !== 'inventoryShortage' ? 'Parcial' : '';
         const color = compact || !available ? colors.muted

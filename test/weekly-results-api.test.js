@@ -107,13 +107,93 @@ async function fixture(t, sourceMode = 'legacy') {
   return { root, app, counts, base: `http://127.0.0.1:${server.address().port}` };
 }
 async function getReport(base, options = {}) {
-  const response = await fetch(`${base}/api/weekly-results?${new URLSearchParams(options)}`);
+  const response = await fetch(`${base}/api/weekly-results?${new URLSearchParams({ weeks: 4, includeCurrent: true, ...options })}`);
   assert.equal(response.status, 200);
   return response.json();
 }
 
+test('defaults show two completed weeks and final physical inventory uses the latest count, including a first count', async t => {
+  const { base } = await fixture(t);
+  const data = await fetch(`${base}/api/weekly-results`).then(response => response.json());
+  assert.deepEqual(data.options, { weeks: 2, includeInventory: true, period: 'week', includeCurrent: false });
+  assert.deepEqual(data.weeks.map(week => week.period.from), ['2026-10-05', '2026-09-28']);
+  assert.equal(data.metrics[data.metrics.findIndex(([key]) => key === 'inventoryConsumptionTotal') + 1][0], 'finalInventory');
+  const cells = data.weeks[0].locations;
+  for (const [index, date, amount] of [[0, '2026-10-11', 1800], [1, '2026-10-10', 1830], [2, '2026-10-11', 1800]]) {
+    const metric = cells[index].values.finalInventory;
+    assert.equal(metric.amount, amount);
+    assert.equal(metric.date, date);
+    assert.equal(metric.basis, 'physical');
+    assert.equal(metric.complete, true);
+    assert.equal(metric.showPercent, false);
+    assert.equal(metric.percent, null);
+  }
+  assert.equal(cells[2].values.inventoryShortage.status, 'no-opening-inventory');
+  const withoutShortage = await getReport(base, { includeInventory: false, includeCurrent: false });
+  assert.equal(withoutShortage.weeks[0].locations[0].values.finalInventory.amount, 1800);
+});
+
+test('final theoretical inventory includes Sunday movements and excludes Monday even when coverage ends on Sunday', async t => {
+  const { base, app, counts, root } = await fixture(t);
+  counts['store-1'] = ['2026-10-04'];
+  const stock = app.locals.toteatStockSync.rebuild;
+  const dates = Array.from({ length: 8 }, (_, index) => advance('2026-10-04', index));
+  for (const field of ['marketing', 'employees']) workbook(path.join(root, 'transactions', 'store-1', `${field}.xlsx`), [
+    ['pl', 'np', 'ce', ...dates.map(date => new Date(`${date}T12:00:00Z`))],
+    ['ID Producto **', 'Nombre Producto *', 'Costo'], ['A', 'Producto A', 10, ...dates.map(() => 0)]
+  ]);
+  const indexPath = path.join(root, 'transactions', 'store-1', 'index.json');
+  const index = JSON.parse(fs.readFileSync(indexPath));
+  index.fields.marketing.files = index.fields.marketing.files.slice(0, 1); delete index.exclusions.marketing;
+  fs.writeFileSync(indexPath, JSON.stringify(index));
+  let sundayPurchase = 7;
+  app.locals.toteatStockSync.rebuild = id => {
+    const state = stock(id);
+    state.range.to = '2026-10-11';
+    state.daily.forEach(row => {
+      if (row.warehouse === 'oper' && row.code === 'A') {
+        row.purchase = row.date === '2026-10-11' ? sundayPurchase : row.date === '2026-10-12' ? 900 : 0;
+        row.closing = 999999; // Reconstruct the balance from the count and movements.
+      }
+    });
+    state.daily = state.daily.filter(row => row.date <= state.range.to);
+    return state;
+  };
+  let metric = (await getReport(base, { includeCurrent: false })).weeks[0].locations[0].values.finalInventory;
+  assert.equal(metric.basis, 'theoretical');
+  assert.equal(metric.date, '2026-10-11');
+  assert.equal(metric.costCutoff, '2026-10-11');
+  assert.equal(metric.amount, 2080); // 67 × (10 + 20), plus Sunday's 7 × 10.
+  sundayPurchase = 10;
+  metric = (await getReport(base, { includeCurrent: false })).weeks[0].locations[0].values.finalInventory;
+  assert.equal(metric.amount, 2110);
+});
+
+test('final inventory preserves verified zero and reports missing counts and costs as partial', async t => {
+  const { base, app } = await fixture(t);
+  const stock = app.locals.toteatStockSync.rebuild;
+  let partial = false;
+  app.locals.toteatStockSync.rebuild = id => {
+    const state = stock(id);
+    state.daily.filter(row => row.date === '2026-10-11' && row.warehouse === 'oper').forEach(row => {
+      row.opening = 0;
+      if (partial && row.code === 'PAC014') row.physicalCount = false;
+    });
+    if (partial) state.daily.push({ date: '2026-10-11', warehouse: 'oper', code: 'UNKNOWN', unit: 'UN', opening: 10, physicalCount: true });
+    return state;
+  };
+  let metric = (await getReport(base)).weeks[1].locations[0].values.finalInventory;
+  assert.equal(metric.amount, 0);
+  assert.equal(metric.complete, true);
+  partial = true;
+  metric = (await getReport(base)).weeks[1].locations[0].values.finalInventory;
+  assert.equal(metric.amount, 0);
+  assert.equal(metric.status, 'partial');
+  assert.deepEqual(metric.missingCodes.sort(), ['PAC014', 'UNKNOWN']);
+});
+
 async function getDaily(base, query = {}) {
-  const response = await fetch(`${base}/api/weekly-results/daily/stream?${new URLSearchParams({ from: '2026-10-05', date: '2026-10-13', location: 'store-1', ...query })}`);
+  const response = await fetch(`${base}/api/weekly-results/daily/stream?${new URLSearchParams({ from: '2026-10-05', date: '2026-10-13', location: 'store-1', weeks: 4, includeCurrent: true, ...query })}`);
   assert.equal(response.status, 200);
   const events = (await response.text()).trim().split('\n').map(JSON.parse);
   assert.equal(events.at(-2).completed, 7);
@@ -244,7 +324,7 @@ test('weekly API distinguishes calendar consumption from count intervals, matche
   assert.equal(data.weeks[0].locations[1].values.netSales.amount, null);
   assert.equal(data.weeks[0].locations[1].values.mercadoPagoTheoretical.status, 'incomplete');
   assert.equal(data.weeks[0].locations[1].values.netSales.percent, null);
-  const stream = await fetch(`${base}/api/weekly-results/stream`).then(response => response.text());
+  const stream = await fetch(`${base}/api/weekly-results/stream?weeks=4&includeCurrent=true`).then(response => response.text());
   const events = stream.trim().split('\n').map(JSON.parse);
   assert.deepEqual(events.at(-1).data, data);
   assert.equal(events.at(-2).completed, 12);
@@ -460,7 +540,7 @@ test('options select 2/3/4 weeks, skip inventory processing and preserve calenda
   const stock = app.locals.toteatStockSync.rebuild;
   app.locals.toteatStockSync.rebuild = id => { rebuilds++; return stock(id); };
   for (const weeks of [2, 3, 4]) {
-    const options = { weeks, includeInventory: false };
+    const options = { weeks, includeInventory: false, includeCurrent: true };
     const data = await getReport(base, options);
     assert.equal(data.weeks.length, weeks);
     assert.deepEqual(data.options, { ...options, period: 'week', includeCurrent: true });
@@ -474,17 +554,17 @@ test('options select 2/3/4 weeks, skip inventory processing and preserve calenda
       assert.equal(previous.values[key].amount, null);
       assert.equal(previous.values[key].percent, null);
     }
-    const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams(options)}`).then(response => response.text());
+    const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams({ weeks: 4, includeCurrent: true, ...options })}`).then(response => response.text());
     const events = stream.trim().split('\n').map(JSON.parse);
     assert.deepEqual(events.at(-1).data, data);
     assert.equal(events.at(-2).total, weeks * 3);
     assert.equal(events.at(-2).completed, weeks * 3);
     assert.equal(rebuilds, 0);
   }
-  const defaults = await getReport(base);
-  assert.deepEqual(defaults.options, { weeks: 4, includeInventory: true, period: 'week', includeCurrent: true });
+  const defaults = await fetch(`${base}/api/weekly-results`).then(response => response.json());
+  assert.deepEqual(defaults.options, { weeks: 2, includeInventory: true, period: 'week', includeCurrent: false });
   assert.equal(rebuilds, 3);
-  assert.equal(defaults.weeks[1].locations[0].inventory.initialDate, '2026-10-04');
+  assert.equal(defaults.weeks[0].locations[0].inventory.initialDate, '2026-10-04');
 });
 
 test('invalid report options fail before calculations on both endpoints', async t => {
@@ -509,7 +589,7 @@ test('weekly and monthly endpoints select prior periods and monthly daily amount
     const options = { count: 2, period: 'month', includeCurrent, includeInventory: false };
     const data = await getReport(base, options);
     assert.deepEqual(data.weeks.map(week => week.period.from), includeCurrent ? ['2026-10-01', '2026-09-01'] : ['2026-09-01', '2026-08-01']);
-    const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams(options)}`).then(response => response.text());
+    const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams({ weeks: 4, includeCurrent: true, ...options })}`).then(response => response.text());
     assert.deepEqual(stream.trim().split('\n').map(JSON.parse).at(-1).data, data);
     const period = data.weeks[0].period;
     const response = await fetch(`${base}/api/weekly-results/daily/stream?${new URLSearchParams({
@@ -567,7 +647,7 @@ test('calendar inbound rows cost central ingredients and direct purchases indepe
   const monthly = await getReport(base, { ...options, period: 'month' });
   assert.equal(monthly.weeks[0].locations[0].values.centralWarehouseInbound.amount, 30);
   assert.equal(monthly.weeks[0].locations[0].values.directSupplierInbound.amount, 50);
-  const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams(options)}`).then(response => response.text());
+  const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams({ weeks: 4, includeCurrent: true, ...options })}`).then(response => response.text());
   assert.deepEqual(stream.trim().split('\n').map(JSON.parse).at(-1).data, weekly);
   assert.equal(rebuilds, 0);
   assert.deepEqual(weekly.metrics.slice(-2), [['centralWarehouseInbound', 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos']]);

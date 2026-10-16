@@ -131,8 +131,8 @@ test('independent report streams the same results, isolates branch failures and 
   assert.deepEqual(await buildWeeklyResultsWithProgress(options, build, event => events.push(event)), sync);
   assert.equal(sync.weeks[0].locations[0].values.netSales.amount, 1000);
   assert.equal(sync.weeks[0].locations[1].values.netSales.amount, null);
-  assert.equal(events.at(-1).completed, 8);
-  assert.equal(sync.metrics.length, 21);
+  assert.equal(events.at(-1).completed, 4);
+  assert.equal(sync.metrics.length, 22);
   assert.equal(sync.total, undefined);
   let calls = 0;
   assert.equal(await buildWeeklyResultsWithProgress(options, () => { calls++; return cell(); }, () => {}, () => calls === 1), null);
@@ -211,11 +211,11 @@ test('MP Teorico adds all tips, subtracts charged commission and cash, and requi
   }
 });
 
-test('report options default to four weeks with inventory and reject unsupported selections', async () => {
-  assert.deepEqual(reportOptions(), { weeks: 4, includeInventory: true, period: 'week', includeCurrent: true });
-  assert.deepEqual(reportOptions({ weeks: '2', includeInventory: 'false' }), { weeks: 2, includeInventory: false, period: 'week', includeCurrent: true });
+test('report options default to two previous weeks with inventory and reject unsupported selections', async () => {
+  assert.deepEqual(reportOptions(), { weeks: 2, includeInventory: true, period: 'week', includeCurrent: false });
+  assert.deepEqual(reportOptions({ weeks: '2', includeInventory: 'false' }), { weeks: 2, includeInventory: false, period: 'week', includeCurrent: false });
   for (const weeks of [2, 3, 4]) {
-    const options = { today: '2026-10-13', locations, weeks, includeInventory: false };
+    const options = { today: '2026-10-13', locations, weeks, includeInventory: false, includeCurrent: true };
     const result = buildWeeklyResults(options, () => cell()), events = [];
     assert.equal(result.weeks.length, weeks);
     assert.equal(result.weeks[0].period.through, options.today);
