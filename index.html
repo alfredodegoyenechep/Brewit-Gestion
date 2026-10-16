@@ -1649,6 +1649,7 @@
         <p class="panel-description">Mercado Pago muestra REAL_AMOUNT, el importe recibido después del fee. El control de diferencias usa ese mismo importe.</p>
         <p class="panel-description">Inventario faltante conserva el signo de Kardex; los consumos y consumibles se muestran como gastos negativos. Inventario y consumibles usan el intervalo entre tomas físicas; merma, marketing y consumo personal usan el período calendario seleccionado.</p>
         <p class="panel-description">El total suma inventario faltante, merma, marketing, consumo personal y otros gastos / consumibles.</p>
+        <p class="panel-description">Inventario Final incluye los consumibles. El consolidado principal del Kardex los presenta por separado; su contexto concilia ambos saldos con el inventario final total. El detalle de esta cifra permite ver el desglose por grupo.</p>
         <p class="panel-description">Entradas Bodega Central: ingredientes y SUB005 recibidos desde Bodega Central Local 001 La Concepcion. Entradas Proveedores Directos: compras recibidas en la bodega operativa, excluyendo transferencias. Ambas filas usan las fechas del período y el costeo del Kardex al cierre, aunque se excluya el cálculo de faltantes de inventario.</p>
         <div id="weekly-results-warnings"></div>
       </section>
@@ -1689,6 +1690,21 @@
         </div>
         <div id="weekly-results-export-status" class="form-status" aria-live="polite"></div>
         <div id="weekly-results-export-body"></div>
+      </dialog>
+      <dialog id="weekly-results-metric-detail" class="weekly-results-detail weekly-results-metric-detail" aria-labelledby="weekly-results-metric-title" aria-describedby="weekly-results-metric-context">
+        <div class="panel-head">
+          <div>
+            <div class="panel-eyebrow">Detalle del reporte</div>
+            <h3 id="weekly-results-metric-title"></h3>
+          </div>
+          <div class="weekly-results-export-actions">
+            <button id="weekly-results-metric-xlsx" class="secondary" type="button" disabled>Descargar XLSX</button>
+            <button id="weekly-results-metric-close" class="secondary" type="button" autofocus>Cerrar</button>
+          </div>
+        </div>
+        <p id="weekly-results-metric-context" class="panel-description"></p>
+        <div id="weekly-results-metric-status" class="form-status" role="status"></div>
+        <div id="weekly-results-metric-body"></div>
       </dialog>
     </section>
 

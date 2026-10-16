@@ -2,10 +2,11 @@ const { localTimestamp } = require('./toteat-sales');
 
 // TotEat identifies cash as 1000 and MercadoPago POS as 5008. Use each
 // payment form's tip so cash tips never get subtracted from MercadoPago.
-function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollectionTotals = false } = {}) {
+function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollectionTotals = false, includeDetails = false } = {}) {
   let mercadoPagoTips = 0, cashSales = 0, coveredLocations = 0, complete = sources.length > 0;
   let tips = 0, cashTips = 0, cashCollection = 0, collectionCoveredLocations = 0;
   const warnings = [];
+  const tipGroups = new Map();
   for (const { location, state } of sources) {
     if (!state) {
       complete = false;
@@ -36,6 +37,12 @@ function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollection
       }
       let hasCash = false;
       for (const form of payment.paymentForms) {
+        if (includeDetails) {
+          const key = JSON.stringify([location.id, date, form.id]);
+          const group = tipGroups.get(key) || { date, method: Number(form.id) === 5008 ? 'MercadoPago'
+            : Number(form.id) === 1000 ? 'Efectivo' : form.name || `Medio ${form.id}`, ids: new Set(), amount: 0 };
+          group.amount += form.tip; group.ids.add(id); tipGroups.set(key, group);
+        }
         tips += form.tip;
         if (Number(form.id) === 5008) mercadoPagoTips += form.tip;
         if (Number(form.id) === 1000) {
@@ -57,7 +64,8 @@ function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollection
       cashTips: { amount: cashTips, ...coverage, available: collectionCoveredLocations > 0 },
       cashCollection: { amount: cashCollection, ...coverage, available: collectionCoveredLocations > 0 }
     } : {}),
-    warnings
+    warnings,
+    ...(includeDetails ? { tipDetails: [...tipGroups.values()].map(({ ids, ...row }) => ({ ...row, payments: ids.size })) } : {})
   };
 }
 

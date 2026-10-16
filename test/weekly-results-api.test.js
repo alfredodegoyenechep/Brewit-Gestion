@@ -112,6 +112,67 @@ async function getReport(base, options = {}) {
   return response.json();
 }
 
+test('all eight detail reports reconcile to displayed amounts and retain their snapshot after sources change', async t => {
+  const { base, app } = await fixture(t);
+  const weekly = await getReport(base);
+  const cell = weekly.weeks[1].locations[0];
+  const keys = ['netSales', 'tips', 'inventoryShortage', 'waste', 'marketing', 'employees', 'otherConsumables', 'finalInventory'];
+  for (const key of keys) {
+    assert.ok(cell.detailReports[key], key);
+    const response = await fetch(`${base}/api/weekly-results/details/${cell.detailReports[key]}`);
+    assert.equal(response.status, 200, key);
+    const report = await response.json();
+    assert.equal(report.total, cell.values[key].amount, key);
+    const sum = report.rows.reduce((total, row) => total + (row.amount ?? 0), 0);
+    assert.ok(Math.abs(sum - report.total) < 1e-7, `${key}: ${sum} != ${report.total}`);
+    assert.equal(report.location.id, 'store-1');
+    assert.deepEqual(report.period, { from: '2026-10-05', through: '2026-10-11' });
+  }
+  app.locals.toteatStockSync.rebuild = () => { throw Error('Must not recalculate'); };
+  app.locals.toteatSalesSync.source = () => { throw Error('Must not reread'); };
+  const retained = await fetch(`${base}/api/weekly-results/details/${cell.detailReports.netSales}`).then(response => response.json());
+  assert.equal(retained.total, cell.values.netSales.amount);
+  assert.equal((await fetch(`${base}/api/weekly-results/details/expired`)).status, 410);
+  assert.equal(weekly.weeks[1].locations[2].detailReports.netSales, undefined);
+});
+
+test('weekly physical stock reconciles with Kardex, consumables and counted items without opening using the same master snapshot', async t => {
+  const { base, app, root } = await fixture(t);
+  const stock = app.locals.toteatStockSync.rebuild;
+  const withExtra = id => {
+    const state = stock(id);
+    if (id === 'store-1') state.daily.push({date:'2026-10-11',warehouse:'oper',code:'B',name:'Sin apertura',unit:'UN',opening:10,physicalCount:true});
+    return state;
+  };
+  app.locals.toteatStockSync.rebuild = withExtra;
+  app.locals.toteatStockSync.current = withExtra;
+  // The original Kardex uses the captured master version for identities and
+  // conversions, with purchase costs cut off at the selected closing date.
+  workbook(path.join(root,'masters','catalog-new.xlsx'),[
+    ['ID Producto **','Nombre Producto *','Activo','Costo','Medida Base'],
+    ['A','Producto A',1,50,'UN'],['PAC014','Consumible',1,20,'UN'],['B','Sin apertura',1,5,'UN']
+  ],'Ingr');
+  const indexPath=path.join(root,'masters','masters.json'),index=JSON.parse(fs.readFileSync(indexPath));
+  index.v2={'master-catalog':{name:'catalog-new.xlsx',originalName:'catalog-new.xlsx',validFrom:'2026-10-13',source:'toteat-shared-api'}};
+  fs.writeFileSync(indexPath,JSON.stringify(index));
+  const weekly=await getReport(base,{includeCurrent:false});
+  const response=await fetch(`${base}/api/inventory/process`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    location:'store-1',source:'originals',criteriaMode:'count-boundaries',initialInventoryDate:'2026-10-04',finalInventoryDate:'2026-10-11'
+  })});
+  assert.equal(response.status,200);
+  const data=await response.json(),balances=data.executiveSummary.inventoryBalances;
+  assert.equal(data.executiveSummary.metrics.physicalInventoryValue.amount,3000);
+  assert.equal(data.executiveSummary.metrics.physicalInventoryValue.partial,true);
+  assert.equal(balances.consumables.physical.amount,1200);
+  assert.equal(balances.physicalOutsideKardex.amount,50);
+  assert.equal(balances.physicalTotal.amount,4250);
+  assert.equal(weekly.weeks[0].locations[0].values.finalInventory.amount,balances.physicalTotal.amount);
+  for(const [key,quantity] of [['theoreticalFinalInventoryValue',item=>item.adjustedTheoreticalFinal],['physicalInventoryValue',item=>item.finalInventory]]){
+    const sum=data.report.items.reduce((total,item)=>total+(item.costAvailable&&Number.isFinite(quantity(item))?quantity(item)*item.unitCost:0),0);
+    assert.equal(data.executiveSummary.metrics[key].amount,sum);
+  }
+});
+
 test('defaults show two completed weeks and final physical inventory uses the latest count, including a first count', async t => {
   const { base } = await fixture(t);
   const data = await fetch(`${base}/api/weekly-results`).then(response => response.json());
@@ -159,11 +220,16 @@ test('final theoretical inventory includes Sunday movements and excludes Monday 
     state.daily = state.daily.filter(row => row.date <= state.range.to);
     return state;
   };
-  let metric = (await getReport(base, { includeCurrent: false })).weeks[0].locations[0].values.finalInventory;
+  const cell = (await getReport(base, { includeCurrent: false })).weeks[0].locations[0];
+  let metric = cell.values.finalInventory;
   assert.equal(metric.basis, 'theoretical');
   assert.equal(metric.date, '2026-10-11');
   assert.equal(metric.costCutoff, '2026-10-11');
   assert.equal(metric.amount, 2080); // 67 × (10 + 20), plus Sunday's 7 × 10.
+  const detail = await fetch(`${base}/api/weekly-results/details/${cell.detailReports.finalInventory}`).then(response => response.json());
+  assert.equal(detail.basis, 'theoretical');
+  assert.equal(detail.balanceDate, '2026-10-11');
+  assert.equal(detail.rows.reduce((sum, row) => sum + (row.amount ?? 0), 0), metric.amount);
   sundayPurchase = 10;
   metric = (await getReport(base, { includeCurrent: false })).weeks[0].locations[0].values.finalInventory;
   assert.equal(metric.amount, 2110);

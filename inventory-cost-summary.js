@@ -18,4 +18,43 @@ function applyBoundaryCostSummary(summary, report, adjustmentsAvailable) {
     kardexTotalCost: baseline, totalAdjustmentCost: available ? baseline - amount : null
   });
 }
-module.exports = { applyBoundaryCostSummary };
+
+function inventoryValue(items, quantity, netSales, excluded = []) {
+  const known = items.filter(item => item.costAvailable && Number.isFinite(item.unitCost) && Number.isFinite(quantity(item)));
+  const missingCostCodes = items.filter(item => !item.costAvailable || !Number.isFinite(item.unitCost)).map(item => item.code);
+  const missingBalanceCodes = items.filter(item => !Number.isFinite(quantity(item))).map(item => item.code);
+  const available = known.length > 0 || (!items.length && !excluded.length);
+  const amount = available ? known.reduce((sum, item) => sum + quantity(item) * item.unitCost, 0) : null;
+  return { amount, available, percentOfNetSales: available && netSales ? amount / netSales * 100 : null,
+    partial: !!(missingCostCodes.length || missingBalanceCodes.length || excluded.length),
+    coveredItemCount: known.length, totalItemCount: items.length, missingCostCodes, missingBalanceCodes,
+    excludedCodes: excluded.map(item => item.code) };
+}
+
+// Recompute AFTER compensation and consumables separation, from exactly the
+// same rows and quantities used by the two grids. Missing rows do not hide
+// counted, priced stock; they make its subtotal partial.
+function applyInventoryValueSummary(summary, report, otherConsumables = null) {
+  const values = part => {
+    const items = part?.items || [], excluded = part?.excluded || [];
+    return {
+      theoretical: inventoryValue(items, item => part.boundaryMode ? item.adjustedTheoreticalFinal : item.theoreticalFinal, summary.netSales, excluded),
+      physical: inventoryValue(items, item => part.selection ? item.finalInventory : item.physicalFinal, summary.netSales, excluded)
+    };
+  };
+  const kardex = values(report), consumables = otherConsumables ? values(otherConsumables) : null;
+  summary.metrics.theoreticalFinalInventoryValue = kardex.theoretical;
+  summary.metrics.physicalInventoryValue = kardex.physical;
+  summary.inventoryBalances = { kardex, consumables };
+  if (report.boundaryMode) {
+    const covered = report.items.filter(item => item.finalIsPhysical && item.costAvailable
+      && Number.isFinite(item.totalCost) && Number.isFinite(item.totalCostBeforeCompensations));
+    Object.assign(summary.metrics.adjustedKardexTotalCost, {
+      theoreticalFinalInventoryValue: inventoryValue(covered, item => item.theoreticalFinal, summary.netSales).amount,
+      adjustedTheoreticalFinalInventoryValue: inventoryValue(covered, item => item.adjustedTheoreticalFinal, summary.netSales).amount,
+      physicalInventoryValue: inventoryValue(covered, item => item.finalInventory, summary.netSales).amount
+    });
+  }
+}
+
+module.exports = { applyBoundaryCostSummary, inventoryValue, applyInventoryValueSummary };

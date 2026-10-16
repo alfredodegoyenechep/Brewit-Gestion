@@ -52,7 +52,7 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
   assert.equal(await dialog.locator('img').count(),0);
   await page.keyboard.press('Escape');assert.equal(await dialog.count(),0);
   assert.equal(await page.getByRole('dialog',{name:'Consolidado de inventario',exact:true}).isVisible(),true);
-  assert.equal(await page.locator('#inventory-results-table tbody button').first().evaluate(button=>button===document.activeElement),true);
+  await page.waitForFunction(() => document.querySelector('#inventory-results-table tbody button') === document.activeElement);
   const itemTrigger=page.locator('#inventory-results-table tbody button').first();
   await itemTrigger.focus();await page.keyboard.press('Enter');await dialog.waitFor();
   await dialog.getByRole('button',{name:'Cerrar',exact:true}).click();assert.equal(await dialog.count(),0);
@@ -107,4 +107,22 @@ test('Kardex keeps numeric totals with missing data and executive labels wrap in
   assert.equal(await warehouseRow.locator('td').nth(2).innerText(),'—');
   assert.match(await warehouseRow.locator('td').nth(3).innerText(),/113 de 116 productos/);
   assert.equal(await page.locator('#inventory-executive-summary-table tfoot td').nth(1).innerText(),'$-463.162');
+  await page.evaluate(()=>{
+    const summary=structuredClone(window.executiveFixture);
+    const theoretical={available:true,partial:true,amount:2425938,percentOfNetSales:86.34};
+    const physical={available:true,partial:true,amount:2443249,percentOfNetSales:86.96};
+    summary.metrics.theoreticalFinalInventoryValue=theoretical;
+    summary.metrics.physicalInventoryValue=physical;
+    Object.assign(summary.metrics.adjustedKardexTotalCost,{amount:17311,kardexTotalCost:64751,totalAdjustmentCost:47440,
+      adjustedTheoreticalFinalInventoryValue:2425938,physicalInventoryValue:2443249,coveredItemCount:120,totalItemCount:124});
+    summary.inventoryBalances={kardex:{theoretical,physical},consumables:{physical:{available:true,amount:75750}},
+      physicalTotal:{available:true,partial:true,amount:2518999},physicalOutsideKardex:{available:true,amount:0},date:'2026-10-11'};
+    renderInventoryExecutiveSummary(summary);
+  });
+  const context=await page.locator('#inventory-executive-summary-table tbody tr').filter({hasText:'Costo Total Kardex ajustado'}).locator('td').nth(3).innerText();
+  assert.match(context,/Valor Inventario Final Teórico \(subtotal parcial\): \$2\.425\.938/);
+  assert.match(context,/Valor Inventario Físico \(subtotal parcial\): \$2\.443\.249/);
+  assert.match(context,/físico \$2\.443\.249 − teórico ajustado \$2\.425\.938 = costo ajustado \$17\.311/);
+  assert.match(context,/consolidado \$2\.443\.249 \+ consumibles \$75\.750 = \$2\.518\.999/);
+  assert.doesNotMatch(context,/2\.511\.955|Valor Inventario Físico: no disponible/);
 });

@@ -19,6 +19,14 @@
   const inboundDialog = document.getElementById('weekly-results-inbound');
   const inboundBody = document.getElementById('weekly-results-inbound-body');
   const inboundLabels = { centralWarehouseInbound: 'Entradas Bodega Central', directSupplierInbound: 'Entradas Proveedores Directos' };
+  const metricLabels = { netSales: 'Venta neta', tips: 'Propinas', inventoryShortage: 'Inventario faltante',
+    waste: 'Merma', marketing: 'Marketing', employees: 'Consumo personal', otherConsumables: 'Otros gastos / consumibles', finalInventory: 'Inventario Final' };
+  const metricDialog = document.getElementById('weekly-results-metric-detail');
+  const metricBody = document.getElementById('weekly-results-metric-body');
+  const metricStatus = document.getElementById('weekly-results-metric-status');
+  const metricDownload = document.getElementById('weekly-results-metric-xlsx');
+  let metricController = null, metricGeneration = 0, metricSnapshot = null, metricVisibleRows = [];
+  const metricCache = new Map();
   const pdfButton = document.getElementById('weekly-results-pdf');
   const xlsxButton = document.getElementById('weekly-results-xlsx');
   const exportDialog = document.getElementById('weekly-results-export');
@@ -115,8 +123,117 @@
     if (pending.trim()) receive(JSON.parse(pending));
   }
   function closeInbound() {
+    if (metricDialog.open) metricDialog.close();
     if (inboundDialog.open) inboundDialog.close();
     inboundBody.replaceChildren();
+  }
+  const detailNumber = value => value.toLocaleString('es-CL', { maximumFractionDigits: 4 });
+  const detailText = (column, value) => {
+    if (value == null) return '—';
+    if (column.type === 'date') return date(value);
+    if (column.type === 'currency') return formatClp(value);
+    if (column.type === 'unitCost') return value.toLocaleString('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 2 });
+    if (column.type === 'number') return detailNumber(value);
+    return String(value);
+  };
+  function renderMetricDetail(report) {
+    metricSnapshot = report;
+    const total = paragraph(metricBody, `${report.partial ? 'Subtotal conocido' : 'Total del reporte'}: ${formatClp(report.total)}`);
+    total.className = 'weekly-results-metric-total';
+    if (report.partial) paragraph(metricBody, 'Detalle parcial: los importes conocidos suman la cifra del reporte. Puede faltar cobertura del período; los registros sin saldo o costo completo se identifican en el detalle.')
+      .className = 'weekly-results-inbound-notice';
+    if (report.inventory?.movements) paragraph(metricBody,
+      `Tomas físicas: ${date(report.inventory.initialDate)} → ${date(report.inventory.finalDate)} · Movimientos: ${date(report.inventory.movements.from)} – ${date(report.inventory.movements.to)}.`);
+    if (report.balanceDate) paragraph(metricBody, `${report.basis === 'physical' ? 'Inventario físico' : 'Inventario teórico al cierre'} · ${date(report.balanceDate)}`);
+    if (report.groups?.length) paragraph(metricBody, report.groups.map(group => `${group.label}: ${formatClp(group.amount)}`).join(' · '));
+    if (report.costCutoff) paragraph(metricBody, `Valorización al ${date(report.costCutoff)}.`);
+    const toolbar = document.createElement('div'); toolbar.className = 'weekly-results-metric-filters';
+    const label = document.createElement('label'); label.textContent = 'Buscar en el detalle';
+    const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Código, producto, fecha o medio de pago';
+    search.id = 'weekly-results-metric-search'; label.htmlFor = search.id; label.append(search);
+    const count = document.createElement('span'); count.setAttribute('aria-live', 'polite'); toolbar.append(label, count); metricBody.append(toolbar);
+    const wrap = document.createElement('div'); wrap.className = 'weekly-results-metric-table-wrap';
+    wrap.tabIndex = 0; wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', `Detalle de ${report.title}; tabla desplazable`);
+    const table = document.createElement('table'); table.className = 'weekly-results-metric-table';
+    const caption = table.createCaption(); caption.textContent = `${report.title} · ${report.location.name}`;
+    const head = table.createTHead().insertRow(), body = table.createTBody();
+    const footer = table.createTFoot().insertRow();
+    let sortKey = 'amount', ascending = false;
+    const headers = [];
+    const normalized = value => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    const draw = () => {
+      const query = normalized(search.value.trim());
+      metricVisibleRows = report.rows.filter(row => !query || report.columns.some(column => normalized(detailText(column, row[column.key])).includes(query)));
+      metricVisibleRows.sort((a, b) => {
+        if (a[sortKey] == null) return b[sortKey] == null ? 0 : 1;
+        if (b[sortKey] == null) return -1;
+        const order = typeof a[sortKey] === 'number' ? a[sortKey] - b[sortKey]
+          : String(a[sortKey]).localeCompare(String(b[sortKey]), 'es', { numeric: true });
+        return ascending ? order : -order;
+      });
+      headers.forEach((th, index) => th.setAttribute('aria-sort', report.columns[index].key === sortKey ? ascending ? 'ascending' : 'descending' : 'none'));
+      body.replaceChildren();
+      for (const item of metricVisibleRows) {
+        const row = body.insertRow();
+        for (const column of report.columns) {
+          const cell = row.insertCell(); cell.textContent = detailText(column, item[column.key]);
+          if (['number', 'currency', 'unitCost'].includes(column.type)) cell.className = 'numeric';
+          if (column.key === 'status' && item.status !== 'Valorizado') cell.className = 'weekly-results-metric-incomplete';
+        }
+      }
+      if (!metricVisibleRows.length) {
+        const cell = body.insertRow().insertCell(); cell.colSpan = report.columns.length;
+        cell.textContent = query ? 'No hay registros que coincidan con la búsqueda.'
+          : report.partial ? 'No hay registros con detalle disponible para este período.' : 'No se registraron movimientos en el período.';
+      }
+      count.textContent = `${metricVisibleRows.length} de ${report.rows.length} registros`;
+      footer.replaceChildren();
+      const amountIndex = report.columns.findIndex(column => column.key === 'amount');
+      const label = document.createElement('th'); label.scope = 'row'; label.colSpan = amountIndex;
+      label.textContent = query ? 'Total de registros visibles' : report.partial ? 'Subtotal conocido' : 'Total del reporte'; footer.append(label);
+      footer.insertCell().textContent = formatClp(query ? metricVisibleRows.reduce((sum, row) => sum + (row.amount ?? 0), 0) : report.total);
+      for (let index = amountIndex + 1; index < report.columns.length; index++) footer.insertCell();
+    };
+    for (const column of report.columns) {
+      const th = document.createElement('th'); th.scope = 'col';
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = column.label;
+      button.title = `Ordenar por ${column.label}`;
+      button.addEventListener('click', () => { ascending = sortKey === column.key ? !ascending : true; sortKey = column.key; draw(); });
+      th.append(button); head.append(th); headers.push(th);
+    }
+    wrap.append(table); metricBody.append(wrap); search.addEventListener('input', draw); draw();
+    (report.notes || []).forEach(note => paragraph(metricBody, note).className = 'panel-description');
+    if (report.excluded?.length) {
+      const details = document.createElement('details'), summary = document.createElement('summary');
+      summary.textContent = `Artículos excluidos (${report.excluded.length})`; details.append(summary);
+      report.excluded.forEach(item => paragraph(details, `${item.code || '—'} · ${item.name || ''}: ${item.reason}`));
+      metricBody.append(details);
+    }
+    metricDownload.disabled = false;
+  }
+  async function openMetricDetail(key, result, { location, period }) {
+    metricController?.abort();
+    const request = ++metricGeneration, active = new AbortController(); metricController = active;
+    metricSnapshot = null; metricDownload.disabled = true; metricBody.replaceChildren();
+    document.getElementById('weekly-results-metric-title').textContent = metricLabels[key];
+    document.getElementById('weekly-results-metric-context').textContent = `${location.name} · ${date(period.from)} – ${date(period.through)}`;
+    setStatus(metricStatus, 'Cargando detalle…'); metricDialog.setAttribute('aria-busy', 'true');
+    if (!metricDialog.open) metricDialog.showModal();
+    const id = result.detailReports[key];
+    try {
+      let report = metricCache.get(id);
+      if (!report) {
+        const response = await fetch(`/api/weekly-results/details/${encodeURIComponent(id)}`, { signal: active.signal });
+        report = await response.json();
+        if (!response.ok) throw Error(report.error || 'No se pudo cargar el detalle.');
+      }
+      if (request !== metricGeneration || !metricDialog.open) return;
+      metricCache.set(id, report); renderMetricDetail(report); setStatus(metricStatus, '');
+    } catch (error) {
+      if (request === metricGeneration && error.name !== 'AbortError') setStatus(metricStatus, error.message, 'error');
+    } finally {
+      if (request === metricGeneration) { metricController = null; metricDialog.setAttribute('aria-busy', 'false'); }
+    }
   }
   function openInbound(key, result, { location, period }) {
     const source = result.sources[key], metric = result.values[key], items = source.items;
@@ -212,6 +329,14 @@
       button.setAttribute('aria-label', `Ver detalle de ${inboundLabels[key]}: ${button.textContent} · ${detailContext.location.name} · ${date(detailContext.period.from)}`);
       button.addEventListener('click', () => openInbound(key, result, detailContext));
       amount.firstChild.replaceWith(button);
+    }
+    if (metricLabels[key] && metric?.available && result?.detailReports?.[key] && detailContext) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.className = 'weekly-results-inbound-button weekly-results-metric-button';
+      button.textContent = amount.firstChild.textContent; button.title = `Ver detalle de ${metricLabels[key]}`;
+      button.setAttribute('aria-haspopup', 'dialog');
+      button.setAttribute('aria-label', `Ver detalle de ${metricLabels[key]}: ${button.textContent} · ${detailContext.location.name} · ${date(detailContext.period.from)}`);
+      button.addEventListener('click', () => openMetricDetail(key, result, detailContext)); amount.firstChild.replaceWith(button);
     }
   }
   function metricRow(body, key, label) {
@@ -409,6 +534,7 @@
     }
   }
   window.cancelCafeWeeklyResults = () => {
+    metricCache.clear();
     if (exportDialog.open) exportDialog.close();
     closeExport();
     cancelDaily(true); dailyCache.clear();
@@ -470,6 +596,31 @@
   });
   document.getElementById('weekly-results-detail-close').addEventListener('click', () => dialog.close());
   document.getElementById('weekly-results-inbound-close').addEventListener('click', () => inboundDialog.close());
+  document.getElementById('weekly-results-metric-close').addEventListener('click', () => metricDialog.close());
+  metricDialog.addEventListener('close', () => {
+    metricController?.abort(); metricController = null; metricGeneration++;
+    metricSnapshot = null; metricDialog.setAttribute('aria-busy', 'false'); metricDownload.disabled = true;
+  });
+  metricDownload.addEventListener('click', () => {
+    if (!metricSnapshot) return;
+    const report = metricSnapshot, total = metricVisibleRows.reduce((sum, row) => sum + (row.amount ?? 0), 0);
+    const rows = [[report.title], [report.location.name], [`${date(report.period.from)} – ${date(report.period.through)}`],
+      [`${report.partial ? 'Subtotal conocido' : 'Total del reporte'}: ${formatClp(report.total)}`], [],
+      report.columns.map(column => column.label), ...metricVisibleRows.map(row => report.columns.map(column => row[column.key] ?? '—')),
+      report.columns.map(column => column.key === 'amount' ? total : column === report.columns[0] ? 'Total de registros visibles' : '')];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    for (let r = 6; r < rows.length; r++) report.columns.forEach((column, c) => {
+      const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+      if (cell?.t !== 'n') return;
+      if (column.type === 'currency') cell.z = '"$"#,##0;"$"-#,##0;"$"0';
+      else if (column.type === 'unitCost') cell.z = '"$"#,##0.00';
+      else if (column.type === 'number') cell.z = '#,##0.####';
+    });
+    sheet['!cols'] = report.columns.map(column => ({ wch: column.key === 'name' ? 38 : 22 }));
+    const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, 'Detalle');
+    const name = `${report.title}_${report.location.name}_${report.period.from}`.normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^a-zA-Z0-9_-]+/g, '_');
+    XLSX.writeFile(book, `${name}.xlsx`);
+  });
   document.getElementById('weekly-results-daily-close').addEventListener('click', () => dailyDialog.close());
   dailyDialog.addEventListener('close', () => cancelDaily());
   dailyLocation.addEventListener('change', () => loadDaily());

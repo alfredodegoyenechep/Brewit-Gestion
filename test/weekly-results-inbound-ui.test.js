@@ -49,6 +49,7 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.locator('[data-view="weekly-results"]').click();
   await page.locator('#weekly-results-weeks').selectOption('2');
+  await page.locator('#weekly-results-current').selectOption('true');
   await page.locator('#weekly-results-refresh').click();
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   const popup = page.locator('#weekly-results-inbound');

@@ -9621,8 +9621,19 @@ function renderInventoryExecutiveSummary(summary) {
   const metrics = summary.metrics;
   const adjustedKardex = metrics.adjustedKardexTotalCost;
   const inventoryContext = (label, metric) => metric?.available
-    ? `${label}: ${formatKardexCost(metric.amount)} (${formatInventoryExecutivePercent(metric.percentOfNetSales)} de la venta neta del período).`
+    ? `${label}${metric.partial ? ' (subtotal parcial)' : ''}: ${formatKardexCost(metric.amount)} (${formatInventoryExecutivePercent(metric.percentOfNetSales)} de la venta neta del período).`
     : `${label}: no disponible para esta fuente o período.`;
+  const balances = summary.inventoryBalances;
+  const physicalReconciliation = () => {
+    if (!balances?.physicalTotal?.available) return '';
+    const components = [];
+    if (balances.kardex.physical.available) components.push(`consolidado ${formatKardexCost(balances.kardex.physical.amount)}`);
+    if (balances.consumables?.physical.available) components.push(`consumibles ${formatKardexCost(balances.consumables.physical.amount)}`);
+    if (balances.physicalOutsideKardex?.available && balances.physicalOutsideKardex.amount !== 0) {
+      components.push(`artículos con toma fuera del consolidado ${formatKardexCost(balances.physicalOutsideKardex.amount)}`);
+    }
+    return `Inventario físico total del ${formatReportDate(balances.date)}${balances.physicalTotal.partial ? ' (subtotal parcial)' : ''}: ${components.join(' + ')} = ${formatKardexCost(balances.physicalTotal.amount)}. Incluye consumibles; es la base de Inventario Final en Resultados Semanales para esa toma.`;
+  };
 
   const rows = [
     {
@@ -9654,8 +9665,12 @@ function renderInventoryExecutiveSummary(summary) {
           : adjustedKardex.available
           ? `Costo Total del Kardex ${formatKardexCost(adjustedKardex.kardexTotalCost)} − sustituciones de syrup y salsas ${formatKardexCost(adjustedKardex.syrupSauceSubstitutionCost)} − costo de LAC001 no utilizado por sustituciones ${formatKardexCost(adjustedKardex.lac001SubstitutionCost)} − vasos y tapas no utilizados ${formatKardexCost(adjustedKardex.avoidedPackagingCost)} = ${formatKardexCost(adjustedKardex.amount)}.`
           : 'Costo ajustado no disponible para esta fuente o período.',
+        balances ? 'Saldos del consolidado completo, sin los consumibles separados; coinciden con la grilla sin filtros.' : '',
         inventoryContext('Valor Inventario Final Teórico', metrics.theoreticalFinalInventoryValue),
-        inventoryContext('Valor Inventario Físico', metrics.physicalInventoryValue)
+        inventoryContext('Valor Inventario Físico', metrics.physicalInventoryValue),
+        adjustedKardex.available && adjustedKardex.physicalInventoryValue != null && adjustedKardex.adjustedTheoreticalFinalInventoryValue != null
+          ? `Productos comparables: físico ${formatKardexCost(adjustedKardex.physicalInventoryValue)} − teórico ajustado ${formatKardexCost(adjustedKardex.adjustedTheoreticalFinalInventoryValue)} = costo ajustado ${formatKardexCost(adjustedKardex.amount)}.` : '',
+        physicalReconciliation()
       ].join(' ')
     }
   ];

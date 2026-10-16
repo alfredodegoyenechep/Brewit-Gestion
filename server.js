@@ -2110,6 +2110,8 @@ function createApp(options = {}) {
   }
   const productAnalyticsSourceCache = new Map();
   const inventoryDetailReports = new Map();
+  const weeklyDetailBuilder = require('./weekly-results-details');
+  const weeklyDetailReports = weeklyDetailBuilder.createDetailStore();
   const demandEnrichmentCache = new Map();
   const toteatMasterDownloadBatches = new Map();
   ensureDir(weeksRoot);
@@ -6993,7 +6995,7 @@ function createApp(options = {}) {
     });
   }
 
-  function buildFinancialResultsPayload(query = {}, { costCutoff = null } = {}) {
+  function buildFinancialResultsPayload(query = {}, { costCutoff = null, onRevenueFacts = null } = {}) {
     const today = projectionToday();
     const dateTo = String(query.dateTo || today);
     const dateFrom = String(query.dateFrom || addDays(dateTo, -29));
@@ -7264,6 +7266,7 @@ function createApp(options = {}) {
       && headOfficeExpenses.every(item => item.complete);
     const headOfficeAmount = headOfficeExpenses.filter(item => item.available)
       .reduce((sum, item) => sum + item.amount, 0);
+    if (onRevenueFacts) onRevenueFacts(facts);
     return {
       date: today,
       period: { from: dateFrom, to: dateTo },
@@ -7361,7 +7364,33 @@ function createApp(options = {}) {
     };
   }
 
-  function buildCafeFinalInventory(context, location, period) {
+  function buildPhysicalInventorySnapshot(state, location, date, resolver = null) {
+    const { inventoryExclusion } = require('./inventory-exclusions');
+    const warehouse = state.warehouses.find(item => Number(item.custom_id) === (location.type === 'warehouse' ? 1 : 2));
+    if (!warehouse) throw Error('No está disponible la bodega operativa de la sucursal.');
+    const rows = state.daily.filter(row => row.warehouse === warehouse.id && !inventoryExclusion(row.code));
+    if (!resolver) {
+      // Use the same master snapshot and cost cutoff as the original Kardex.
+      const masterDate = state.masterObservedAt?.slice(0, 10) || date;
+      const master = latestMasterFile('master-catalog', masterDate, location.id);
+      const catalog = master ? parseIngredientCatalog(master.filePath) : null;
+      const recipes = resolveRecipes(masterDate, location.id).recipes;
+      resolver = buildInventoryPurchaseCostResolver(date, location, state, { catalog, recipes: recipes?.size ? recipes : null });
+    }
+    const items = rows.filter(row => row.date === date).map(row => {
+      const cost = resolver.resolve(row.code, row.unit);
+      return { code: row.code, name: row.name || row.code, unit: row.unit,
+        quantity: row.physicalCount ? row.opening : null,
+        unitCost: cost.unitCost, costAvailable: cost.source !== 'missing' && !cost.costIncomplete };
+    });
+    const identity = item => JSON.stringify([item.code, item.unit]);
+    const present = new Set(items.map(identity));
+    const excluded = [...new Map(rows.filter(row => row.date <= date && !present.has(identity(row)))
+      .map(row => [identity(row), { code: row.code, name: row.name, reason: 'Sin saldo en la fecha de la toma.' }])).values()];
+    return { items, excluded };
+  }
+
+  function buildCafeFinalInventory(context, location, period, collectDetail = () => {}) {
     const { value } = require('./weekly-results');
     const { inventoryExclusion } = require('./inventory-exclusions');
     const state = context.stock(location, true);
@@ -7374,16 +7403,7 @@ function createApp(options = {}) {
     let items, excluded;
     if (physicalDate) {
       // A first physical count can be valued without an earlier opening count.
-      const master = latestMasterFile('master-catalog', date, location.id);
-      const catalog = master ? parseIngredientCatalog(master.filePath) : new Map();
-      const resolver = buildInventoryPurchaseCostResolver(date, location, state, { catalog });
-      items = rows.filter(row => row.date === date).map(row => {
-        const cost = resolver.resolve(row.code, row.unit, catalog.get(row.code));
-        return { code: row.code, quantity: row.physicalCount ? row.opening : null,
-          unitCost: cost.unitCost, costAvailable: cost.source !== 'missing' && !cost.costIncomplete };
-      });
-      const present = new Set(items.map(item => item.code));
-      excluded = rows.some(row => row.date <= date && !present.has(row.code));
+      ({ items, excluded } = buildPhysicalInventorySnapshot(state, location, date));
     } else {
       const initialDate = countDates.filter(day => day <= date).at(-1)
         || rows.filter(row => row.initialRecord && row.date <= date).map(row => row.date).sort()[0];
@@ -7393,21 +7413,23 @@ function createApp(options = {}) {
       const result = buildInventoryProcessPayload({ location: location.id, source: 'originals', criteriaMode: 'count-boundaries',
         initialInventoryDate: initialDate, finalInventoryDate: addDays(date, 1) }, { stockState: state, retainDetails: false, costCutoff: date });
       items = [...result.report.items, ...(result.otherConsumables?.items || [])].map(item => ({
-        code: item.code, quantity: item.adjustedTheoreticalFinal, unitCost: item.unitCost, costAvailable: item.costAvailable
+        code: item.code, name: item.name, unit: item.unit, quantity: item.adjustedTheoreticalFinal,
+        unitCost: item.unitCost, costAvailable: item.costAvailable
       }));
-      excluded = !!(result.report.excluded?.length || result.otherConsumables?.excluded?.length);
+      excluded = [...(result.report.excluded || []), ...(result.otherConsumables?.excluded || [])];
     }
     const available = item => Number.isFinite(item.quantity) && item.costAvailable && Number.isFinite(item.unitCost);
     const known = items.filter(available);
     const missingCodes = items.filter(item => !available(item)).map(item => item.code);
+    collectDetail(weeklyDetailBuilder.balances(items, excluded));
     return value(known.length ? known.reduce((sum, item) => sum + item.quantity * item.unitCost, 0) : null,
-      excluded || missingCodes.length ? 'partial' : 'complete', { basis, date, costCutoff: date, missingCodes });
+      excluded.length || missingCodes.length ? 'partial' : 'complete', { basis, date, costCutoff: date, missingCodes });
   }
 
   function buildCafeWeeklyResults(context, cafe, period) {
     const { value, fromMetric, derived, selectInventoryDates } = require('./weekly-results');
     const location = activeLocation(cafe.id);
-    const values = {}, warnings = [], sources = {};
+    const values = {}, warnings = [], sources = {}, details = {};
     const { from, through } = period;
     const costCutoff = period.valuationThrough || through;
     const sourceInfo = source => ({ name: source.record?.originalName || source.record?.name || source.originalName,
@@ -7430,7 +7452,8 @@ function createApp(options = {}) {
     const failure = (label, error) => warnings.push(`${label}: ${error.message}`);
     try {
       const payload = buildFinancialResultsPayload({ location: location.id, dateFrom: from, dateTo: through,
-        costValuation: 'period-end', skipInventory: true }, { costCutoff });
+        costValuation: 'period-end', skipInventory: true }, { costCutoff,
+        onRevenueFacts: facts => { details.netSales = weeklyDetailBuilder.sales(facts); } });
       const files = storedSalesFiles(location.id), coverage = fileCoverage(files);
       const available = payload.revenue.filesRead > 0 && (coverage.available || payload.revenue.lineCount > 0);
       const status = coverage.complete && payload.revenue.filesRead === files.length ? 'complete' : 'partial';
@@ -7450,7 +7473,8 @@ function createApp(options = {}) {
     } catch (error) { failure('Ventas y margen', error); }
     try {
       const state = toteatSalesSync.get(location.id);
-      const payments = toteatPaymentCollections([{ location, state }], from, through, { includeCollectionTotals: true });
+      const payments = toteatPaymentCollections([{ location, state }], from, through, { includeCollectionTotals: true, includeDetails: true });
+      details.tips = weeklyDetailBuilder.tips(payments.tipDetails);
       values.tips = fromMetric(payments.tips);
       values.mercadoPagoTips = fromMetric({ ...payments.mercadoPagoTips, available: payments.tips.available });
       values.cashTips = fromMetric(payments.cashTips);
@@ -7502,6 +7526,7 @@ function createApp(options = {}) {
           const summary = buildWasteSummary(parsed, from, through, catalog, resolver);
           dates = new Set(parsed.groups.map(group => group.date));
           amount = summary.totalCost;
+          details[key] = weeklyDetailBuilder.expense(summary.items, { waste: true });
           missingCostCodes = summary.itemsWithoutCost;
           if (missingCostCodes.length && summary.items.every(item => !item.costAvailable)) throw Error('No hay costos disponibles para valorizar la merma.');
           partial = missingCostCodes.length > 0 || !covers(dates);
@@ -7509,6 +7534,7 @@ function createApp(options = {}) {
           const products = applyCatalogProductCosts(mergedConsumptionProducts(location.id, field, from, through, { allowEmpty: true }), catalog, resolver);
           dates = new Set(products.datesProcessed);
           amount = products.totalCost;
+          details[key] = weeklyDetailBuilder.expense(products.products);
           missingCostCodes = products.productsWithoutMasterCost || [];
           if (missingCostCodes.length && products.products.every(product => product.costIncomplete)) throw Error('No hay costos completos disponibles para valorizar el consumo.');
           partial = missingCostCodes.length > 0 || !covers(dates);
@@ -7535,6 +7561,8 @@ function createApp(options = {}) {
           initialInventoryDate: inventory.initialDate, finalInventoryDate: inventory.finalDate }, { stockState: state, retainDetails: false });
         values.inventoryShortage = fromMetric(result.executiveSummary.metrics.adjustedKardexTotalCost);
         values.otherConsumables = fromMetric(result.executiveSummary.metrics.otherConsumables, { expense: true });
+        details.inventoryShortage = weeklyDetailBuilder.differences(result.report);
+        details.otherConsumables = weeklyDetailBuilder.differences(result.otherConsumables || { items: [] }, { consumables: true });
         inventory.status = values.inventoryShortage.status;
         inventory.coverage = result.executiveSummary.metrics.adjustedKardexTotalCost;
         sources.inventory = result.provenance;
@@ -7546,7 +7574,7 @@ function createApp(options = {}) {
     }
     // Daily detail keeps inventory balances exclusively in the period total.
     if (!period.valuationThrough) try {
-      values.finalInventory = buildCafeFinalInventory(context, location, period);
+      values.finalInventory = buildCafeFinalInventory(context, location, period, detail => { details.finalInventory = detail; });
       sources.finalInventory = { basis: values.finalInventory.basis, date: values.finalInventory.date,
         costCutoff: values.finalInventory.costCutoff, missingCodes: values.finalInventory.missingCodes };
       if (values.finalInventory.status === 'partial') warnings.push('Inventario final: cobertura o valorización parcial; se muestra el subtotal conocido.');
@@ -7561,8 +7589,23 @@ function createApp(options = {}) {
         if (values[key].status !== 'complete') warnings.push(`${label}: cobertura, origen o costeo incompleto; se muestra el subtotal conocido cuando está disponible.`);
       }
     } catch (error) { failure('Entradas al Kardex', error); }
-    return { values, inventory, sources, warnings: [...new Set(warnings)] };
+    const detailReports = {};
+    for (const [key, detail] of Object.entries(details)) {
+      const metadata = ['inventoryShortage', 'otherConsumables'].includes(key)
+        ? { inventory, costCutoff: inventory?.finalDate }
+        : key === 'finalInventory' ? { basis: values[key]?.basis, balanceDate: values[key]?.date, costCutoff: values[key]?.costCutoff }
+          : { costCutoff: key === 'tips' || key === 'netSales' ? null : costCutoff };
+      const id = weeklyDetailReports.put(key, detail, values[key], location, period, context.today, metadata);
+      if (id) detailReports[key] = id;
+    }
+    return { values, inventory, sources, detailReports, warnings: [...new Set(warnings)] };
   }
+
+  app.get('/api/weekly-results/details/:id', (req, res) => {
+    const detail = weeklyDetailReports.get(req.params.id);
+    if (!detail) return res.status(410).json({ error: 'Este detalle ya no está disponible. Actualiza el reporte y vuelve a abrir la cifra.' });
+    res.set('Cache-Control', 'no-store').json(detail);
+  });
 
   app.get('/api/weekly-results/daily/stream', async (req, res) => {
     const { currentPeriods, buildDailyResultsWithProgress } = require('./weekly-results');
@@ -8119,15 +8162,10 @@ function createApp(options = {}) {
       });
       if (originalMode) {
         const unavailable = salesData.filesRead ? [] : ['adjustedKardexTotalCost', 'lac001AdjustedKardexCost', 'syrupSauceSubstitutions', 'syrupSauceAdjustedKardexCost', 'avoidedPackaging', 'packagingKardexCost', 'packagingAdjustedKardexCost'];
-        if (original.physicalFinalItems !== report.itemCount) unavailable.push('physicalInventoryValue');
         for (const key of unavailable) Object.assign(executiveSummary.metrics[key], { available: false, amount: null, percentOfNetSales: null });
       }
-      if(boundaryMode) {
-        const amount=report.items.reduce((n,i)=>n+(i.costAvailable?i.adjustedTheoreticalFinal*i.unitCost:0),0);
-        Object.assign(executiveSummary.metrics.theoreticalFinalInventoryValue,{amount,percentOfNetSales:executiveSummary.netSales?amount/executiveSummary.netSales*100:null});
-      }
       if(boundaryMode && report.items.some(i=>!i.finalIsPhysical)) {
-        for(const key of ['physicalInventoryValue','kardexTotalCost','adjustedKardexTotalCost','lac001AdjustedKardexCost','syrupSauceAdjustedKardexCost','packagingKardexCost','packagingAdjustedKardexCost'])Object.assign(executiveSummary.metrics[key],{available:false,amount:null,percentOfNetSales:null});
+        for(const key of ['kardexTotalCost','adjustedKardexTotalCost','lac001AdjustedKardexCost','syrupSauceAdjustedKardexCost','packagingKardexCost','packagingAdjustedKardexCost'])Object.assign(executiveSummary.metrics[key],{available:false,amount:null,percentOfNetSales:null});
       }
       // The executive summary retains its baseline and adjusted indicators.
       // Detail rows expose the compensated difference without applying credits twice.
@@ -8148,6 +8186,16 @@ function createApp(options = {}) {
       const otherConsumables = location.id === 'main-warehouse'
         ? null
         : require('./other-consumables').separateOtherConsumables(report, executiveSummary, location.type === 'warehouse' || !!salesData.filesRead);
+      const { applyInventoryValueSummary, inventoryValue } = require('./inventory-cost-summary');
+      applyInventoryValueSummary(executiveSummary, report, otherConsumables);
+      if (originalMode && boundaryMode) {
+        const snapshot = buildPhysicalInventorySnapshot(stock, location, selection.finalDate, costResolver);
+        const identity = item => JSON.stringify([item.code, item.unit]);
+        const included = new Set([...report.items, ...(otherConsumables?.items || [])].map(identity));
+        executiveSummary.inventoryBalances.physicalTotal = inventoryValue(snapshot.items, item => item.quantity, executiveSummary.netSales, snapshot.excluded);
+        executiveSummary.inventoryBalances.physicalOutsideKardex = inventoryValue(snapshot.items.filter(item => !included.has(identity(item))), item => item.quantity, executiveSummary.netSales);
+        executiveSummary.inventoryBalances.date = selection.finalDate;
+      }
       // Keep detail tied to the exact report snapshot even if sources refresh
       // before the user opens a row. Load document lines only on demand.
       let itemDetailReportId = null;

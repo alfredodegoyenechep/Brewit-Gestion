@@ -32,4 +32,4 @@ function separateOtherConsumables(report, summary, adjustmentsAvailable) {
   Object.assign(report,main);
   return other;
 }
-module.exports = {CODES,separateOtherConsumables};
+module.exports = {CODES,isOther,separateOtherConsumables};
