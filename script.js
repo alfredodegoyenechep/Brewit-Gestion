@@ -1,3 +1,87 @@
+const IngredientMasterExport = (() => {
+  const headers = ['Código', 'Ingrediente', 'Unidad interna', 'Unidad de compra', 'Contenido en Unidad Interna', 'Equivalencia'];
+  const quantity = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(value);
+
+  function values(item, draft = item) {
+    const unit = draft.purchaseUnit || item.masterPurchaseUnit || '';
+    const raw = draft.purchaseUnit ? draft.unitsPerPurchaseUnit : item.masterContent;
+    const content = raw !== null && raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) && Number(raw) > 0
+      ? Number(raw) : null;
+    return [item.code, item.name, item.internalUnit || 'Sin unidad interna', unit, content,
+      unit && content !== null ? `1 ${unit} = ${quantity(content)} ${item.internalUnit}` : 'Sin equivalencia'];
+  }
+
+  function csv(rows, decimalSystem = 'comma') {
+    const escape = value => {
+      let text = typeof value === 'number' && decimalSystem === 'comma'
+        ? String(value).replace('.', ',') : String(value ?? '');
+      // Keep spreadsheet applications from evaluating ingredient names or codes as formulas.
+      if (typeof value === 'string' && /^[\s]*[=+@\-]/.test(text)) text = `'${text}`;
+      return `"${text.replaceAll('"', '""')}"`;
+    };
+    return '\uFEFF' + [headers, ...rows].map(row => row.map(escape).join(';')).join('\r\n') + '\r\n';
+  }
+
+  function workbook(rows, XLSX) {
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    sheet['!cols'] = [16, 48, 20, 22, 30, 40].map(wch => ({ wch }));
+    sheet['!autofilter'] = { ref: sheet['!ref'] };
+    sheet['!brewitTextColumns'] = [0, 1, 2, 3, 5];
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Ingredientes');
+    return book;
+  }
+
+  function pdf(rows, JsPDF, context = '') {
+    const doc = new JsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
+    doc.setProperties({ title: 'Maestro de ingredientes', author: 'Brewit' });
+    const width = doc.internal.pageSize.getWidth(), height = doc.internal.pageSize.getHeight();
+    const margin = 28, bottom = height - 32, lineHeight = 11;
+    const widths = [.10, .29, .11, .13, .17, .20].map(ratio => ratio * (width - margin * 2));
+    const font = (bold = false, size = 9) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); };
+    const split = row => row.map((value, index) => doc.splitTextToSize(String(value ?? ''), widths[index] - 12));
+    const draw = (cells, y, rowHeight, header = false) => {
+      if (header) { doc.setFillColor('#f7f2ea'); doc.rect(margin, y, width - margin * 2, rowHeight, 'F'); }
+      let x = margin;
+      cells.forEach((lines, index) => { if (lines.length) doc.text(lines, x + 6, y + 13); x += widths[index]; });
+      doc.setDrawColor('#e6ded5'); doc.setLineWidth(.4);
+      doc.line(margin, y + rowHeight, width - margin, y + rowHeight);
+    };
+    const page = () => {
+      doc.setTextColor('#33291e'); font(true, 16); doc.text('Maestro de ingredientes', margin, 34);
+      font(false, 9); doc.text(`${rows.length} ingredientes · ${context || 'Maestro compartido'}`, margin, 51);
+      font(true); const cells = split(headers);
+      const headerHeight = Math.max(...cells.map(lines => lines.length)) * lineHeight + 12;
+      draw(cells, 64, headerHeight, true); font();
+      return 64 + headerHeight;
+    };
+    let y = page();
+    const top = y;
+    for (const row of rows) {
+      const cells = split(row.map(value => typeof value === 'number' ? quantity(value) : value));
+      const count = Math.max(...cells.map(lines => lines.length));
+      const rowHeight = count * lineHeight + 12;
+      if (y + rowHeight > bottom && rowHeight <= bottom - top) { doc.addPage(); y = page(); }
+      // Split exceptionally long rows without clipping text at the page edge.
+      for (let offset = 0; offset < count;) {
+        const capacity = Math.floor((bottom - y - 12) / lineHeight);
+        if (capacity < 1) { doc.addPage(); y = page(); continue; }
+        const take = Math.min(capacity, count - offset), blockHeight = take * lineHeight + 12;
+        draw(cells.map(lines => lines.slice(offset, offset + take)), y, blockHeight);
+        y += blockHeight; offset += take;
+        if (offset < count) { doc.addPage(); y = page(); }
+      }
+    }
+    const total = doc.getNumberOfPages();
+    for (let index = 1; index <= total; index++) {
+      doc.setPage(index); font(false, 8); doc.text(`Página ${index} de ${total}`, width - margin, height - 16, { align: 'right' });
+    }
+    return doc;
+  }
+
+  return { headers, values, csv, workbook, pdf };
+})();
+
 let locationRegistry = {};
 let exportDecimalSystem = 'comma';
 let toteatMasterDownloadBatchId = null;
@@ -7163,18 +7247,18 @@ async function saveConsumptionReferenceConfiguration() {
 }
 
 function ingredientMasterEquivalence(row, item, draft) {
-  const unit = draft.purchaseUnit || item.masterPurchaseUnit;
-  const content = draft.purchaseUnit ? Number(draft.unitsPerPurchaseUnit) : item.masterContent;
-  row.querySelector('.ingredient-master-equivalence').textContent = unit && Number.isFinite(content) && content > 0
-    ? `1 ${unit} = ${formatProjectionQuantity(content)} ${item.internalUnit}` : 'Sin equivalencia';
+  row.querySelector('.ingredient-master-equivalence').textContent = IngredientMasterExport.values(item, draft)[5];
+}
+
+function visibleIngredientPurchaseMasterItems() {
+  const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const query = normalize(document.getElementById('ingredient-purchase-master-search').value);
+  return (ingredientPurchaseMasterState?.items || []).filter(item => normalize(`${item.code} ${item.name}`).includes(query));
 }
 
 function renderIngredientPurchaseMaster() {
-  const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  const query = normalize(document.getElementById('ingredient-purchase-master-search').value);
-  const items = ingredientPurchaseMasterState?.items || [];
-  document.getElementById('ingredient-purchase-master-body').replaceChildren(...items.filter(item =>
-    normalize(`${item.code} ${item.name}`).includes(query)).map(item => {
+  const items = visibleIngredientPurchaseMasterItems();
+  document.getElementById('ingredient-purchase-master-body').replaceChildren(...items.map(item => {
     const draft = ingredientPurchaseMasterDrafts.get(item.code) || item;
     const row = document.createElement('tr');
     row.dataset.code = item.code;
@@ -7212,6 +7296,45 @@ function renderIngredientPurchaseMaster() {
     return row;
   }));
   document.getElementById('save-ingredient-purchase-master').disabled = !ingredientPurchaseMasterDrafts.size;
+  document.querySelectorAll('.ingredient-purchase-master-exports button').forEach(button => {
+    button.disabled = !items.length || document.getElementById('ingredient-purchase-master-dialog').dataset.saving === 'true';
+  });
+}
+
+function exportIngredientPurchaseMaster(format) {
+  const status = document.getElementById('ingredient-purchase-master-status');
+  const items = visibleIngredientPurchaseMasterItems();
+  if (!items.length || document.getElementById('ingredient-purchase-master-dialog').dataset.saving === 'true') return;
+  try {
+    const rows = items.map(item => {
+      const draft = ingredientPurchaseMasterDrafts.get(item.code) || item;
+      const values = IngredientMasterExport.values(item, draft);
+      if (ingredientPurchaseMasterDrafts.has(item.code) && draft.purchaseUnit
+        && (values[4] === null || values[4] > 1e9)) {
+        throw new Error(`${item.code}: ingresa un contenido mayor que 0, expresado en ${item.internalUnit}.`);
+      }
+      return values;
+    });
+    const filename = 'maestro-ingredientes';
+    if (format === 'xlsx') {
+      if (!window.XLSX) throw new Error('No fue posible cargar el generador de archivos Excel.');
+      writeConfiguredExcelWorkbook(IngredientMasterExport.workbook(rows, XLSX), `${filename}.xlsx`);
+    } else if (format === 'pdf') {
+      if (!window.jspdf?.jsPDF) throw new Error('No fue posible cargar el generador de archivos PDF.');
+      const context = [document.getElementById('ingredient-purchase-master-search').value.trim() ? 'Tabla filtrada' : '',
+        ingredientPurchaseMasterDrafts.size ? 'Incluye cambios sin guardar' : ''].filter(Boolean).join(' · ');
+      IngredientMasterExport.pdf(rows, window.jspdf.jsPDF, context).save(`${filename}.pdf`);
+    } else if (format === 'csv') {
+      const url = URL.createObjectURL(new Blob([IngredientMasterExport.csv(rows, exportDecimalSystem)], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = `${filename}.csv`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    setStatus(status, `${rows.length} ${rows.length === 1 ? 'ingrediente exportado' : 'ingredientes exportados'} a ${format.toUpperCase()}.${ingredientPurchaseMasterDrafts.size ? ' Incluye cambios sin guardar.' : ''}`, 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
 }
 
 function editIngredientPurchaseMaster(event) {
@@ -7266,6 +7389,7 @@ async function saveIngredientPurchaseMaster() {
   button.disabled = true;
   document.getElementById('close-ingredient-purchase-master').disabled = true;
   document.getElementById('ingredient-purchase-master-search').disabled = true;
+  dialog.querySelectorAll('.ingredient-purchase-master-exports button').forEach(control => { control.disabled = true; });
   dialog.querySelectorAll('tbody input, tbody select').forEach(control => { control.disabled = true; });
   setStatus(status, 'Guardando unidades de compra…');
   try {
@@ -11703,6 +11827,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('ingredient-purchase-master-body').addEventListener('input', editIngredientPurchaseMaster);
   document.getElementById('ingredient-purchase-master-body').addEventListener('change', editIngredientPurchaseMaster);
   document.getElementById('save-ingredient-purchase-master').addEventListener('click', saveIngredientPurchaseMaster);
+  ['pdf', 'csv', 'xlsx'].forEach(format => {
+    document.getElementById(`ingredient-purchase-master-${format}`).addEventListener('click', () => exportIngredientPurchaseMaster(format));
+  });
   document.getElementById('purchase-projection-body').addEventListener('click', event => {
     const button = event.target.closest('button[data-local-detail]');
     if (button) openProjectionLocalDetail(button.closest('tr[data-key]').dataset.key, button.dataset.localDetail);

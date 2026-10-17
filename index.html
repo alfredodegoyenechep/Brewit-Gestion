@@ -1463,7 +1463,13 @@
           </table>
         </div>
         <div id="ingredient-purchase-master-status" class="form-status" aria-live="polite"></div>
-        <div class="projection-branch-orders-actions">
+        <div class="projection-branch-orders-actions ingredient-purchase-master-actions">
+          <div class="ingredient-purchase-master-exports" role="group" aria-label="Exportar ingredientes visibles con los valores actuales">
+            <span>Exportar tabla:</span>
+            <button id="ingredient-purchase-master-pdf" class="icon-button" type="button" title="Exportar ingredientes visibles a PDF" disabled>PDF</button>
+            <button id="ingredient-purchase-master-csv" class="icon-button" type="button" title="Exportar ingredientes visibles a CSV" disabled>CSV</button>
+            <button id="ingredient-purchase-master-xlsx" class="icon-button" type="button" title="Exportar ingredientes visibles a Excel" disabled>XLSX</button>
+          </div>
           <button id="save-ingredient-purchase-master" class="primary" type="button" disabled>Guardar unidades de compra</button>
         </div>
       </dialog>

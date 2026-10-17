@@ -675,6 +675,8 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   let projectionRequests = 0;
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (new URL(request.url()).pathname === '/api/purchase-projections') projectionRequests += 1; });
+  // Reproduce a running server that predates the new asset route.
+  await page.route('**/ingredient-master-export.js', route => route.fulfill({ status: 404, body: 'Cannot GET /ingredient-master-export.js' }));
   await page.goto(base);
   await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
   await page.locator('[data-view="purchase-projection"]').click();
@@ -697,6 +699,33 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.equal(await page.locator('#ingredient-purchase-master-body tr').count(), 1);
   await search.fill('A');
   assert.equal(await row.locator('input').inputValue(), '0.75');
+  await search.fill('leche');
+  for (const format of ['pdf', 'csv', 'xlsx']) {
+    const ready = page.waitForEvent('download');
+    await page.locator(`#ingredient-purchase-master-${format}`).click();
+    const download = await ready;
+    assert.equal(download.suggestedFilename(), `maestro-ingredientes.${format}`);
+    const bytes = fs.readFileSync(await download.path());
+    if (format === 'pdf') {
+      assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
+    } else {
+      const book = XLSX.read(format === 'csv' ? bytes.toString('utf8') : bytes,
+        format === 'csv' ? { type: 'string', raw: true } : {});
+      const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1 });
+      assert.equal(rows.length, 2);
+      assert.deepEqual(rows[1].slice(0, 4), ['A', 'Leche', 'L', 'Botella']);
+      assert.equal(rows[1][4], format === 'csv' ? '0,75' : .75);
+      assert.equal(rows[1][5], '1 Botella = 0,75 L');
+    }
+    assert.match(await page.locator('#ingredient-purchase-master-status').innerText(), /1 ingrediente exportado.*Incluye cambios sin guardar/);
+  }
+  await search.fill('no existe');
+  for (const format of ['pdf', 'csv', 'xlsx']) assert.equal(await page.locator(`#ingredient-purchase-master-${format}`).isDisabled(), true);
+  await search.fill('leche');
+  await row.locator('input').fill('0');
+  await page.locator('#ingredient-purchase-master-csv').click();
+  assert.match(await page.locator('#ingredient-purchase-master-status').innerText(), /mayor que 0/);
+  assert.equal(projectionRequests, 0);
   await page.locator('#close-ingredient-purchase-master').click();
   assert.equal(fs.existsSync(path.join(root, 'config', 'purchase-unit-configuration.json')), false);
   await open.click();

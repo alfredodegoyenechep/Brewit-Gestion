@@ -5170,6 +5170,25 @@ body {
   max-height: 55vh;
 }
 
+.projection-branch-orders-actions.ingredient-purchase-master-actions {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ingredient-purchase-master-exports {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ingredient-purchase-master-exports span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .ingredient-purchase-master-table-wrap th {
   position: sticky;
   top: 0;
