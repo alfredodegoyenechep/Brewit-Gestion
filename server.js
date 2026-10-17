@@ -27,7 +27,8 @@ const { paymentLocalTimestamp } = require('./payment-timestamps');
 const mercadoPagoStores = require('./mercadopago-stores');
 const { CURVES: CONSUMPTION_REFERENCE_CURVES, monthlyAnniversary, referenceStatus, replenishmentConsumption } = require('./purchase-consumption-reference');
 const { consolidateLocalTotals } = require('./purchase-local-totals');
-const { PURCHASE_UNIT_OPTIONS, purchaseUnitLabel, configuredPurchaseUnits, configuredPurchaseCost } = require('./purchase-unit-config');
+const { PURCHASE_UNIT_OPTIONS, purchaseUnitLabel, configuredPurchaseUnits, configuredPurchaseCost,
+  supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple } = require('./purchase-unit-config');
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -4483,20 +4484,6 @@ function createApp(options = {}) {
     };
   }
 
-  function roundUpToPackageMultiple(quantity, unitsPerPackage) {
-    const value = Number(quantity);
-    const packageSize = Number(unitsPerPackage);
-    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(packageSize) || packageSize <= 0) return value;
-    return Number((Math.ceil((value / packageSize) - 1e-9) * packageSize).toPrecision(12));
-  }
-
-  function purchaseUnitsForInternalQuantity(quantity, unitsPerPurchaseUnit) {
-    const value = Number(quantity);
-    const conversion = Number(unitsPerPurchaseUnit);
-    if (!(value > 0) || !(conversion > 0)) return null;
-    return Math.ceil((value / conversion) - 1e-9);
-  }
-
   function inventoryCorrection(location,stock,recipes,ingredientCatalog,catalogAssignments,costResolver,originalMode=true) {
         const cache=new Map();
         return (code,unit,from,to)=>{
@@ -4668,8 +4655,6 @@ function createApp(options = {}) {
       const policy = policies[key] || {};
       const minDays = Number.isFinite(Number(policy.minDays)) ? Number(policy.minDays) : 7;
       const maxDays = Number.isFinite(Number(policy.maxDays)) ? Number(policy.maxDays) : 14;
-      const unitsPerPackage = Number.isFinite(Number(policy.unitsPerPackage)) && Number(policy.unitsPerPackage) > 0
-        ? Number(policy.unitsPerPackage) : 1;
       const managed = policy.managed === true;
       const metricMatcher = metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
         || metric.startsWith('mov-out -') || metric.startsWith('trn-out -');
@@ -4710,6 +4695,7 @@ function createApp(options = {}) {
       const configuredUnits = configuredPurchaseUnits(purchaseUnitConfigurations[key], product.unit, convertQuantityUnit);
       const purchaseUnit = configuredUnits?.purchaseUnit || originalPurchaseUnit;
       const unitsPerPurchaseUnit = configuredUnits ? configuredUnits.unitsPerPurchaseUnit : originalUnitsPerPurchaseUnit;
+      const unitsPerPackage = supplyMultipleFromPolicy(policy, unitsPerPurchaseUnit, purchaseUnit);
       const inferredSupplier = latestPurchase
         ? { key: latestPurchase.supplierKey, name: latestPurchase.supplier, taxId: latestPurchase.supplierTaxId }
         : supplierOptions.get('unassigned');
@@ -4725,7 +4711,9 @@ function createApp(options = {}) {
           : 0)
         : Math.max(0, -currentInventory);
       const needsPurchase = rawSuggestedInternalQuantity > 0;
-      const suggestedInternalQuantity = roundUpToPackageMultiple(rawSuggestedInternalQuantity, unitsPerPackage);
+      const suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(rawSuggestedInternalQuantity, unitsPerPurchaseUnit, unitsPerPackage);
+      const suggestedInternalQuantity = suggestedPurchaseUnits === null ? rawSuggestedInternalQuantity
+        : Number((suggestedPurchaseUnits * unitsPerPurchaseUnit).toPrecision(12));
       let purchaseOrderConversionMissing = false;
       const purchaseOrderInternalQuantity = (purchaseOrders.demandByItem.get(key) || []).reduce((sum, demand) => {
         const converted = convertQuantityUnit(demand.quantity, demand.unit, product.unit);
@@ -4736,12 +4724,7 @@ function createApp(options = {}) {
       const coverageAfterPurchaseOrdersDays = averageDailyConsumption > 0
         ? inventoryAfterPurchaseOrders / averageDailyConsumption
         : null;
-      const suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(
-        suggestedInternalQuantity, unitsPerPurchaseUnit
-      );
-      const projectedInternalQuantity = suggestedPurchaseUnits === null
-        ? suggestedInternalQuantity
-        : suggestedPurchaseUnits * unitsPerPurchaseUnit;
+      const projectedInternalQuantity = suggestedInternalQuantity;
       const fallbackCostReference = costResolver.resolve(key, product.unit, costCatalog.get(key));
       const estimatedPurchaseUnitCost = configuredUnits
         ? configuredPurchaseCost(latestPurchase, originalUnitsPerPurchaseUnit, configuredUnits, fallbackCostReference)
@@ -4770,6 +4753,7 @@ function createApp(options = {}) {
         minDays,
         maxDays,
         unitsPerPackage,
+        unitsPerPackageBasis: 'purchase',
         managed,
         minimumStock,
         maximumStock,
@@ -4985,10 +4969,10 @@ function createApp(options = {}) {
       const supplierKey = String(item.supplierKey || 'unassigned').trim();
       if (!key || !Number.isFinite(minDays) || !Number.isFinite(maxDays) || !Number.isFinite(unitsPerPackage)
         || minDays < 0 || maxDays < minDays || maxDays > 365 || unitsPerPackage <= 0 || unitsPerPackage > 1000000) {
-        return res.status(400).json({ error: 'Cada ítem debe tener días mínimos, días máximos y unidades por empaque válidos; el máximo no puede ser menor que el mínimo.' });
+        return res.status(400).json({ error: 'Cada ítem debe tener días mínimos, días máximos y un múltiplo mínimo de abastecimiento válidos; el máximo no puede ser menor que el mínimo.' });
       }
       registry.locations[location.id].items[key] = {
-        minDays, maxDays, unitsPerPackage, supplierKey, managed, updatedAt: new Date().toISOString()
+        minDays, maxDays, unitsPerPackage, unitsPerPackageBasis: 'purchase', supplierKey, managed, updatedAt: new Date().toISOString()
       };
     }
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
@@ -5028,7 +5012,8 @@ function createApp(options = {}) {
         return res.status(400).json({ error: `Revisa los criterios guardados de ${key} en la cafetería de origen antes de copiarlos.` });
       }
       items[key] = { minDays, maxDays, unitsPerPackage, supplierKey: String(policy.supplierKey || 'unassigned').trim(),
-        managed: policy.managed === true, updatedAt };
+        managed: policy.managed === true, updatedAt,
+        ...(policy.unitsPerPackageBasis === 'purchase' ? { unitsPerPackageBasis: 'purchase' } : {}) };
     }
     registry.locations ||= {};
     registry.locations[location.id] = { ...registry.locations[location.id], items };
@@ -5146,8 +5131,13 @@ function createApp(options = {}) {
       seen.add(key);
       const unitCost = Math.round(requestedUnitCost);
       const referenceCost = Math.round(Number(source.estimatedPurchaseUnitCost ?? source.referenceUnitCost ?? 0));
-      const unitsPerPurchaseUnit = Number(source.unitsPerPurchaseUnit);
-      const unitsPerPackage = Number(source.unitsPerPackage);
+      const unitsPerPurchaseUnit = source.unitsPerPurchaseUnit == null ? null : Number(source.unitsPerPurchaseUnit);
+      const unitsPerPackage = supplyMultipleFromPolicy(source, source.unitsPerPurchaseUnit, source.purchaseUnit);
+      if (!isSupplyMultiple(quantity, unitsPerPackage)) {
+        const error = new Error(`${source.name}: la cantidad debe ser un múltiplo de ${unitsPerPackage ?? 'la equivalencia pendiente'} ${source.purchaseUnit || 'unidades de abastecimiento'}.`);
+        error.status = 400;
+        throw error;
+      }
       return {
         key,
         code: source.code || '',
@@ -5156,6 +5146,7 @@ function createApp(options = {}) {
         purchaseUnit: source.purchaseUnit || '',
         unitsPerPurchaseUnit: Number.isFinite(unitsPerPurchaseUnit) ? unitsPerPurchaseUnit : null,
         unitsPerPackage: Number.isFinite(unitsPerPackage) && unitsPerPackage > 0 ? unitsPerPackage : 1,
+        unitsPerPackageBasis: 'purchase',
         suggestedPurchaseUnits: source.suggestedPurchaseUnits ?? null,
         referenceUnitCost: referenceCost,
         quantity,

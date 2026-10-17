@@ -1887,7 +1887,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(configuredProjection.items[0].maxDays, 20);
   assert.equal(configuredProjection.items[0].unitsPerPackage, 6);
   assert.ok(Math.abs(configuredProjection.items[0].rawSuggestedInternalQuantity - (10 / 3)) < 1e-12);
-  assert.equal(configuredProjection.items[0].suggestedInternalQuantity, 6);
+  assert.equal(configuredProjection.items[0].suggestedInternalQuantity, 72);
   assert.equal(configuredProjection.items[0].managed, true);
   assert.equal(configuredProjection.summary.managedItemCount, 1);
   assert.equal(configuredProjection.summary.purchaseItemCount, 1);
@@ -1917,7 +1917,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
       location: 'main-warehouse',
       supplierKey: '222',
       filters: { onlyRequired: true, onlyManaged: true },
-      items: [{ key: 'I1', quantity: 2, unitCost: 12.6 }]
+      items: [{ key: 'I1', quantity: 6, unitCost: 12.6 }]
     })
   });
   assert.equal(createOrder.status, 201);
@@ -1926,11 +1926,11 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.equal(createdOrder.orderNumber, 'OC-000001');
   assert.equal(createdOrder.sequence, 1);
   assert.equal(createdOrder.items.length, 1);
-  assert.equal(createdOrder.items[0].quantity, 2);
+  assert.equal(createdOrder.items[0].quantity, 6);
   assert.equal(createdOrder.items[0].unitsPerPackage, 6);
   assert.equal(createdOrder.items[0].unitCost, 13);
   assert.equal(createdOrder.items[0].costModified, true);
-  assert.equal(createdOrder.total, 26);
+  assert.equal(createdOrder.total, 78);
 
   const projectionWithSelectedOrder = await fetch(
     `${baseUrl}/api/purchase-projections?location=main-warehouse&orders=${encodeURIComponent(createdOrder.id)}`
@@ -1938,10 +1938,10 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.deepEqual(projectionWithSelectedOrder.purchaseOrders.selectedOrderIds, [createdOrder.id]);
   assert.equal(projectionWithSelectedOrder.purchaseOrders.selectedOrderCount, 1);
   assert.equal(projectionWithSelectedOrder.purchaseOrders.orders[0].selected, true);
-  assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderInternalQuantity, 24);
+  assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderInternalQuantity, 72);
   assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderConversionMissing, false);
-  assert.equal(projectionWithSelectedOrder.items[0].inventoryAfterPurchaseOrders, 24);
-  assert.equal(projectionWithSelectedOrder.items[0].coverageAfterPurchaseOrdersDays, 144);
+  assert.equal(projectionWithSelectedOrder.items[0].inventoryAfterPurchaseOrders, 72);
+  assert.equal(projectionWithSelectedOrder.items[0].coverageAfterPurchaseOrdersDays, 432);
 
   const orderList = await fetch(`${baseUrl}/api/purchase-orders?location=main-warehouse`).then(response => response.json());
   assert.equal(orderList.orders.length, 1);
@@ -1965,15 +1965,15 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   const updateOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items: [{ key: 'I1', quantity: 3, unitCost: createdOrder.items[0].referenceUnitCost }] })
+    body: JSON.stringify({ items: [{ key: 'I1', quantity: 12, unitCost: createdOrder.items[0].referenceUnitCost }] })
   });
   assert.equal(updateOrder.status, 200);
   const updatedOrder = await updateOrder.json();
-  assert.equal(updatedOrder.items[0].quantity, 3);
+  assert.equal(updatedOrder.items[0].quantity, 12);
   assert.equal(updatedOrder.items[0].costModified, false);
-  assert.equal(updatedOrder.total, 3 * createdOrder.items[0].referenceUnitCost);
+  assert.equal(updatedOrder.total, 12 * createdOrder.items[0].referenceUnitCost);
   const loadedOrder = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`).then(response => response.json());
-  assert.equal(loadedOrder.total, 3 * createdOrder.items[0].referenceUnitCost);
+  assert.equal(loadedOrder.total, 12 * createdOrder.items[0].referenceUnitCost);
   const invalidDelete = await fetch(`${baseUrl}/api/purchase-orders/${createdOrder.id}`, {
     method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: 'incorrecta' })
   });
@@ -1988,7 +1988,7 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       location: 'main-warehouse', supplierKey: '222',
-      items: [{ key: 'I1', quantity: 1, unitCost: createdOrder.items[0].referenceUnitCost }]
+      items: [{ key: 'I1', quantity: 6, unitCost: createdOrder.items[0].referenceUnitCost }]
     })
   }).then(response => response.json());
   assert.equal(secondOrder.orderNumber, 'OC-000002');
@@ -2102,16 +2102,16 @@ test('limits purchase projections to ingredients and the five explicit exception
   assert.ok(Math.abs(decimalItem.rawSuggestedInternalQuantity - 1.622066666666667) < 1e-12);
   assert.equal(decimalItem.suggestedInternalQuantity, 2.72);
   assert.equal(decimalItem.unitsPerPurchaseUnit, 1);
-  assert.equal(decimalItem.suggestedPurchaseUnits, 3);
-  assert.equal(decimalItem.projectedInternalQuantity, 3);
-  assert.equal(decimalItem.estimatedTotal, 300);
+  assert.equal(decimalItem.suggestedPurchaseUnits, 2.72);
+  assert.equal(decimalItem.projectedInternalQuantity, 2.72);
+  assert.equal(decimalItem.estimatedTotal, 272);
 
   const createResponse = await fetch(`${baseUrl}/api/purchase-orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       location: 'store-1', supplierKey: '111',
-      items: [{ key: 'I100', quantity: 1, unitCost: 100 }]
+      items: [{ key: 'I100', quantity: 2.72, unitCost: 100 }]
     })
   });
   assert.equal(createResponse.status, 201, await createResponse.clone().text());
@@ -2123,7 +2123,7 @@ test('limits purchase projections to ingredients and the five explicit exception
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       items: [
-        { key: 'I100', quantity: 1, unitCost: 100 },
+        { key: 'I100', quantity: 2.72, unitCost: 100 },
         { key: 'SUB005', quantity: 2, unitCost: 200 }
       ]
     })
@@ -2131,7 +2131,7 @@ test('limits purchase projections to ingredients and the five explicit exception
   assert.equal(updateResponse.status, 200, await updateResponse.clone().text());
   const updated = await updateResponse.json();
   assert.deepEqual(updated.items.map(item => item.key), ['I100', 'SUB005']);
-  assert.equal(updated.total, 500);
+  assert.equal(updated.total, 672);
 });
 
 test('warehouse projection ignores cafeteria orders after removing OC Suc', async t => {

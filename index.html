@@ -1429,15 +1429,15 @@
         <button id="open-tentative-purchase-orders" class="icon-button" type="button">Órdenes tentativas</button>
         <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
       </div>
-      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. La cantidad interna se redondea al empaque y luego las UDC se redondean hacia arriba.</p>
+      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. La necesidad de consumo se convierte a unidades de abastecimiento y se redondea hacia arriba al múltiplo mínimo permitido para solicitar la compra.</p>
       <div class="purchase-projection-table-wrap">
         <table class="purchase-projection-table">
           <thead>
             <tr>
-              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad|interna">Unidad<br />interna</th><th data-sort-key="purchaseUnit" data-header-lines="Unidad de|compra">Unidad de<br />compra</th><th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Contenido en|Unidad Interna">Contenido en<br />Unidad Interna</th><th data-sort-key="unitsPerPackage" data-header-lines="Unidades x|empaque">Unidades x<br />empaque</th>
+              <th data-sort-key="managed">Administrar</th><th data-sort-key="code">Código</th><th data-sort-key="name">Producto / ingrediente</th><th data-sort-key="supplier">Proveedor</th><th data-sort-key="internalUnit" data-header-lines="Unidad de|Consumo">Unidad de<br />Consumo</th><th data-sort-key="purchaseUnit" data-header-lines="Unidad de|Abastecimiento">Unidad de<br />Abastecimiento</th><th data-sort-key="unitsPerPurchaseUnit" data-header-lines="Un. de Consumo|x Un. de Abast.">Un. de Consumo<br />x Un. de Abast.</th><th data-sort-key="unitsPerPackage" data-header-lines="Multiplo Min.|Abast.">Multiplo Min.<br />Abast.</th>
               <th data-sort-key="currentInventory" data-header-lines="Inventario|actual">Inventario<br />actual</th><th id="projection-locals-inventory-header" data-sort-key="localsInventory" data-header-lines="Inventario|Locales" hidden>Inventario<br />Locales</th><th id="projection-total-inventory-header" data-sort-key="totalInventory" data-header-lines="Inventario|Total" hidden>Inventario<br />Total</th><th id="projection-own-consumption-header" data-sort-key="consumption30" data-header-lines="Consumo y salidas|del período">Consumo y salidas<br />del período</th><th id="projection-locals-daily-header" data-sort-key="localsDailyConsumption" data-header-lines="Consumo Diario|Locales" hidden>Consumo Diario<br />Locales</th><th id="projection-own-daily-header" data-sort-key="ownAverageDailyConsumption" data-header-lines="Promedio|diario">Promedio<br />diario</th><th id="projection-reference-daily-header" data-sort-key="projectedAverageDailyConsumption" data-header-lines="Prom Diario|Sustitutivo" hidden>Prom Diario<br />Sustitutivo</th><th id="projection-used-daily-header" data-sort-key="averageDailyConsumption" data-header-lines="Promedio Diario|utilizado para Reposición" hidden>Promedio Diario<br />utilizado para Reposición</th><th data-sort-key="currentCoverageDays" data-header-lines="Cobertura|actual">Cobertura<br />actual</th>
-              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th data-sort-key="suggestedInternalQuantity" data-header-lines="Sugerencia|interna">Sugerencia<br />interna</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
-              <th data-sort-key="suggestedPurchaseUnits" data-header-lines="UDC|sugeridas">UDC<br />sugeridas</th><th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo UDC|estimado">Costo UDC<br />estimado</th><th data-sort-key="estimatedTotal">Total estimado</th>
+              <th data-sort-key="minDays">Días mín.</th><th data-sort-key="maxDays">Días máx.</th><th data-sort-key="suggestedPurchaseUnits" data-header-lines="Sugerencia de|Abastecimiento">Sugerencia de<br />Abastecimiento</th><th id="projection-suggested-consumption-header" data-sort-key="suggestedConsumptionQuantity" data-header-lines="Sugerencia|Un. Consumo">Sugerencia<br />Un. Consumo</th><th id="projection-suggestion-coverage-header" data-sort-key="coverageAfterSuggestionDays" data-header-lines="Días con|sugerencia">Días con<br />sugerencia</th><th><button id="open-projection-purchase-orders" class="projection-orders-header-button" type="button" title="Seleccionar órdenes de compra para comparar">OC</button></th><th id="projection-new-coverage-header" data-header-lines="Cobertura|nueva" hidden>Cobertura<br />nueva</th>
+              <th data-sort-key="estimatedPurchaseUnitCost" data-header-lines="Costo Un.|Abastec.">Costo Un.<br />Abastec.</th><th data-sort-key="estimatedTotal">Total estimado</th>
             </tr>
           </thead>
           <tbody id="purchase-projection-body"></tbody>
@@ -1448,17 +1448,17 @@
           <div>
             <div class="panel-eyebrow">Abastecimiento · Maestro compartido</div>
             <h2 id="ingredient-purchase-master-title">Maestro de ingredientes</h2>
-            <p class="panel-description">Unidad interna del maestro utilizada para expresar los consumos. Configura cuánto contiene una unidad de compra; estas equivalencias se comparten entre las sucursales.</p>
+            <p class="panel-description">Unidad de consumo del maestro utilizada para expresar los consumos. Configura cuántas unidades de consumo contiene una unidad de abastecimiento; estas equivalencias se comparten entre las sucursales.</p>
           </div>
           <button id="close-ingredient-purchase-master" class="icon-button" type="button">Cerrar</button>
         </div>
         <label class="copy-projection-policies-field" for="ingredient-purchase-master-search">Buscar ingrediente o código
           <input id="ingredient-purchase-master-search" type="search" placeholder="Ej.: syrup caramelo" />
         </label>
-        <p class="form-status muted">Ejemplo: Botella de 750 ml = 0,75 L si la unidad interna es L, o 750 si es ML. La unidad interna se consulta aquí y conserva el valor del maestro.</p>
+        <p class="form-status muted">Ejemplo: Botella de 750 ml = 0,75 L si la unidad de consumo es L, o 750 si es ML. La unidad de consumo se consulta aquí y conserva el valor del maestro.</p>
         <div class="projection-branch-orders-table-wrap ingredient-purchase-master-table-wrap">
           <table class="projection-branch-orders-table">
-            <thead><tr><th>Código</th><th>Ingrediente</th><th>Unidad interna</th><th>Unidad de compra</th><th>Contenido en Unidad Interna</th><th>Equivalencia</th></tr></thead>
+            <thead><tr><th>Código</th><th>Ingrediente</th><th>Unidad de Consumo</th><th>Unidad de Abastecimiento</th><th>Un. de Consumo x Un. de Abast.</th><th>Equivalencia</th></tr></thead>
             <tbody id="ingredient-purchase-master-body"></tbody>
           </table>
         </div>
@@ -1470,7 +1470,7 @@
             <button id="ingredient-purchase-master-csv" class="icon-button" type="button" title="Exportar ingredientes visibles a CSV" disabled>CSV</button>
             <button id="ingredient-purchase-master-xlsx" class="icon-button" type="button" title="Exportar ingredientes visibles a Excel" disabled>XLSX</button>
           </div>
-          <button id="save-ingredient-purchase-master" class="primary" type="button" disabled>Guardar unidades de compra</button>
+          <button id="save-ingredient-purchase-master" class="primary" type="button" disabled>Guardar unidades de abastecimiento</button>
         </div>
       </dialog>
       <dialog id="projection-local-detail-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-local-detail-title">
@@ -1533,7 +1533,7 @@
         <label class="copy-projection-policies-field" for="copy-projection-policies-source">Cafetería de origen
           <select id="copy-projection-policies-source" disabled><option value="">Selecciona una cafetería</option></select>
         </label>
-        <p class="form-status muted">Se reemplazarán los proveedores, las unidades por empaque, los días mínimos y máximos y el campo Administrar con los criterios guardados del origen, por código de producto. Los productos sin criterios en el origen volverán a sus valores predeterminados y quedarán sin administrar.</p>
+        <p class="form-status muted">Se reemplazarán los proveedores, los múltiplos mínimos de abastecimiento, los días mínimos y máximos y el campo Administrar con los criterios guardados del origen, por código de producto. Los productos sin criterios en el origen volverán a sus valores predeterminados y quedarán sin administrar.</p>
         <p class="form-status muted">También se descartarán los cambios de criterios que aún no hayas guardado en la proyección actual.</p>
         <div id="copy-projection-policies-status" class="form-status" aria-live="polite"></div>
         <div class="projection-branch-orders-actions">
@@ -1582,7 +1582,7 @@
         </div>
         <div class="purchase-order-editor-table-wrap">
           <table class="purchase-order-editor-table">
-            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>UDC</th><th>Unidades x UDC</th><th>Unidades x empaque</th><th>UDC sugeridas</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
+            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>UDC</th><th>Un. de Consumo x Un. de Abast.</th><th>Multiplo Min. Abast.</th><th>Un Abast. Sugeridas</th><th>Cantidad UDA</th><th>Costo UDA</th><th>Total</th><th>Aviso</th></tr></thead>
             <tbody id="purchase-order-editor-body"></tbody>
             <tfoot><tr><td colspan="9">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
           </table>
@@ -1627,7 +1627,7 @@
           </div>
           <div class="tentative-orders-table-wrap">
             <table class="tentative-orders-table tentative-orders-buying-table">
-              <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Inventario</th><th>Cobertura</th><th>Sugerencia interna</th><th>Unidades x empaque</th><th>UDC</th><th>Unidades x UDC</th><th>Cantidad UDC</th><th>Costo UDC</th><th>Total</th><th>Aviso</th></tr></thead>
+              <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Inventario</th><th>Cobertura</th><th>Sugerencia de Abastecimiento</th><th>Multiplo Min. Abast.</th><th>UDC</th><th>Un. de Consumo x Un. de Abast.</th><th>Cantidad UDA</th><th>Costo UDA</th><th>Total</th><th>Aviso</th></tr></thead>
               <tbody id="tentative-orders-buying-body"></tbody>
             </table>
           </div>

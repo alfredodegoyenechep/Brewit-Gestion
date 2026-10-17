@@ -152,6 +152,57 @@ test('synchronized purchase projections exclude stock-managed products except th
   }
 });
 
+test('legacy multiples migrate to supply units once, copy with their basis, and orders enforce the allowed supply multiple', async t => {
+  const { root, json, project, base } = await setup(t);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [
+      { code: 'A', internalUnit: 'L', purchaseUnit: 'Botella', unitsPerPurchaseUnit: 1.36 },
+      { code: 'D', internalUnit: 'UN', purchaseUnit: 'Caja', unitsPerPurchaseUnit: 1000 }
+    ] }) });
+  const policyFile = path.join(root, 'config', 'purchase-projection-policies.json');
+  fs.writeFileSync(policyFile, JSON.stringify({ locations: { 'store-2': { items: {
+    A: { minDays: 7, maxDays: 14, unitsPerPackage: 1, supplierKey: '111', managed: true },
+    D: { minDays: 7, maxDays: 14, unitsPerPackage: 1000, managed: true }
+  } } } }));
+  const before = fs.readFileSync(policyFile, 'utf8');
+  const legacy = await project();
+  for (const code of ['A', 'D']) {
+    const item = legacy.items.find(item => item.code === code);
+    assert.equal(item.unitsPerPackage, 1);
+    assert.equal(item.unitsPerPackageBasis, 'purchase');
+  }
+  assert.equal(fs.readFileSync(policyFile, 'utf8'), before); // Reading converts without rewriting saved criteria.
+  await json('/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', items: legacy.items.map(item => ({ ...item, unitsPerPackage: item.code === 'A' ? 6 : item.unitsPerPackage })) }) });
+  const saved = JSON.parse(fs.readFileSync(policyFile, 'utf8')).locations['store-2'].items;
+  assert.equal(saved.D.unitsPerPackage, 1);
+  assert.equal(saved.D.unitsPerPackageBasis, 'purchase');
+  const projection = await project();
+  const a = projection.items.find(item => item.code === 'A');
+  assert.equal(a.unitsPerPackage, 6);
+  assert.equal(a.suggestedPurchaseUnits, 36);
+  assert.equal(a.suggestedInternalQuantity, 48.96);
+  assert.equal(a.estimatedTotal, 36 * a.estimatedPurchaseUnitCost);
+  assert.equal(projection.items.find(item => item.code === 'D').unitsPerPackage, 1);
+  await json('/api/purchase-projections/policies/copy', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-1', sourceLocation: 'store-2', confirmed: true }) });
+  assert.equal((await project('store-1')).items.find(item => item.code === 'A').unitsPerPackage, 6);
+  const create = quantity => fetch(base + '/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', supplierKey: '111', items: [{ key: 'A', quantity, unitCost: a.estimatedPurchaseUnitCost }] }) });
+  const invalid = await create(37);
+  assert.equal(invalid.status, 400);
+  assert.match((await invalid.json()).error, /múltiplo de 6 Botella/);
+  assert.equal((await json('/api/purchase-orders?location=store-2')).orders.length, 0);
+  const order = await (await create(36)).json();
+  assert.equal(order.items[0].quantity, 36);
+  assert.equal(order.items[0].internalQuantity, 48.96);
+  assert.equal(order.items[0].unitsPerPackageBasis, 'purchase');
+  const invalidUpdate = await fetch(base + `/api/purchase-orders/${order.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ key: 'A', quantity: 37, unitCost: a.estimatedPurchaseUnitCost }] }) });
+  assert.equal(invalidUpdate.status, 400);
+  assert.equal((await json(`/api/purchase-orders/${order.id}`)).items[0].quantity, 36);
+});
+
 test('ingredient buying units convert quantities and prices without modifying real consumption or the original master', async t => {
   const { root, json, project, configure } = await setup(t);
   const masterPath = path.join(root, 'masters', 'catalog.xlsx');
@@ -357,7 +408,8 @@ test('store order quantities still round up to purchase units without OC Suc con
       consumptionReference: { enabled: true, sourceLocationId: 'store-1', curveId: '50-75' } }
   } }));
   const item = (await project()).items.find(item => item.key === 'A');
-  assert.equal(item.suggestedInternalQuantity, 73);
+  assert.equal(item.rawSuggestedInternalQuantity, 73);
+  assert.equal(item.suggestedInternalQuantity, 84);
   assert.equal(item.suggestedPurchaseUnits, 7);
   assert.equal(item.projectedInternalQuantity, 84);
   assert.equal((await project('main-warehouse')).items.find(item => item.key === 'A').branchOrderInternalQuantity, undefined);
@@ -453,6 +505,10 @@ test('warehouse columns show consolidated values and open inventory and consumpt
     ['100,00', '50,00', '150,00', '0,00', '15,00', '10,0 días']);
   assert.equal(await page.locator('#projection-own-daily-header').isVisible(), false);
   assert.equal(await page.locator('#projection-locals-inventory-header').isVisible(), true);
+  assert.equal(await row.locator('.projection-suggested-consumption').innerText(), '0 L');
+  assert.equal(await row.locator('.projection-suggestion-coverage').innerText(), '10,0 días');
+  assert.match(await row.locator('.projection-suggestion-coverage').getAttribute('title'), /Inventario Total.*Consumo Diario Locales/);
+  assert.equal(await row.locator('td').count(), await page.locator('.purchase-projection-table th:visible').count());
   assert.equal(await page.locator('#projection-branch-orders-header, #open-projection-branch-orders, #projection-branch-orders-dialog').count(), 0);
   const dialog = page.locator('#projection-local-detail-dialog');
   await row.getByRole('button', { name: 'Ver detalle de Inventario Locales de A', exact: true }).click();
@@ -746,6 +802,36 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.deepEqual(cells.slice(4, 7), ['L', 'Botella', '0,75 L']);
   const keys = await page.locator('.purchase-projection-table th').evaluateAll(headers => headers.slice(4, 7).map(header => header.dataset.sortKey));
   assert.deepEqual(keys, ['internalUnit', 'purchaseUnit', 'unitsPerPurchaseUnit']);
+  const projectionRow = page.locator('#purchase-projection-body tr[data-key="A"]');
+  await projectionRow.locator('.projection-package-input').fill('6');
+  const suggestionColumn = await page.locator('.purchase-projection-table th').evaluateAll(headers =>
+    headers.filter(header => !header.hidden).findIndex(header => header.dataset.headerLines === 'Sugerencia de|Abastecimiento'));
+  assert.equal(await projectionRow.locator('td').nth(suggestionColumn).innerText(), '60 Botella');
+  assert.equal(await projectionRow.locator('.projection-suggested-consumption').innerText(), '45 L');
+  assert.equal(await projectionRow.locator('.projection-suggestion-coverage').innerText(), '14,0 días');
+  assert.equal(await page.locator('.purchase-projection-table th[data-header-lines="UDC|sugeridas"]').count(), 0);
+  assert.equal(await projectionRow.locator('td').count(), await page.locator('.purchase-projection-table th:visible').count());
+  await projectionRow.locator('.projection-package-input').fill('7');
+  assert.equal(await projectionRow.locator('.projection-suggested-consumption').innerText(), '47,25 L');
+  assert.equal(await projectionRow.locator('.projection-suggestion-coverage').innerText(), '14,8 días');
+  await projectionRow.locator('.projection-package-input').fill('6');
+  await page.locator('#save-projection-policies').click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Consumo considerado'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'config', 'purchase-projection-policies.json'))).locations['store-2'].items.A.unitsPerPackageBasis, 'purchase');
+  await page.locator('#projection-supplier-filter').selectOption('111');
+  await page.locator('#print-purchase-order').click();
+  const editorRow = page.locator('#purchase-order-editor-body tr[data-key="A"]');
+  const quantity = editorRow.locator('.purchase-order-quantity');
+  assert.equal(await quantity.inputValue(), '60');
+  assert.equal(await quantity.getAttribute('step'), '6');
+  await quantity.fill('61');
+  await page.locator('#confirm-purchase-order').click();
+  assert.match(await page.locator('#purchase-order-editor-status').innerText(), /múltiplos de 6 Botella/);
+  assert.equal(await page.locator('#print-saved-purchase-order').isDisabled(), true);
+  await quantity.fill('66');
+  await page.locator('#confirm-purchase-order').click();
+  await page.waitForFunction(() => !document.getElementById('print-saved-purchase-order').disabled);
+  assert.equal(await quantity.inputValue(), '66');
   assert.deepEqual(errors, []);
 });
 

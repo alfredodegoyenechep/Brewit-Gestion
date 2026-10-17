@@ -1,5 +1,5 @@
 const IngredientMasterExport = (() => {
-  const headers = ['Código', 'Ingrediente', 'Unidad interna', 'Unidad de compra', 'Contenido en Unidad Interna', 'Equivalencia'];
+  const headers = ['Código', 'Ingrediente', 'Unidad de Consumo', 'Unidad de Abastecimiento', 'Un. de Consumo x Un. de Abast.', 'Equivalencia'];
   const quantity = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(value);
 
   function values(item, draft = item) {
@@ -7,7 +7,7 @@ const IngredientMasterExport = (() => {
     const raw = draft.purchaseUnit ? draft.unitsPerPurchaseUnit : item.masterContent;
     const content = raw !== null && raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) && Number(raw) > 0
       ? Number(raw) : null;
-    return [item.code, item.name, item.internalUnit || 'Sin unidad interna', unit, content,
+    return [item.code, item.name, item.internalUnit || 'Sin unidad de consumo', unit, content,
       unit && content !== null ? `1 ${unit} = ${quantity(content)} ${item.internalUnit}` : 'Sin equivalencia'];
   }
 
@@ -7081,30 +7081,54 @@ function formatProjectionOneDecimal(value) {
   return new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(value));
 }
 
-function roundUpToPackageMultiple(quantity, unitsPerPackage) {
-  const value = Number(quantity);
-  const packageSize = Number(unitsPerPackage);
-  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(packageSize) || packageSize <= 0) return value;
-  return Number((Math.ceil((value / packageSize) - 1e-9) * packageSize).toPrecision(12));
+function supplyMultipleFromPolicy(policy, unitsPerPurchaseUnit, purchaseUnit) {
+  if (policy.unitsPerPackage === null) return null;
+  const multiple = Number(policy.unitsPerPackage);
+  if (!Number.isFinite(multiple) || multiple <= 0) return 1;
+  if (policy.unitsPerPackageBasis === 'purchase') return multiple;
+  const conversion = Number(unitsPerPurchaseUnit);
+  if (!Number.isFinite(conversion) || conversion <= 0) return null;
+  const converted = multiple / conversion;
+  const measured = /^(kg|kilo|kilogramo|g|gr|gramo|mg|l|lt|litro|ml)$/i.test(String(purchaseUnit || '').trim());
+  // Legacy package sizes were in consumption units. Counted supplies remain whole.
+  return measured ? Number(converted.toPrecision(12)) : Math.max(1, Math.ceil(converted - 1e-9));
 }
 
-function purchaseUnitsForInternalQuantity(quantity, unitsPerPurchaseUnit) {
-  const value = Number(quantity);
-  const conversion = Number(unitsPerPurchaseUnit);
-  if (!(value > 0) || !(conversion > 0)) return null;
-  return Math.ceil((value / conversion) - 1e-9);
+function purchaseUnitsForInternalQuantity(quantity, unitsPerPurchaseUnit, minimumMultiple = 1) {
+  const value = Number(quantity), conversion = Number(unitsPerPurchaseUnit), multiple = Number(minimumMultiple);
+  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(conversion) || conversion <= 0
+    || !Number.isFinite(multiple) || multiple <= 0) return null;
+  return Number((Math.max(1, Math.ceil((value / conversion / multiple) - 1e-9)) * multiple).toPrecision(12));
+}
+
+function isSupplyMultiple(quantity, minimumMultiple) {
+  const value = Number(quantity), multiple = Number(minimumMultiple);
+  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(multiple) || multiple <= 0) return false;
+  const ratio = value / multiple;
+  return Math.abs(ratio - Math.round(ratio)) <= 1e-8 && Math.round(ratio) >= 1;
 }
 
 function purchaseQuantityPackageWarning(item, purchaseQuantity) {
-  const quantity = Number(purchaseQuantity);
-  const packageSize = Number(item.unitsPerPackage);
-  const conversion = Number(item.unitsPerPurchaseUnit);
-  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(packageSize) || packageSize <= 0
-    || !Number.isFinite(conversion) || conversion <= 0) return '';
-  const internalQuantity = quantity * conversion;
-  const nearestMultiple = Math.round(internalQuantity / packageSize) * packageSize;
-  if (Math.abs(internalQuantity - nearestMultiple) <= Math.max(1, Math.abs(internalQuantity)) * 1e-8) return '';
-  return `Cantidad no múltiplo del empaque (${formatProjectionQuantity(packageSize)} ${item.internalUnit || 'un.'})`;
+  if (isSupplyMultiple(purchaseQuantity, item.unitsPerPackage)) return '';
+  return `Solicita múltiplos de ${formatProjectionQuantity(item.unitsPerPackage)} ${item.purchaseUnit || 'unidades de abastecimiento'}.`;
+}
+
+function formatSupplySuggestion(item) {
+  if (!item.needsPurchase) return 'No comprar';
+  if (item.suggestedPurchaseUnits === null) return item.unitsPerPackage === null ? 'Configura múltiplo' : 'Sin conversión';
+  return `${formatProjectionQuantity(item.suggestedPurchaseUnits)} ${item.purchaseUnit || ''}`.trim();
+}
+
+function projectionSuggestionMetrics(item) {
+  const suggestedConsumptionQuantity = !item.needsPurchase ? 0
+    : Number.isFinite(item.suggestedPurchaseUnits) && item.suggestedPurchaseUnits > 0
+      && Number.isFinite(item.unitsPerPurchaseUnit) && item.unitsPerPurchaseUnit > 0
+      ? Number((item.suggestedPurchaseUnits * item.unitsPerPurchaseUnit).toPrecision(12)) : null;
+  const inventory = item.totalInventory === undefined ? item.currentInventory : item.totalInventory;
+  const daily = item.localsDailyConsumption === undefined ? item.averageDailyConsumption : item.localsDailyConsumption;
+  const coverageAfterSuggestionDays = suggestedConsumptionQuantity !== null && Number.isFinite(inventory)
+    && Number.isFinite(daily) && daily > 0 ? (inventory + suggestedConsumptionQuantity) / daily : null;
+  return { suggestedConsumptionQuantity, coverageAfterSuggestionDays };
 }
 
 function filteredPurchaseProjectionItems() {
@@ -7136,12 +7160,13 @@ function recalculatePurchaseProjectionItem(item) {
       : 0)
     : Math.max(0, -item.currentInventory);
   item.needsPurchase = item.rawSuggestedInternalQuantity > 0;
-  item.suggestedInternalQuantity = roundUpToPackageMultiple(item.rawSuggestedInternalQuantity, item.unitsPerPackage);
   item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(
-    item.suggestedInternalQuantity, item.unitsPerPurchaseUnit
+    item.rawSuggestedInternalQuantity, item.unitsPerPurchaseUnit, item.unitsPerPackage
   );
-  item.projectedInternalQuantity = item.suggestedPurchaseUnits === null
-    ? item.suggestedInternalQuantity : item.suggestedPurchaseUnits * item.unitsPerPurchaseUnit;
+  item.suggestedInternalQuantity = item.suggestedPurchaseUnits === null ? item.rawSuggestedInternalQuantity
+    : Number((item.suggestedPurchaseUnits * item.unitsPerPurchaseUnit).toPrecision(12));
+  item.projectedInternalQuantity = item.suggestedInternalQuantity;
+  Object.assign(item, projectionSuggestionMetrics(item));
   item.estimatedTotal = item.suggestedPurchaseUnits === null || item.estimatedPurchaseUnitCost === null
     ? null : item.suggestedPurchaseUnits * item.estimatedPurchaseUnitCost;
 }
@@ -7262,7 +7287,7 @@ function renderIngredientPurchaseMaster() {
     const draft = ingredientPurchaseMasterDrafts.get(item.code) || item;
     const row = document.createElement('tr');
     row.dataset.code = item.code;
-    for (const value of [item.code, item.name, item.internalUnit || 'Sin unidad interna']) {
+    for (const value of [item.code, item.name, item.internalUnit || 'Sin unidad de consumo']) {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.appendChild(cell);
@@ -7270,7 +7295,7 @@ function renderIngredientPurchaseMaster() {
     const unitCell = document.createElement('td');
     const select = document.createElement('select');
     select.className = 'ingredient-master-purchase-unit';
-    select.setAttribute('aria-label', `Unidad de compra de ${item.name}`);
+    select.setAttribute('aria-label', `Unidad de abastecimiento de ${item.name}`);
     select.replaceChildren(new Option('Usar valores del maestro', ''),
       ...item.allowedPurchaseUnits.map(unit => new Option(unit, unit)));
     select.value = draft.purchaseUnit;
@@ -7286,7 +7311,7 @@ function renderIngredientPurchaseMaster() {
     input.className = 'ingredient-master-content';
     input.value = draft.unitsPerPurchaseUnit ?? '';
     input.disabled = !draft.purchaseUnit || !item.internalUnit;
-    input.setAttribute('aria-label', `Contenido en ${item.internalUnit} de ${item.name}`);
+    input.setAttribute('aria-label', `Unidades de consumo en ${item.internalUnit} por unidad de abastecimiento de ${item.name}`);
     contentCell.append(input, ` ${item.internalUnit}`);
     row.appendChild(contentCell);
     const equivalence = document.createElement('td');
@@ -7367,7 +7392,7 @@ async function openIngredientPurchaseMaster() {
     if (request !== ingredientPurchaseMasterRequest || !dialog.open) return;
     ingredientPurchaseMasterState = data;
     renderIngredientPurchaseMaster();
-    setStatus(status, `${data.items.length} ingredientes. Las unidades de compra se comparten entre todas las ubicaciones.`, 'muted');
+    setStatus(status, `${data.items.length} ingredientes. Las unidades de abastecimiento se comparten entre todas las ubicaciones.`, 'muted');
   } catch (error) {
     if (request === ingredientPurchaseMasterRequest && dialog.open) setStatus(status, error.message, 'error');
   }
@@ -7391,7 +7416,7 @@ async function saveIngredientPurchaseMaster() {
   document.getElementById('ingredient-purchase-master-search').disabled = true;
   dialog.querySelectorAll('.ingredient-purchase-master-exports button').forEach(control => { control.disabled = true; });
   dialog.querySelectorAll('tbody input, tbody select').forEach(control => { control.disabled = true; });
-  setStatus(status, 'Guardando unidades de compra…');
+  setStatus(status, 'Guardando unidades de abastecimiento…');
   try {
     await apiRequest('/api/purchase-projections/ingredient-master', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
@@ -7400,7 +7425,7 @@ async function saveIngredientPurchaseMaster() {
     ingredientPurchaseMasterDrafts.clear();
     resetPurchaseProjection();
     setStatus(document.getElementById('purchase-projection-status'),
-      'Unidades de compra guardadas. Presiona Actualizar para cargar la proyección.', 'success');
+      'Unidades de abastecimiento guardadas. Presiona Actualizar para cargar la proyección.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
@@ -7434,7 +7459,7 @@ function openProjectionLocalDetail(key, kind) {
   document.getElementById('projection-local-detail-title').textContent = inventory ? 'Detalle de Inventario Locales' : 'Detalle de Consumo Diario Locales';
   document.getElementById('projection-local-detail-product').textContent = `${item.code} · ${item.name} · Unidad consolidada: ${item.internalUnit}`;
   document.getElementById('projection-local-detail-description').textContent = inventory
-    ? 'Suma de los inventarios de todas las cafeterías activas, convertidos a la unidad interna del ingrediente. Cuando no hay datos, se considera 0. Se muestra la fecha del último inventario disponible en cada local.'
+    ? 'Suma de los inventarios de todas las cafeterías activas, convertidos a la unidad de consumo del ingrediente. Cuando no hay datos, se considera 0. Se muestra la fecha del último inventario disponible en cada local.'
     : 'Suma del promedio diario utilizado para reposición solo en las cafeterías donde este ingrediente está administrado. Si hay referencia vigente, se usa el mayor entre el promedio propio y el promedio de referencia multiplicado por su porcentaje. Cada promedio utiliza los días de historial disponibles desde la apertura. Los ingredientes no administrados y los valores sin datos aportan 0.';
   const header = document.createElement('tr');
   const labels = inventory
@@ -7529,6 +7554,7 @@ function renderPurchaseProjection() {
     return;
   }
   const data = purchaseProjectionState;
+  data.items.forEach(item => Object.assign(item, projectionSuggestionMetrics(item)));
   const showsWarehouseCoverage = data.location.type === 'warehouse';
   newCoverageHeader.hidden = !showsWarehouseCoverage;
   document.querySelectorAll('.purchase-projection-table thead th[data-sort-key]').forEach(cell => {
@@ -7610,9 +7636,11 @@ function renderPurchaseProjection() {
     packageInput.min = '0.0001';
     packageInput.max = '1000000';
     packageInput.step = 'any';
-    packageInput.value = String(item.unitsPerPackage ?? 1);
+    packageInput.value = item.unitsPerPackage === null ? '' : String(item.unitsPerPackage ?? 1);
     packageInput.className = 'projection-package-input';
-    packageInput.setAttribute('aria-label', `Unidades por empaque de ${item.name}`);
+    packageInput.setAttribute('aria-label', `Múltiplo mínimo de abastecimiento de ${item.name}`);
+    packageInput.title = item.unitsPerPackage === null ? 'Configura la equivalencia de abastecimiento para convertir el múltiplo guardado.'
+      : `Las solicitudes deben ser múltiplos de este valor en ${item.purchaseUnit || 'unidades de abastecimiento'}.`;
     packageCell.appendChild(packageInput);
     row.appendChild(packageCell);
     const plainValues = [
@@ -7663,11 +7691,27 @@ function renderPurchaseProjection() {
       row.appendChild(cell);
     }
     const leadingResultValues = [
-      item.needsPurchase ? `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit}` : 'No comprar'
+      { value: formatSupplySuggestion(item) },
+      {
+        value: item.suggestedConsumptionQuantity === null ? formatSupplySuggestion(item)
+          : `${formatProjectionQuantity(item.suggestedConsumptionQuantity)} ${item.internalUnit || ''}`.trim(),
+        className: 'projection-suggested-consumption',
+        title: 'Sugerencia de abastecimiento × unidades de consumo por unidad de abastecimiento.'
+      },
+      {
+        value: item.coverageAfterSuggestionDays !== null ? `${formatProjectionOneDecimal(item.coverageAfterSuggestionDays)} días`
+          : item.suggestedConsumptionQuantity === null ? formatSupplySuggestion(item)
+          : (showsLocals ? item.localsDailyConsumption : item.averageDailyConsumption) === 0 ? 'Sin consumo' : 'Sin datos',
+        className: 'projection-suggestion-coverage',
+        title: showsLocals ? '(Inventario Total + Sugerencia Un. Consumo) ÷ Consumo Diario Locales.'
+          : '(Inventario actual + Sugerencia Un. Consumo) ÷ Promedio diario utilizado para reposición.'
+      }
     ];
-    leadingResultValues.forEach(value => {
+    leadingResultValues.forEach(entry => {
       const cell = document.createElement('td');
-      cell.textContent = value;
+      cell.textContent = entry.value;
+      if (entry.className) cell.className = entry.className;
+      if (entry.title) cell.title = entry.title;
       row.appendChild(cell);
     });
     const purchaseOrderCell = document.createElement('td');
@@ -7682,10 +7726,10 @@ function renderPurchaseProjection() {
         purchaseOrderCell.title = 'Hay cantidades de órdenes cuya unidad no se pudo convertir.';
       } else if (item.purchaseOrderInternalQuantity + 1e-9 >= item.suggestedInternalQuantity) {
         purchaseOrderCell.classList.add('projection-purchase-order-sufficient');
-        purchaseOrderCell.title = 'La cantidad ordenada cubre la sugerencia interna.';
+        purchaseOrderCell.title = 'La cantidad ordenada cubre la sugerencia de abastecimiento.';
       } else {
         purchaseOrderCell.classList.add('projection-purchase-order-short');
-        purchaseOrderCell.title = 'La cantidad ordenada es menor que la sugerencia interna.';
+        purchaseOrderCell.title = 'La cantidad ordenada es menor que la sugerencia de abastecimiento.';
       }
     }
     row.appendChild(purchaseOrderCell);
@@ -7698,7 +7742,7 @@ function renderPurchaseProjection() {
       } else if (item.purchaseOrderConversionMissing) {
         newCoverageCell.textContent = 'Sin conversión';
         newCoverageCell.classList.add('projection-purchase-order-warning');
-        newCoverageCell.title = 'No fue posible convertir todas las cantidades a la unidad interna.';
+        newCoverageCell.title = 'No fue posible convertir todas las cantidades a la unidad de consumo.';
       } else if (item.coverageAfterPurchaseOrdersDays === null) {
         newCoverageCell.textContent = 'Sin consumo';
         newCoverageCell.title = 'No existe consumo diario para calcular la cobertura.';
@@ -7712,7 +7756,6 @@ function renderPurchaseProjection() {
       row.appendChild(newCoverageCell);
     }
     const trailingResultValues = [
-      item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits),
       item.estimatedPurchaseUnitCost === null ? '—' : formatClp(item.estimatedPurchaseUnitCost),
       item.estimatedTotal === null ? '—' : formatClp(item.estimatedTotal)
     ];
@@ -7743,7 +7786,7 @@ async function openProjectionPurchaseOrders() {
   const status = document.getElementById('projection-purchase-orders-status');
   const openButton = document.getElementById('open-projection-purchase-orders');
   document.getElementById('projection-purchase-orders-description').textContent =
-    `Selecciona las órdenes emitidas por ${purchaseProjectionState.location.name} que deseas comparar con la sugerencia interna.`;
+    `Selecciona las órdenes emitidas por ${purchaseProjectionState.location.name} que deseas comparar con la sugerencia de abastecimiento.`;
   openButton.disabled = true;
   try {
     const latest = await apiRequest(`/api/purchase-orders?location=${encodeURIComponent(purchaseProjectionState.location.id)}`);
@@ -8007,7 +8050,7 @@ async function copyProjectionPolicies() {
     return setStatus(status, 'La ubicación seleccionada cambió. Cierra este diálogo y vuelve a abrirlo para el nuevo destino.', 'error');
   }
   const sourceName = sourceSelect.selectedOptions[0].dataset.name;
-  if (!window.confirm(`¿Cargar los criterios guardados de ${sourceName} en ${dialog.dataset.locationName}?\n\nSe reemplazarán los proveedores, las unidades por empaque, los días mínimos y máximos y el campo Administrar existentes. Los productos sin criterios en el origen volverán a sus valores predeterminados y quedarán sin administrar. También se descartarán los cambios sin guardar de la proyección actual.\n\n¿Confirmas el reemplazo?`)) return;
+  if (!window.confirm(`¿Cargar los criterios guardados de ${sourceName} en ${dialog.dataset.locationName}?\n\nSe reemplazarán los proveedores, los múltiplos mínimos de abastecimiento, los días mínimos y máximos y el campo Administrar existentes. Los productos sin criterios en el origen volverán a sus valores predeterminados y quedarán sin administrar. También se descartarán los cambios sin guardar de la proyección actual.\n\n¿Confirmas el reemplazo?`)) return;
   button.disabled = true;
   cancelButton.disabled = true;
   sourceSelect.disabled = true;
@@ -8051,7 +8094,7 @@ async function savePurchaseProjectionPolicies() {
     !Number.isFinite(item.minDays) || !Number.isFinite(item.maxDays) || !Number.isFinite(item.unitsPerPackage)
     || item.minDays < 0 || item.maxDays < item.minDays || item.maxDays > 365
     || item.unitsPerPackage <= 0 || item.unitsPerPackage > 1000000);
-  if (invalid) return setStatus(status, `Revisa los días mínimos, máximos y las unidades por empaque de ${invalid.name}.`, 'error');
+  if (invalid) return setStatus(status, `Revisa los días mínimos, máximos y los múltiplos mínimos de abastecimiento de ${invalid.name}.`, 'error');
   button.disabled = true;
   try {
     await apiRequest('/api/purchase-projections/policies', {
@@ -8088,7 +8131,8 @@ function editablePurchaseOrderSupplierItem(item, options = {}) {
   const selected = options.selected === true;
   return {
     ...item,
-    unitsPerPackage: Number(item.unitsPerPackage) > 0 ? Number(item.unitsPerPackage) : 1,
+    unitsPerPackage: supplyMultipleFromPolicy(item, item.unitsPerPurchaseUnit, item.purchaseUnit),
+    unitsPerPackageBasis: 'purchase',
     referenceUnitCost,
     quantity,
     unitCost,
@@ -8212,8 +8256,8 @@ function renderPurchaseOrderEditor() {
     const quantityCell = document.createElement('td');
     const quantity = document.createElement('input');
     quantity.type = 'number';
-    quantity.min = '0';
-    quantity.step = '1';
+    quantity.min = String(item.unitsPerPackage || 0);
+    quantity.step = String(item.unitsPerPackage || 'any');
     quantity.value = String(item.quantity ?? 0);
     quantity.className = 'purchase-order-quantity';
     quantityCell.appendChild(quantity);
@@ -8276,6 +8320,8 @@ async function confirmPurchaseOrder() {
   if (selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
     return setStatus(status, 'Todos los ítems incluidos deben tener cantidad mayor que cero y un costo válido.', 'error');
   }
+  const invalidMultiple = selected.find(item => !isSupplyMultiple(item.quantity, item.unitsPerPackage));
+  if (invalidMultiple) return setStatus(status, `${invalidMultiple.name}: ${purchaseQuantityPackageWarning(invalidMultiple, invalidMultiple.quantity)}`, 'error');
   if (purchaseOrderHasChangedCosts() && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden con estos nuevos costos?')) return;
   const button = document.getElementById('confirm-purchase-order');
   button.disabled = true;
@@ -8345,7 +8391,7 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   supplierTaxId.textContent = order.supplier.taxId ? `RUT ${order.supplier.taxId}` : 'RUT no disponible';
   supplierBlock.append(supplierLabel, supplierName, supplierTaxId);
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDC</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDC</th><th>Total</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDA</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDA</th><th>Total</th></tr></thead>';
   const body = document.createElement('tbody');
   printableItems.forEach(item => {
     const row = document.createElement('tr');
@@ -8648,7 +8694,7 @@ function renderTentativePurchaseOrderReview() {
     [
       item.code || '—', item.name, formatProjectionMetric(item.currentInventory),
       item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
-      `${formatProjectionOneDecimal(item.suggestedInternalQuantity)} ${item.internalUnit || ''}`.trim(),
+      formatSupplySuggestion(item),
       formatProjectionQuantity(item.unitsPerPackage || 1),
       item.purchaseUnit || '—',
       item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión'
@@ -8657,15 +8703,15 @@ function renderTentativePurchaseOrderReview() {
     });
     const quantityCell = document.createElement('td');
     const quantity = document.createElement('input');
-    quantity.type = 'number'; quantity.min = '0'; quantity.step = '1'; quantity.value = String(item.quantity);
+    quantity.type = 'number'; quantity.min = String(item.unitsPerPackage || 0); quantity.step = String(item.unitsPerPackage || 'any'); quantity.value = String(item.quantity);
     quantity.className = 'tentative-order-quantity'; quantity.disabled = disabled;
-    quantity.setAttribute('aria-label', `Cantidad UDC de ${item.name}`);
+    quantity.setAttribute('aria-label', `Cantidad UDA de ${item.name}`);
     quantityCell.appendChild(quantity); row.appendChild(quantityCell);
     const costCell = document.createElement('td');
     const cost = document.createElement('input');
     cost.type = 'text'; cost.inputMode = 'numeric'; cost.value = formatPurchaseOrderCost(item.unitCost);
     cost.className = 'tentative-order-cost'; cost.disabled = disabled;
-    cost.setAttribute('aria-label', `Costo UDC de ${item.name}`);
+    cost.setAttribute('aria-label', `Costo UDA de ${item.name}`);
     costCell.appendChild(cost); row.appendChild(costCell);
     const totalCell = document.createElement('td'); totalCell.className = 'tentative-order-row-total'; row.appendChild(totalCell);
     const warningCell = document.createElement('td'); warningCell.className = 'tentative-order-row-warning'; row.appendChild(warningCell);
@@ -8789,6 +8835,8 @@ async function confirmTentativePurchaseOrder() {
     || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
     return setStatus(status, 'Selecciona al menos un ítem y revisa sus cantidades y costos.', 'error');
   }
+  const invalidMultiple = selected.find(item => !isSupplyMultiple(item.quantity, item.unitsPerPackage));
+  if (invalidMultiple) return setStatus(status, `${invalidMultiple.name}: ${purchaseQuantityPackageWarning(invalidMultiple, invalidMultiple.quantity)}`, 'error');
   if (selected.some(item => item.unitCost !== item.referenceUnitCost)
     && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden?')) return;
   const button = document.getElementById('confirm-tentative-purchase-order');
@@ -11857,7 +11905,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
     applySort(purchaseProjectionSort, header.dataset.sortKey,
-      ['managed', 'unitsPerPackage', 'currentInventory', 'localsInventory', 'totalInventory', 'localsDailyConsumption', 'consumption30', 'ownAverageDailyConsumption', 'projectedAverageDailyConsumption', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+      ['managed', 'unitsPerPackage', 'currentInventory', 'localsInventory', 'totalInventory', 'localsDailyConsumption', 'consumption30', 'ownAverageDailyConsumption', 'projectedAverageDailyConsumption', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'suggestedConsumptionQuantity', 'coverageAfterSuggestionDays', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderPurchaseProjection();
   });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
