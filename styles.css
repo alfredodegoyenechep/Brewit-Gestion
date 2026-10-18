@@ -5637,6 +5637,18 @@ body {
   font-size: calc(14px * var(--font-scale));
 }
 
+.purchase-order-quantity-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.purchase-order-quantity-unit,
+.purchase-order-consumption-quantity {
+  white-space: nowrap;
+}
+
 .purchase-order-editor-table tfoot td:first-child {
   padding-right: 8px;
   text-align: right !important;

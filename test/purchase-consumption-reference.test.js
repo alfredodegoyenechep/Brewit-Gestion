@@ -203,6 +203,45 @@ test('legacy multiples migrate to supply units once, copy with their basis, and 
   assert.equal((await json(`/api/purchase-orders/${order.id}`)).items[0].quantity, 36);
 });
 
+test('orders save and update the reviewed warehouse projection without recalculating cafeteria inventories', async t => {
+  const { app, root, project, json, base } = await setup(t);
+  await json('/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'main-warehouse', items: [{ key: 'A', supplierKey: '111',
+      minDays: 7, maxDays: 14, managed: true, unitsPerPackage: 3 }] }) });
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', purchaseUnit: 'Botella', unitsPerPurchaseUnit: 2 }] }) });
+  const projection = await project('main-warehouse');
+  assert.ok(projection.projectionId);
+  let recalculations = 0;
+  app.locals.toteatStockSync.current = () => { recalculations++; throw Error('Do not recalculate inventory while saving'); };
+  const send = (payload, orderId) => fetch(base + '/api/purchase-orders' + (orderId ? '/' + orderId : ''), {
+    method: orderId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'main-warehouse', supplierKey: '111', projectionId: projection.projectionId, ...payload })
+  });
+  const items = [{ key: 'A', quantity: 3, unitCost: 120, unitsPerPurchaseUnit: 999 }];
+  assert.equal((await send({ items, projectionId: 'missing' })).status, 409);
+  assert.equal((await send({ items, location: 'store-2' })).status, 409);
+  assert.equal((await send({ items: [{ key: 'D', quantity: 3, unitCost: 120 }] })).status, 400);
+  assert.equal((await send({ items: [{ key: 'A', quantity: 4, unitCost: 120 }] })).status, 400);
+  const response = await send({ items });
+  assert.equal(response.status, 201);
+  const saved = await response.json();
+  assert.equal(saved.total, 360);
+  assert.equal(saved.items[0].internalQuantity, 6);
+  assert.equal(saved.items[0].unitsPerPurchaseUnit, 2);
+  assert.equal((await json('/api/purchase-orders?location=main-warehouse')).orders[0].id, saved.id);
+  const file = path.join(root, 'reports', 'purchase-orders', saved.id + '.json');
+  assert.equal(JSON.parse(fs.readFileSync(file)).items[0].internalQuantity, 6);
+  const updatedResponse = await send({ items: [{ ...items[0], quantity: 6 }] }, saved.id);
+  assert.equal(updatedResponse.status, 200);
+  const updated = await updatedResponse.json();
+  assert.equal(updated.items[0].internalQuantity, 12);
+  assert.equal(updated.total, 720);
+  assert.equal((await json('/api/purchase-orders/' + saved.id)).total, 720);
+  assert.equal(JSON.parse(fs.readFileSync(file)).total, 720);
+  assert.equal(recalculations, 0);
+});
+
 test('ingredient buying units convert quantities and prices without modifying real consumption or the original master', async t => {
   const { root, json, project, configure } = await setup(t);
   const masterPath = path.join(root, 'masters', 'catalog.xlsx');
@@ -502,7 +541,7 @@ test('warehouse columns show consolidated values and open inventory and consumpt
   await page.locator('#projection-only-required').uncheck();
   const row = page.locator('#purchase-projection-body tr[data-key="A"]');
   assert.deepEqual((await row.locator('td').allTextContents()).slice(8, 14),
-    ['100,00', '50,00', '150,00', '0,00', '15,00', '10,0 días']);
+    ['100,00 L', '50,00', '150,00', '0,00', '15,00', '10,0 días']);
   assert.equal(await page.locator('#projection-own-daily-header').isVisible(), false);
   assert.equal(await page.locator('#projection-locals-inventory-header').isVisible(), true);
   assert.equal(await row.locator('.projection-suggested-consumption').innerText(), '0 L');
@@ -570,7 +609,9 @@ test('projection streams real calculation stages and the same result as a JSON r
   assert.ok(events.some(event => event.unit === 'cafeterías' && event.completed === 2 && event.total === 2));
   assert.ok(events.some(event => /Consolidando inventario/.test(event.message)));
   assert.equal(events.at(-1).type, 'result');
-  assert.deepEqual(events.at(-1).data, expected);
+  assert.ok(events.at(-1).data.projectionId);
+  assert.notEqual(events.at(-1).data.projectionId, expected.projectionId);
+  assert.deepEqual({ ...events.at(-1).data, projectionId: null }, { ...expected, projectionId: null });
   const invalid = await fetch(base + '/api/purchase-projections?location=missing&progress=1');
   assert.equal(invalid.status, 400);
   stocks['main-warehouse'] = null;
@@ -723,7 +764,7 @@ test('projection headers and first four columns stay fixed when scrolling and re
 });
 
 test('UI ingredient master preserves drafts through search and only refreshes projection when requested', { skip: !fs.existsSync(chrome) }, async t => {
-  const { base, root } = await setup(t);
+  const { base, root, app, json } = await setup(t);
   const browser = await chromium.launch({ executablePath: chrome, headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
@@ -822,6 +863,10 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   await page.locator('#print-purchase-order').click();
   const editorRow = page.locator('#purchase-order-editor-body tr[data-key="A"]');
   const quantity = editorRow.locator('.purchase-order-quantity');
+  assert.equal(await page.locator('.purchase-order-editor-table th').nth(3).innerText(), 'Un. de Abast.');
+  assert.equal(await editorRow.locator('td').nth(4).innerText(), '0,75 L por Botella');
+  assert.equal(await editorRow.locator('.purchase-order-quantity-unit').innerText(), 'Botella');
+  assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '45 L');
   assert.equal(await quantity.inputValue(), '60');
   assert.equal(await quantity.getAttribute('step'), '6');
   await quantity.fill('61');
@@ -829,9 +874,44 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.match(await page.locator('#purchase-order-editor-status').innerText(), /múltiplos de 6 Botella/);
   assert.equal(await page.locator('#print-saved-purchase-order').isDisabled(), true);
   await quantity.fill('66');
+  assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '49,5 L');
+  let releaseSave;
+  const saveGate = new Promise(resolve => { releaseSave = resolve; });
+  let failSave = true;
+  await page.route('**/api/purchase-orders', async route => {
+    await saveGate;
+    if (failSave) {
+      failSave = false;
+      return route.fulfill({ status: 500, json: { error: 'No se pudo guardar la orden de prueba.' } });
+    }
+    await route.continue();
+  });
+  app.locals.toteatStockSync.current = () => { throw Error('Saving must reuse the projection'); };
+  await page.locator('#confirm-purchase-order').click();
+  assert.equal(await page.locator('#confirm-purchase-order').isDisabled(), true);
+  assert.equal(await page.locator('#purchase-order-editor-status').innerText(), 'Guardando orden…');
+  releaseSave();
+  await page.waitForFunction(() => !document.getElementById('confirm-purchase-order').disabled);
+  assert.equal(await page.locator('#purchase-order-editor-status').innerText(), 'No se pudo guardar la orden de prueba.');
+  assert.equal(await page.locator('#print-saved-purchase-order').isDisabled(), true);
+  assert.equal((await json('/api/purchase-orders?location=store-2')).orders.length, 0);
   await page.locator('#confirm-purchase-order').click();
   await page.waitForFunction(() => !document.getElementById('print-saved-purchase-order').disabled);
   assert.equal(await quantity.inputValue(), '66');
+  assert.match(await page.locator('#purchase-order-editor-title').innerText(), /Orden de compra OC-/);
+  assert.match(await page.locator('#purchase-order-editor-status').innerText(), /guardada correctamente/);
+  const orders = await json('/api/purchase-orders?location=store-2');
+  assert.equal(orders.orders.length, 1);
+  const savedOrder = await json('/api/purchase-orders/' + orders.orders[0].id);
+  assert.equal(savedOrder.items[0].quantity, 66);
+  assert.equal(savedOrder.items[0].internalQuantity, 49.5);
+  assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '49,5 L');
+  await quantity.fill('72');
+  assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '54 L');
+  await page.locator('#confirm-purchase-order').click();
+  await page.waitForFunction(() => !document.getElementById('print-saved-purchase-order').disabled);
+  assert.equal((await json('/api/purchase-orders/' + savedOrder.id)).items[0].internalQuantity, 54);
+  await page.screenshot({ path: '/private/tmp/brewit-purchase-order-units.png' });
   assert.deepEqual(errors, []);
 });
 

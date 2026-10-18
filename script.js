@@ -7644,7 +7644,7 @@ function renderPurchaseProjection() {
     packageCell.appendChild(packageInput);
     row.appendChild(packageCell);
     const plainValues = [
-      { value: formatProjectionMetric(item.currentInventory) },
+      { value: `${formatProjectionMetric(item.currentInventory)} ${item.internalUnit || ''}`.trim() },
       ...(showsLocals ? [
         { value: projectionLocalMetric(item, 'localsInventory', 'localsInventorySubtotal'), detail: 'inventory' },
         { value: item.totalInventory === null ? 'Sin datos completos' : formatProjectionMetric(item.totalInventory), title: 'Inventario Actual de bodega + Inventario Locales.' }
@@ -8191,6 +8191,10 @@ function updatePurchaseOrderEditorTotals() {
     const rowTotal = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
       ? item.quantity * item.unitCost : 0;
     row.querySelector('.purchase-order-row-total').textContent = formatClp(rowTotal);
+    const consumptionQuantity = Number.isFinite(item.quantity) && Number.isFinite(item.unitsPerPurchaseUnit)
+      && item.unitsPerPurchaseUnit > 0 ? Number((item.quantity * item.unitsPerPurchaseUnit).toPrecision(12)) : null;
+    row.querySelector('.purchase-order-consumption-quantity').textContent = consumptionQuantity === null
+      ? 'Sin conversión' : `${formatProjectionQuantity(consumptionQuantity)} ${item.internalUnit || ''}`.trim();
     row.querySelector('.purchase-order-row-warning').textContent = [
       changed ? 'Costo modificado' : '', packageWarning,
       !item.editorDefaultVisible && item.selected ? 'Ítem adicional' : ''
@@ -8245,7 +8249,8 @@ function renderPurchaseOrderEditor() {
     selectCell.appendChild(checkbox);
     row.appendChild(selectCell);
     [item.code || '—', item.name, item.purchaseUnit || '—',
-      item.unitsPerPurchaseUnit === null ? '—' : formatProjectionQuantity(item.unitsPerPurchaseUnit),
+      item.unitsPerPurchaseUnit == null ? 'Sin conversión'
+        : `${formatProjectionQuantity(item.unitsPerPurchaseUnit)} ${item.internalUnit || ''} por ${item.purchaseUnit || 'Un. de Abast.'}`.trim(),
       formatProjectionQuantity(item.unitsPerPackage || 1),
       item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits)]
       .forEach(value => {
@@ -8260,8 +8265,18 @@ function renderPurchaseOrderEditor() {
     quantity.step = String(item.unitsPerPackage || 'any');
     quantity.value = String(item.quantity ?? 0);
     quantity.className = 'purchase-order-quantity';
-    quantityCell.appendChild(quantity);
+    quantity.setAttribute('aria-label', `Cantidad UDA de ${item.name}`);
+    const quantityUnit = document.createElement('span');
+    quantityUnit.className = 'purchase-order-quantity-unit';
+    quantityUnit.textContent = item.purchaseUnit || '—';
+    const quantityControl = document.createElement('div');
+    quantityControl.className = 'purchase-order-quantity-control';
+    quantityControl.append(quantity, quantityUnit);
+    quantityCell.appendChild(quantityControl);
     row.appendChild(quantityCell);
+    const consumptionCell = document.createElement('td');
+    consumptionCell.className = 'purchase-order-consumption-quantity';
+    row.appendChild(consumptionCell);
     const costCell = document.createElement('td');
     const cost = document.createElement('input');
     cost.type = 'text';
@@ -8296,6 +8311,7 @@ function openPurchaseOrderEditor() {
     location: data.location,
     supplier,
     projectionPeriod: data.period,
+    projectionId: data.projectionId,
     filters: {
       onlyRequired: document.getElementById('projection-only-required').checked,
       onlyManaged: document.getElementById('projection-only-managed').checked,
@@ -8313,6 +8329,8 @@ function openPurchaseOrderEditor() {
 
 async function confirmPurchaseOrder() {
   if (!purchaseOrderEditorState) return;
+  const button = document.getElementById('confirm-purchase-order');
+  if (button.disabled) return;
   updatePurchaseOrderEditorTotals();
   const status = document.getElementById('purchase-order-editor-status');
   const selected = purchaseOrderEditorState.items.filter(item => item.selected);
@@ -8323,13 +8341,15 @@ async function confirmPurchaseOrder() {
   const invalidMultiple = selected.find(item => !isSupplyMultiple(item.quantity, item.unitsPerPackage));
   if (invalidMultiple) return setStatus(status, `${invalidMultiple.name}: ${purchaseQuantityPackageWarning(invalidMultiple, invalidMultiple.quantity)}`, 'error');
   if (purchaseOrderHasChangedCosts() && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden con estos nuevos costos?')) return;
-  const button = document.getElementById('confirm-purchase-order');
   button.disabled = true;
+  button.textContent = 'Guardando orden…';
+  setStatus(status, 'Guardando orden…');
   try {
     const existing = purchaseOrderEditorState.id;
     const payload = {
       location: purchaseOrderEditorState.location.id,
       supplierKey: purchaseOrderEditorState.supplier.key,
+      projectionId: purchaseOrderEditorState.projectionId,
       filters: purchaseOrderEditorState.filters,
       items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
     };
@@ -8339,13 +8359,14 @@ async function confirmPurchaseOrder() {
       body: JSON.stringify(payload)
     });
     const supplierItems = purchaseOrderEditorState.items;
-    purchaseOrderEditorState = editableSavedPurchaseOrder(saved, supplierItems);
+    purchaseOrderEditorState = { ...editableSavedPurchaseOrder(saved, supplierItems), projectionId: purchaseOrderEditorState.projectionId };
     renderPurchaseOrderEditor();
     setStatus(status, `Orden ${saved.orderNumber} guardada correctamente. Ya puedes imprimirla o volver a modificarla.`, 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
+    button.textContent = 'Confirmar y guardar orden';
   }
 }
 
@@ -8391,7 +8412,7 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   supplierTaxId.textContent = order.supplier.taxId ? `RUT ${order.supplier.taxId}` : 'RUT no disponible';
   supplierBlock.append(supplierLabel, supplierName, supplierTaxId);
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDA</th><th>UDC</th><th>Equivalencia interna</th><th>Costo UDA</th><th>Total</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Cantidad UDA</th><th>Un. de Abast.</th><th>Cantidad Un. de Cons.</th><th>Costo UDA</th><th>Total</th></tr></thead>';
   const body = document.createElement('tbody');
   printableItems.forEach(item => {
     const row = document.createElement('tr');
@@ -8527,14 +8548,16 @@ async function openSavedPurchaseOrder(orderId, printOnly = false) {
     const order = await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}`);
     if (printOnly) return printPurchaseOrder(order);
     let supplierItems = [];
+    let projectionId;
     try {
       const projection = await apiRequest(`/api/purchase-projections?location=${encodeURIComponent(order.location.id)}`);
       supplierItems = projection.items.filter(item => item.supplierKey === order.supplier.key);
+      projectionId = projection.projectionId;
     } catch {
       supplierItems = [];
     }
     document.getElementById('past-purchase-orders-dialog').close();
-    purchaseOrderEditorState = editableSavedPurchaseOrder(order, supplierItems);
+    purchaseOrderEditorState = { ...editableSavedPurchaseOrder(order, supplierItems), projectionId };
     renderPurchaseOrderEditor();
     document.getElementById('purchase-order-editor-dialog').showModal();
   } catch (error) {
@@ -8787,6 +8810,7 @@ async function generateTentativePurchaseOrders() {
       return {
         ...location,
         period: projection.period,
+        projectionId: projection.projectionId,
         groups: uniqueGroups
       };
     });
@@ -8848,6 +8872,7 @@ async function confirmTentativePurchaseOrder() {
       body: JSON.stringify({
         location: location.id,
         supplierKey: group.supplier.key,
+        projectionId: location.projectionId,
         filters: { onlyRequired: true, onlyManaged: true },
         items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
       })

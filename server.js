@@ -4840,6 +4840,37 @@ function createApp(options = {}) {
     };
   }
 
+  // Keep the server-calculated ordering basis so confirming an order does not
+  // repeat inventory and consumption calculations for every cafeteria.
+  const purchaseOrderProjections = new Map();
+  const purchaseOrderProjectionLifetime = 4 * 60 * 60 * 1000;
+  function retainPurchaseOrderProjection(projection) {
+    for (const [id, snapshot] of purchaseOrderProjections) {
+      if (Date.now() - snapshot.createdAt > purchaseOrderProjectionLifetime) purchaseOrderProjections.delete(id);
+    }
+    while (purchaseOrderProjections.size >= 64) purchaseOrderProjections.delete(purchaseOrderProjections.keys().next().value);
+    const projectionId = crypto.randomUUID();
+    const fields = ['key', 'code', 'name', 'supplierKey', 'internalUnit', 'purchaseUnit', 'unitsPerPurchaseUnit',
+      'unitsPerPackage', 'unitsPerPackageBasis', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost'];
+    purchaseOrderProjections.set(projectionId, { createdAt: Date.now(), projection: {
+      location: projection.location, company: projection.company, period: projection.period,
+      suppliers: projection.suppliers,
+      items: projection.items.map(item => Object.fromEntries(fields.map(key => [key, item[key]])))
+    } });
+    return { ...projection, projectionId };
+  }
+  function purchaseOrderProjection(locationId, projectionId) {
+    if (!projectionId) return buildPurchaseProjection(locationId);
+    const snapshot = purchaseOrderProjections.get(projectionId);
+    if (!snapshot || Date.now() - snapshot.createdAt > purchaseOrderProjectionLifetime
+      || snapshot.projection.location.id !== locationId || !activeLocation(locationId)) {
+      const error = new Error('La proyección de esta orden venció o ya no está disponible. Cierra la orden y actualiza la proyección antes de guardar.');
+      error.status = 409;
+      throw error;
+    }
+    return snapshot.projection;
+  }
+
   app.get('/api/purchase-projections', async (req, res) => {
     const stream = req.query.progress === '1';
     const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
@@ -4848,7 +4879,7 @@ function createApp(options = {}) {
         ? String(req.query.orders || '').split(',').map(value => value.trim()).filter(Boolean)
         : null;
       const locationId = String(req.query.location || '');
-      if (!stream) return res.json(buildPurchaseProjection(locationId, selectedPurchaseOrderIds));
+      if (!stream) return res.json(retainPurchaseOrderProjection(buildPurchaseProjection(locationId, selectedPurchaseOrderIds)));
       if (!activeLocation(locationId)) return res.status(400).json({ error: 'Selecciona una cafetería o bodega válida.' });
       res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
       res.flushHeaders();
@@ -4857,7 +4888,8 @@ function createApp(options = {}) {
         while (!res.destroyed) {
           const step = calculation.next();
           if (step.done) {
-            const data = res.locals.decorateSourcePolicy ? res.locals.decorateSourcePolicy(step.value) : step.value;
+            const projection = retainPurchaseOrderProjection(step.value);
+            const data = res.locals.decorateSourcePolicy ? res.locals.decorateSourcePolicy(projection) : projection;
             send({ type: 'result', data });
             break;
           }
@@ -5177,7 +5209,7 @@ function createApp(options = {}) {
 
   app.post('/api/purchase-orders', (req, res) => {
     try {
-      const projection = buildPurchaseProjection(String(req.body?.location || ''));
+      const projection = purchaseOrderProjection(String(req.body?.location || ''), req.body?.projectionId);
       const supplierKey = String(req.body?.supplierKey || '');
       const supplier = projection.suppliers.find(item => item.key === supplierKey);
       if (!supplier || ['all', 'unassigned'].includes(supplierKey)) {
@@ -5222,7 +5254,7 @@ function createApp(options = {}) {
       const filePath = purchaseOrderPath(req.params.orderId);
       const existing = filePath ? readJson(filePath, null) : null;
       if (!existing) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
-      const projection = buildPurchaseProjection(existing.location.id);
+      const projection = purchaseOrderProjection(existing.location.id, req.body?.projectionId);
       const availableItems = projection.items.filter(item => item.supplierKey === existing.supplier.key);
       const items = normalizedPurchaseOrderItems(req.body?.items, availableItems, existing.items);
       const updatedAt = new Date().toISOString();
