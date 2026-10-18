@@ -116,7 +116,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.equal(url.searchParams.get('includeCurrent'), 'false');
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(await page.locator('#weekly-results-workspace').isVisible(), true);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 22);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 26);
   assert.equal(await page.locator('.weekly-results-table thead tr').count(), 3);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 3);
   assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 8);
@@ -128,7 +128,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
 
   const locations = [{ id: 'store-1', name: 'La Concepción' }, { id: 'store-2', name: 'Lyon' }, { id: 'store-3', name: 'Nueva sucursal' }];
   const data = buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-13', locations }, (location, period) => ({
-    values: { netSales: value(location.id === 'store-2' ? 0 : 1000, 'complete'), tips: value(100, 'complete'),
+    values: { netSales: value(location.id === 'store-2' ? 0 : 1000, 'complete'), margin: value(location.id === 'store-2' ? 0 : 700, 'complete'), tips: value(100, 'complete'),
       grossSales: value(1200, 'complete'), discounts: value(100, 'complete'),
       mercadoPagoTips: value(80, 'complete'), cashTips: value(20, 'complete'),
       mercadoPagoFee: value(35, 'complete'),
@@ -160,6 +160,18 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.equal(await page.locator('[data-metric="inventoryConsumptionTotal"] th').innerText(), 'Total inventario faltante, merma, marketing, consumo personal y otros gastos / consumibles');
   assert.equal(await page.locator('[data-metric="inventoryConsumptionTotal"] + tr').getAttribute('data-metric'), 'finalInventory');
   assert.equal(await page.locator('[data-metric="finalInventory"] .weekly-results-amount').first().innerText(), '$1.800\nInventario teórico · 13-10-2026');
+  assert.deepEqual(await page.locator('#weekly-results-table tbody tr').evaluateAll(rows => rows.slice(-3).map(row => row.dataset.metric)),
+    ['variableCosts', 'cogs', 'otherVariableCosts']);
+  assert.equal(await page.locator('[data-metric="variableCosts"] th').innerText(), 'Costos Variables');
+  assert.equal(await page.locator('[data-metric="cogs"] th').innerText(), 'COGs');
+  assert.equal(await page.locator('[data-metric="otherVariableCosts"] th').innerText(), 'Otros Variables');
+  assert.equal(await page.locator('[data-metric="cogs"] .weekly-results-amount').first().innerText(), '$-300');
+  assert.equal(await page.locator('[data-metric="cogs"] .weekly-results-percent').first().innerText(), '-30,0%');
+  assert.equal(await page.locator('[data-metric="variableCosts"] .weekly-results-amount').first().innerText(), 'Incompleto');
+  assert.equal(await page.locator('[data-metric="variableCosts"] .weekly-results-amount').nth(3).innerText(), '$-450\nParcial');
+  assert.equal(await page.locator('[data-metric="variableCosts"] .weekly-results-percent').nth(3).innerText(), '-45,0%\nParcial');
+  assert.equal(await page.locator('[data-metric="otherVariableCosts"] .weekly-results-amount').nth(3).innerText(),
+    await page.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').nth(3).innerText());
   assert.equal(await page.locator('[data-metric="finalInventory"] .weekly-results-amount').nth(3).innerText(), '$1.800\nFísico · 11-10-2026');
   assert.deepEqual((await page.locator('[data-metric="finalInventory"] .weekly-results-percent').allTextContents()).slice(0, 3), ['180,0%', '—', '180,0%']);
   assert.equal(await page.locator('[data-metric="employees"] + tr').getAttribute('data-metric'), 'otherConsumables');
@@ -190,7 +202,15 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.deepEqual(sizes, [4, 4]);
   assert.equal(await page.locator('[data-metric="collectionDifference"] .weekly-results-amount').first().innerText(), '$-65');
   assert.equal(await page.locator('[data-metric="collectionDifference"] .weekly-results-percent').first().innerText(), '-6,5%');
-  assert.match(await page.locator('.weekly-results-note').innerText(), /Control de diferencias = Mercado Pago − MP Teorico/);
+  const criteria = page.locator('#weekly-results-criteria');
+  assert.equal(await criteria.evaluate(details => details.open), false);
+  assert.equal(await criteria.locator('.weekly-results-note').isVisible(), false);
+  await criteria.locator('summary').click();
+  assert.match(await criteria.innerText(), /Control de diferencias = Mercado Pago − MP Teorico/);
+  assert.match(await criteria.innerText(), /Costo parcial de inventario/);
+  assert.equal(await criteria.locator('.weekly-results-note').isVisible(), true);
+  await criteria.locator('summary').click();
+  assert.equal(await criteria.locator('.weekly-results-note').isVisible(), false);
   await page.getByRole('button', { name: 'Revisar fechas y fuentes de La Concepción, semana del 05-10-2026' }).click();
   assert.equal(await page.locator('#weekly-results-detail').isVisible(), true);
   const detail = await page.locator('#weekly-results-detail-body').innerText();
@@ -250,7 +270,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   await page.evaluate(() => { window.loadCafeWeeklyResults(); });
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   release();
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 22);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 26);
 
   // Changing an option aborts the in-flight result and leaves manual generation pending.
   await page.unroute('**/api/weekly-results/stream?*');

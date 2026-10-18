@@ -74,6 +74,87 @@ function service(t, request) {
   for (const id of ['store-1', 'store-2']) sync.configure(id, { from: '2026-09-14', enabled: true, intervalMinutes: 5 });
   return { sync, uploadsRoot, options };
 }
+test('one shared sales schedule controls every store, preserves manual mode and survives restarts', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: new Date('2026-09-21T12:00:00Z') });
+  const calls = [];
+  const { sync, options } = service(t, async (credential, route) => {
+    calls.push([credential.localId, route]);
+    return { ok: true, data: route === 'shiftstatus' ? { status: 'closed', localNumber: credential.localId } : [] };
+  });
+  t.after(() => sync.stop());
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  const starts = id => calls.filter(([localId, route]) => localId === id && route === 'shiftstatus').length;
+  sync.configure('store-1', { from: '2026-09-14', enabled: false, intervalMinutes: 5 });
+  assert.equal(sync.status('store-2').enabled, false);
+  sync.start();
+  t.mock.timers.tick(60 * 60000); await settle();
+  assert.deepEqual(calls, []);
+  sync.configure('store-2', { from: '2026-09-14', enabled: true, intervalMinutes: 15 });
+  assert.deepEqual(sync.schedule(), { enabled: true, intervalMinutes: 15 });
+  assert.equal(sync.status('store-1').intervalMinutes, 15);
+  t.mock.timers.tick(30000); await settle();
+  assert.equal(starts('1'), 1); assert.equal(starts('2'), 1);
+  t.mock.timers.tick(14.5 * 60000); await settle();
+  assert.equal(starts('1'), 1); assert.equal(starts('2'), 1);
+  t.mock.timers.tick(.5 * 60000); await settle();
+  assert.equal(starts('1'), 2); assert.equal(starts('2'), 2);
+  sync.configure('store-1', { from: '2026-09-14', enabled: true, intervalMinutes: 5 });
+  assert.equal(sync.status('store-2').intervalMinutes, 5);
+  t.mock.timers.tick(4.5 * 60000); await settle();
+  assert.equal(starts('1'), 2); assert.equal(starts('2'), 2);
+  t.mock.timers.tick(.5 * 60000); await settle();
+  assert.equal(starts('1'), 3); assert.equal(starts('2'), 3);
+  sync.configure('store-2', { from: '2026-09-14', enabled: false, intervalMinutes: 5 });
+  sync.stop();
+  const restarted = createSalesSync(options); t.after(() => restarted.stop());
+  restarted.start();
+  t.mock.timers.tick(60 * 60000); await settle();
+  assert.equal(starts('1'), 3); assert.equal(starts('2'), 3);
+  await restarted.synchronize('store-1');
+  assert.equal(starts('1'), 4);
+  assert.equal(restarted.status('store-1').enabled, false);
+  assert.equal(restarted.status('store-2').enabled, false);
+  t.mock.timers.tick(60 * 60000); await settle();
+  assert.equal(starts('1'), 4); assert.equal(starts('2'), 3);
+});
+
+test('conflicting legacy frequencies migrate to shared manual mode while retaining each historical range', t => {
+  const { uploadsRoot, options } = service(t, async () => { throw Error('Must not contact Toteat'); });
+  const file = path.join(uploadsRoot, '.integrations/toteat-api/sales/settings.json');
+  const saved = {
+    'store-1': { from: '2026-05-18', enabled: false, intervalMinutes: 5, lastAttempt: '2026-09-21T12:00:00Z' },
+    'store-2': { from: '2026-09-01', enabled: true, intervalMinutes: 15, lastFullSuccess: '2026-09-20T12:00:00Z' }
+  };
+  fs.writeFileSync(file, JSON.stringify(saved));
+  const migrated = createSalesSync(options);
+  assert.deepEqual(migrated.schedule(), { enabled: false, intervalMinutes: 5 });
+  for (const id of ['store-1', 'store-2']) {
+    assert.equal(migrated.status(id).enabled, false);
+    assert.equal(migrated.status(id).from, saved[id].from);
+  }
+  const actual = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(actual['store-1'].lastAttempt, saved['store-1'].lastAttempt);
+  assert.equal(actual['store-2'].lastFullSuccess, saved['store-2'].lastFullSuccess);
+  const restarted = createSalesSync(options);
+  assert.deepEqual(restarted.schedule(), migrated.schedule());
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), actual);
+});
+
+test('a frequency change during synchronization stays shared after the running job finishes', async t => {
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  const { sync } = service(t, async (credential, route) => {
+    if (route === 'shiftstatus') await hold;
+    return { ok: true, data: route === 'shiftstatus' ? { status: 'closed', localNumber: credential.localId } : [] };
+  });
+  const pending = sync.synchronize('store-1');
+  sync.configure('store-1', { from: '2026-09-14', enabled: false, intervalMinutes: 5 });
+  assert.equal(sync.status('store-2').enabled, false);
+  release(); await pending;
+  assert.deepEqual(sync.schedule(), { enabled: false, intervalMinutes: 5 });
+  assert.equal(sync.status('store-1').enabled, false);
+});
+
 test('synchronization publishes both files atomically, is idempotent, and preserves legacy history', async t => {
   let data = [payment()], fail = false;
   const { sync, uploadsRoot, options } = service(t, async (c, route) => {

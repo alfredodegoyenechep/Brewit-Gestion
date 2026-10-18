@@ -20,7 +20,9 @@ test('daily detail includes seven days, skips future days and keeps inventory ex
   assert.equal(data.days[1].values.netSales.amount, null);
   assert.match(data.days[1].warnings[0], /Fuente del día/);
   assert.equal(data.days[2].values.netSales.status, 'future');
-  for (const day of data.days) for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal']) {
+  assert.equal(data.days[0].values.cogs.amount, -300);
+  assert.equal(data.days[2].values.cogs.status, 'future');
+  for (const day of data.days) for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal', 'otherVariableCosts', 'variableCosts']) {
     assert.equal(day.values[key].amount, null);
     assert.equal(day.values[key].percent, null);
     assert.equal(day.values[key].status, 'weekly-only');
@@ -59,7 +61,7 @@ test('inventory uses the latest physical count in the week and the immediate pre
 });
 
 function cell(netSales = 1000) {
-  return { values: { netSales: value(netSales, 'complete'), tips: value(100, 'complete'), cashCollection: value(200, 'complete'),
+  return { values: { netSales: value(netSales, 'complete'), margin: value(netSales - 300, 'complete'), tips: value(100, 'complete'), cashCollection: value(200, 'complete'),
     grossSales: value(netSales + 200, 'complete'), discounts: value(100, 'complete'),
     mercadoPagoTips: value(80, 'complete'), cashTips: value(20, 'complete'),
     mercadoPagoFee: value(35, 'complete'),
@@ -78,6 +80,44 @@ test('percentages share the branch/week denominator and signed totals include co
   assert.equal(values.directSupplierInbound.percent, null);
   assert.equal(finalizeCell(cell(1100)).values.collectionDifference.amount, -165);
   assert.equal(finalizeCell(cell(900)).values.collectionDifference.amount, 35);
+});
+
+test('variable costs add COGs and other expenses, preserving the resulting sign and coverage', () => {
+  const complete = finalizeCell(cell()).values;
+  assert.equal(complete.cogs.amount, -300);
+  assert.equal(complete.cogs.percent, -30);
+  assert.deepEqual(complete.otherVariableCosts, complete.inventoryConsumptionTotal);
+  assert.equal(complete.otherVariableCosts.amount, -150);
+  assert.equal(complete.variableCosts.amount, -450);
+  assert.equal(complete.variableCosts.percent, -45);
+  assert.equal(complete.variableCosts.status, 'complete');
+  const source = cell(); source.values.inventoryShortage = value(25, 'partial');
+  const partial = finalizeCell(source).values;
+  assert.deepEqual(partial.otherVariableCosts, partial.inventoryConsumptionTotal);
+  assert.equal(partial.otherVariableCosts.amount, -75);
+  assert.equal(partial.variableCosts.amount, -375);
+  assert.equal(partial.variableCosts.status, 'partial');
+  source.values.inventoryShortage = value(250, 'complete');
+  assert.equal(finalizeCell(source).values.otherVariableCosts.amount, 150);
+  assert.equal(finalizeCell(source).values.variableCosts.amount, -150);
+  source.values.inventoryShortage = value(400, 'complete');
+  assert.equal(finalizeCell(source).values.variableCosts.amount, 0);
+  source.values.inventoryShortage = value(550, 'complete');
+  assert.equal(finalizeCell(source).values.variableCosts.amount, 150);
+  source.values.margin = value();
+  assert.equal(finalizeCell(source).values.cogs.available, false);
+  assert.equal(finalizeCell(source).values.cogs.status, 'incomplete');
+  assert.equal(finalizeCell(source).values.variableCosts.amount, null);
+  assert.equal(finalizeCell(source).values.variableCosts.status, 'incomplete');
+  const missingInventory = cell(); missingInventory.values.inventoryShortage = value(null, 'no-physical-count');
+  assert.equal(finalizeCell(missingInventory).values.variableCosts.amount, null);
+  assert.equal(finalizeCell(missingInventory).values.variableCosts.status, 'incomplete');
+  const excluded = finalizeCell(cell(), false).values;
+  assert.equal(excluded.cogs.amount, -300);
+  assert.deepEqual(excluded.otherVariableCosts, excluded.inventoryConsumptionTotal);
+  assert.equal(excluded.otherVariableCosts.status, 'not-included');
+  assert.equal(excluded.variableCosts.status, 'not-included');
+  assert.equal(excluded.variableCosts.amount, null);
 });
 test('zero and absent net sales have no percentages, including pending rows', () => {
   for (const source of [cell(0), { ...cell(), values: { ...cell().values, netSales: value() } }]) {
@@ -132,11 +172,30 @@ test('independent report streams the same results, isolates branch failures and 
   assert.equal(sync.weeks[0].locations[0].values.netSales.amount, 1000);
   assert.equal(sync.weeks[0].locations[1].values.netSales.amount, null);
   assert.equal(events.at(-1).completed, 4);
-  assert.equal(sync.metrics.length, 22);
+  assert.equal(sync.metrics.length, 26);
   assert.equal(sync.total, undefined);
   let calls = 0;
   assert.equal(await buildWeeklyResultsWithProgress(options, () => { calls++; return cell(); }, () => {}, () => calls === 1), null);
   assert.equal(calls, 1);
+});
+
+test('Entradas Insumos sums both sources with percentages and preserves partial or missing coverage', () => {
+  const total = (central, direct) => finalizeCell({ values: { netSales: value(1000, 'complete'),
+    centralWarehouseInbound: central, directSupplierInbound: direct } }, false).values.suppliesInbound;
+  const complete = total(value(30, 'complete'), value(50, 'complete'));
+  assert.equal(complete.amount, 80);
+  assert.equal(complete.percent, 8);
+  assert.equal(complete.complete, true);
+  const partial = total(value(30, 'partial'), value(50, 'complete'));
+  assert.equal(partial.amount, 80);
+  assert.equal(partial.status, 'partial');
+  assert.equal(partial.percentPartial, true);
+  const missing = total(value(30, 'complete'), value());
+  assert.equal(missing.available, false);
+  assert.equal(missing.amount, null);
+  assert.equal(missing.status, 'incomplete');
+  assert.equal(total(value(0, 'complete'), value(0, 'complete')).amount, 0);
+  assert.equal(total(value(30, 'complete'), value(-10, 'complete')).amount, 20);
 });
 
 test('control subtracts MP Teorico from received Mercado Pago, and selected rows suppress percentages', () => {
@@ -278,7 +337,9 @@ test('monthly daily detail covers every calendar day, uses the period valuation 
     assert.ok(calls.every(day => day.valuationThrough === today));
     assert.equal(events.at(-1).total, data.days.length);
     assert.equal(events.at(-1).completed, data.days.length);
-    assert.ok(data.days.every(day => day.values.inventoryShortage.status === 'monthly-only'));
+    for (const key of ['inventoryShortage', 'otherVariableCosts', 'variableCosts']) {
+      assert.ok(data.days.every(day => day.values[key].status === 'monthly-only'));
+    }
     if (today < period.to) assert.equal(data.days.at(-1).values.netSales.status, 'future');
   }
 });

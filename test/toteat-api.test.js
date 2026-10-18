@@ -53,6 +53,33 @@ test('connects with read-only menu request, persists private credentials and exp
   assert.equal((await restarted.connect({ ...credentials, token: '' })).status, 200);
 });
 
+test('sales frequency is shared across cafeterias while historical start dates remain local', async t => {
+  const app = await setup(t, () => { throw Error('Changing frequency must not contact Toteat'); });
+  const file = path.join(app.root, '.integrations/toteat-api/credentials.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ 'store-1': credentials, 'store-2': { ...credentials, localId: '2' } }));
+  const save = (location, from, enabled, intervalMinutes) => fetch(app.base + '/api/integrations/toteat/api/sales/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location, from, enabled, intervalMinutes })
+  });
+  assert.equal((await save('store-1', '2026-05-18', false, 5)).status, 200);
+  assert.equal((await save('store-2', '2026-09-01', true, 15)).status, 200);
+  const read = () => fetch(app.base + '/api/integrations/toteat/api/sales/status').then(response => response.json());
+  let status = await read();
+  assert.deepEqual(status.schedule, { enabled: true, intervalMinutes: 15 });
+  assert.ok(status.locations.every(location => location.enabled && location.intervalMinutes === 15));
+  assert.equal(status.locations.find(location => location.location === 'store-1').from, '2026-05-18');
+  assert.equal(status.locations.find(location => location.location === 'store-2').from, '2026-09-01');
+  assert.equal((await save('store-1', '2026-05-18', false, 5)).status, 200);
+  status = await read();
+  assert.ok(status.locations.every(location => !location.enabled));
+  const saved = JSON.parse(fs.readFileSync(path.join(path.dirname(file), 'sales/settings.json'), 'utf8'));
+  assert.deepEqual(saved._schedule, { enabled: false, intervalMinutes: 5 });
+  assert.equal(saved['store-2'].enabled, false);
+  assert.equal(saved['store-2'].from, '2026-09-01');
+  assert.equal((await save('store-2', '2026-09-01', true, 2)).status, 400);
+  assert.deepEqual((await read()).schedule, status.schedule);
+});
+
 test('rejects invalid inputs without calling Toteat', async t => {
   const app = await setup(t, () => { throw new Error('Should not call'); });
   for (const values of [{ ...credentials, location: 'missing' }, { ...credentials, token: '' }, { ...credentials, userId: 'a b' }]) {

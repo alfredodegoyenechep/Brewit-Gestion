@@ -134,6 +134,18 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
   let timer;
   const readJson = (file, fallback) => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback;
   const settings = () => readJson(settingsFile, {});
+  const schedule = () => settings()._schedule;
+  const initial = settings();
+  if (!initial._schedule) {
+    const stores = Object.entries(initial).filter(([id]) => activeLocation(id)?.type === 'store').map(([, config]) => config);
+    const first = stores[0];
+    // Conflicting legacy choices migrate to manual so an existing manual choice is respected.
+    const enabled = !!first && first.enabled === true && [5, 15].includes(first.intervalMinutes)
+      && stores.every(config => config.enabled === true && config.intervalMinutes === first.intervalMinutes);
+    initial._schedule = { enabled, intervalMinutes: enabled ? first.intervalMinutes : 5 };
+    for (const [id, config] of Object.entries(initial)) if (id !== '_schedule') Object.assign(config, initial._schedule);
+    atomicJson(settingsFile, initial);
+  }
   const get = location => {
     const pointer = path.join(root, location, 'current.json');
     if (!fs.existsSync(pointer)) return null;
@@ -159,9 +171,10 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       }
       return { ...warning, closedAt, resolved: resolutions[location]?.[warning.paymentId]?.resolved === true };
     });
-    return { location, configured: !!credentials()[location], enabled: config?.enabled || false,
+    const frequency = schedule();
+    return { location, configured: !!credentials()[location], enabled: frequency.enabled,
       from: config?.from || null, through: s?.through || null, openShift: s?.openShift || null,
-      intervalMinutes: config?.intervalMinutes || 5, running: running.has(location),
+      intervalMinutes: frequency.intervalMinutes, running: running.has(location),
       lastSuccess: s?.syncedAt || null, paymentCount: s?.payments.length || 0, orderCount: s?.orderCount || 0,
       completedWindows: Object.keys(s?.batches || {}).length, lastError: config?.lastError || null,
       detailWarnings, cancellationCheckError: s?.cancellationCheckError || null,
@@ -180,15 +193,17 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     return { location, paymentId: id, resolved };
   }
   function configure(location, body) {
-    if (running.has(location)) throw new Error('Espera a que termine la actualización antes de cambiar la configuración.');
     if (activeLocation(location)?.type !== 'store' || !credentials()[location]) throw new Error('Conecta primero la API de esta cafetería.');
     const from = String(body.from || '');
     if (!dateKey(from) || from > clock()) throw new Error('Selecciona una fecha inicial válida, no futura.');
     const intervalMinutes = Number(body.intervalMinutes ?? 5);
     if (![5, 15].includes(intervalMinutes) || typeof body.enabled !== 'boolean') throw new Error('Frecuencia o activación no válidas.');
     const all = settings();
+    if (running.has(location) && all[location]?.from !== from) throw new Error('Espera a que termine la actualización antes de cambiar la fecha inicial.');
     if (get(location) && all[location]?.from !== from) throw new Error('La fecha histórica ya está fijada. Para ampliarla se requiere una conciliación del histórico.');
     all[location] = { ...all[location], from, intervalMinutes, enabled: body.enabled };
+    all._schedule = { enabled: body.enabled, intervalMinutes };
+    for (const [id, config] of Object.entries(all)) if (id !== '_schedule') Object.assign(config, all._schedule);
     atomicJson(settingsFile, all); return status(location);
   }
   async function synchronize(location, { full = false } = {}) {
@@ -318,13 +333,17 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
   }
   function start() {
     if (timer) return;
-    const tick = () => { for (const [location, config] of Object.entries(settings())) {
-      if (!config.enabled || activeLocation(location)?.type !== 'store' || running.has(location)) continue;
-      const last = Date.parse(config.lastAttempt || 0) || 0;
-      if (Date.now() - last >= config.intervalMinutes * 60000) synchronize(location, { full: Date.now() - (Date.parse(config.lastFullSuccess || '') || 0) >= 86400000 }).catch(() => {});
-    } };
+    const tick = () => {
+      const all = settings(), frequency = all._schedule;
+      if (!frequency.enabled) return;
+      for (const [location, config] of Object.entries(all)) {
+        if (activeLocation(location)?.type !== 'store' || !config.from || running.has(location)) continue;
+        const last = Date.parse(config.lastAttempt || 0) || 0;
+        if (Date.now() - last >= frequency.intervalMinutes * 60000) synchronize(location, { full: Date.now() - (Date.parse(config.lastFullSuccess || '') || 0) >= 86400000 }).catch(() => {});
+      }
+    };
     timer = setInterval(tick, 30000); timer.unref(); tick();
   }
-  return { configure, synchronize, status, resolveWarning, classifyPayment, source, filterLegacy, get, start, stop: () => { clearInterval(timer); timer = null; } };
+  return { configure, synchronize, status, schedule, resolveWarning, classifyPayment, source, filterLegacy, get, start, stop: () => { clearInterval(timer); timer = null; } };
 }
 module.exports = { createSalesSync, salesRows, windows, localTimestamp, atomicJson };

@@ -11,8 +11,12 @@ const metrics = [
   ['otherConsumables', 'Otros gastos / consumibles'],
   ['inventoryConsumptionTotal', 'Total inventario faltante, merma, marketing, consumo personal y otros gastos / consumibles'],
   ['finalInventory', 'Inventario Final'],
-  ['centralWarehouseInbound', 'Entradas Bodega Central'],
-  ['directSupplierInbound', 'Entradas Proveedores Directos']
+  ['suppliesInbound', 'Entradas Insumos'],
+  ['centralWarehouseInbound', 'Bodega Central'],
+  ['directSupplierInbound', 'Proveedores Directos'],
+  ['variableCosts', 'Costos Variables'],
+  ['cogs', 'COGs'],
+  ['otherVariableCosts', 'Otros Variables']
 ];
 const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']);
 
@@ -95,7 +99,12 @@ function finalizeCell(data = {}, includeInventory = true) {
     (mp, theoretical) => mp - theoretical);
   values.inventoryConsumptionTotal = derived(values, ['inventoryShortage', 'waste', 'marketing', 'employees', 'otherConsumables'],
     (...amounts) => amounts.reduce((sum, amount) => sum + amount, 0));
+  values.suppliesInbound = derived(values, ['centralWarehouseInbound', 'directSupplierInbound'], (central, direct) => central + direct);
   if (values.inventoryShortage.status === 'not-included') values.inventoryConsumptionTotal = value(null, 'not-included');
+  values.cogs = derived(values, ['netSales', 'margin'], (sales, margin) => margin - sales);
+  values.otherVariableCosts = { ...values.inventoryConsumptionTotal };
+  values.variableCosts = values.otherVariableCosts.status === 'not-included' ? value(null, 'not-included')
+    : derived(values, ['cogs', 'otherVariableCosts'], (cogs, other) => cogs + other);
   const base = values.netSales;
   for (const [key, metric] of Object.entries(values)) {
     metric.showPercent = !percentlessMetrics.has(key);
@@ -154,7 +163,7 @@ async function buildDailyResultsWithProgress({ today, period, location, periodTy
     if (date > period.through) for (const [key, metric] of Object.entries(result.values)) {
       result.values[key] = value(null, 'future', { showPercent: metric.showPercent });
     }
-    for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal', 'finalInventory']) {
+    for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal', 'finalInventory', 'otherVariableCosts', 'variableCosts']) {
       result.values[key] = value(null, periodType === 'month' ? 'monthly-only' : 'weekly-only', { showPercent: false });
     }
     data.days.push({ ...result, date, locationId: location.id });

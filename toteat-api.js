@@ -62,7 +62,7 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     const selected = String(req.query.location || 'all');
     const stores = (locations?.() || []).filter(l => l.type === 'store' && l.status === 'active' && (selected === 'all' || l.id === selected));
     if (!stores.length && selected !== 'all') return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
-    return res.json({ locations: stores.map(l => ({ ...sync.status(l.id), name: l.name })) });
+    return res.json({ schedule: sync.schedule(), locations: stores.map(l => ({ ...sync.status(l.id), name: l.name })) });
   });
   app.patch(`${base}/sales/warning-resolution`, (req, res) => {
     try { return res.json(sync.resolveWarning(String(req.body?.location || ''), req.body?.paymentId, req.body?.resolved)); }

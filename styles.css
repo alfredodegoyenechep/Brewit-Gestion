@@ -9131,7 +9131,9 @@ button:disabled {
 .weekly-results-inventory-dates { display: block; font-size: 11px; font-weight: 500; color: var(--text-muted); margin-top: 3px; }
 .weekly-results-table [data-metric="tips"] > *, .weekly-results-table [data-metric="mercadoPagoTips"] > *,
 .weekly-results-table [data-metric="netSales"] > *, .weekly-results-table [data-metric="grossSales"] > *,
-.weekly-results-table [data-metric="discounts"] > * { border-bottom: 0; }
+.weekly-results-table [data-metric="discounts"] > *, .weekly-results-table [data-metric="suppliesInbound"] > *,
+.weekly-results-table [data-metric="centralWarehouseInbound"] > *, .weekly-results-table [data-metric="variableCosts"] > *,
+.weekly-results-table [data-metric="cogs"] > * { border-bottom: 0; }
 .weekly-results-table .weekly-results-breakdown > * { font-size: calc(var(--weekly-results-row-size) - 4px); padding-top: 4px; padding-bottom: 4px; }
 .weekly-results-table .weekly-results-breakdown td { color: var(--text-muted); }
 .weekly-results-breakdown .weekly-results-partial { font-size: 10px; margin-top: 2px; }
@@ -9180,6 +9182,8 @@ button:disabled {
 .weekly-results-metric-detail summary { cursor: pointer; font-weight: 700; }
 .weekly-results-difference { color: var(--red); }
 .weekly-results-note { margin-top: 18px; }
+.weekly-results-criteria { margin-top: 14px; }
+.weekly-results-criteria > summary { cursor: pointer; }
 .weekly-results-detail { width: min(780px, 90vw); max-height: 85vh; overflow: auto; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
 .weekly-results-detail p { overflow-wrap: anywhere; }
 .weekly-results-detail h4 { margin: 22px 0 8px; }

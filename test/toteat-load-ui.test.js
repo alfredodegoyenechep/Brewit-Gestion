@@ -90,6 +90,77 @@ test('el resumen abre el detalle de carga y permite revisar pagos sin productos'
   assert.equal(await dialog.isVisible(), false);
 });
 
+test('sales frequency stays shared when changing cafeterias and polling only user actions request updates', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+  const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.clock.install();
+  const states = [
+    { location: 'store-1', name: 'La Concepción', configured: true, enabled: false, intervalMinutes: 5,
+      from: '2026-09-01', lastSuccess: '2026-09-23T13:19:37Z', orderCount: 20, paymentCount: 21 },
+    { location: 'store-2', name: 'Portal Lyon', configured: true, enabled: false, intervalMinutes: 5,
+      from: '2026-09-15', lastSuccess: '2026-09-23T12:00:00Z', orderCount: 10, paymentCount: 10 }
+  ];
+  let schedule = { enabled: false, intervalMinutes: 5 };
+  const updates = [], saves = [];
+  await page.route('http://brewit.test/**', async route => {
+    const pathname = new URL(route.request().url()).pathname;
+    let body;
+    if (pathname === '/api/config/locations') body = { active: states.map(s => ({ id: s.location, name: s.name, type: 'store' })) };
+    else if (pathname.endsWith('/sales/status')) body = { schedule, locations: states };
+    else if (pathname.endsWith('/api/config')) body = { configured: true, verifiedAt: '2026-09-01T12:00:00Z', productCount: 1 };
+    else if (pathname.endsWith('/sales/settings')) {
+      const update = route.request().postDataJSON(); saves.push(update);
+      schedule = { enabled: update.enabled, intervalMinutes: update.intervalMinutes };
+      states.find(s => s.location === update.location).from = update.from;
+      states.forEach(state => Object.assign(state, schedule)); body = update;
+    } else if (pathname.endsWith('/sales/sync')) {
+      const update = route.request().postDataJSON(); updates.push(update); body = {};
+    } else return route.fulfill({ contentType: 'text/html', body: `
+      <form id="toteat-api-form"><select id="toteat-api-location"></select><input name="token"><input name="restaurantId"><input name="localId"><input name="userId"></form>
+      <p id="toteat-api-status"></p><button id="toteat-api-refresh"></button>
+      <form id="toteat-sales-settings"><input name="from" type="date"><select name="frequency"><option value="5">Cada 5 min</option><option value="15">Cada 15 min</option><option value="manual">Solo manual</option></select><button type="submit">Guardar y sincronizar ventas</button></form>
+      <button data-toteat-sales-sync="selected">Actualizar ahora</button><div data-toteat-sales-status></div>` });
+    return route.fulfill({ json: body });
+  });
+  await page.goto('http://brewit.test/');
+  await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../toteat-api-view.js'), 'utf8') });
+  const frequency = page.locator('#toteat-sales-settings [name="frequency"]');
+  await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="frequency"]').value === 'manual');
+  assert.match(await page.locator('[data-sales-load-location="store-1"]').innerText(), /Solo manual/);
+  assert.match(await page.locator('[data-sales-load-location="store-2"]').innerText(), /Solo manual/);
+  for (let index = 0; index < 3; index++) {
+    const polled = page.waitForResponse(response => response.url().endsWith('/sales/status'));
+    await page.clock.fastForward(15 * 60000); await polled;
+  }
+  assert.equal(await frequency.inputValue(), 'manual');
+  assert.deepEqual(updates, []);
+  assert.deepEqual(saves, []);
+  await page.getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('[data-toteat-sales-sync]').disabled);
+  assert.deepEqual(updates, [{ location: 'store-1', full: false }]);
+  assert.equal(states[0].enabled, false);
+  await page.locator('#toteat-api-location').selectOption('store-2');
+  await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="from"]').value === '2026-09-15');
+  assert.equal(await frequency.inputValue(), 'manual');
+  await frequency.selectOption('15');
+  await page.getByRole('button', { name: 'Guardar y sincronizar ventas' }).click();
+  await page.waitForFunction(() => !document.querySelector('#toteat-sales-settings [type="submit"]').disabled);
+  assert.equal(states[0].enabled, true);
+  assert.equal(states[0].intervalMinutes, 15);
+  assert.equal(states[0].from, '2026-09-01');
+  await page.locator('#toteat-api-location').selectOption('store-1');
+  await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="frequency"]').value === '15');
+  await frequency.selectOption('manual');
+  await page.getByRole('button', { name: 'Guardar y sincronizar ventas' }).click();
+  await page.waitForFunction(() => !document.querySelector('#toteat-sales-settings [type="submit"]').disabled);
+  assert.equal(states[1].enabled, false);
+  assert.equal(states[0].enabled, false);
+  assert.equal(saves.length, 2);
+  assert.deepEqual(updates[1], { location: 'store-2', full: false });
+  assert.deepEqual(updates[2], { location: 'store-1', full: false });
+});
+
 test('finding evidence exposes nested source fields safely and closes with Escape', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
   t.after(() => browser.close());

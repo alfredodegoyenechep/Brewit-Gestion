@@ -6,8 +6,8 @@
   const states = { 'no-data': 'Sin datos', 'no-physical-count': 'Sin toma física',
     'no-opening-inventory': 'Sin inventario inicial', incomplete: 'Incompleto', pending: 'Pendiente',
     partial: 'Parcial', 'not-included': 'No incluido' };
-  const compactKeys = new Set(['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'mercadoPagoTips', 'cashTips']);
-  const borderlessKeys = new Set(['netSales', 'grossSales', 'discounts', 'tips', 'mercadoPagoTips']);
+  const compactKeys = new Set(['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'mercadoPagoTips', 'cashTips', 'centralWarehouseInbound', 'directSupplierInbound', 'cogs', 'otherVariableCosts']);
+  const borderlessKeys = new Set(['netSales', 'grossSales', 'discounts', 'tips', 'mercadoPagoTips', 'suppliesInbound', 'centralWarehouseInbound', 'variableCosts', 'cogs']);
   const defaults = { bg: '#f7f2ea', soft: '#fffdf8', text: '#33291e', muted: '#9d968a',
     border: '#e6ded5', positive: '#3f8c61', difference: '#d17045' };
   const date = iso => iso ? iso.split('-').reverse().join('-') : '—';
@@ -115,7 +115,7 @@
       const blocks = [];
       for (let index = 0; index < report.rows.length; index++) {
         const block = [index];
-        if (['netSales', 'tips'].includes(report.rows[index].key)) {
+        if (['netSales', 'tips', 'suppliesInbound', 'variableCosts'].includes(report.rows[index].key)) {
           while (report.rows[index + 1]?.compact) block.push(++index);
         }
         blocks.push(block);

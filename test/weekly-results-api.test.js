@@ -116,6 +116,10 @@ test('all eight detail reports reconcile to displayed amounts and retain their s
   const { base, app } = await fixture(t);
   const weekly = await getReport(base);
   const cell = weekly.weeks[1].locations[0];
+  assert.equal(cell.values.cogs.amount, cell.values.margin.amount - cell.values.netSales.amount);
+  assert.deepEqual(cell.values.otherVariableCosts, cell.values.inventoryConsumptionTotal);
+  assert.equal(cell.values.variableCosts.amount, cell.values.cogs.amount + cell.values.inventoryConsumptionTotal.amount);
+  assert.equal(cell.values.variableCosts.percent, cell.values.variableCosts.amount / cell.values.netSales.amount * 100);
   const keys = ['netSales', 'tips', 'inventoryShortage', 'waste', 'marketing', 'employees', 'otherConsumables', 'finalInventory'];
   for (const key of keys) {
     assert.ok(cell.detailReports[key], key);
@@ -279,7 +283,7 @@ test('daily endpoint matches calendar weekly amounts, handles replacements and n
   app.locals.toteatStockSync.rebuild = () => { rebuilds++; throw Error('No daily inventory processing'); };
   const daily = await getDaily(base);
   assert.deepEqual(daily.days.map(day => day.date), ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11']);
-  for (const key of ['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'netSales', 'margin', 'tips', 'cashTips', 'mercadoPagoTips', 'mercadoPagoFee', 'cashCollection', 'mercadoPagoCollection', 'mercadoPagoTheoretical', 'collectionDifference', 'marketing', 'employees', 'waste']) {
+  for (const key of ['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'netSales', 'margin', 'cogs', 'tips', 'cashTips', 'mercadoPagoTips', 'mercadoPagoFee', 'cashCollection', 'mercadoPagoCollection', 'mercadoPagoTheoretical', 'collectionDifference', 'marketing', 'employees', 'waste']) {
     assert.ok(daily.days.every(day => day.values[key].available), key);
     const sum = daily.days.reduce((total, day) => total + day.values[key].amount, 0);
     assert.ok(Math.abs(sum - weekly.values[key].amount) < 1e-8, key);
@@ -288,7 +292,7 @@ test('daily endpoint matches calendar weekly amounts, handles replacements and n
   assert.equal(daily.days[1].values.netSales.amount, 0);
   assert.equal(daily.days[1].values.netSales.percent, null);
   assert.equal(daily.days[1].values.marketing.amount, -40);
-  for (const day of daily.days) for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal']) {
+  for (const day of daily.days) for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal', 'otherVariableCosts', 'variableCosts']) {
     assert.equal(day.values[key].status, 'weekly-only');
     assert.equal(day.values[key].amount, null);
   }
@@ -701,20 +705,26 @@ test('calendar inbound rows cost central ingredients and direct purchases indepe
   assert.equal(result.values.centralWarehouseInbound.percent, 3);
   assert.equal(result.values.directSupplierInbound.amount, 50);
   assert.equal(result.values.directSupplierInbound.percent, 5);
+  assert.equal(result.values.suppliesInbound.amount, 80);
+  assert.equal(result.values.suppliesInbound.percent, 8);
   assert.equal(result.values.inventoryShortage.status, 'not-included');
+  assert.equal(result.values.cogs.amount, result.values.margin.amount - result.values.netSales.amount);
+  assert.equal(result.values.otherVariableCosts.status, 'not-included');
+  assert.equal(result.values.variableCosts.status, 'not-included');
   assert.equal(result.sources.centralWarehouseInbound.items[0].unitCost, 10);
   assert.equal(result.sources.centralWarehouseInbound.items[0].costSource, 'master');
   assert.equal(result.sources.centralWarehouseInbound.costCutoff, '2026-10-11');
   const daily = await getDaily(base);
-  for (const key of ['centralWarehouseInbound', 'directSupplierInbound']) {
+  for (const key of ['suppliesInbound', 'centralWarehouseInbound', 'directSupplierInbound']) {
     assert.equal(daily.days.reduce((sum, day) => sum + day.values[key].amount, 0), result.values[key].amount);
-    assert.equal(daily.days[0].sources[key].costCutoff, '2026-10-11');
+    if (key !== 'suppliesInbound') assert.equal(daily.days[0].sources[key].costCutoff, '2026-10-11');
   }
   const monthly = await getReport(base, { ...options, period: 'month' });
   assert.equal(monthly.weeks[0].locations[0].values.centralWarehouseInbound.amount, 30);
   assert.equal(monthly.weeks[0].locations[0].values.directSupplierInbound.amount, 50);
+  assert.equal(monthly.weeks[0].locations[0].values.suppliesInbound.amount, 80);
   const stream = await fetch(`${base}/api/weekly-results/stream?${new URLSearchParams({ weeks: 4, includeCurrent: true, ...options })}`).then(response => response.text());
   assert.deepEqual(stream.trim().split('\n').map(JSON.parse).at(-1).data, weekly);
   assert.equal(rebuilds, 0);
-  assert.deepEqual(weekly.metrics.slice(-2), [['centralWarehouseInbound', 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos']]);
+  assert.deepEqual(weekly.metrics.slice(-6, -3), [['suppliesInbound', 'Entradas Insumos'], ['centralWarehouseInbound', 'Bodega Central'], ['directSupplierInbound', 'Proveedores Directos']]);
 });

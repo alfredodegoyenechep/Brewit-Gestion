@@ -342,7 +342,7 @@
   function metricRow(body, key, label) {
     const row = body.insertRow(); row.dataset.metric = key;
     if (['mercadoPagoTips', 'cashTips'].includes(key)) row.className = 'weekly-results-tip-breakdown';
-    if (['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'mercadoPagoTips', 'cashTips'].includes(key)) row.classList.add('weekly-results-breakdown');
+    if (['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'mercadoPagoTips', 'cashTips', 'centralWarehouseInbound', 'directSupplierInbound', 'cogs', 'otherVariableCosts'].includes(key)) row.classList.add('weekly-results-breakdown');
     if (['netSales', 'inventoryConsumptionTotal'].includes(key)) row.className = 'weekly-results-subtotal';
     const th = document.createElement('th'); th.scope = 'row'; th.textContent = label; row.append(th);
     return row;
@@ -527,11 +527,7 @@
       }
     }
     wrap.append(table); container.append(wrap);
-    if (data.warnings.length) {
-      const details = document.createElement('details'), summary = document.createElement('summary');
-      summary.textContent = 'Cobertura y criterios de cálculo'; details.append(summary);
-      data.warnings.forEach(message => paragraph(details, message)); warnings.append(details);
-    }
+    data.warnings.forEach(message => paragraph(warnings, message));
   }
   window.cancelCafeWeeklyResults = () => {
     metricCache.clear();

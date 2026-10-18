@@ -58,7 +58,7 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const locations = [{ id: 'store-1', name: 'La Concepción' }, { id: 'store-2', name: 'Lyon' }, { id: 'store-3', name: 'Nueva sucursal' }];
   const data = buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-14', locations }, (location, period) => ({
-    values: { netSales: value(location.id === 'store-2' ? 0 : 1000.25, 'partial'), grossSales: value(1300.25, 'complete'),
+    values: { netSales: value(location.id === 'store-2' ? 0 : 1000.25, 'partial'), margin: value(location.id === 'store-2' ? 0 : 700.25, 'complete'), grossSales: value(1300.25, 'complete'),
       discounts: value(110.25, 'complete'), tips: value(100, 'complete'), mercadoPagoFee: value(35, 'partial'),
       cashCollection: value(200, 'complete'), mercadoPagoCollection: value(900, 'complete'),
       centralWarehouseInbound: value(30, 'complete'), directSupplierInbound: value(50, 'complete'),
@@ -91,10 +91,14 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   assert.equal(await page.locator('#weekly-results-export-download').isEnabled(), true, await page.locator('#weekly-results-export-status').innerText());
   assert.equal(await popup.isVisible(), true);
   assert.match(await popup.locator('h3').innerText(), /Previsualización XLSX/);
-  assert.equal(await popup.locator('table tbody tr').count(), 22);
+  assert.equal(await popup.locator('table tbody tr').count(), 26);
   assert.equal(await popup.locator('table button').count(), 0);
   assert.equal(await popup.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').first().innerText(), '$30');
   assert.equal(await popup.locator('[data-metric="directSupplierInbound"] .weekly-results-amount').first().innerText(), '$50');
+  assert.equal(await popup.locator('[data-metric="cogs"] .weekly-results-amount').first().innerText(), '$-300\nParcial');
+  assert.equal(await popup.locator('[data-metric="variableCosts"] .weekly-results-amount').nth(3).innerText(), '$-450\nParcial');
+  assert.equal(await popup.locator('[data-metric="otherVariableCosts"] .weekly-results-amount').nth(3).innerText(),
+    await popup.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').nth(3).innerText());
   assert.equal(await popup.locator('[data-metric="netSales"] .weekly-results-amount').first().innerText(), '$1.000\nParcial');
   assert.match(await popup.locator('[data-metric="inventoryShortage"] .weekly-results-amount').nth(3).innerText(), /04-10-2026 → 11-10-2026/);
   assert.equal(await popup.locator('[data-metric="finalInventory"] .weekly-results-amount').first().innerText(), '$1.800\nInventario teórico · 14-10-2026');
@@ -109,11 +113,19 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   assert.equal(sheet.B6.t, 'n'); assert.equal(sheet.B6.v, 1000.25);
   assert.equal(sheet.C6.t, 'n'); assert.equal(sheet.C6.v, 1);
   assert.equal(sheet.B7.v, 'Parcial');
-  for (const [label, amount] of [['Entradas Bodega Central', 30], ['Entradas Proveedores Directos', 50]]) {
+  for (const [label, amount] of [['Entradas Insumos', 80], ['Bodega Central', 30], ['Proveedores Directos', 50]]) {
     const address = Object.keys(sheet).find(key => sheet[key]?.v === label);
     assert.ok(address, label);
     const row = XLSX.utils.decode_cell(address).r;
     assert.equal(sheet[XLSX.utils.encode_cell({ r: row, c: 1 })].v, amount);
+  }
+  for (const [label, amount] of [['Costos Variables', -450], ['COGs', -300], ['Otros Variables', -150]]) {
+    const address = Object.keys(sheet).find(key => sheet[key]?.v === label);
+    assert.ok(address, label);
+    const row = XLSX.utils.decode_cell(address).r;
+    const cell = sheet[XLSX.utils.encode_cell({ r: row, c: 7 })];
+    assert.equal(cell.t, 'n');
+    assert.equal(cell.v, amount);
   }
   assert.equal(sheet.D6.v, 0); assert.equal(sheet.E6.v, '—');
   assert.ok(Object.values(sheet).some(cell => cell?.v === 'Sin toma física'));

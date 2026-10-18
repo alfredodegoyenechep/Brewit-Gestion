@@ -8,7 +8,7 @@
   let locations = [];
   let revision = 0;
   const salesForm = document.getElementById('toteat-sales-settings');
-  let salesStates = [], previousVersions = new Map(), polling = false;
+  let salesStates = [], salesSchedule = null, previousVersions = new Map(), polling = false;
   let detailLocation = null;
   let warningFilter = 'unresolved', savingResolution = false, resolutionRevision = 0;
   const detailDialog = document.createElement('dialog');
@@ -221,7 +221,8 @@
     const state = salesStates.find(s => s.location === select.value);
     salesForm.elements.from.value = state?.from || new Intl.DateTimeFormat('sv-SE').format(new Date());
     salesForm.elements.from.readOnly = !!state?.lastSuccess;
-    salesForm.elements.frequency.value = state?.enabled ? String(state.intervalMinutes) : 'manual';
+    const frequency = salesSchedule || state;
+    salesForm.elements.frequency.value = frequency?.enabled ? String(frequency.intervalMinutes) : 'manual';
   }
   async function pollSales() {
     if (polling || savingResolution) return;
@@ -231,16 +232,18 @@
       const data = await request('/api/integrations/toteat/api/sales/status');
       if (savingResolution || currentResolutionRevision !== resolutionRevision) return;
       salesStates = data.locations;
+      salesSchedule = data.schedule || null;
       let changed = false;
       const lines = salesStates.map(s => {
         if (previousVersions.has(s.location) && previousVersions.get(s.location) !== s.lastSuccess && s.lastSuccess) changed = true;
         previousVersions.set(s.location, s.lastSuccess);
         const updated = s.lastSuccess ? ` · última actualización ${new Date(s.lastSuccess).toLocaleString('es-CL')}` : '';
+        const frequency = s.enabled ? `Automática cada ${s.intervalMinutes} min` : 'Solo manual';
         const message = s.running ? `Actualizando… ${s.progress || ''}` : s.lastError ? `No se pudo actualizar: ${s.lastError}` : !s.configured ? 'Falta conectar la API' : !s.lastSuccess ? 'Pendiente de sincronizar' : s.state === 'connected-empty' ? 'Conectado · sin ventas todavía' : `${s.orderCount} órdenes · ${s.paymentCount} pagos`;
         const pending = s.detailWarnings?.filter(item => !item.cancelled).length || 0;
         const cancelled = s.detailWarnings?.filter(item => item.cancelled).length || 0;
         const warning = pending || cancelled ? ` · Sin productos: ${pending} pagos incluidos en totales, pendientes de verificar; ${cancelled} anulados excluidos.` : '';
-        return `${s.name}: ${message}${updated}${warning}`;
+        return `${s.name}: ${message} · ${frequency}${updated}${warning}`;
       });
       document.querySelectorAll('[data-toteat-sales-status]').forEach(e => {
         lines.forEach((line, index) => {
@@ -271,7 +274,7 @@
       const frequency = salesForm.elements.frequency.value;
       await request('/api/integrations/toteat/api/sales/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: select.value, from: salesForm.elements.from.value, enabled: frequency !== 'manual', intervalMinutes: frequency === 'manual' ? 5 : Number(frequency) }) });
       await synchronize(select.value);
-      status.textContent = 'Configuración guardada. La primera carga histórica puede tardar unos minutos.';
+      status.textContent = 'Frecuencia guardada para todas las cafeterías. La primera carga histórica puede tardar unos minutos.';
     } catch (error) { status.textContent = error.message; }
     finally { button.disabled = false; }
   });

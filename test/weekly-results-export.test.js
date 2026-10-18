@@ -8,7 +8,7 @@ const exporter = require('../weekly-results-export');
 function fixture(count = 3, partial = false) {
   const locations = Array.from({ length: count }, (_, index) => ({ id: `store-${index}`, name: `Sucursal ${index + 1}` }));
   return buildWeeklyResults({ weeks: 4, includeCurrent: true, today: '2026-10-14', locations }, () => ({
-    values: { netSales: value(1000.25, partial ? 'partial' : 'complete'),
+    values: { netSales: value(1000.25, partial ? 'partial' : 'complete'), margin: value(700.25, 'complete'),
       grossSales: value(1300.25, 'complete'), discounts: value(110.25, 'complete'),
       tips: value(100, 'complete'), mercadoPagoFee: value(35, 'complete'), cashCollection: value(200, 'complete'),
       mercadoPagoCollection: value(900, 'complete'), inventoryShortage: value(-50, 'partial'),
@@ -37,6 +37,18 @@ test('export model preserves the calculated snapshot, amounts, percentages, cove
   assert.equal(report.rows.find(row => row.key === 'grossSales').separator, false);
   assert.equal(report.rows.find(row => row.key === 'discounts').cells[0].color, report.colors.muted);
   assert.equal(report.rows.find(row => row.key === 'centralWarehouseInbound').cells[0].text, 'Sin datos');
+  for (const key of ['centralWarehouseInbound', 'directSupplierInbound']) assert.equal(report.rows.find(row => row.key === key).compact, true);
+  assert.equal(report.rows.find(row => row.key === 'suppliesInbound').compact, false);
+  assert.equal(report.rows.find(row => row.key === 'suppliesInbound').separator, false);
+  assert.equal(report.rows.find(row => row.key === 'centralWarehouseInbound').separator, false);
+  assert.equal(report.rows.find(row => row.key === 'cogs').cells[0].value, -300);
+  assert.equal(report.rows.find(row => row.key === 'cogs').cells[1].value, -300 / 1000.25);
+  assert.equal(report.rows.find(row => row.key === 'otherVariableCosts').cells[0].value, -150);
+  assert.equal(report.rows.find(row => row.key === 'variableCosts').cells[0].value, -450);
+  assert.equal(report.rows.find(row => row.key === 'variableCosts').cells[1].value, -450 / 1000.25);
+  assert.equal(report.rows.find(row => row.key === 'variableCosts').separator, false);
+  assert.equal(report.rows.find(row => row.key === 'cogs').compact, true);
+  assert.equal(report.rows.find(row => row.key === 'otherVariableCosts').compact, true);
   const row = report.rows.find(row => row.key === 'collectionDifference');
   assert.equal(row.cells[0].color, report.colors.difference);
 });

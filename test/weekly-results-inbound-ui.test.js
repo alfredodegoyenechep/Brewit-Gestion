@@ -52,6 +52,20 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
   await page.locator('#weekly-results-current').selectOption('true');
   await page.locator('#weekly-results-refresh').click();
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  assert.deepEqual(await page.locator('#weekly-results-table tbody tr').evaluateAll(rows => rows.slice(-6, -3).map(row => row.dataset.metric)),
+    ['suppliesInbound', 'centralWarehouseInbound', 'directSupplierInbound']);
+  const inboundTotal = page.locator('#weekly-results-table [data-metric="suppliesInbound"]');
+  assert.equal(await inboundTotal.locator('th').innerText(), 'Entradas Insumos');
+  assert.match(await inboundTotal.locator('.weekly-results-amount').first().innerText(), /\$140.*Parcial/s);
+  assert.match(await inboundTotal.locator('.weekly-results-percent').first().innerText(), /14,0%/);
+  assert.equal(await inboundTotal.locator('.weekly-results-amount').nth(1).innerText(), '$100');
+  for (const [key, label] of [['centralWarehouseInbound', 'Bodega Central'], ['directSupplierInbound', 'Proveedores Directos']]) {
+    const row = page.locator(`#weekly-results-table [data-metric="${key}"]`);
+    assert.equal(await row.locator('th').innerText(), label);
+    assert.equal(await row.evaluate(row => row.classList.contains('weekly-results-breakdown')), true);
+  }
+  assert.equal(await inboundTotal.evaluate(row => parseFloat(getComputedStyle(row.cells[0]).fontSize)
+    - parseFloat(getComputedStyle(row.nextElementSibling.cells[0]).fontSize)), 4);
   const popup = page.locator('#weekly-results-inbound');
   const central = page.locator('#weekly-results-table [data-metric="centralWarehouseInbound"] button').nth(2);
   await central.focus(); await page.keyboard.press('Enter');
