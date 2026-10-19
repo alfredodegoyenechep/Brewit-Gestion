@@ -163,6 +163,9 @@
             <input type="checkbox" id="inventory-file-confirmed" />
             <span id="inventory-file-confirmation-copy">Confirmo que seleccioné el archivo correcto.</span>
           </label>
+          <label class="confirmation-check"><input type="checkbox" id="historical-complete" />Confirmo que el archivo incluye todos los registros del período confirmado y del ámbito indicado. Permite verificar eliminaciones.</label>
+          <label class="historical-scope-label">Ámbito de bodega (vacío = todas las bodegas de la ubicación)<input id="historical-warehouse" type="text" maxlength="100" placeholder="Código o nombre estable de la bodega" /></label>
+          <p class="panel-description">Sin esta confirmación se conserva el original y se comparan registros presentes, sin declarar eliminaciones.</p>
           <div id="transaction-overlap-notice" class="transaction-overlap-notice" hidden></div>
           <div id="transaction-confirmation-status" class="form-status" aria-live="polite"></div>
           <div class="conflict-actions">
@@ -214,6 +217,7 @@
         <p class="panel-description">Lee productos, ingredientes, extras, jerarquías, recetas y proveedores desde Toteat y guarda una nueva versión compartida con vigencia de hoy. Requiere una sesión de Toteat vigente.</p>
         <div data-toteat-masters-status class="form-status" role="status" aria-live="polite"></div>
         <form id="master-upload-form">
+          <label class="confirmation-check"><input type="checkbox" name="historicalComplete" value="true" />Confirmo que cada archivo maestro contiene el conjunto completo. Permite verificar eliminaciones.</label>
           <div id="master-status" class="form-status" aria-live="polite"></div>
           <div class="file-row">
             <label for="master-catalog">Maestro Productos / Ingredientes / Extras</label>

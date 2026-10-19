@@ -62,8 +62,8 @@ async function readDirectMasters(uploadsRoot, restaurant, { fetchImpl = fetch } 
       response = await fetchImpl(url, { method: 'GET', headers: { ...request.headers, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(45000) });
       if ([401, 403].includes(response.status)) throw failure(AUTH_ERROR);
       if (!response.ok) throw failure('La API interna no completó la lectura de maestros; se conserva la versión anterior.');
-      body = await response.json();
-    } catch (error) { throw error.safeMasterMessage ? error : failure('No se pudo consultar la API interna de maestros; se conserva la versión anterior.'); }
+      body = await require('./historical-control').responseBody(response,{origin:'toteat-authenticated-web',name:expectedPath.split('/').filter(Boolean).at(-1)+'.json'});
+    } catch (error) { if(error.code==='HISTORICAL_BACKUP_FAILED')throw error; throw error.safeMasterMessage ? error : failure('No se pudo consultar la API interna de maestros; se conserva la versión anterior.'); }
     if (body.ok === false) throw failure(AUTH_ERROR);
     return body;
   }
@@ -72,6 +72,8 @@ async function readDirectMasters(uploadsRoot, restaurant, { fetchImpl = fetch } 
     const body = await get({ url: `https://api.toteat.com${route}`, headers: requests.products.headers }, route);
     if (!Array.isArray(body.results) || body.next || (body.count != null && body.count !== body.results.length)) throw failure('Maestros incompletos o paginados; no se publica la actualización.');
     if (body.results.some(p => p.local != null && p.local !== localRef)) throw failure('El maestro contiene registros de otro local.');
+    const datasets={products:['master-catalog','master-recipes'],warehouses:['warehouses'],providers:['master-suppliers']}[name];
+    require('./historical-control').annotate(body,datasets.map(dataset=>({dataset,selector:'results',master:true,complete:true})));
     return body.results;
   }
   const products = await collection('products');
@@ -82,6 +84,7 @@ async function readDirectMasters(uploadsRoot, restaurant, { fetchImpl = fetch } 
     if (!request || new URL(request.url).searchParams.get('xmod') !== moduleId) throw failure('Configuración de jerarquías inválida.');
     const body = await get(request, '/resto/setupconfig');
     if (body.ok !== true || !Array.isArray(body.data) || !body.data.length || body.data.some(g => !Array.isArray(g.listado))) throw failure('Jerarquías incompletas; no se publica la actualización.');
+    require('./historical-control').annotate(body,[{dataset:{products:'product-hierarchy',ingredients:'ingredient-hierarchy',extras:'extras-hierarchy'}[kind],selector:'data',hierarchy:true,master:true,complete:true}]);
     hierarchies[kind] = body.data;
   }
   const warehouses = await collection('warehouses');

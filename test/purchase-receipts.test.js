@@ -16,7 +16,7 @@ const source = () => ({restaurantId: 'r', localId: '1', localRef: 'branch', capt
   products: [{id: 'p', custom_id: 'PAC003'}], warehouses: [{id: 'central', custom_id: 1}, {id: 'local', custom_id: 2}],
   operations: {purchases: [{id: 354057, document: '360', receive_date: '2026-09-29', supplier_ref: 'supplier', warehouse_receive_ref: 'central',
     purchase_detail: [{id: 1418595, product_ref: 'p', quantity: 3600, measure_unit: 'UN', warehouse_ref: 'local'}]}]}});
-function root(t) {const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-receipts-'));t.after(() => fs.rmSync(dir,{recursive:true,force:true}));return dir;}
+function root(t) {const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-receipts-'));t.after(async () => {await require('../historical-control').get(dir).idle();fs.rmSync(dir,{recursive:true,force:true});});return dir;}
 
 test('PAC003 receipt 354057 overrides its stale product warehouse without changing quantities, costs or raw responses', () => {
   const doc = document(), native = source(), before = structuredClone({doc,native});

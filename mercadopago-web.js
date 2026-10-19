@@ -76,6 +76,7 @@ function createMercadoPagoBrowser(root, options = {}) {
           if (!/\.csv$/i.test(file.suggestedFilename())) throw webError('MP_INVALID_DOWNLOAD', 'MercadoPago no entregó un archivo CSV. Revisa el reporte y reintenta.');
           const filename = path.join(directory, `report-${reports.length}.csv`);
           await file.saveAs(filename);
+          require('./historical-control').captureFileCurrent(filename,{name:file.suggestedFilename()});
           if (fs.statSync(filename).size > 50 * 1024 * 1024) throw webError('MP_FILE_TOO_LARGE', 'El reporte supera el límite de 50 MB. Divide el período en MercadoPago.');
           reports.push({ path: filename, period });
         }
@@ -94,7 +95,7 @@ function createMercadoPagoBrowser(root, options = {}) {
         throw webError('MP_AUTH_REQUIRED', 'Inicia sesión en MercadoPago en la ventana del navegador del servidor y pulsa «Ya inicié sesión, continuar».');
       }
       if (error.code !== 'MP_AUTH_REQUIRED') await close().catch(() => {});
-      if (error.code?.startsWith('MP_')) throw error;
+      if (error.code === 'HISTORICAL_BACKUP_FAILED' || error.code?.startsWith('MP_')) throw error;
       throw webError('MP_DOWNLOAD_FAILED', 'No se pudo completar la descarga de MercadoPago. Reintenta la actualización; si la sesión venció, vuelve a iniciar sesión.');
     }
   }

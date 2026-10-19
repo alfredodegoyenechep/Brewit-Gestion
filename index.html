@@ -100,6 +100,10 @@
         </svg>
         <span class="nav-text">Datos y sincronización</span>
       </a>
+      <a href="#" class="nav-link" data-view="historical-control">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11a9 9 0 1 1 3 7M3 4v7h7M12 7v5l3 2" /></svg>
+        <span class="nav-text">Control histórico</span>
+      </a>
       <a href="#" class="nav-link" data-view="financial-results">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 20V10M10 20V4M16 20v-7M3 20h18" />
@@ -2310,7 +2314,7 @@
       <div class="inventory-results-table-wrap"><table id="upload-transaction-matrix" class="inventory-results-table"></table></div>
       <h3 id="manual-uploads-title">Cargas manuales</h3>
       <div class="report-actions mercadopago-upload-actions">
-        <button id="upload-mercadopago-shared" class="icon-button" type="button">Cargar archivo único de MercadoPago</button>
+        <button id="upload-mercadopago-shared" class="icon-button" type="button" data-upload-field="mercadopago" data-upload-location="all">Cargar archivo único de MercadoPago</button>
         <button id="sync-mercadopago-web" class="icon-button" type="button">Actualizar MercadoPago desde web</button>
       </div>
       <p class="panel-description">MercadoPago: carga un archivo con todos los locales. Cada registro se asigna a su cafetería por la columna STORE_ID, configurada en Configuración.</p>
@@ -2378,6 +2382,9 @@
             <input type="checkbox" id="inventory-file-confirmed" />
             <span id="inventory-file-confirmation-copy">Confirmo que seleccioné el archivo correcto.</span>
           </label>
+          <label class="confirmation-check"><input type="checkbox" id="historical-complete" />Confirmo que el archivo incluye todos los registros del período confirmado y del ámbito indicado. Permite verificar eliminaciones.</label>
+          <label class="historical-scope-label">Ámbito de bodega (vacío = todas las bodegas de la ubicación)<input id="historical-warehouse" type="text" maxlength="100" placeholder="Código o nombre estable de la bodega" /></label>
+          <p class="panel-description">Sin esta confirmación se conserva el original y se comparan registros presentes, sin declarar eliminaciones.</p>
           <div id="transaction-overlap-notice" class="transaction-overlap-notice" hidden></div>
           <div id="transaction-confirmation-status" class="form-status" aria-live="polite"></div>
           <div class="conflict-actions">
@@ -2633,6 +2640,30 @@
       </dialog>
     </section>
 
+    <section id="historical-workspace" class="historical-workspace" hidden aria-labelledby="historical-title">
+      <div class="section-header"><div><div class="panel-eyebrow">Trazabilidad de los datos</div><h2 id="historical-title">Control histórico</h2><p class="panel-description">Originales de cada carga y sincronización, cambios detectados y espacio utilizado. Horario de Chile.</p></div><button id="historical-refresh" class="icon-button" type="button">Actualizar vista</button></div>
+      <div class="historical-tabs" role="tablist" aria-label="Consultas de control histórico">
+        <button type="button" role="tab" aria-selected="true" data-historical-tab="changes">Cambios del día</button>
+        <button type="button" role="tab" aria-selected="false" data-historical-tab="backups">Respaldos</button>
+        <button type="button" role="tab" aria-selected="false" data-historical-tab="storage">Almacenamiento</button>
+      </div>
+      <div class="historical-filters">
+        <label>Fecha de carga<input id="historical-date" type="date" /></label>
+        <label>Conjunto de datos<select id="historical-dataset"><option value="">Todos los conjuntos</option></select></label>
+        <label>Bodega de origen<select id="historical-warehouse-filter"><option value="">Todas las bodegas de origen</option></select></label>
+        <label>Origen<select id="historical-origin"><option value="">Todos los orígenes</option></select></label>
+        <label>Sucursal o bodega<select id="historical-location"><option value="">Todas las ubicaciones</option></select></label>
+      </div>
+      <p id="historical-status" class="form-status" role="status" aria-live="polite"></p>
+      <div id="historical-content"></div>
+      <div id="historical-pagination" class="historical-actions" hidden><button id="historical-prev" class="icon-button" type="button">Anterior</button><span id="historical-page"></span><button id="historical-next" class="icon-button" type="button">Siguiente</button></div>
+      <dialog id="historical-detail" class="historical-detail-dialog" aria-labelledby="historical-detail-title">
+        <div class="preview-dialog-head"><h3 id="historical-detail-title">Detalle de comparación</h3><button id="historical-detail-close" class="icon-button" type="button">Cerrar</button></div>
+        <div id="historical-detail-content"></div>
+        <div class="historical-actions"><button id="historical-detail-prev" class="icon-button" type="button">Anterior</button><span id="historical-detail-page"></span><button id="historical-detail-next" class="icon-button" type="button">Siguiente</button></div>
+      </dialog>
+    </section>
+
   </main>
 
   <script src="/vendor/xlsx.full.min.js"></script>
@@ -2641,6 +2672,7 @@
   <script src="sales-clusters-view.js"></script>
   <script src="upload-records-view.js"></script>
   <script src="sales-insight-filters.js"></script>
+  <script src="historical-control-view.js"></script>
   <script src="script.js"></script>
   <script src="/vendor/jspdf.umd.min.js"></script>
   <script src="weekly-results-export.js"></script>

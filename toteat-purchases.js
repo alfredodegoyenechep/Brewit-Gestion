@@ -149,7 +149,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
   }
   function status(location) {
     const s = get(location), config = settings()[location];
-    return { location, configured: !!credentials()[location], enabled: config?.enabled || false, from: config?.from || null,
+    return { location, historicalRunId:require('./historical-control').get(uploadsRoot).latest(location,['purchases']), configured: !!credentials()[location], enabled: config?.enabled || false, from: config?.from || null,
       intervalMinutes: config?.intervalMinutes || 15, running: jobs.has(location), progress: jobs.get(location)?.progress || null,
       lastSuccess: s?.syncedAt || null, lastError: config?.lastError || null, documentCount: s?.documents.length || 0,
       lineCount: s?.lineCount || 0, warnings: [...(s?.warnings || []), ...(receiptReader && s && !s.receiptSource ? [{type: 'warehouse-receipts-pending', message: 'Actualiza Compras para verificar sus bodegas contra las recepciones originales.'}] : [])],
@@ -172,7 +172,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     const config = settings()[location], credential = credentials()[location];
     if (activeLocation(location)?.type !== 'store' || !config || !credential) throw new Error('Configura primero la conexión y el período de compras.');
     const job = { progress: 'Preparando compras…' }; jobs.set(location, job);
-    job.promise = (async () => {
+    job.promise = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-public-api', location, upstream:{restaurantId:credential.restaurantId,localId:credential.localId}, label: 'Compras', datasets:['purchases','receipts'] }, async () => {
       const registered = activeLocation(location);
       if ((registered.toteatRestaurantId && String(registered.toteatRestaurantId) !== credential.restaurantId)
         || (registered.toteatLocalId && String(registered.toteatLocalId) !== credential.localId)) throw new Error('La API no corresponde a esta cafetería.');
@@ -185,6 +185,8 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
         job.progress = `Consultando ${++count} de ${selected.length}: ${w.from}…`;
         const response = await request(credential, 'accountingmovements', { initial_date: w.from.replaceAll('-', ''), final_date: (w.to > clock() ? clock() : w.to).replaceAll('-', ''), include_sales: 'false' });
         if (!Array.isArray(response.data?.purchases)) throw new Error('Toteat no confirmó una lista de compras válida.');
+        require('./historical-control').annotate(response, [{ dataset: 'purchases', selector: 'data.purchases', complete: true, range: { from: w.from, to: w.to > clock() ? clock() : w.to } }], 'compras.json');
+        if(response.next || response.has_more || response.hasMore || response.data?.next || response.pagination?.next) throw new Error('La respuesta de compras está incompleta o paginada; se conserva la versión anterior.');
         // Accounting movements also includes manual cash entries, even with include_sales=false.
         // Those entries are outside the purchase file and must not inflate purchases or costs.
         excludedByRange[w.from] = 0;
@@ -207,6 +209,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
           const from = documents.reduce((start, doc) => date(doc.emission_date) < start ? date(doc.emission_date) : start, config.from);
           receiptSource = await receiptReader({restaurantId: credential.restaurantId, localId: credential.localId},
             {from, to: clock(), includePurchases: true, onProgress: value => {job.progress = value;}});
+          require('./historical-control').snapshot(receiptSource, [{ dataset: 'receipts', selector: 'operations.purchases', complete: true, range: { from, to: clock() } }]);
           assigned = applyPurchaseReceiptWarehouses(documents, receiptSource, credential);
         }
         reconciled = compareWarehouses(assigned.documents, Object.values(inventoryBatches));
@@ -226,7 +229,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
         lastFullSuccess: selected.length === ranges.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
       require('./storage-retention').safePrune(uploadsRoot,'purchases',location);
-    })().catch(error => {
+    }).catch(error => {
       const all = settings(); all[location] = { ...all[location], lastAttempt: new Date().toISOString(), lastError: error.message }; atomicJson(settingsFile, all); throw error;
     }).finally(() => jobs.delete(location));
     return job.promise;

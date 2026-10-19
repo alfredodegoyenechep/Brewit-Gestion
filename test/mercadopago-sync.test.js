@@ -14,7 +14,7 @@ const csv = rows => [header, ...rows].map(row => row.join(';')).join('\n');
 const period = { from: '2026-10-12', to: '2026-10-15' };
 function temporary(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-mp-sync-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(root).idle();fs.rmSync(root, { recursive: true, force: true });});
   return root;
 }
 async function serve(t, app) {

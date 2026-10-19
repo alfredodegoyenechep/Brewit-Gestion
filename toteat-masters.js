@@ -135,7 +135,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   }
   function status(location) {
     const s = current(location);
-    return { location, running: running.has(location), lastError: errors.get(location) || null, observedAt: s?.observedAt || null,
+    return { location, historicalRunId:require('./historical-control').get(uploadsRoot).latest(location,['master-catalog']), running: running.has(location), lastError: errors.get(location) || null, observedAt: s?.observedAt || null,
       source: require('./toteat-direct-masters').connectionStatus(uploadsRoot).label, counts: s ? {
         products: s.products.filter(p => p.types.includes('PRODUCT')).length,
         ingredients: s.products.filter(p => p.types.includes('INGREDIENT')).length,
@@ -152,6 +152,12 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
     if (!Number.isFinite(Date.parse(source.capturedAt)) || source.products.some(p => !p.id || !p.custom_id || !Array.isArray(p.types))) throw Error('Formato de maestros inválido; se conserva la versión anterior.');
     const ids = new Set(source.products.map(p => p.id));
     if (ids.size !== source.products.length || source.items.some(p => !ids.has(p.m_id))) throw Error('Identidad o cobertura de maestros inconsistente.');
+    require('./historical-control').snapshot(source, [
+      {dataset:'master-catalog',selector:'products'}, {dataset:'master-recipes',selector:'products'},
+      {dataset:'master-suppliers',selector:'suppliers'}, {dataset:'product-hierarchy',selector:'hierarchies.products'},
+      {dataset:'ingredient-hierarchy',selector:'hierarchies.ingredients'}, {dataset:'extras-hierarchy',selector:'hierarchies.extras'},
+      {dataset:'warehouses',selector:'warehouses'}
+    ].map(d => ({...d, master:true, complete:true})));
     const normalized = normalizeMasters(source);
     normalized.inputFingerprint = require('./storage-retention').fingerprint({ normalized, items: source.items });
     if(current(location)?.inputFingerprint === normalized.inputFingerprint)return status(location);
@@ -173,7 +179,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
     if (running.has(location)) return running.get(location);
     const config = credentials()[location];
     if (!config) return Promise.reject(Error('Configura primero el restaurante y local en la conexión de Toteat.'));
-    const task = Promise.resolve().then(async () => {
+    const task = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-authenticated-web', location, upstream:config, label: 'Maestros' }, async () => {
       errors.delete(location);
       try { const source = await reader({ restaurantId: config.restaurantId, localId: config.localId }); return publish(location, source); }
       catch { const message = 'No se pudo actualizar. Revisa la sesión web de Toteat y vuelve a intentar; se conserva el último maestro completo.'; errors.set(location, message); throw Error(message); }
@@ -204,7 +210,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   }
   function sharedStatus() {
     const record = sharedRecord();
-    return { location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError, lastFailedAt, authentication: require('./toteat-direct-masters').connectionStatus(uploadsRoot).state,
+    return { historicalRunId:require('./historical-control').get(uploadsRoot).latest('shared',['master-catalog']), location: 'store-1', name: 'Maestros compartidos · La Concepción', running: !!sharedTask, lastError: sharedError, lastFailedAt, authentication: require('./toteat-direct-masters').connectionStatus(uploadsRoot).state,
       credentialExpiresAt: require('./toteat-direct-masters').connectionStatus(uploadsRoot).expiresAt,
       connection: require('./toteat-direct-masters').connectionStatus(uploadsRoot).label,
       observedAt: record?.observedAt || null, publishedAt: record?.savedAt || null, counts: record?.counts || null, warnings: [], shared: true };
@@ -212,7 +218,7 @@ function createMasterSync({ uploadsRoot, credentials, activeLocation, reader, cl
   function synchronizeShared() {
     if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     if (sharedTask) return sharedTask;
-    sharedTask = Promise.resolve().then(async () => {
+    sharedTask = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-authenticated-web', location: 'shared', upstream:credentials()['store-1'], label: 'Maestros compartidos' }, async () => {
       sharedError = null;
       try {
         const config = credentials()['store-1'];

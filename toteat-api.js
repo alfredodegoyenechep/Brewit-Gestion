@@ -18,8 +18,8 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
       const url = new URL(`https://api.toteat.com/mw/or/1.0/${route}`);
       url.search = new URLSearchParams({ xir: config.restaurantId, xil: config.localId, xiu: config.userId, xapitoken: config.token, ...params });
       let response, payload;
-      try { response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(45000), headers: { Accept: 'application/json' } }); payload = await response.json(); }
-      catch { throw new Error('No se pudo consultar Toteat. Se conserva la última actualización.'); }
+      try { response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(45000), headers: { Accept: 'application/json' } }); payload = await require('./historical-control').responseBody(response, { name: route + '.json' }); }
+      catch (error) { if (error.code === 'HISTORICAL_BACKUP_FAILED') throw error; throw new Error('No se pudo consultar Toteat. Se conserva la última actualización.'); }
       if (response.status === 429) throw new Error('Toteat limitó las consultas. Se reintentará en el próximo ciclo.');
       if (!response.ok || payload.ok !== true) throw new Error(`Toteat no autorizó o no completó la lectura de ${route}. Revisa el permiso y las credenciales del local.`);
       return payload;

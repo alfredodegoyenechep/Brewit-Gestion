@@ -175,6 +175,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     return { location, configured: !!credentials()[location], enabled: frequency.enabled,
       from: config?.from || null, through: s?.through || null, openShift: s?.openShift || null,
       intervalMinutes: frequency.intervalMinutes, running: running.has(location),
+      historicalRunId: require('./historical-control').get(uploadsRoot).latest(location, ['sales']),
       lastSuccess: s?.syncedAt || null, paymentCount: s?.payments.length || 0, orderCount: s?.orderCount || 0,
       completedWindows: Object.keys(s?.batches || {}).length, lastError: config?.lastError || null,
       detailWarnings, cancellationCheckError: s?.cancellationCheckError || null,
@@ -217,7 +218,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       || (registered.toteatLocalId && String(registered.toteatLocalId) !== credential.localId)) throw new Error('La conexión API no corresponde a los identificadores configurados para esta cafetería.');
     const job = { progress: 'Consultando turno…' };
     running.set(location, job);
-    job.promise = (async () => {
+    job.promise = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-public-api', location, upstream:{restaurantId:credential.restaurantId,localId:credential.localId}, label: 'Ventas y pagos', datasets:['sales','payment-details'] }, async () => {
       const shift = await request(credential, 'shiftstatus', {});
       if (!shift.data || !['open', 'closed'].includes(String(shift.data.status).toLowerCase())) throw new Error('Toteat no confirmó el estado del turno.');
       if (shift.data.localNumber != null && String(shift.data.localNumber) !== credential.localId) throw new Error('Toteat respondió con otro local.');
@@ -233,6 +234,8 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
         job.progress = `Consultando ${++count} de ${selected.length}: ${w.from}…`;
         const response = await request(credential, 'sales', { ini: w.from.replaceAll('-', ''), end: (w.to > clock() ? clock() : w.to).replaceAll('-', ''), detail_cancel_order: 'true' });
         if (!Array.isArray(response.data)) throw new Error('Toteat no entregó una lista de ventas válida.');
+        require('./historical-control').annotate(response, ['sales', 'payment-details'].map(dataset => ({ dataset, selector: 'data', complete: true, range: { from: w.from, to: w.to > clock() ? clock() : w.to } })), 'ventas-pagos.json');
+        if(response.next || response.has_more || response.hasMore || response.pagination?.next) throw new Error('La respuesta de ventas está incompleta o paginada; se conserva la versión anterior.');
         batches[w.from] = response.data.map(({ client, ...p }) => p);
       }
       const byPayment = new Map();
@@ -255,7 +258,8 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
           const data = response.data;
           if (response.ok !== true || !data || normalizeId(data.orderId) !== orderId || !['OPEN', 'CLOSED', 'CANCELLED', 'CANCELED'].includes(data.orderStatus)) throw new Error('Estado no verificable');
           orderStatuses[orderId] = data.orderStatus;
-        } catch {
+        } catch (error) {
+          if (error.code === 'HISTORICAL_BACKUP_FAILED') throw error;
           cancellationCheckError = 'No se pudieron verificar las anulaciones en Toteat. Revisa los pagos sin productos y confirma su estado.';
           break;
         }
@@ -269,7 +273,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
         cancellationCheckError, openShift: opened, from: config.from, through: clock() }, converted);
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
         lastFullSuccess: selected.length === allWindows.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
-    })().catch(error => {
+    }).catch(error => {
       const all = settings(); all[location] = { ...all[location], lastError: error.message, lastAttempt: new Date().toISOString() }; atomicJson(settingsFile, all);
       throw error;
     }).finally(() => running.delete(location));

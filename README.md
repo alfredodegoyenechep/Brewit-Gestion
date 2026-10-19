@@ -62,6 +62,18 @@ La casilla **Actualizar MercadoPago automáticamente todos los días a las 8:00*
 - Every master requires a “Válido desde” date. A duplicate category/date combination must be explicitly replaced or cancelled.
 - Saved masters include an in-app spreadsheet preview and permanent deletion with explicit per-file confirmation.
 
+## Control histórico
+
+**Control histórico**, debajo de **Datos y sincronización**, conserva los originales de cada carga manual, descarga web y sincronización. Ofrece **Cambios del día**, **Respaldos** y **Almacenamiento**, con filtros por fecha, conjunto, origen, ubicación y bodega. Las descargas recuperan los bytes originales; las capturas API conservan sus cuerpos antes de las conversiones de los reportes, sin guardar cabeceras de autenticación ni URLs con credenciales.
+
+Los archivos y reportes se guardan comprimidos en `uploads/.historical-control/`, fuera de la limpieza operativa y con retención indefinida. Cada ejecución conserva su propia evidencia, incluso si no cambia ningún registro. Un fallo al guardar o verificar el respaldo impide publicar los datos nuevos. Las comparaciones corren en un trabajador separado y sus pendientes se recuperan al reiniciar o con la siguiente carga. El cierre del servidor espera las comparaciones pendientes.
+
+La primera recepción válida establece la línea base por conjunto, origen y ámbito. Las modificaciones de registros existentes y las eliminaciones verificadas se muestran separadas de las altas históricas. Las altas del día en curso y las fechas nunca recibidas son crecimiento normal. Los maestros separan sus nuevas altas. Las cargas manuales requieren confirmar explícitamente el período completo y su ámbito para verificar eliminaciones; sin esa confirmación solo se comparan registros presentes y altas clasificables. Las respuestas paginadas o fallidas no reemplazan la última fuente válida. Una identidad o fecha sin resolver deja una comparación parcial o pendiente, sin inventar eliminaciones. Cuando no hay identificadores de línea, se compara el documento con todas sus filas, conservando repeticiones legítimas.
+
+Antes de la primera limpieza se incorporan los antecedentes disponibles. Los archivos reconstruidos desde registros internos se identifican como reconstrucciones: no equivalen al original perdido ni generan alertas retroactivas. Las métricas de almacenamiento suman los tamaños físicos comprimidos, reportes, estados de comparación y metadatos, contando cada archivo una vez. El promedio incluye todos los días desde la activación, incluso días sin cargas; la estimación mensual usa los días del mes seleccionado. El almacenamiento local forma parte de `uploads/` y debe incluirse en los respaldos externos del equipo.
+
+La consulta usa `/api/historical-control/options`, `/runs`, `/runs/:id`, `/runs/:id/changes`, `/runs/:id/files/:fileId/download`, `/runs/:id/report` y `/storage`, con la protección de acceso existente. Verificación específica: `node --test test/historical-control.test.js test/historical-ingestion.test.js`.
+
 ## Location management
 
 - Configuración can create and rename cafeterías or bodegas; the transaction upload selector reads this registry dynamically.

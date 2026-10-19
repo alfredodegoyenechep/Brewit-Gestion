@@ -76,7 +76,7 @@ test('bottle conversion tolerances affect comparison only, never warehouse or pu
 
 function tempRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-purchase-authority-'));
-  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  t.after(async () => {await require('../historical-control').get(root).idle();fs.rmSync(root, {recursive: true, force: true});});
   return root;
 }
 

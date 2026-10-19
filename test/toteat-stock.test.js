@@ -18,7 +18,7 @@ test('a master unit change keeps original records and excludes only the unconver
  const resolved=buildLedger(s,canonical,empty,empty);assert.equal(resolved.excluded.length,0);assert.equal(resolved.daily.find(r=>r.code==='C').opening,.5);
 });
 test('a failed dependency rebuild preserves the last version and status remains readable until recovery',t=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-rebuild-failure-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-rebuild-failure-'));t.after(async () => {await require('../historical-control').get(root).idle();fs.rmSync(root, {recursive:true,force:true});});
  let master={observedAt:'v1',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))};
  const sync=createStockSync({uploadsRoot:root,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>master});
  sync.publish('store-1',source());const original=sync.current('store-1'),pointer=path.join(root,'.integrations/toteat-api/stock/store-1/current.json'),version=fs.readFileSync(pointer,'utf8');
@@ -29,7 +29,7 @@ test('a failed dependency rebuild preserves the last version and status remains 
  assert.equal(sync.status('store-1').error,null);assert.equal(sync.current('store-1').masterObservedAt,'v2');
 });
 test('corrected purchase warehouse replaces old local receipts automatically without reading Toteat Kardex',t=>{
- const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-independent-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-independent-'));t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, {recursive:true,force:true});});
  const base=path.join(uploadsRoot,'.integrations/toteat-api/purchases/store-1');
  const purchase=(version,warehouse)=>{fs.mkdirSync(path.join(base,version),{recursive:true});fs.writeFileSync(path.join(base,version,'state.json'),JSON.stringify({...empty,version,documents:[{movement_id:'22978',received_date:'20260823',products:[{sku:'C',warehouse,received_quantity:3.4,received_measurement:'KG'}]}]}));fs.writeFileSync(path.join(base,'current.json'),JSON.stringify({version}));};
  const sync=createStockSync({uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))}),reader:()=>{throw Error('No remote read required');}});
@@ -53,7 +53,7 @@ test('duplicate documents, wrong local and unknown warehouses fail closed',()=>{
  let s=source();s.operations.counts.push(s.operations.counts[0]);assert.throws(()=>normalizeOperations(s,products),/identidad/);s=source();s.operations.counts[0].warehouse_ref='foreign';assert.throws(()=>normalizeOperations(s,products),/Bodega/);s=source();s.operations.counts[0].local_ref='other';assert.throws(()=>normalizeOperations(s,products),/otro local/);
 });
 test('atomic version replacement is idempotent, preserves previous generation on failed source',async t=>{
- const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));const masters=()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))});const sync=createStockSync({uploadsRoot,activeLocation:id=>id==='store-1'?{type:'store'}:null,credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters,reader:async()=>{throw Error('offline');}});sync.publish('store-1',source());const first=sync.current('store-1');sync.publish('store-1',source());assert.deepEqual(sync.current('store-1').daily,first.daily);await assert.rejects(sync.synchronize('store-1',source().range));assert.deepEqual(sync.current('store-1').daily,first.daily);assert.ok(sync.status('store-1').error);assert.throws(()=>sync.publish('store-1',{...source(),localId:'2'}),/no corresponde/);assert.throws(()=>sync.status('../secret'),/activo/);
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-'));t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, {recursive:true,force:true});});const masters=()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))});const sync=createStockSync({uploadsRoot,activeLocation:id=>id==='store-1'?{type:'store'}:null,credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters,reader:async()=>{throw Error('offline');}});sync.publish('store-1',source());const first=sync.current('store-1');sync.publish('store-1',source());assert.deepEqual(sync.current('store-1').daily,first.daily);await assert.rejects(sync.synchronize('store-1',source().range));assert.deepEqual(sync.current('store-1').daily,first.daily);assert.ok(sync.status('store-1').error);assert.throws(()=>sync.publish('store-1',{...source(),localId:'2'}),/no corresponde/);assert.throws(()=>sync.status('../secret'),/activo/);
 });
 test('transformation ledger preserves full precision while posting each input at three decimals',()=>{
  const s=source();s.operations.transformations=[{id:2,status:'APPROVED',registration_date:'2026-08-23',product_ref:'sandwich',quantity_produce:3,measure_unit:'UN',target_warehouse_ref:'w2',transformation_details:[{id:3,product_ref:'coffee',warehouse_ref:'w2',quantity:.1123456,measure_unit:'KG'},{id:4,product_ref:'coffee',warehouse_ref:'w2',quantity:.1123456,measure_unit:'KG'}]}];const r=buildLedger(s,products,empty,empty);assert.equal(r.daily.find(r=>r.code==='C').transformed_out,.224);assert.equal(r.operationLines.find(l=>l.column==='transformed_out').exactQuantity,.1123456);
@@ -64,7 +64,7 @@ test('extra sales include base and replacement once, leaving compensation to the
 });
 
 test('independent counts rebuild the ledger and close the next day without extending movement coverage',t=>{
- const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-count-dependency-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-count-dependency-'));t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, {recursive:true,force:true});});
  const config={uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}})};
  const sync=createStockSync({...config,masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))})});
  const original=source();original.capturedAt='2026-09-21T00:00:00Z';sync.publish('store-1',original);
@@ -83,7 +83,7 @@ test('independent counts rebuild the ledger and close the next day without exten
 
 
 test('unchanged rebuilds do not create snapshots and real changes retain three generations',t=>{
- const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-retention-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-retention-'));t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, {recursive:true,force:true});});
  const sync=createStockSync({uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))})});
  const original=source();sync.publish('store-1',original);const base=path.join(uploadsRoot,'.integrations/toteat-api/stock/store-1');const dirs=()=>fs.readdirSync(base,{withFileTypes:true}).filter(e=>e.isDirectory()).length;
  for(let i=0;i<5;i++)sync.rebuild('store-1');assert.equal(dirs(),1);
@@ -93,7 +93,7 @@ test('unchanged rebuilds do not create snapshots and real changes retain three g
 
 
 test('disk failure while writing a replacement retains the current pointer and removes the partial generation',t=>{
- const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-disk-'));t.after(()=>fs.rmSync(uploadsRoot,{recursive:true,force:true}));
+ const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-stock-disk-'));t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, {recursive:true,force:true});});
  const sync=createStockSync({uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))})});
  sync.publish('store-1',source());const base=path.join(uploadsRoot,'.integrations/toteat-api/stock/store-1'),pointer=fs.readFileSync(path.join(base,'current.json'),'utf8');
  const write=fs.writeFileSync;t.mock.method(fs,'writeFileSync',function(file,...args){if(String(file).includes('state.json.'))throw Error('disk unavailable');return write.call(this,file,...args);});

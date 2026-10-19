@@ -12,7 +12,7 @@ function fixture(localId = '1') {
 }
 function setup(t, reader = async () => fixture()) {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-masters-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   return createMasterSync({ uploadsRoot, credentials: () => ({ a: { restaurantId: 'r', localId: '1' }, b: { restaurantId: 'r', localId: '2' } }),
     activeLocation: id => ['a', 'b'].includes(id) ? { type: 'store' } : null, reader });
 }
@@ -46,7 +46,7 @@ test('unchanged captures reuse data; changed masters preserve their historical v
 
 test('shared synchronization always reads La Concepcion and publishes all six categories together', async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-shared-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   let fail = false, reads = 0;
   const sync = createMasterSync({ uploadsRoot, activeLocation: () => ({ type: 'store' }),
     credentials: () => ({ 'store-1': { restaurantId: 'r', localId: '1' }, 'store-2': { restaurantId: 'r', localId: '2' } }),

@@ -31,7 +31,7 @@ test('purchases preserve SKU, independent quantities, line total and rounding wi
 
 test('purchase snapshots replace documents and preserve the last valid version on failure', async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-purchases-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   let documents = [purchase(), { movement_id: 'cash1', movement_class: 'CASH_FLOW', total_amount: 4800 }], fail = false;
   const options = { uploadsRoot, activeLocation: id => ({ id, type: 'store' }), credentials: () => ({ 'store-1': { localId: '1' }, 'store-2': { localId: '2' } }), clock: () => '2026-09-21', request: async (c, route, params) => {
     assert.equal(route, 'accountingmovements'); assert.equal(params.include_sales, 'false');
@@ -56,7 +56,7 @@ test('purchase snapshots replace documents and preserve the last valid version o
 
 test('purchase reports use the API source once and expose a preview and protected export', async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-purchase-api-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   fs.mkdirSync(path.join(uploadsRoot, '.integrations/toteat-api'), { recursive: true });
   fs.writeFileSync(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), JSON.stringify({ 'store-1': { localId: '1', restaurantId: 'r', userId: 'u', token: 'secret' } }));
   const app = createApp({ enableLegacyTools: true, uploadsRoot, toteatRequestSpacing: 0, toteatSyncClock: () => '2026-09-21',

@@ -11,7 +11,7 @@ const source = () => ({ restaurantId: 'r', localId: '1', localRef: 'local', capt
   ] } });
 function options(t) {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-counts-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   return { uploadsRoot, activeLocation: id => id === 'store-1' ? { type: 'store' } : null, credentials: () => ({ 'store-1': { restaurantId: 'r', localId: '1' } }) };
 }
 test('original counts retain documents, zeros, units and statuses and filter warehouse records', t => {

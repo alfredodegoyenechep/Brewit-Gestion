@@ -6,6 +6,7 @@ const { createCountSync } = require('../toteat-counts');
 async function main() {
   const [location, from, to] = process.argv.slice(2);
   const root = path.resolve(__dirname, '../uploads');
+  require('../historical-control').get(root).bootstrap();
   const credentials = () => JSON.parse(fs.readFileSync(path.join(root, '.integrations/toteat-api/credentials.json'), 'utf8'));
   const reader = createToteatAutomation(path.join(root, '.integrations/toteat'));
   const sync = createCountSync({ uploadsRoot: root, credentials,

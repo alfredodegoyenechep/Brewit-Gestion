@@ -11,6 +11,7 @@ try {
     lock=path.join(root,'.storage-maintenance.lock');
     fs.writeFileSync(lock,JSON.stringify({pid:process.pid,startedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});
     acquired=true;
+    require('../historical-control').get(root).bootstrap();
   }
   const progress=message=>process.stderr.write(message+'\n');
   const result=args.includes('--apply')?maintenance.apply(root,JSON.parse(fs.readFileSync(value('--apply'),'utf8')),{progress})

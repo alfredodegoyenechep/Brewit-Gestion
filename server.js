@@ -2084,6 +2084,9 @@ function createApp(options = {}) {
   }
   const uploadsRoot = options.uploadsRoot || process.env.BREWIT_UPLOADS_ROOT || path.join(__dirname, 'uploads');
   require('./record-store').registerRoot(uploadsRoot);
+  const historicalControl = require('./historical-control').get(uploadsRoot);
+  historicalControl.bootstrap();
+  app.locals.historicalControl = historicalControl;
   if (options.storageMaintenance !== false) require('./storage-retention').startup(uploadsRoot);
   const weeksRoot = path.join(uploadsRoot, 'weeks');
   const mastersRoot = path.join(uploadsRoot, 'masters');
@@ -2128,7 +2131,32 @@ function createApp(options = {}) {
   ensureDir(purchaseOrdersRoot);
   ensureDir(trashLocationsRoot);
   ensureDir(toteatProfilesRoot);
-  const toteatAutomation = options.toteatAutomation || createToteatAutomation(toteatProfilesRoot);
+  const toteatAutomationBase = options.toteatAutomation || createToteatAutomation(toteatProfilesRoot);
+  const toteatAutomation = Object.create(toteatAutomationBase);
+  for (const [method, dataset] of Object.entries({downloadSales:'sales',downloadPaymentDetails:'payment-details',
+    downloadTransactionalSales:'sales',downloadTransactionalPaymentDetails:'payment-details',downloadTransactionalPurchases:'purchases',
+    downloadTransactionalKardex:'kardex',downloadSuppliers:'master-suppliers',downloadProductsMaster:'master-catalog',
+    downloadProductHierarchy:'product-hierarchy',downloadIngredientHierarchy:'ingredient-hierarchy',downloadExtrasHierarchy:'extras-hierarchy',downloadRecipes:'master-recipes'})) {
+    if (typeof toteatAutomationBase[method] !== 'function') continue;
+    toteatAutomation[method] = async (...args) => {
+      const input = args[0] || {}, restaurant = input.restaurant;
+      const location = typeof input === 'string' ? input : /central/.test(input.kind || '') ? 'main-warehouse'
+        : restaurant ? readLocations().locations.find(l => String(l.toteatRestaurantId) === String(restaurant.restaurantId) && String(l.toteatLocalId) === String(restaurant.localId))?.id : 'shared';
+      const branch=readLocations().locations.find(l=>l.id===location);
+      const upstream=restaurant || (branch && {restaurantId:branch.toteatRestaurantId,localId:branch.toteatLocalId});
+      return historicalControl.track({origin:'toteat-web-file',location:location || 'shared',upstream,label:dataset,datasets:[dataset]},async () => {
+        const download = await toteatAutomationBase[method].apply(toteatAutomationBase,args);
+        for (const file of download.files || [download]) {
+          if (!file.buffer) continue;
+          require('./historical-control').captureCurrent({bytes:file.buffer,name:file.filename || dataset+'.xlsx',format:'file',datasets:[{
+            dataset:input.kind?.includes('waste')?'waste':dataset,master:dataset.includes('master') || dataset.includes('hierarchy'),
+            complete:!!input.dateFrom && !!input.dateTo,range:input.dateFrom && input.dateTo ? {from:download.dateFrom || input.dateFrom,to:input.dateTo}:null
+          }]});
+        }
+        return download;
+      });
+    };
+  }
   migrateLegacySundayWeeks(weeksRoot);
   if (!fs.existsSync(locationsPath)) {
     const createdAt = new Date().toISOString();
@@ -3225,6 +3253,8 @@ function createApp(options = {}) {
     browser: options.mercadoPagoBrowser, clock: options.mercadoPagoClock,
     enableScheduler: options.enableMercadoPagoSync !== false && options.enableToteatSync !== false
   });
+  require('./historical-control').register(app,historicalControl);
+  app.get('/historical-control-view.js',(req,res)=>res.sendFile(path.join(__dirname,'historical-control-view.js')));
   app.locals.mercadoPagoSync = mercadoPagoSync;
   app.get('/api/integrations/mercadopago', (req, res) => res.json(mercadoPagoSync.status()));
   app.put('/api/integrations/mercadopago/schedule', (req, res) => {
@@ -10670,6 +10700,7 @@ function createApp(options = {}) {
   });
   const sendToteatDownload = (res, download, fallbackFilename) => {
     const filename = path.basename(download.filename || fallbackFilename).replace(/[\r\n"]/g, '_');
+    if(download.historicalRunId)res.setHeader('X-Brewit-Historical-Run',download.historicalRunId);
     res.setHeader('Content-Type', download.contentType || 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(download.buffer);
@@ -11432,6 +11463,39 @@ function createApp(options = {}) {
     }
   });
 
+  function archiveManualUpload(req, res, files, location, autoFinish = false) {
+    const run = req.historicalRunId ? historicalControl.load(req.historicalRunId) : historicalControl.begin({origin:'manual',location:location || 'all',label:'Carga de archivos'});
+    req.historicalRunId = run.id;
+    req.historicalAutoFinish ||= autoFinish;
+    try {
+      for (const file of files) historicalControl.capture(run,{bytes:require('node:fs').readFileSync(file.path),name:file.originalname,format:'file',datasets:[{
+        dataset:file.fieldname,location:location || 'all',master:MASTER_FIELDS.some(f=>f.name===file.fieldname),
+        validFrom:req.body?.[file.fieldname+'-from'] || null,complete:req.body?.historicalComplete==='true'
+      }]});
+    } catch(error) { historicalControl.finish(run,{success:false,error});throw error; }
+    res.set('X-Brewit-Historical-Run',run.id);
+    if (!req.historicalFinishAttached) res.once('finish',()=>{
+      if (res.statusCode >= 400 || req.historicalAutoFinish) {
+        try { historicalControl.finish(run.id,{success:res.statusCode<400}); } catch { /* The unfinished run is recovered on startup. */ }
+      }
+    });
+    req.historicalFinishAttached = true;
+    req.once('aborted',()=>{try{historicalControl.finish(run.id,{success:false});}catch{}});
+    return run.id;
+  }
+  function retainPartialUploads(storage) {
+    const remove = storage._removeFile;
+    storage._removeFile = (req,file,callback) => {
+      try {
+        if (req.historicalRunId && file.path && require('node:fs').existsSync(file.path)) historicalControl.capture(req.historicalRunId,{
+          bytes:require('node:fs').readFileSync(file.path),name:file.originalname,format:'file',evidence:'partial',
+          datasets:[{dataset:file.fieldname,location:req.query?.location || 'shared',complete:false}]
+        });
+      } catch(error) { return callback(error); }
+      remove.call(storage,req,file,callback);
+    };
+  }
+
   app.post('/api/uploads/transactions/inspect', (req, res) => {
     const locationId = String(req.query.location || '');
     const selectedLocation = activeLocation(locationId);
@@ -11444,7 +11508,9 @@ function createApp(options = {}) {
       destination: (uploadReq, file, callback) => callback(null, stagingDirectory),
       filename: (uploadReq, file, callback) => callback(null, safeFilename(file))
     });
+    retainPartialUploads(storage);
     const upload = multer({ storage, fileFilter, limits: { fileSize: MAX_FILE_SIZE, files: WEEK_FIELDS.length } }).fields(legacyToolsEnabled ? WEEK_FIELDS : WEEK_FIELDS.filter(f => legacy.manualFields.has(f.name)));
+    try { archiveManualUpload(req,res,[],locationId); } catch(error) { fs.rmSync(stagingDirectory,{recursive:true,force:true}); return res.status(507).json({error:error.message}); }
     upload(req, res, error => {
       if (error) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
@@ -11459,6 +11525,7 @@ function createApp(options = {}) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
         return res.status(400).json({ error: 'Selecciona una ubicación válida.' });
       }
+      try { archiveManualUpload(req,res,files,locationId); } catch(error) { fs.rmSync(stagingDirectory,{recursive:true,force:true}); return res.status(507).json({error:error.message,code:error.code}); }
       const allowedFields = selectedLocation ? fieldsForLocation(selectedLocation.type) : ['mercadopago'];
       const invalidField = files.find(file => !allowedFields.includes(file.fieldname));
       if (invalidField) {
@@ -11524,6 +11591,7 @@ function createApp(options = {}) {
         });
         const manifest = {
           token,
+          historicalRunId:req.historicalRunId,
           location: assignments ? 'all' : locationId,
           locationLabel: assignments ? 'Cafeterías según STORE_ID de MercadoPago' : selectedLocation.name,
           ...(assignments ? { assignments, mercadoPagoSummary } : {}),
@@ -11532,6 +11600,11 @@ function createApp(options = {}) {
           detectedRange: combinedDateRange(inspectedFiles),
           hasOverlap: inspectedFiles.some(file => file.existingSources.length)
         };
+        if (assignments) {
+          const run=historicalControl.load(req.historicalRunId);
+          for (const artifact of run.artifacts) artifact.datasets=assignments.map(a=>({dataset:'mercadopago',location:a.location,storeId:a.storeId,complete:false}));
+          historicalControl.save(run);
+        }
         writeJsonAtomic(path.join(stagingDirectory, 'manifest.json'), manifest);
         return res.json(manifest);
       } catch (inspectionError) {
@@ -11539,6 +11612,17 @@ function createApp(options = {}) {
         return res.status(422).json({ error: inspectionError.message || 'No se pudieron inspeccionar los archivos seleccionados.' });
       }
     });
+  });
+
+  app.post('/api/uploads/transactions/cancel', (req,res) => {
+    const token = req.body?.token;
+    if (!/^[0-9a-f-]{36}$/.test(token || '')) return res.status(400).json({error:'Revisión inválida.'});
+    const directory=path.join(stagingRoot,token),manifest=readJson(path.join(directory,'manifest.json'),null);
+    if (manifest?.historicalRunId) {
+      const run=historicalControl.load(manifest.historicalRunId);
+      if(run?.publication==='pending') historicalControl.finish(run,{success:false,publication:'cancelled'});
+    }
+    fs.rmSync(directory,{recursive:true,force:true});res.json({ok:true});
   });
 
   app.post('/api/uploads/transactions/confirm', (req, res) => {
@@ -11549,6 +11633,7 @@ function createApp(options = {}) {
     if (confirmed !== true || !isValidDate(dateFrom) || !isValidDate(dateTo) || dateFrom > dateTo) {
       return res.status(400).json({ error: 'Confirma un rango de fechas válido antes de guardar.' });
     }
+    if ((req.body?.historicalComplete !== undefined && typeof req.body.historicalComplete !== 'boolean') || (req.body?.historicalWarehouse !== undefined && (typeof req.body.historicalWarehouse !== 'string' || req.body.historicalWarehouse.length>100))) return res.status(400).json({error:'Indica una cobertura y un ámbito válidos.'});
     if (!['keep', 'replace'].includes(overlapAction)) {
       return res.status(400).json({ error: 'Selecciona si deseas mantener o reemplazar los días coincidentes.' });
     }
@@ -11586,6 +11671,8 @@ function createApp(options = {}) {
     const imports = {};
     const locationImports = {};
     try {
+      if (!manifest.historicalRunId) throw Error('Selecciona nuevamente el archivo para respaldar su original.');
+      historicalControl.updateCoverage(manifest.historicalRunId,{range:{from:dateFrom,to:dateTo},complete:req.body?.historicalComplete===true,warehouse:req.body?.historicalWarehouse?.trim() || '*'});
       for (const staged of manifest.files) {
         const locationId = staged.location || manifest.location;
         const destination = transactionLocationRoot(locationId);
@@ -11686,10 +11773,12 @@ function createApp(options = {}) {
           imports.mercadopago.duplicateTransactions += value.mercadopago?.duplicateTransactions || 0;
         }
       }
+      historicalControl.finish(manifest.historicalRunId);
       fs.rmSync(stagingDirectory, { recursive: true, force: true });
-      return res.json({ ok: true, location: manifest.location, overlapAction, imports,
+      return res.json({ ok: true, historicalRunId:manifest.historicalRunId, location: manifest.location, overlapAction, imports,
         ...(manifest.assignments ? { assignments: manifest.assignments.map(assignment => ({ ...assignment, imports: locationImports[assignment.location] })), skippedCount: manifest.mercadoPagoSummary?.unassociatedCount || 0 } : {}) });
     } catch (confirmationError) {
+      if(manifest.historicalRunId) historicalControl.finish(manifest.historicalRunId,{success:false,error:confirmationError});
       for (const locationId of writtenIndexes) {
         const original = originalIndexes.get(locationId);
         if (original) writeTransactionIndex(locationId, original);
@@ -11786,6 +11875,8 @@ function createApp(options = {}) {
       filename: (uploadReq, file, callback) => callback(null, safeFilename(file))
     });
     const upload = multer({ storage, fileFilter, limits: { fileSize: MAX_FILE_SIZE, files: WEEK_FIELDS.length } }).fields(WEEK_FIELDS);
+    retainPartialUploads(storage);
+    try { archiveManualUpload(req,res,[],location); } catch(error) { fs.rmSync(stagingDirectory,{recursive:true,force:true}); return res.status(507).json({error:error.message}); }
 
     upload(req, res, error => {
       if (error) {
@@ -11797,6 +11888,7 @@ function createApp(options = {}) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
         return res.status(400).json({ error: 'Select at least one file to inspect.' });
       }
+      try { archiveManualUpload(req,res,files,location); } catch(error) { return res.status(507).json({error:error.message}); }
       const allowedFields = fieldsForLocation(selectedLocation.type);
       const invalidField = files.find(file => !allowedFields.includes(file.fieldname));
       if (invalidField) {
@@ -11814,6 +11906,7 @@ function createApp(options = {}) {
         }));
         const manifest = {
           token,
+          historicalRunId:req.historicalRunId,
           location,
           locationLabel: selectedLocation.name,
           week,
@@ -11853,6 +11946,9 @@ function createApp(options = {}) {
         fs.rmSync(stagingDirectory, { recursive: true, force: true });
         return res.status(410).json({ error: 'This upload review expired. Select the files again.' });
       }
+      if(!manifest.historicalRunId) throw Error('Vuelve a seleccionar los originales.');
+      historicalControl.updateCoverage(manifest.historicalRunId,{range:{from:dateFrom,to:dateTo},complete:req.body?.historicalComplete===true});
+      res.once('finish',()=>{try{historicalControl.finish(manifest.historicalRunId,{success:res.statusCode<400});}catch{}});
       const destination = path.join(weeksRoot, manifest.week, manifest.location);
       ensureDir(destination);
       const metadataPath = path.join(destination, 'meta.json');
@@ -11914,7 +12010,7 @@ function createApp(options = {}) {
       writeJsonAtomic(metadataPath, next);
       replaced.forEach(record => removeStoredRecords(destination, record));
       fs.rmSync(stagingDirectory, { recursive: true, force: true });
-      return res.json({ ok: true, week: manifest.week, location: manifest.location, meta: next, salesImport });
+      return res.json({ ok: true, historicalRunId:manifest.historicalRunId, week: manifest.week, location: manifest.location, meta: next, salesImport });
     } catch (confirmationError) {
       movedFiles.forEach(filePath => fs.rmSync(filePath, { force: true }));
       fs.rmSync(stagingDirectory, { recursive: true, force: true });
@@ -12007,9 +12103,11 @@ function createApp(options = {}) {
     destination: (req, file, callback) => callback(null, mastersRoot),
     filename: (req, file, callback) => callback(null, safeFilename(file))
   });
+  retainPartialUploads(masterStorage);
   const masterUpload = multer({ storage: masterStorage, fileFilter, limits: { fileSize: MAX_FILE_SIZE, files: MASTER_FIELDS.length } }).fields(MASTER_FIELDS);
 
   if (legacyToolsEnabled) app.post('/upload/master', (req, res) => {
+    try { archiveManualUpload(req,res,[],'shared',true); } catch(error) { return res.status(507).json({error:error.message}); }
     masterUpload(req, res, error => {
       if (error) {
         removeFiles(uploadedFiles(req));
@@ -12017,6 +12115,7 @@ function createApp(options = {}) {
       }
       const files = uploadedFiles(req);
       if (files.length === 0) return res.status(400).json({ error: 'Select at least one master file to upload.' });
+      try { archiveManualUpload(req,res,files,'shared',true); } catch(error) { removeFiles(files); return res.status(507).json({error:error.message}); }
       const structureValidations = files.map(validateUploadStructure);
       const mismatch = structureValidations.find(validation => !validation.ok);
       if (mismatch) {
@@ -12084,7 +12183,7 @@ function createApp(options = {}) {
           try { require('./record-store').removeOriginal(file.path); } catch { /* Published records remain valid; maintenance can retry source cleanup. */ }
         }
         replacedRecords.forEach(record => removeStoredRecords(mastersRoot, record));
-        return res.json({ ok: true, saved });
+        return res.json({ ok: true, historicalRunId:req.historicalRunId, saved });
       } catch (writeError) {
         removeFiles(files);
         return res.status(500).json({ error: 'Could not save master-file metadata.' });
@@ -12143,6 +12242,22 @@ function createApp(options = {}) {
     if (res.headersSent) return next(error);
     return res.status(error.status || 500).json({ error: error.status === 404 ? 'File not found.' : 'Unexpected server error.' });
   });
+  const listen = app.listen.bind(app);
+  app.listen = (...args) => {
+    const server = listen(...args), close = server.close.bind(server);
+    let closing;
+    server.close = callback => {
+      if (!closing) {
+        toteatSalesSync?.stop(); toteatSalesSync?.purchases.stop(); app.locals.uploadRefresh?.stop();
+        closing = new Promise(resolve=>close(error=>resolve(error))).then(async error=>{
+          await mercadoPagoSync.close(); await historicalControl.idle(); return error;
+        });
+      }
+      closing.then(error=>callback?.(error),error=>callback?.(error));
+      return server;
+    };
+    return server;
+  };
   return app;
 }
 

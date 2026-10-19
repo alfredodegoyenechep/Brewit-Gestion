@@ -66,7 +66,7 @@ test('separate payments sum once per order and ambiguous shared lines are blocke
 
 function service(t, request) {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-sales-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   const options = { uploadsRoot, activeLocation: id => ['store-1', 'store-2'].includes(id) ? { id, type: 'store' } : null,
     credentials: () => ({ 'store-1': { localId: '1' }, 'store-2': { localId: '2' } }),
     request, clock: () => '2026-09-21' };
@@ -211,7 +211,7 @@ test('refresh includes an old open shift and windows stay at most 15 days', asyn
 
 test('all report readers use API data without double counting an old upload', async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-report-sync-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   fs.mkdirSync(path.join(uploadsRoot, '.integrations/toteat-api'), { recursive: true });
   fs.writeFileSync(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), JSON.stringify({ 'store-1': { localId: '1', restaurantId: 'r', userId: 'u', token: 'secret' } }));
   const app = createApp({ enableLegacyTools: true, uploadsRoot, toteatRequestSpacing: 0, toteatSyncClock: () => '2026-09-21', toteatApiFetch: async url => Response.json({ ok: true, data: url.pathname.endsWith('shiftstatus') ? { status: 'closed', localNumber: 1 } : [payment()] }) });
@@ -321,7 +321,7 @@ test('a linked credit note on another order retains the original to avoid revers
 
 test('confirmation corrects daily and network reports immediately and survives resync', async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-cancel-report-'));
-  t.after(() => fs.rmSync(uploadsRoot, { recursive: true, force: true }));
+  t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, { recursive: true, force: true });});
   fs.mkdirSync(path.join(uploadsRoot, '.integrations/toteat-api'), { recursive: true });
   fs.writeFileSync(path.join(uploadsRoot, '.integrations/toteat-api/credentials.json'), JSON.stringify({ 'store-2': { localId: '2', restaurantId: 'r', userId: 'u', token: 'secret' } }));
   const payments = [10600, 5900, 4100, 4100, 4100, 3900, 4800].map((total, i) => payment({

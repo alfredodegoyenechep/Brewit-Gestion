@@ -185,7 +185,7 @@ function organizeWorkspaceNavigation() {
     { label: 'Visión ejecutiva', views: ['report', 'financial-results', 'weekly-results'] },
     { label: 'Inteligencia comercial', views: ['sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients'] },
     { label: 'Operación y costos', views: ['products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings'] },
-    { label: 'Administración', views: ['uploads', 'config'] }
+    { label: 'Administración', views: ['uploads', 'historical-control', 'config'] }
   ];
   navigation.replaceChildren(...groups.map(group => {
     const section = document.createElement('section');
@@ -295,6 +295,9 @@ function setView(view) {
     loader.style.display = '';
     loadUploadOverview();
     return;
+  }
+  if (view === 'historical-control') {
+    const history = document.getElementById('historical-workspace');history.hidden=false;history.style.display='';window.openHistoricalControl?.();return;
   }
   if (view === 'config') {
     const settings = document.getElementById('location-settings');
@@ -899,6 +902,8 @@ function clearInspection(clearStatus = false) {
   const confirmation = document.getElementById('date-confirmation');
   if (confirmation.open) confirmation.close();
   document.getElementById('dates-confirmed').checked = false;
+  if(document.getElementById('historical-complete'))document.getElementById('historical-complete').checked=false;
+  if(document.getElementById('historical-warehouse'))document.getElementById('historical-warehouse').value='';
   document.getElementById('inventory-file-confirmed').checked = false;
   document.getElementById('inventory-file-confirmation-row').hidden = true;
   document.getElementById('detected-files-list').replaceChildren();
@@ -911,6 +916,7 @@ function clearInspection(clearStatus = false) {
 
 function cancelTransactionConfirmation() {
   const status = transactionUploadStatus();
+  if (inspectionState?.token) apiRequest('/api/uploads/transactions/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:inspectionState.token})}).catch(()=>{});
   clearWeeklySelections();
   clearInspection();
   setStatus(status, 'Carga cancelada.', 'muted');
@@ -980,7 +986,7 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
     const result = await apiRequest('/api/uploads/transactions/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction,
+      body: JSON.stringify({ token: inspectionState.token, dateFrom, dateTo, confirmed: true, categoryConfirmed, overlapAction, historicalComplete:document.getElementById('historical-complete')?.checked===true, historicalWarehouse:document.getElementById('historical-warehouse')?.value.trim() || '*',
         ...(inspectionState.mercadoPagoSummary?.unassociatedCount ? { excludedAcknowledged: true } : {}) })
     });
     clearWeeklySelections();
@@ -11057,6 +11063,8 @@ function showInspection(manifest, { openDialog = true } = {}) {
   document.getElementById('confirmed-date-from').value = manifest.detectedRange?.from || '';
   document.getElementById('confirmed-date-to').value = manifest.detectedRange?.to || '';
   document.getElementById('dates-confirmed').checked = false;
+  if(document.getElementById('historical-complete'))document.getElementById('historical-complete').checked=false;
+  if(document.getElementById('historical-warehouse'))document.getElementById('historical-warehouse').value='';
   const salesOnlyUpload = manifest.files.length > 0 && manifest.files.every(file => file.field === 'sales');
   const sharedMercadoPago = hasSharedMercadoPagoDates(manifest);
   const noAssociatedRows = manifest.mercadoPagoSummary?.associatedCount === 0;

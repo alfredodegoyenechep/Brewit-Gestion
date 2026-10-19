@@ -70,7 +70,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
     'report', 'financial-results', 'weekly-results',
     'sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients',
     'products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings',
-    'uploads', 'config'
+    'uploads', 'historical-control', 'config'
   ]);
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-summary-day"]')?.disabled);
   assert.equal(await page.locator('#weekly-report [data-report-chart]').count(), 22);
@@ -263,7 +263,8 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
   const browser=await chromium.launch({executablePath:CHROME_PATH,headless:true});t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));fs.rmSync(uploadsRoot,{recursive:true,force:true});});
   const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();
   await page.locator('[data-upload-location="store-1"][data-upload-field="marketing"]').waitFor();
-  assert.equal(await page.locator('[data-upload-field]').count(),6);
+  assert.equal(await page.locator('#upload-manual-actions [data-upload-field]').count(),6);
+  assert.equal(await page.locator('#upload-mercadopago-shared[data-upload-field="mercadopago"]').count(),1);
   assert.equal(await page.locator('[data-upload-location="main-warehouse"]').count(),0);
   for(const field of ['marketing','employees','calibrations','mercadopago']) {
     const chooser=page.waitForEvent('filechooser');await (field==='mercadopago'?page.getByRole('button',{name:'Cargar archivo único de MercadoPago'}):page.locator(`[data-upload-location="store-1"][data-upload-field="${field}"]`)).click();

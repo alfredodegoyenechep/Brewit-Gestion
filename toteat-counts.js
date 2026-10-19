@@ -20,7 +20,7 @@ function createCountSync({ uploadsRoot, activeLocation, credentials, reader }) {
   }
   function status(id) {
     const key = keyFor(id), state = current(key), attempt = read(path.join(root, key, 'attempt.json'));
-    return { location: key, running: jobs.has(key), error: attempt?.error || null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],
+    return { location: key, historicalRunId:require('./historical-control').get(uploadsRoot).latest(key,['counts']), running: jobs.has(key), error: attempt?.error || null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],
       updatedAt: state?.capturedAt || null, range: state?.range || null, sourceKind: 'original-count-documents',
       documents: state?.documents.length ?? null, approved: state?.documents.filter(d => d.status === 'APPROVED').length ?? null,
       lines: state?.lines.length ?? null };
@@ -56,10 +56,11 @@ function createCountSync({ uploadsRoot, activeLocation, credentials, reader }) {
     if (jobs.has(key)) return jobs.get(key);
     if (!validDate(range.from) || !validDate(range.to) || range.from > range.to || Date.parse(range.to) - Date.parse(range.from) > 366 * 86400000) throw Error('Selecciona un período de hasta un año.');
     const config = credentials()[key]; if (!config) throw Error('Configura la conexión Toteat del local.');
-    const task = Promise.resolve().then(async () => {
+    const task = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-authenticated-web', location: key, upstream:{restaurantId:config.restaurantId,localId:config.localId}, label: 'Tomas de inventario', datasets:['counts'] }, async () => {
       try {
         const source = await reader({ restaurantId: String(config.restaurantId), localId: String(config.localId) },
           { from: range.from, to: range.to, includeOperations: true, operationKinds: ['counts'] });
+        require('./historical-control').snapshot(source, [{dataset:'counts',selector:'operations.counts',complete:true,range}]);
         return publish(key, source);
       } catch (cause) {
         const error = cause.code === 'TOTEAT_AUTH_REQUIRED' ? require('./toteat-session').sessionMessage(cause.loginOpened) : 'No se pudieron actualizar las tomas originales. Revisa la sesión autorizada de Toteat; se conserva la última versión completa.';

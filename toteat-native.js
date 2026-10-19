@@ -1,18 +1,22 @@
+const history = require('./historical-control');
 // Read-only adapter for Toteat's authenticated web application. This is not
 // the public token API. Authorization headers live only in this function.
 async function readNative(page, restaurant, { from, to, includeSuppliers = false, includeOperations = false, includePurchases = false, operationKinds = ['counts', 'transfers', 'transformations'], onProgress = () => {} } = {}) {
+  const readBody=(response,options)=>history.responseBody(response,{...options,origin:'toteat-authenticated-web'});
   const checkAuthentication = response => {
     if ([401, 403].includes(response.status())) throw Object.assign(Error('Inicia sesión en Toteat para continuar.'), { code: 'TOTEAT_AUTH_REQUIRED' });
   };
-  const pending = [], captured = {};
+  const pending = [], captured = {}, transferBodies = [];
+  const remember = promise => {pending.push(promise);promise.catch(()=>{});};
   let inventoryHeaders, masterHeaders;
   const observe = response => {
     const url = new URL(response.url());
     const kind = url.origin === 'https://api.toteat.com' && /^\/locals\/[^/]+\/(products|warehouses)\/$/.exec(url.pathname)?.[1];
-    if (kind) pending.push((async () => {
+    if (kind) remember((async () => {
       checkAuthentication(response);
       if (!response.ok()) throw Error('Toteat no entregó el maestro completo.');
-      const body = await response.json();
+      const body = await readBody(response, { name: kind + '.json' });
+      history.annotate(body, (kind === 'products' ? ['master-catalog', 'master-recipes'] : ['warehouses']).map(dataset => ({dataset,selector:'results',master:true,complete:!body.next && (body.count == null || body.count === body.results?.length)})));
       if (!Array.isArray(body.results)) throw Error('Formato de maestro no reconocido.');
       captured[kind] = body.results;
       captured.localRef = url.pathname.split('/')[2];
@@ -21,8 +25,18 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         masterHeaders = { authorization: headers.authorization };
       }
     })());
+    if (url.origin === 'https://api.toteat.com' && ['5911','5912'].includes(url.searchParams.get('xmod'))) remember((async()=>{
+      const body=await readBody(response,{name:'solicitudes-transferencias.json'});transferBodies.push({body,detail:Number(url.searchParams.get('idsol'))!==0});
+    })());
+    if (url.origin === 'https://api.toteat.com' && url.pathname === '/resto/setupconfig') {
+      const dataset = {'5100':'product-hierarchy','5115':'ingredient-hierarchy','5110':'extras-hierarchy'}[url.searchParams.get('xmod')];
+      if (dataset) remember((async () => {
+        const body = await readBody(response, {name:dataset+'.json'});
+        history.annotate(body,[{dataset,selector:'data',hierarchy:true,master:true,complete:body.ok===true && !body.next}]);
+      })());
+    }
     if (url.origin === 'https://inventory.toteat.com' && ['/kardex/', '/take-inventory/', '/purchases/'].includes(url.pathname)) {
-      pending.push((async () => {
+      remember((async () => {
         const headers = await response.request().allHeaders();
         inventoryHeaders = { authorization: headers.authorization, timezone: 'America/Santiago' };
       })());
@@ -59,7 +73,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
     // endpoint explicitly so pre-opening locations still get complete masters.
     if (!captured.products && captured.localRef && masterHeaders?.authorization) {
       const response = await page.context().request.get(`https://api.toteat.com/locals/${encodeURIComponent(captured.localRef)}/products/`, { headers: masterHeaders, timeout: 45000, maxRedirects: 0 });
-      try { checkAuthentication(response); if (response.ok()) captured.products = (await response.json()).results; }
+      try { checkAuthentication(response); if (response.ok()) { const body = await readBody(response,{name:'products.json'}); history.annotate(body,['master-catalog','master-recipes'].map(dataset=>({dataset,selector:'results',master:true,complete:!body.next && (body.count==null || body.count===body.results?.length)}))); captured.products=body.results; } }
       finally { await response.dispose(); }
     }
     if (!captured.products || !captured.warehouses || (from && !inventoryHeaders?.authorization)) throw Error('La sesión web no permitió leer inventario. Inicia sesión en Toteat y vuelve a actualizar.');
@@ -72,7 +86,9 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
       try {
         checkAuthentication(response);
         if (!response.ok()) throw Error('No se pudo leer el maestro de proveedores.');
-        result.suppliers = (await response.json()).results;
+        const body = await readBody(response,{name:'providers.json'});
+        history.annotate(body,[{dataset:'master-suppliers',selector:'results',master:true,complete:!body.next && (body.count==null || body.count===body.results?.length)}]);
+        result.suppliers = body.results;
         if (!Array.isArray(result.suppliers) || result.suppliers.some(p => p.local !== captured.localRef)) throw Error('Proveedores incompletos o de otro local.');
       } finally { await response.dispose(); }
     }
@@ -93,7 +109,8 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         try {
           checkAuthentication(response);
           if (!response.ok()) throw Error('No se pudo leer una fuente de inventario. Se conserva la versión anterior.');
-          const body = await response.json();
+          const body = await readBody(response,{name:route+'.json'});
+          history.annotate(body,[{dataset:kind==='purchases'?'receipts':kind,selector:'results',complete:!body.next && (body.count==null || body.count===body.results?.length),range:{from:start,to:finish}}]);
           if (!Array.isArray(body.results) || body.next || (body.count != null && body.count !== body.results.length)) throw Error('La fuente de inventario está incompleta o paginada.');
           for (const document of body.results) {
             if (document.id == null || documents.has(String(document.id))) throw Error('La fuente repite documentos entre períodos; no se publicó la actualización.');
@@ -105,7 +122,14 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         }
         result.operations[kind] = [...documents.values()];
       }
-      if(operationKinds.includes('transfers')) result.localTransfers=await require('./toteat-local-transfers').readLocalTransfers(page,restaurant,from,to);
+      if(operationKinds.includes('transfers')) {
+        result.localTransfers=await require('./toteat-local-transfers').readLocalTransfers(page,restaurant,from,to);
+        await Promise.all(pending);
+        const details=transferBodies.filter(r=>r.detail);
+        if(details.length)for(const {body} of details)history.annotate(body,[{dataset:'local-transfers',selector:'data',complete:true,range:{from,to}}]);
+        else if(!result.localTransfers.documents.length && transferBodies.length)history.annotate(transferBodies[0].body,[{dataset:'local-transfers',selector:'data',complete:true,range:{from,to}}]);
+        else history.captureCurrent({body:result.localTransfers,name:'transferencias-entre-locales.json',datasets:[{dataset:'local-transfers',selector:'documents',complete:true,range:{from,to}}]});
+      }
     } else if (from && to) {
       const get = async (route, params) => {
         const url = new URL(route, 'https://inventory.toteat.com');
@@ -114,7 +138,9 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         try {
           checkAuthentication(response);
           if (!response.ok()) throw Error('Toteat no completó la lectura de inventario. Se conserva la versión anterior.');
-          return await response.json();
+          const body = await readBody(response,{name:'kardex.json'});
+          history.annotate(body,[{dataset:'kardex',selector:route==='/kardex/get-kardex'?'':'results.detail',complete:false,range:{from,to},warehouse:params.warehouse_ref||'*'}]);
+          return body;
         } finally { await response.dispose(); }
       };
       result.range = { from, to, timezone: 'America/Santiago' };
@@ -130,6 +156,7 @@ async function readNative(page, restaurant, { from, to, includeSuppliers = false
         await page.waitForTimeout(200);
       }
     }
+    await Promise.all(pending);
     return result;
   } finally {
     page.off('response', observe);
