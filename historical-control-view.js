@@ -3,12 +3,12 @@
   const node = (tag, text, className) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (className) n.className = className; return n; };
   const states = { receiving:'Recibiendo / pendiente de confirmación', complete:'Completa', incomplete:'Incompleta', pending:'Pendiente', done:'Comparada',
     'not-applicable':'No corresponde', published:'Publicada', 'not-published':'Sin publicar', antecedent:'Antecedente', partial:'Comparación parcial', baseline:'Línea base' };
-  const types = { modified:'Modificado', deleted:'Eliminado', historicalAdded:'Agregado histórico', masterAdded:'Alta de maestro', ambiguous:'Identidad pendiente' };
+  const types = { modified:'Modificado', deleted:'Eliminado', historicalAdded:'Agregado histórico', masterAdded:'Alta de maestro', ambiguous:'Identidad pendiente',incomplete:'Carga incompleta',pending:'Comparación pendiente',partial:'Comparación parcial' };
   const originNames = {manual:'Archivo manual','toteat-public-api':'API pública Toteat','toteat-authenticated-web':'Servicios web Toteat','toteat-web-file':'Archivo web Toteat','mercadopago-web':'Reportes web MercadoPago',legacy:'Antecedentes anteriores'};
   const time = value => value ? new Intl.DateTimeFormat('es-CL',{timeZone:'America/Santiago',dateStyle:'short',timeStyle:'medium'}).format(new Date(value)) : '—';
   const bytes = n => { const units=['KB','MB','GB']; n/=1000; let i=0; while(n>=1000 && i<units.length-1){n/=1000;i++;} return `${new Intl.NumberFormat('es-CL',{maximumFractionDigits:n<0.01?3:2}).format(n)} ${units[i]}`; };
   const valueText = (v, present=true) => !present ? 'Campo ausente' : v === null ? 'null' : typeof v === 'object' ? JSON.stringify(v,null,2) : String(v);
-  let options, locations = {}, tab='changes', offset=0, detailOffset=0, detailId, requestId=0, timer;
+  let options, locations = {}, tab='alerts', offset=0, detailOffset=0, detailId, requestId=0, timer;
   async function api(url) {
     const response=await fetch(url);
     if(!response.ok)throw Error((await response.json().catch(()=>({}))).error || (response.status===404 ? 'El servidor no tiene disponible esta consulta de Control histórico. Reinicia el servidor y vuelve a cargar la página.' : 'No se pudo consultar el control histórico.'));
@@ -31,12 +31,21 @@
   function query() {
     const q=new URLSearchParams({offset:String(offset),limit:'30'});
     for(const [field,id] of [['date','historical-date'],['dataset','historical-dataset'],['origin','historical-origin'],['location','historical-location'],['warehouse','historical-warehouse-filter']])if(el(id).value)q.set(field,el(id).value);
+    if(tab==='alerts'){
+      if(el('historical-date-to').value)q.set('dateTo',el('historical-date-to').value);
+      if(el('historical-alert-type').value)q.set('type',el('historical-alert-type').value);
+    }
     return q;
   }
   async function refresh() {
     const current=++requestId; clearTimeout(timer);el('historical-status').textContent='Consultando respaldos…';
     try {
-      if(tab==='storage') {
+      if(tab==='alerts') {
+        const result=await api('/api/historical-control/alerts?'+query());
+        if(current!==requestId)return;renderAlerts(result);
+        el('historical-page').textContent=result.total?`${offset+1}–${offset+result.alerts.length} de ${result.total} alertas`:'0 alertas';
+        el('historical-prev').disabled=offset===0;el('historical-next').disabled=offset+30>=result.total;el('historical-pagination').hidden=!result.total;
+      } else if(tab==='storage') {
         const result=await api('/api/historical-control/storage?'+new URLSearchParams({date:el('historical-date').value || options.today}));
         if(current!==requestId)return;renderStorage(result);el('historical-pagination').hidden=true;
       } else {
@@ -48,6 +57,47 @@
       }
       el('historical-status').textContent='';
     } catch(error) { if(current===requestId)el('historical-status').textContent=error.message; }
+  }
+  function renderAlerts(data) {
+    const target=el('historical-content');target.replaceChildren();
+    const summary=data.summary,kpis=node('div',null,'historical-kpis');
+    for(const [label,key] of [['Registros modificados','modified'],['Registros eliminados','deleted'],['Agregados históricos','historicalAdded'],['Requieren revisión','review']]){
+      const card=node('div',null,'historical-kpi');card.append(node('span',label),node('strong',summary[key]));kpis.append(card);
+    }
+    const toolbar=node('div',null,'historical-actions'),q=query();q.delete('offset');q.delete('limit');q.set('format','csv');
+    toolbar.append(link('Descargar reporte CSV','/api/historical-control/alerts?'+q));
+    target.append(kpis,node('p',data.message,summary.review+summary.modified+summary.deleted+summary.historicalAdded?'historical-notice':'historical-empty'),
+      node('p',`${summary.executions} cargas evaluadas · ${summary.completeSources} comparaciones completas · ${summary.baselineSources} líneas base · ${summary.partialSources} comparaciones parciales · ${summary.antecedents} antecedentes incorporados. Los contadores abarcan el período y ámbito seleccionados, antes del filtro por tipo. Las altas de maestros y el crecimiento normal se consultan en «Cambios del día».`,'panel-description'),toolbar);
+    if(!data.alerts.length){
+      if(summary.modified+summary.deleted+summary.historicalAdded+summary.review)target.append(node('p','No hay alertas del tipo seleccionado.','historical-empty'));
+      return;
+    }
+    const alertsTable=table(['Alerta','Detección / operación','Conjunto / ámbito','Identificador','Detalle'],data.alerts.map(alert=>{
+      const detail=node('div');
+      detail.append(node('p',`Detectado el ${time(alert.detectedAt)}; operación del ${alert.operationDate || 'fecha no disponible'}${alert.previousDate && alert.previousDate!==alert.operationDate?' (antes: '+alert.previousDate+')':''}. ${name(alert.dataset) || 'Carga'} · ${locationName(alert.location)}.`));
+      if(alert.message)detail.append(node('p',alert.message));
+      detail.append(node('p',`Versiones: ${alert.previousRunId || 'Sin versión anterior'} → ${alert.runId}`,'panel-description'));
+      if(alert.sourceStatus==='partial')detail.append(node('p','Hallazgo identificado en una comparación parcial.','historical-notice'));
+      if(alert.fields.length)detail.append(table(['Campo','Valor anterior','Valor nuevo'],alert.fields.map(f=>[f.field,node('pre',valueText(f.before,f.beforePresent)),node('pre',valueText(f.after,f.afterPresent))])));
+      const version=node('button','Consultar carga y respaldos','icon-button');version.type='button';version.addEventListener('click',async()=>{
+        version.disabled=true;
+        try{
+          const run=await api('/api/historical-control/runs/'+alert.runId),files=node('div',null,'historical-actions');
+          files.append(node('p',`Carga recibida: ${time(run.startedAt)} · ${states[run.reception]} · ${states[run.publication] || run.publication}`));
+          for(const artifact of run.artifacts)files.append(link('Descargar '+artifact.name,`/api/historical-control/runs/${run.id}/files/${artifact.id}/download`));
+          if(run.comparison==='done'){const compare=node('button','Ver comparación','icon-button');compare.type='button';compare.addEventListener('click',()=>openDetails(run));files.append(compare);}
+          detail.append(files);version.remove();
+        }catch(error){el('historical-status').textContent=error.message;version.disabled=false;}
+      });detail.append(version);
+      const inspect=node('button','Ver detalle de alerta','icon-button');inspect.type='button';inspect.addEventListener('click',()=>{
+        el('historical-detail-title').textContent=`${types[alert.type]} · ${alert.id || name(alert.dataset) || 'Carga'}`;
+        el('historical-detail-content').replaceChildren(detail);el('historical-detail-pagination').hidden=true;el('historical-detail').showModal();
+      });
+      return [node('span',types[alert.type],alert.category==='historical'?'historical-alert-badge':'historical-badge'),
+        `Detectado el ${time(alert.detectedAt)}; operación del ${alert.operationDate || 'fecha no disponible'}${alert.previousDate && alert.previousDate!==alert.operationDate?' (antes: '+alert.previousDate+')':''}`,
+        `${name(alert.dataset) || 'Carga'} · ${originNames[alert.origin] || alert.origin} · ${locationName(alert.location)}${alert.warehouses?.length?' · '+alert.warehouses.map(warehouseName).join(', '):alert.warehouse && alert.warehouse!=='*'?' · '+warehouseName(alert.warehouse):''}`,
+        alert.id || '—',inspect];
+    }));alertsTable.classList.add('historical-alerts-table');target.append(alertsTable);
   }
   function renderRuns(runs) {
     const target=el('historical-content');target.replaceChildren();
@@ -91,6 +141,7 @@
   }
   async function openDetails(run) {
     detailId=run.id;detailOffset=0;el('historical-detail-title').textContent=`Comparación · ${time(run.startedAt)}`;
+    el('historical-detail-pagination').hidden=false;
     el('historical-detail').showModal();await loadDetails();
   }
   async function loadDetails() {
@@ -119,17 +170,26 @@
         const [data,registry]=await Promise.all([api('/api/historical-control/options'),api('/api/config/locations')]);options=data;
         locations=Object.fromEntries([...(registry.active || []),...(registry.trash || [])].map(l=>[l.id,l.name]));
         el('historical-date').value=data.today;
+        el('historical-date-to').value=data.today;
         for(const [id,items] of [['historical-dataset',Object.entries(data.datasets)],['historical-origin',data.origins.map(o=>[o,originNames[o] || o])],['historical-location',data.locations.map(l=>[l,locationName(l)])],['historical-warehouse-filter',data.warehouses.map(w=>[w,warehouseName(w)])]])for(const [value,label] of items){const option=node('option',label);option.value=value;el(id).append(option);}
       }catch(error){el('historical-status').textContent=error.message;return;}
     }
     await refresh();
   };
-  for(const id of ['historical-date','historical-dataset','historical-origin','historical-location','historical-warehouse-filter'])el(id).addEventListener('change',()=>{offset=0;refresh();});
+  for(const id of ['historical-date','historical-date-to','historical-alert-type','historical-dataset','historical-origin','historical-location','historical-warehouse-filter'])el(id).addEventListener('change',()=>{
+    if(id==='historical-date' && el('historical-date-to').value<el(id).value)el('historical-date-to').value=el(id).value;
+    offset=0;refresh();
+  });
   el('historical-refresh').addEventListener('click',()=>window.openHistoricalControl());
   for(const button of document.querySelectorAll('[data-historical-tab]'))button.addEventListener('click',()=>{
     tab=button.dataset.historicalTab;offset=0;for(const b of document.querySelectorAll('[data-historical-tab]'))b.setAttribute('aria-selected',String(b===button));
-    for(const id of ['historical-dataset','historical-origin','historical-location','historical-warehouse-filter'])el(id).disabled=tab==='storage';refresh();
+    updateTabFilters();refresh();
   });
+  function updateTabFilters() {
+    for(const filter of document.querySelectorAll('[data-historical-alert-filter]'))filter.hidden=tab!=='alerts';
+    el('historical-date-label').textContent=tab==='alerts'?'Detectado desde':'Fecha de carga';
+    for(const id of ['historical-dataset','historical-origin','historical-location','historical-warehouse-filter'])el(id).disabled=tab==='storage';
+  }
   el('historical-prev').addEventListener('click',()=>{offset=Math.max(0,offset-30);refresh();});el('historical-next').addEventListener('click',()=>{offset+=30;refresh();});
   el('historical-detail-close').addEventListener('click',()=>el('historical-detail').close());
   el('historical-detail-prev').addEventListener('click',()=>{detailOffset=Math.max(0,detailOffset-30);loadDetails();});el('historical-detail-next').addEventListener('click',()=>{detailOffset+=30;loadDetails();});

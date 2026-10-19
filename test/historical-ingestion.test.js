@@ -63,6 +63,7 @@ test('historical UI opens below data sync, separates baseline from no changes an
   for(const amount of [100,100,150])await history.track({origin:'manual',location:'store-1'},async run=>history.capture(run,{body:[{id:'purchase-1',date:'2026-10-05',amount}],datasets:[{dataset:'purchases',range:{from:'2026-10-01',to:'2026-10-10'},complete:true}]}));
   await history.idle();const browser=await chromium.launch({executablePath:chrome,headless:true});t.after(()=>browser.close());const page=await browser.newPage();
   await page.goto(base);await page.getByRole('link',{name:'Control histórico',exact:true}).click();
+  await page.getByRole('tab',{name:'Cambios del día',exact:true}).click();
   await page.locator('#historical-content .historical-run').first().waitFor();
   assert.deepEqual(await page.locator('.nav-group:last-of-type .nav-link').evaluateAll(links=>links.map(l=>l.dataset.view)),['uploads','historical-control','config']);
   assert.ok(await page.getByText('Sin cambios históricos detectados',{exact:true}).count());assert.ok(await page.getByText('Línea base',{exact:true}).count());
@@ -85,7 +86,31 @@ test('historical UI explains missing assets and retries initialization after an 
   await page.getByText('El servidor no tiene disponible esta consulta de Control histórico.',{exact:false}).waitFor();
   await page.unroute('**/api/historical-control/options');
   await page.getByRole('button',{name:'Actualizar vista',exact:true}).click();
-  await page.getByText('No hay cargas registradas para estos filtros.',{exact:true}).waitFor();
+  await page.getByText('No hay cargas ni comparaciones para este período y filtros.',{exact:true}).waitFor();
   assert.equal(await page.locator('#historical-status').innerText(),'');
   assert.ok(await page.locator('#historical-dataset option').count()>1);
+});
+test('audit alerts are the default view, filter findings, show before and after values and export the selected report',{skip:!fs.existsSync(chrome)},async t=>{
+  const {base,history}=await service(t);
+  const old=history.begin({antecedent:true,origin:'legacy',location:'store-1'});history.capture(old,{body:[{id:'old'}],datasets:[{dataset:'purchases'}]});history.finish(old);
+  for(const records of [
+    [{id:'a',date:'2020-01-02',amount:100},{id:'b',date:'2020-01-02',amount:200}],
+    [{id:'a',date:'2020-01-02',amount:150},{id:'c',date:'2020-01-02',amount:300}]
+  ])await history.track({origin:'manual',location:'store-1'},run=>history.capture(run,{body:records,datasets:[{dataset:'purchases',range:{from:'2020-01-01',to:'2020-01-03'},complete:true}]}));
+  await history.idle();const browser=await chromium.launch({executablePath:chrome,headless:true});t.after(()=>browser.close());const page=await browser.newPage();
+  await page.goto(base);await page.getByRole('link',{name:'Control histórico',exact:true}).click();
+  await page.getByRole('link',{name:'Descargar reporte CSV',exact:true}).waitFor();
+  assert.equal(await page.getByRole('tab',{name:'Alertas',exact:true}).getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('.historical-alert-badge').count(),3);assert.equal(await page.locator('.historical-run').count(),0);
+  assert.match(await page.locator('#historical-content').innerText(),/1 antecedentes incorporados/);
+  const filtered=page.waitForResponse(r=>r.url().includes('/alerts?')&&r.url().includes('type=modified'));
+  await page.locator('#historical-alert-type').selectOption('modified');await filtered;await page.waitForFunction(()=>!document.getElementById('historical-status').textContent);
+  assert.equal(await page.locator('.historical-alert-badge').count(),1);
+  await page.getByRole('button',{name:'Ver detalle de alerta',exact:true}).click();
+  const content=await page.locator('#historical-detail-content').innerText();assert.match(content,/operación del 2020-01-02/);assert.match(content,/amount/);assert.match(content,/100/);assert.match(content,/150/);
+  const exported=await fetch(base+await page.getByRole('link',{name:'Descargar reporte CSV',exact:true}).getAttribute('href'));const csv=await exported.text();assert.match(csv,/Registro modificado/);assert.doesNotMatch(csv,/Registro eliminado/);assert.match(csv,/150/);
+  await page.getByRole('button',{name:'Consultar carga y respaldos',exact:true}).click();await page.getByRole('link',{name:'Descargar respuesta.json',exact:true}).waitFor();
+  await page.screenshot({path:'/private/tmp/brewit-historical-alerts.png',fullPage:true});
+  await page.getByRole('button',{name:'Cerrar',exact:true}).click();
+  await page.getByRole('tab',{name:'Cambios del día',exact:true}).click();assert.equal(await page.locator('#historical-date-to').isVisible(),false);
 });

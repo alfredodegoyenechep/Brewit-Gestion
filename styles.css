@@ -9321,6 +9321,12 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .historical-run { background: white; border: 1px solid #dee5de; border-radius: 12px; padding: 1.25rem; margin: 1rem 0; overflow: hidden; }
 .historical-run-heading h3 { margin: 0; font-size: 1rem; }
 .historical-badge { background: #edf3ed; color: #31553d; padding: .35rem .6rem; border-radius: 6px; font-size: .8rem; }
+.historical-alert-badge { display: inline-block; white-space: nowrap; background: #fce9e4; color: #873d2c; padding: .35rem .6rem; border-radius: 6px; font-weight: 700; }
+.historical-alerts-table table { min-width: 800px; }
+.historical-alerts-table th:nth-child(4) { min-width: 100px; }
+.historical-table-wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; margin: 0; }
+.historical-filters [hidden] { display: none; }
+#historical-detail-pagination[hidden] { display: none; }
 .historical-notice { background: #fff5de; color: #795211; border-radius: 6px; padding: .75rem; }
 .historical-table-wrap { width: 100%; overflow-x: auto; margin: .75rem 0; }
 .historical-table-wrap table { width: 100%; min-width: 650px; border-collapse: collapse; }
@@ -9330,7 +9336,7 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .historical-kpi { display: grid; gap: .6rem; border: 1px solid #dce5dc; background: white; padding: 1rem; border-radius: 10px; }
 .historical-kpi span { font-size: .85rem; color: #55695b; }
 .historical-kpi strong { font-size: 1.5rem; color: #244d37; }
-.historical-detail-dialog { width: min(1100px, 94vw); max-height: 88vh; border: 1px solid #c9d5ca; border-radius: 14px; padding: 1.5rem; overflow: auto; }
+.historical-detail-dialog { width: min(1100px, 94vw); max-height: 88vh; margin: auto; border: 1px solid #c9d5ca; border-radius: 14px; padding: 1.5rem; overflow: auto; }
 .historical-detail-dialog::backdrop { background: #102c235e; }
 .historical-change { border-top: 1px solid #dce5dc; margin-top: 1rem; padding-top: .5rem; }
 .historical-change pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 360px; max-height: 300px; overflow: auto; margin: 0; font-size: .85rem; }

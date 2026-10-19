@@ -316,6 +316,20 @@ function register(app, history) {
     const date = req.query.date || localDay(new Date()); if (!dateKey(date)) return res.status(400).json({ error: 'Fecha inválida.' });
     res.json(history.storage(date));
   }));
+  app.get(base + '/alerts', wrap((req,res) => {
+    const date=req.query.date || localDay(new Date()), dateTo=req.query.dateTo || date;
+    if(!dateKey(date) || !dateKey(dateTo) || date>dateTo)return res.status(400).json({error:'Selecciona un período de detección válido.'});
+    if(req.query.type && !['modified','deleted','historicalAdded','review'].includes(req.query.type))return res.status(400).json({error:'Tipo de alerta inválido.'});
+    const alerts=require('./historical-alerts'),report=alerts.collect(history,{...req.query,date,dateTo});
+    res.set('Cache-Control','no-store');
+    if(req.query.format==='csv') {
+      const registry=read(path.join(history.uploadsRoot,'config','locations.json'),{locations:[]});
+      const locations=Object.fromEntries((registry.locations || []).map(l=>[l.id,l.name]));
+      return res.attachment(`alertas-historicas-${date}-${dateTo}.csv`).type('text/csv; charset=utf-8').send(alerts.csv(report,{locations}));
+    }
+    const offset=Math.max(0,Math.floor(Number(req.query.offset)||0)),limit=Math.min(100,Math.max(1,Math.floor(Number(req.query.limit)||30)));
+    res.json({...report,total:report.alerts.length,alerts:report.alerts.slice(offset,offset+limit)});
+  }));
   app.get(base + '/runs/:id', wrap((req, res) => { const run = history.load(req.params.id); return run ? res.json(run) : res.sendStatus(404); }));
   app.get(base + '/runs/:id/changes', wrap((req, res) => {
     const run = history.load(req.params.id); if (!run) return res.sendStatus(404);

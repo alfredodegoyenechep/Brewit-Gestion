@@ -72,7 +72,9 @@ La primera recepción válida establece la línea base por conjunto, origen y á
 
 Antes de la primera limpieza se incorporan los antecedentes disponibles. Los archivos reconstruidos desde registros internos se identifican como reconstrucciones: no equivalen al original perdido ni generan alertas retroactivas. Las métricas de almacenamiento suman los tamaños físicos comprimidos, reportes, estados de comparación y metadatos, contando cada archivo una vez. El promedio incluye todos los días desde la activación, incluso días sin cargas; la estimación mensual usa los días del mes seleccionado. El almacenamiento local forma parte de `uploads/` y debe incluirse en los respaldos externos del equipo.
 
-La consulta usa `/api/historical-control/options`, `/runs`, `/runs/:id`, `/runs/:id/changes`, `/runs/:id/files/:fileId/download`, `/runs/:id/report` y `/storage`, con la protección de acceso existente. Verificación específica: `node --test test/historical-control.test.js test/historical-ingestion.test.js`.
+La vista inicial **Alertas** reúne modificaciones, eliminaciones y altas históricas por fecha de detección, con filtros por período, conjunto, origen, ubicación, bodega y tipo. Separa las cargas incompletas y comparaciones pendientes o parciales de los cambios confirmados. Los antecedentes se cuentan sin generar alertas retroactivas; las altas de maestros y el crecimiento normal siguen en **Cambios del día**. El CSV exporta toda la selección, incluidos campos y valores anteriores/nuevos, fechas de operación, versiones y motivos de revisión; la paginación solo limita la pantalla.
+
+La consulta usa `/api/historical-control/options`, `/alerts` (`date`, `dateTo`, `type`, `dataset`, `origin`, `location`, `warehouse`, `offset`, `limit`; `format=csv` descarga el reporte), `/runs`, `/runs/:id`, `/runs/:id/changes`, `/runs/:id/files/:fileId/download`, `/runs/:id/report` y `/storage`, con la protección de acceso existente. Verificación específica: `node --test test/historical-control.test.js test/historical-alerts.test.js test/historical-ingestion.test.js`.
 
 ## Location management
 

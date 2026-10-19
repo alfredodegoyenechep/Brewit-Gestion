@@ -2643,16 +2643,19 @@
     <section id="historical-workspace" class="historical-workspace" hidden aria-labelledby="historical-title">
       <div class="section-header"><div><div class="panel-eyebrow">Trazabilidad de los datos</div><h2 id="historical-title">Control histórico</h2><p class="panel-description">Originales de cada carga y sincronización, cambios detectados y espacio utilizado. Horario de Chile.</p></div><button id="historical-refresh" class="icon-button" type="button">Actualizar vista</button></div>
       <div class="historical-tabs" role="tablist" aria-label="Consultas de control histórico">
-        <button type="button" role="tab" aria-selected="true" data-historical-tab="changes">Cambios del día</button>
+        <button type="button" role="tab" aria-selected="true" data-historical-tab="alerts">Alertas</button>
+        <button type="button" role="tab" aria-selected="false" data-historical-tab="changes">Cambios del día</button>
         <button type="button" role="tab" aria-selected="false" data-historical-tab="backups">Respaldos</button>
         <button type="button" role="tab" aria-selected="false" data-historical-tab="storage">Almacenamiento</button>
       </div>
       <div class="historical-filters">
-        <label>Fecha de carga<input id="historical-date" type="date" /></label>
+        <label><span id="historical-date-label">Detectado desde</span><input id="historical-date" type="date" /></label>
+        <label data-historical-alert-filter>Detectado hasta<input id="historical-date-to" type="date" /></label>
         <label>Conjunto de datos<select id="historical-dataset"><option value="">Todos los conjuntos</option></select></label>
         <label>Bodega de origen<select id="historical-warehouse-filter"><option value="">Todas las bodegas de origen</option></select></label>
         <label>Origen<select id="historical-origin"><option value="">Todos los orígenes</option></select></label>
         <label>Sucursal o bodega<select id="historical-location"><option value="">Todas las ubicaciones</option></select></label>
+        <label data-historical-alert-filter>Tipo de alerta<select id="historical-alert-type"><option value="">Todas las alertas</option><option value="modified">Registros modificados</option><option value="deleted">Registros eliminados</option><option value="historicalAdded">Agregados históricos</option><option value="review">Requieren revisión</option></select></label>
       </div>
       <p id="historical-status" class="form-status" role="status" aria-live="polite"></p>
       <div id="historical-content"></div>
@@ -2660,7 +2663,7 @@
       <dialog id="historical-detail" class="historical-detail-dialog" aria-labelledby="historical-detail-title">
         <div class="preview-dialog-head"><h3 id="historical-detail-title">Detalle de comparación</h3><button id="historical-detail-close" class="icon-button" type="button">Cerrar</button></div>
         <div id="historical-detail-content"></div>
-        <div class="historical-actions"><button id="historical-detail-prev" class="icon-button" type="button">Anterior</button><span id="historical-detail-page"></span><button id="historical-detail-next" class="icon-button" type="button">Siguiente</button></div>
+        <div id="historical-detail-pagination" class="historical-actions" hidden><button id="historical-detail-prev" class="icon-button" type="button">Anterior</button><span id="historical-detail-page"></span><button id="historical-detail-next" class="icon-button" type="button">Siguiente</button></div>
       </dialog>
     </section>
 
