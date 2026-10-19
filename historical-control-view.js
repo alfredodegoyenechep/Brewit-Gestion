@@ -7,7 +7,6 @@
   const originNames = {manual:'Archivo manual','toteat-public-api':'API pública Toteat','toteat-authenticated-web':'Servicios web Toteat','toteat-web-file':'Archivo web Toteat','mercadopago-web':'Reportes web MercadoPago',legacy:'Antecedentes anteriores'};
   const time = value => value ? new Intl.DateTimeFormat('es-CL',{timeZone:'America/Santiago',dateStyle:'short',timeStyle:'medium'}).format(new Date(value)) : '—';
   const bytes = n => { const units=['KB','MB','GB']; n/=1000; let i=0; while(n>=1000 && i<units.length-1){n/=1000;i++;} return `${new Intl.NumberFormat('es-CL',{maximumFractionDigits:n<0.01?3:2}).format(n)} ${units[i]}`; };
-  const valueText = (v, present=true) => !present ? 'Campo ausente' : v === null ? 'null' : typeof v === 'object' ? JSON.stringify(v,null,2) : String(v);
   let options, locations = {}, tab='alerts', offset=0, detailOffset=0, detailId, requestId=0, timer;
   async function api(url) {
     const response=await fetch(url);
@@ -22,6 +21,40 @@
     const wrap=node('div',null,'historical-table-wrap'), table=node('table',null,'inventory-results-table');
     const head=node('thead'), tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);table.append(head);
     const body=node('tbody'); for(const cells of rows){const row=node('tr'); for(const cell of cells){const td=node('td');td.append(cell instanceof Node?cell:document.createTextNode(String(cell??'—')));row.append(td);}body.append(row);}table.append(body);wrap.append(table);return wrap;
+  }
+  function changeContent(change) {
+    const section=node('section',null,'historical-readable-change'), model=change.presentation;
+    if (!model) {
+      section.append(node('p','El detalle de los artículos no está disponible. Consulta la carga y sus respaldos para revisar este cambio.','historical-notice'));
+      return section;
+    }
+    section.append(node('p',model.summary,'historical-change-summary'));
+    for (const warning of model.warnings) section.append(node('p',warning,'historical-notice'));
+    for (const notice of model.notices) {
+      const message=node('p',null,'historical-change-notice');
+      message.append(node('strong',[notice.itemName,notice.code].filter(Boolean).join(' · ')),document.createTextNode(' · '+notice.message));section.append(message);
+    }
+    if (model.rows.length) {
+      const controls=node('div',null,'historical-change-controls'),label=node('label','Buscar artículo, código o dato modificado');
+      const search=node('input');search.type='search';search.placeholder='Ej.: salsa chocolate, SSR008, costo';label.append(search);
+      const count=node('span',null,'panel-description'),results=node('div');controls.append(label,count);section.append(controls,results);
+      const draw=()=>{
+        const normalized=v=>String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+        const query=normalized(search.value),rows=model.rows.filter(row=>!query || [row.itemName,row.code,row.stage,row.field,row.before,row.after].some(v=>normalized(v).includes(query)));
+        count.textContent=`${rows.length} de ${model.rows.length} cambios`;
+        if(!rows.length){results.replaceChildren(node('p','No hay cambios que coincidan con la búsqueda.','historical-empty'));return;}
+        const content=table(['Artículo / ingrediente','Etapa','Qué cambió','Valor anterior','Valor nuevo','Diferencia'],rows.map(row=>{
+          const item=node('div',null,'historical-change-item');item.append(node('strong',row.itemName));
+          if(row.code)item.append(node('span',row.code,'historical-item-code'));
+          const field=node('span',row.field,`historical-field-${row.type}`);
+          return [item,row.stage,field,node('span',row.before,'historical-previous-value'),node('strong',row.after,'historical-current-value'),row.difference];
+        }));content.classList.add('historical-readable-table');results.replaceChildren(content);
+      };
+      search.addEventListener('input',draw);draw();
+      section.append(node('p','Los valores corresponden a las versiones comparadas. La diferencia se muestra cuando ambos valores son numéricos y usan la misma unidad.','panel-description'));
+    }
+    if(model.administrativeCount && model.rows.length)section.append(node('p','También se actualizó información administrativa del registro.','panel-description'));
+    return section;
   }
   function sourceStatus(source) {
     const historical=source.summary.modified+source.summary.deleted+source.summary.historicalAdded;
@@ -72,13 +105,12 @@
       if(summary.modified+summary.deleted+summary.historicalAdded+summary.review)target.append(node('p','No hay alertas del tipo seleccionado.','historical-empty'));
       return;
     }
-    const alertsTable=table(['Alerta','Detección / operación','Conjunto / ámbito','Identificador','Detalle'],data.alerts.map(alert=>{
+    const alertsTable=table(['Alerta','Detección / operación','Conjunto / ámbito','Documento / artículo','Detalle'],data.alerts.map(alert=>{
       const detail=node('div');
       detail.append(node('p',`Detectado el ${time(alert.detectedAt)}; operación del ${alert.operationDate || 'fecha no disponible'}${alert.previousDate && alert.previousDate!==alert.operationDate?' (antes: '+alert.previousDate+')':''}. ${name(alert.dataset) || 'Carga'} · ${locationName(alert.location)}.`));
       if(alert.message)detail.append(node('p',alert.message));
-      detail.append(node('p',`Versiones: ${alert.previousRunId || 'Sin versión anterior'} → ${alert.runId}`,'panel-description'));
       if(alert.sourceStatus==='partial')detail.append(node('p','Hallazgo identificado en una comparación parcial.','historical-notice'));
-      if(alert.fields.length)detail.append(table(['Campo','Valor anterior','Valor nuevo'],alert.fields.map(f=>[f.field,node('pre',valueText(f.before,f.beforePresent)),node('pre',valueText(f.after,f.afterPresent))])));
+      if(alert.fields.length)detail.append(changeContent(alert));
       const version=node('button','Consultar carga y respaldos','icon-button');version.type='button';version.addEventListener('click',async()=>{
         version.disabled=true;
         try{
@@ -90,13 +122,16 @@
         }catch(error){el('historical-status').textContent=error.message;version.disabled=false;}
       });detail.append(version);
       const inspect=node('button','Ver detalle de alerta','icon-button');inspect.type='button';inspect.addEventListener('click',()=>{
-        el('historical-detail-title').textContent=`${types[alert.type]} · ${alert.id || name(alert.dataset) || 'Carga'}`;
+        el('historical-detail-title').textContent=`${types[alert.type]} · ${name(alert.dataset) || 'Carga'}${alert.id?' · Documento '+alert.id:''}`;
         el('historical-detail-content').replaceChildren(detail);el('historical-detail-pagination').hidden=true;el('historical-detail').showModal();
       });
       return [node('span',types[alert.type],alert.category==='historical'?'historical-alert-badge':'historical-badge'),
         `Detectado el ${time(alert.detectedAt)}; operación del ${alert.operationDate || 'fecha no disponible'}${alert.previousDate && alert.previousDate!==alert.operationDate?' (antes: '+alert.previousDate+')':''}`,
         `${name(alert.dataset) || 'Carga'} · ${originNames[alert.origin] || alert.origin} · ${locationName(alert.location)}${alert.warehouses?.length?' · '+alert.warehouses.map(warehouseName).join(', '):alert.warehouse && alert.warehouse!=='*'?' · '+warehouseName(alert.warehouse):''}`,
-        alert.id || '—',inspect];
+        (()=>{const cell=node('div');cell.append(node('strong',alert.id || '—'));
+          const affected=[...new Set([...(alert.presentation?.rows || []),...(alert.presentation?.notices || [])].map(row=>row.itemName).filter(item=>item && item!=='Documento'))];
+          if(affected.length)cell.append(node('p',affected.slice(0,2).join(', ')+(affected.length>2?` y ${affected.length-2} más`:''),'panel-description'));
+          return cell;})(),inspect];
     }));alertsTable.classList.add('historical-alerts-table');target.append(alertsTable);
   }
   function renderRuns(runs) {
@@ -149,13 +184,12 @@
     try {
       const q=query();q.set('offset',String(detailOffset));q.set('limit','30');
       const data=await api(`/api/historical-control/runs/${detailId}/changes?`+q);target.replaceChildren();
-      for(const source of data.sources || [])target.append(node('p',`${name(source.dataset)} · ${locationName(source.location)} · ${sourceStatus(source)}. Versiones: ${source.previousRunId || 'Sin versión anterior'} → ${detailId}.`,'panel-description'));
+      for(const source of data.sources || [])target.append(node('p',`${name(source.dataset)} · ${locationName(source.location)} · ${sourceStatus(source)}.`,'panel-description'));
       for(const change of data.changes){
         const block=node('article',null,'historical-change');
         block.append(node('h4',`${types[change.type]} · ${name(change.dataset)} · ${change.id || 'Sin identificador'}`));
         block.append(node('p',change.type==='ambiguous'?change.reason:`Detectado el ${time(change.detectedAt)}; operación del ${change.operationDate || 'fecha no disponible'}${change.previousDate && change.previousDate!==change.operationDate?' (antes: '+change.previousDate+')':''}. ${locationName(change.location)} · Bodega: ${change.warehouses?.length?change.warehouses.map(warehouseName).join(', '):change.warehouse || 'No informada'}.`));
-        if(change.previousRunId)block.append(node('p',`Versión anterior: ${change.previousRunId} → ${change.runId}`,'panel-description'));
-        if(change.fields?.length)block.append(table(['Campo','Valor anterior','Valor nuevo'],change.fields.map(f=>[f.field,node('pre',valueText(f.before,f.beforePresent)),node('pre',valueText(f.after,f.afterPresent))])));
+        if(change.fields?.length)block.append(changeContent(change));
         target.append(block);
       }
       if(!data.total)target.append(node('p','No hay registros afectados en esta comparación.'));

@@ -66,7 +66,7 @@ function collect(history, query) {
         if(!HISTORICAL.includes(change.type))continue;
         if(query.warehouse && change.warehouse!==query.warehouse && !change.warehouses?.includes(query.warehouse))continue;
         summary[change.type]++;
-        alerts.push({...change,category:'historical',dataset:source.dataset,origin:source.origin,
+        alerts.push({...change,sourceKey:source.key,category:'historical',dataset:source.dataset,origin:source.origin,
           location:source.location,warehouse:change.warehouse || source.warehouse,warehouseNames:source.warehouseNames || {},sourceStatus:source.status});
       }
     }

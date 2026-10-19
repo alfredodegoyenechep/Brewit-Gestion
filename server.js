@@ -3253,7 +3253,10 @@ function createApp(options = {}) {
     browser: options.mercadoPagoBrowser, clock: options.mercadoPagoClock,
     enableScheduler: options.enableMercadoPagoSync !== false && options.enableToteatSync !== false
   });
-  require('./historical-control').register(app,historicalControl);
+  require('./historical-control').register(app,historicalControl, {
+    catalog: location => toteatMasterSync.current(['shared','main-warehouse','all'].includes(location) ? 'store-1' : location)?.products
+      || toteatMasterSync.sharedCurrent()?.products || []
+  });
   app.get('/historical-control-view.js',(req,res)=>res.sendFile(path.join(__dirname,'historical-control-view.js')));
   app.locals.mercadoPagoSync = mercadoPagoSync;
   app.get('/api/integrations/mercadopago', (req, res) => res.json(mercadoPagoSync.status()));
@@ -7676,8 +7679,10 @@ function createApp(options = {}) {
       today: projectionToday(),
       ...options,
       centralIdentity: central ? { restaurantId: central.restaurantId, localId: central.localId } : null,
-      locations: readLocations().locations.filter(location => location.status === 'active' && location.type === 'store')
-        .map(location => ({ id: location.id, name: location.name })),
+      locations: readLocations().locations.filter(location => location.status === 'active'
+        && (location.type === 'store' || location.id === 'main-warehouse' && location.type === 'warehouse'))
+        .sort((a, b) => Number(b.type === 'warehouse') - Number(a.type === 'warehouse'))
+        .map(location => ({ id: location.id, name: location.name, type: location.type })),
       inboundValuation(location, state, cutoff) {
         const key = `${location.id}:${cutoff}`;
         if (!inboundValuations.has(key)) {
@@ -7729,11 +7734,11 @@ function createApp(options = {}) {
     return { items, excluded };
   }
 
-  function buildCafeFinalInventory(context, location, period, collectDetail = () => {}) {
+  function buildLocationFinalInventory(context, location, period, collectDetail = () => {}) {
     const { value } = require('./weekly-results');
     const { inventoryExclusion } = require('./inventory-exclusions');
     const state = context.stock(location, true);
-    const warehouse = state.warehouses.find(item => Number(item.custom_id) === 2);
+    const warehouse = state.warehouses.find(item => Number(item.custom_id) === (location.type === 'warehouse' ? 1 : 2));
     if (!warehouse) throw Error('No está disponible la bodega operativa de la sucursal.');
     const rows = state.daily.filter(row => row.warehouse === warehouse.id && !inventoryExclusion(row.code));
     const countDates = [...new Set(rows.filter(row => row.physicalCount).map(row => row.date))].sort();
@@ -7765,9 +7770,10 @@ function createApp(options = {}) {
       excluded.length || missingCodes.length ? 'partial' : 'complete', { basis, date, costCutoff: date, missingCodes });
   }
 
-  function buildCafeWeeklyResults(context, cafe, period) {
+  function buildLocationWeeklyResults(context, selectedLocation, period) {
     const { value, fromMetric, derived, selectInventoryDates } = require('./weekly-results');
-    const location = activeLocation(cafe.id);
+    const location = activeLocation(selectedLocation.id);
+    const isWarehouse = location.type === 'warehouse';
     const values = {}, warnings = [], sources = {}, details = {};
     const { from, through } = period;
     const costCutoff = period.valuationThrough || through;
@@ -7789,7 +7795,7 @@ function createApp(options = {}) {
       return { available: dates.size > 0, complete: covers(dates) };
     };
     const failure = (label, error) => warnings.push(`${label}: ${error.message}`);
-    try {
+    if (!isWarehouse) try {
       const payload = buildFinancialResultsPayload({ location: location.id, dateFrom: from, dateTo: through,
         costValuation: 'period-end', skipInventory: true }, { costCutoff,
         onRevenueFacts: facts => { details.netSales = weeklyDetailBuilder.sales(facts); } });
@@ -7810,7 +7816,7 @@ function createApp(options = {}) {
       if (available && status === 'partial') warnings.push('Ventas: cobertura incompleta; se muestran subtotales conocidos.');
       warnings.push(...payload.warnings);
     } catch (error) { failure('Ventas y margen', error); }
-    try {
+    if (!isWarehouse) try {
       const state = toteatSalesSync.get(location.id);
       const payments = toteatPaymentCollections([{ location, state }], from, through, { includeCollectionTotals: true, includeDetails: true });
       details.tips = weeklyDetailBuilder.tips(payments.tipDetails);
@@ -7821,7 +7827,7 @@ function createApp(options = {}) {
       sources.payments = state ? { name: 'Detalle de pagos TotEat', range: { from: state.from, to: state.through } } : null;
       warnings.push(...payments.warnings);
     } catch (error) { failure('Propinas y efectivo', error); }
-    try {
+    if (!isWarehouse) try {
       const mp = mercadoPagoFeesForPeriod([location], from, through, { collectionField: 'REAL_AMOUNT' });
       const files = storedTransactionFiles(location.id, 'mercadopago'), coverage = fileCoverage(files);
       const mercadoPagoSources = files.map(sourceInfo);
@@ -7853,11 +7859,13 @@ function createApp(options = {}) {
 
     // Calendar consumption never depends on the physical-count interval.
     for (const [key, field] of [['marketing', 'marketing'], ['employees', 'employees'], ['waste', 'waste']]) {
+      if (isWarehouse && key !== 'waste') continue;
       try {
         const catalogMaster = latestMasterFile('master-catalog', costCutoff, location.id);
         if (!catalogMaster) throw Error('No hay un catálogo maestro vigente para valorizar los consumos.');
         const catalog = parseIngredientCatalog(catalogMaster.filePath);
-        const resolver = buildCostResolver(costCutoff, [location.id]);
+        const resolver = isWarehouse ? context.inboundValuation(location, context.stock(location, true), costCutoff).costResolver
+          : buildCostResolver(costCutoff, [location.id]);
         let amount, partial, missingCostCodes, dates;
         if (field === 'waste') {
           const parsed = mergedKardexData(location.id, 'waste');
@@ -7889,7 +7897,7 @@ function createApp(options = {}) {
     let inventory;
     if (context.includeInventory) try {
       const state = context.stock(location);
-      const warehouse = state.warehouses.find(item => Number(item.custom_id) === 2);
+      const warehouse = state.warehouses.find(item => Number(item.custom_id) === (location.type === 'warehouse' ? 1 : 2));
       if (!warehouse) throw Error('No está disponible la bodega operativa de la sucursal.');
       inventory = selectInventoryDates(state.daily.filter(row => row.warehouse === warehouse.id && row.physicalCount).map(row => row.date), period);
       if (inventory.status !== 'complete') {
@@ -7913,7 +7921,7 @@ function createApp(options = {}) {
     }
     // Daily detail keeps inventory balances exclusively in the period total.
     if (!period.valuationThrough) try {
-      values.finalInventory = buildCafeFinalInventory(context, location, period, detail => { details.finalInventory = detail; });
+      values.finalInventory = buildLocationFinalInventory(context, location, period, detail => { details.finalInventory = detail; });
       sources.finalInventory = { basis: values.finalInventory.basis, date: values.finalInventory.date,
         costCutoff: values.finalInventory.costCutoff, missingCodes: values.finalInventory.missingCodes };
       if (values.finalInventory.status === 'partial') warnings.push('Inventario final: cobertura o valorización parcial; se muestra el subtotal conocido.');
@@ -7924,7 +7932,8 @@ function createApp(options = {}) {
         centralIdentity: context.centralIdentity || (location.id === 'store-1' ? state.sourceIdentity : null),
         ...context.inboundValuation(location, state, costCutoff) });
       Object.assign(values, inbound.values); Object.assign(sources, inbound.sources);
-      for (const [key, label] of [['centralWarehouseInbound', 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos']]) {
+      for (const [key, label] of [['centralWarehouseInbound', isWarehouse ? 'Reversas / devoluciones' : 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos'],
+        ...(isWarehouse ? [['suppliesOutbound', 'Salidas Insumos']] : [])]) {
         if (values[key].status !== 'complete') warnings.push(`${label}: cobertura, origen o costeo incompleto; se muestra el subtotal conocido cuando está disponible.`);
       }
     } catch (error) { failure('Entradas al Kardex', error); }
@@ -7963,7 +7972,7 @@ function createApp(options = {}) {
     const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
     try {
       const data = await buildDailyResultsWithProgress({ today: context.today, period, location, periodType: context.period },
-        (cafe, day) => buildCafeWeeklyResults(context, cafe, day),
+        (location, day) => buildLocationWeeklyResults(context, location, day),
         progress => send({ type: 'progress', ...progress }), () => res.destroyed);
       if (data) send({ type: 'result', data });
     } catch (error) { send({ type: 'error', error: error.message || 'No se pudo calcular el detalle diario.' }); }
@@ -7974,7 +7983,7 @@ function createApp(options = {}) {
     try {
       const context = weeklyResultsContext(req.query);
       res.set('Cache-Control', 'no-store').json(require('./weekly-results').buildWeeklyResults(context,
-        (location, period) => buildCafeWeeklyResults(context, location, period)));
+        (location, period) => buildLocationWeeklyResults(context, location, period)));
     } catch (error) { res.status(error.status || 500).json({ error: error.message }); }
   });
   app.get('/api/weekly-results/stream', async (req, res) => {
@@ -7986,7 +7995,7 @@ function createApp(options = {}) {
     const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
     try {
       const data = await require('./weekly-results').buildWeeklyResultsWithProgress(context,
-        (location, period) => buildCafeWeeklyResults(context, location, period),
+        (location, period) => buildLocationWeeklyResults(context, location, period),
         progress => send({ type: 'progress', ...progress }), () => res.destroyed);
       if (data) send({ type: 'result', data });
     } catch (error) { send({ type: 'error', error: error.message || 'No se pudo calcular el reporte semanal.' }); }

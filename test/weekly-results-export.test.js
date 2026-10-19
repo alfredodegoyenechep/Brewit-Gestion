@@ -100,3 +100,34 @@ test('monthly and prior-week exports label periods, cutoffs and spreadsheet prin
     assert.ok(doc.internal.pages[1].join('\n').includes(report.title));
   }
 });
+
+test('warehouse uses one amount column before the cafes in PDF and Excel for every period', () => {
+  for (const period of ['week', 'month']) {
+    const locations = [{ id: 'main-warehouse', name: 'Bodega Principal', type: 'warehouse' },
+      { id: 'store-1', name: 'La Concepción', type: 'store' }, { id: 'store-2', name: 'Portal Lyon', type: 'store' }];
+    const data = buildWeeklyResults({ today: '2026-10-14', weeks: 2, period, locations }, () => ({ values: {
+      netSales: value(1000, 'complete'), finalInventory: value(2500, 'complete'),
+      centralWarehouseInbound: value(20, 'complete'), directSupplierInbound: value(100, 'complete'),
+      suppliesOutbound: value(50, 'complete')
+    } }));
+    const report = exporter.model(data);
+    assert.deepEqual(report.columns.map(column => column.units), [1, 2, 2, 1, 2, 2]);
+    assert.deepEqual(report.columns.map(column => column.cellStart), [0, 1, 3, 5, 6, 8]);
+    assert.deepEqual(report.rows[0].cells.map(cell => cell.value), ['—', 1000, 1, 1000, 1, '—', 1000, 1, 1000, 1]);
+    assert.equal(report.rows.find(row => row.key === 'suppliesInbound').cells[0].value, 120);
+    assert.equal(report.rows.find(row => row.key === 'suppliesOutbound').cells[0].value, 50);
+    assert.match(report.context, /2 sucursales \+ Bodega Principal/);
+    const sheet = exporter.workbook(report, XLSX).Sheets[report.title];
+    assert.equal(sheet['!cols'].length, 11);
+    assert.equal(sheet.B4.v, 'Bodega Principal'); assert.equal(sheet.C4.v, 'La Concepción');
+    assert.equal(sheet.D5.v, '%'); assert.equal(sheet.B6.v, '—'); assert.equal(sheet.C6.v, 1000);
+    assert.ok(sheet['!merges'].some(merge => merge.s.r === 2 && merge.s.c === 1 && merge.e.c === 5));
+    assert.ok(!sheet['!merges'].some(merge => merge.s.r === 3 && merge.s.c === 1));
+    const doc = exporter.pdf(report, jsPDF);
+    for (let index = 1; index <= doc.getNumberOfPages(); index++) {
+      const page = doc.internal.pages[index].join('\n');
+      assert.match(page, /Bodega Principal/);
+      assert.equal((page.match(/\(%\)/g) || []).length, 2);
+    }
+  }
+});

@@ -85,3 +85,24 @@ test('mixed origins and datasets in a shared execution remain independently filt
   const report=await get({});assert.equal(report.summary.modified,0);assert.equal(report.summary.review,2);
   assert.ok(report.alerts.every(alert=>alert.type==='pending'));assert.match(report.message,/requieren revisión/);
 });
+
+test('alerts and comparison pages explain saved nested transfer changes by article instead of arrays',async t=>{
+  const {load,get,base,history}=await fixture(t);
+  const item=(quantity,cost)=>({pl:'SSR008',np:'Salsa chocolate',cant:quantity,costo:cost,unit_select:'KG'});
+  const document=(quantity,cost)=>({id:'T1',date:'2020-01-02',det:{listas:[[],[],[item(quantity,cost)],[item(quantity,cost)]]}});
+  await load([document(2,100)],{dataset:'local-transfers'});
+  const run=await load([document(4,150)],{dataset:'local-transfers'});
+  const result=await get({type:'modified'}),model=result.alerts[0].presentation;
+  assert.equal(model.itemCount,1);assert.equal(model.rows.length,4);
+  assert.ok(model.rows.every(row=>row.itemName==='Salsa chocolate'&&row.code==='SSR008'));
+  assert.ok(model.rows.some(row=>row.field==='Cantidad'&&row.before==='2 kg'&&row.after==='4 kg'));
+  const changes=await fetch(base.replace('/alerts','/runs/'+run.id+'/changes')).then(r=>r.json());
+  assert.deepEqual(changes.changes[0].presentation,model);
+  // Previously saved comparisons keep their original evidence and still work
+  // when only the stored field differences can be recovered.
+  fs.rmSync(path.join(history.directory(run.id),'state.json.gz'));
+  fs.rmSync(path.join(history.directory(result.alerts[0].previousRunId),'state.json.gz'));
+  const fallback=await get({type:'modified'});
+  assert.equal(fallback.alerts[0].presentation.rows[0].itemName,'Salsa chocolate');
+  assert.equal(fallback.alerts[0].fields[0].field,'det.listas');
+});

@@ -10,7 +10,7 @@ function workbook(file, rows, sheet = 'Datos') {
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), sheet);
   XLSX.writeFile(book, file);
 }
-async function fixture(t, sourceMode = 'legacy') {
+async function fixture(t, sourceMode = 'legacy', includeWarehouse = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-weekly-results-'));
   const app = createApp({ uploadsRoot: root, sourceMode, enableLegacyTools: true, reportToday: '2026-10-13' });
   fs.writeFileSync(path.join(root, 'config', 'locations.json'), JSON.stringify({ locations: [
@@ -18,7 +18,8 @@ async function fixture(t, sourceMode = 'legacy') {
     { id: 'store-2', name: 'Lyon', type: 'store', status: 'active' },
     { id: 'store-3', name: 'Nueva cafetería', type: 'store', status: 'active' },
     { id: 'closed', name: 'Eliminada', type: 'store', status: 'trashed' },
-    { id: 'main-warehouse', name: 'Casa Matriz', type: 'warehouse', status: 'active' }
+    { id: 'main-warehouse', name: 'Bodega Principal', type: 'warehouse', status: includeWarehouse ? 'active' : 'trashed' },
+    { id: 'head-office', name: 'Casa Matriz', type: 'head-office', status: 'active' }
   ] }));
   const masters = path.join(root, 'masters');
   workbook(path.join(masters, 'catalog.xlsx'), [
@@ -727,4 +728,56 @@ test('calendar inbound rows cost central ingredients and direct purchases indepe
   assert.deepEqual(stream.trim().split('\n').map(JSON.parse).at(-1).data, weekly);
   assert.equal(rebuilds, 0);
   assert.deepEqual(weekly.metrics.slice(-6, -3), [['suppliesInbound', 'Entradas Insumos'], ['centralWarehouseInbound', 'Bodega Central'], ['directSupplierInbound', 'Proveedores Directos']]);
+});
+
+test('main warehouse precedes cafes and reconciles inventory, waste and calendar flows without sales', async t => {
+  const { base, app, counts } = await fixture(t, 'synchronized', true);
+  counts['main-warehouse'] = ['2026-10-04', '2026-10-11'];
+  const stock = app.locals.toteatStockSync.current;
+  const range = { from: '2026-09-01', to: '2026-10-15' };
+  app.locals.toteatStockSync.current = id => {
+    const state = stock(id);
+    if (id !== 'main-warehouse') return state;
+    return { ...state, warehouses: [{ id: 'oper', custom_id: 1 }, { id: 'waste', custom_id: 4 }, { id: 'cafe', custom_id: 2 }],
+      sourceCoverage: { purchases: range, transfers: range, localTransfers: range },
+      documents: [{ key: 'return', originWarehouse: 'cafe' }, { key: 'dispatch', destinationWarehouse: 'cafe' },
+        { key: 'waste', destinationWarehouse: 'waste' }],
+      movements: [
+        ['purchase', 'purchase', 10], ['return', 'transfer_warehouse_in', 2],
+        ['dispatch', 'transfer_warehouse_out', 3], ['waste', 'transfer_warehouse_out', 1]
+      ].map(([id, column, quantity]) => ({ id, document: id, date: '2026-10-05', warehouse: 'oper', code: 'A', unit: 'UN', column, quantity, active: true })) };
+  };
+  const weekly = await getReport(base, { weeks: 2, includeCurrent: false });
+  assert.deepEqual(weekly.locations.map(location => location.id), ['main-warehouse', 'store-1', 'store-2', 'store-3']);
+  const cell = weekly.weeks[0].locations[0];
+  assert.equal(cell.values.directSupplierInbound.amount, 100);
+  assert.equal(cell.values.centralWarehouseInbound.amount, 20);
+  assert.equal(cell.values.suppliesInbound.amount, 120);
+  assert.equal(cell.values.suppliesOutbound.amount, 30);
+  assert.equal(cell.values.waste.amount, -70);
+  assert.equal(cell.values.finalInventory.amount, 1800);
+  assert.equal(cell.inventory.initialDate, '2026-10-04'); assert.equal(cell.inventory.finalDate, '2026-10-11');
+  assert.equal(cell.values.inventoryShortage.available, true);
+  assert.ok(Object.values(cell.values).every(metric => metric.percent === null && metric.showPercent === false));
+  for (const key of ['netSales', 'margin', 'tips', 'marketing', 'employees', 'otherConsumables', 'inventoryConsumptionTotal', 'variableCosts', 'cogs']) {
+    assert.equal(cell.values[key].status, 'not-applicable', key);
+  }
+  assert.ok(!cell.warnings.some(warning => /Ventas|Mercado Pago|Propinas|Marketing|Consumo personal/.test(warning)));
+  const direct = await fetch(`${base}/api/inventory/process`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'main-warehouse', source: 'originals', criteriaMode: 'count-boundaries',
+      initialInventoryDate: cell.inventory.initialDate, finalInventoryDate: cell.inventory.finalDate }) }).then(response => response.json());
+  assert.equal(cell.values.inventoryShortage.amount, direct.executiveSummary.metrics.adjustedKardexTotalCost.amount);
+  const dailyResponse = await fetch(`${base}/api/weekly-results/daily/stream?${new URLSearchParams({
+    from: '2026-10-05', location: 'main-warehouse', weeks: 2, includeCurrent: false })}`);
+  assert.equal(dailyResponse.status, 200);
+  const daily = (await dailyResponse.text()).trim().split('\n').map(JSON.parse).at(-1).data;
+  for (const key of ['directSupplierInbound', 'centralWarehouseInbound', 'suppliesInbound', 'suppliesOutbound', 'waste']) {
+    assert.equal(daily.days.reduce((sum, day) => sum + day.values[key].amount, 0), cell.values[key].amount, key);
+  }
+  const monthly = await getReport(base, { weeks: 2, period: 'month' });
+  assert.equal(monthly.weeks[0].locations[0].values.suppliesInbound.amount, 120);
+  const excluded = await getReport(base, { weeks: 2, includeInventory: false });
+  assert.equal(excluded.weeks[1].locations[0].values.inventoryShortage.status, 'not-included');
+  assert.equal(excluded.weeks[1].locations[0].values.otherConsumables.status, 'not-applicable');
+  assert.equal(excluded.weeks[1].locations[0].values.suppliesOutbound.amount, 30);
 });

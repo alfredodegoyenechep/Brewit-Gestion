@@ -14,6 +14,7 @@ const metrics = [
   ['suppliesInbound', 'Entradas Insumos'],
   ['centralWarehouseInbound', 'Bodega Central'],
   ['directSupplierInbound', 'Proveedores Directos'],
+  ['suppliesOutbound', 'Salidas Insumos'],
   ['variableCosts', 'Costos Variables'],
   ['cogs', 'COGs'],
   ['otherVariableCosts', 'Otros Variables']
@@ -85,7 +86,7 @@ function derived(values, keys, calculate, requireComplete = false) {
   return value(calculate(...inputs.map(input => input.amount)), inputs.every(input => input.complete) ? 'complete' : 'partial');
 }
 
-function finalizeCell(data = {}, includeInventory = true) {
+function finalizeCell(data = {}, includeInventory = true, location = {}) {
   const values = Object.fromEntries(metrics.map(([key]) => [key, data.values?.[key] || value()]));
   if (!includeInventory) {
     values.inventoryShortage = value(null, 'not-included');
@@ -105,9 +106,15 @@ function finalizeCell(data = {}, includeInventory = true) {
   values.otherVariableCosts = { ...values.inventoryConsumptionTotal };
   values.variableCosts = values.otherVariableCosts.status === 'not-included' ? value(null, 'not-included')
     : derived(values, ['cogs', 'otherVariableCosts'], (cogs, other) => cogs + other);
+  const warehouse = location.type === 'warehouse';
+  if (warehouse) {
+    const applicable = new Set(['inventoryShortage', 'waste', 'finalInventory', 'suppliesInbound',
+      'centralWarehouseInbound', 'directSupplierInbound', 'suppliesOutbound']);
+    for (const key of Object.keys(values)) if (!applicable.has(key)) values[key] = value(null, 'not-applicable');
+  } else values.suppliesOutbound = value(null, 'not-applicable');
   const base = values.netSales;
   for (const [key, metric] of Object.entries(values)) {
-    metric.showPercent = !percentlessMetrics.has(key);
+    metric.showPercent = !warehouse && !percentlessMetrics.has(key) && metric.status !== 'not-applicable';
     if (metric.showPercent && metric.available && base.available && base.amount !== 0) {
       metric.percent = metric.amount / base.amount * 100;
       metric.percentPartial = !metric.complete || !base.complete;
@@ -117,14 +124,15 @@ function finalizeCell(data = {}, includeInventory = true) {
 }
 
 function report(today, locations, options) {
-  return { date: today, locations, metrics, options,
+  return { date: today, locations, metrics: locations.some(location => location.type === 'warehouse')
+    ? metrics : metrics.filter(([key]) => key !== 'suppliesOutbound'), options,
     weeks: currentPeriods(today, options).map(period => ({ period, locations: [] })), warnings: [] };
 }
 function append(data, week, location, build) {
   let cell;
   try { cell = build(location, week.period); }
   catch (error) { cell = { warnings: [error.message] }; }
-  const result = { ...finalizeCell(cell, data.options.includeInventory), locationId: location.id };
+  const result = { ...finalizeCell(cell, data.options.includeInventory, location), locationId: location.id };
   week.locations.push(result);
   for (const warning of result.warnings || []) data.warnings.push(`${location.name} (${week.period.from} al ${week.period.through}): ${warning}`);
 }
@@ -147,7 +155,8 @@ async function buildWeeklyResultsWithProgress({ today, locations, ...options }, 
 }
 
 async function buildDailyResultsWithProgress({ today, period, location, periodType = 'week' }, build, progress, cancelled = () => false) {
-  const data = { date: today, period, periodType, location, metrics, days: [] };
+  const data = { date: today, period, periodType, location,
+    metrics: location.type === 'warehouse' ? metrics : metrics.filter(([key]) => key !== 'suppliesOutbound'), days: [] };
   const total = Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86400000) + 1;
   progress({ completed: 0, total });
   for (let index = 0; index < total; index++) {
@@ -159,11 +168,13 @@ async function buildDailyResultsWithProgress({ today, period, location, periodTy
       try { cell = build(location, { from: date, to: date, through: date, valuationThrough: period.through }); }
       catch (error) { cell = { warnings: [error.message] }; }
     }
-    const result = finalizeCell(cell, false);
+    const result = finalizeCell(cell, false, location);
     if (date > period.through) for (const [key, metric] of Object.entries(result.values)) {
+      if (metric.status === 'not-applicable') continue;
       result.values[key] = value(null, 'future', { showPercent: metric.showPercent });
     }
     for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal', 'finalInventory', 'otherVariableCosts', 'variableCosts']) {
+      if (result.values[key].status === 'not-applicable') continue;
       result.values[key] = value(null, periodType === 'month' ? 'monthly-only' : 'weekly-only', { showPercent: false });
     }
     data.days.push({ ...result, date, locationId: location.id });

@@ -18,7 +18,7 @@
   const dailyBody = document.getElementById('weekly-results-daily-body');
   const inboundDialog = document.getElementById('weekly-results-inbound');
   const inboundBody = document.getElementById('weekly-results-inbound-body');
-  const inboundLabels = { centralWarehouseInbound: 'Entradas Bodega Central', directSupplierInbound: 'Entradas Proveedores Directos' };
+  const inboundLabels = { centralWarehouseInbound: 'Entradas Bodega Central', directSupplierInbound: 'Entradas Proveedores Directos', suppliesOutbound: 'Salidas Insumos' };
   const metricLabels = { netSales: 'Venta neta', tips: 'Propinas', inventoryShortage: 'Inventario faltante',
     waste: 'Merma', marketing: 'Marketing', employees: 'Consumo personal', otherConsumables: 'Otros gastos / consumibles', finalInventory: 'Inventario Final' };
   const metricDialog = document.getElementById('weekly-results-metric-detail');
@@ -34,7 +34,7 @@
   const exportStatus = document.getElementById('weekly-results-export-status');
   const exportDownload = document.getElementById('weekly-results-export-download');
   const states = { 'no-data': 'Sin datos', 'no-physical-count': 'Sin toma física',
-    'no-opening-inventory': 'Sin inventario inicial', incomplete: 'Incompleto', pending: 'Pendiente', partial: 'Parcial', 'not-included': 'No incluido',
+    'no-opening-inventory': 'Sin inventario inicial', incomplete: 'Incompleto', pending: 'Pendiente', partial: 'Parcial', 'not-included': 'No incluido', 'not-applicable': '—',
     'weekly-only': 'Solo total semanal', 'monthly-only': 'Solo total mensual', future: 'Sin transcurrir' };
   const date = iso => iso ? new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })
     .format(new Date(`${iso}T12:00:00Z`)) : '—';
@@ -237,16 +237,16 @@
   }
   function openInbound(key, result, { location, period }) {
     const source = result.sources[key], metric = result.values[key], items = source.items;
-    document.getElementById('weekly-results-inbound-title').textContent = inboundLabels[key];
+    document.getElementById('weekly-results-inbound-title').textContent = key === 'centralWarehouseInbound' && location.type === 'warehouse' ? 'Reversas / devoluciones' : inboundLabels[key];
     document.getElementById('weekly-results-inbound-context').textContent = `${location.name} · ${date(period.from)} – ${date(period.through)} · Costeo al ${date(source.costCutoff)}`;
     inboundBody.replaceChildren();
     if (!metric.complete) {
       const note = paragraph(inboundBody, 'Detalle parcial: el total corresponde únicamente a los importes conocidos.');
       note.className = 'weekly-results-inbound-notice';
     }
-    if (source.unresolvedOriginCount) paragraph(inboundBody, `${source.unresolvedOriginCount} entradas con origen sin confirmar no se incluyen en el total.`);
+    if (source.unresolvedOriginCount) paragraph(inboundBody, `${source.unresolvedOriginCount} movimientos con ${key === 'suppliesOutbound' ? 'destino' : 'origen'} sin confirmar no se incluyen en el total.`);
     (source.issues || []).forEach(message => paragraph(inboundBody, message));
-    paragraph(inboundBody, `${metric.complete ? 'Total de entradas' : 'Subtotal conocido'}: ${metric.available ? formatClp(metric.amount) : 'Sin datos'}`)
+    paragraph(inboundBody, `${metric.complete ? key === 'suppliesOutbound' ? 'Total de salidas' : 'Total de entradas' : 'Subtotal conocido'}: ${metric.available ? formatClp(metric.amount) : 'Sin datos'}`)
       .className = 'weekly-results-inbound-total';
     const quantity = amount => amount.toLocaleString('es-CL', { maximumFractionDigits: 6 });
     const unitCost = amount => amount.toLocaleString('es-CL', { style: 'currency', currency: 'CLP', minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -289,14 +289,15 @@
         ]), 'weekly-results-inbound-movements');
       details.append(movements.wrap); inboundBody.append(details);
     } else {
-      paragraph(inboundBody, metric.complete ? 'No se registraron entradas de este tipo en el período seleccionado.' : 'No hay entradas con detalle disponible para el período seleccionado.');
+      paragraph(inboundBody, metric.complete ? `No se registraron ${key === 'suppliesOutbound' ? 'salidas' : 'entradas'} de este tipo en el período seleccionado.` : 'No hay movimientos con detalle disponible para el período seleccionado.');
     }
     if (source.missingCostCodes?.length) paragraph(inboundBody, `Sin costo completo: ${source.missingCostCodes.join(', ')}.`);
     inboundDialog.showModal();
   }
   function metricCells(row, key, result, weekStart = false, detailContext = null) {
     const metric = result?.values[key], showPercent = metric?.showPercent !== false;
-    const amount = row.insertCell(), percent = row.insertCell();
+    const amount = row.insertCell(), percent = document.createElement('td');
+    if (detailContext?.location.type !== 'warehouse') row.append(percent);
     if (weekStart) amount.classList.add('weekly-results-week-start');
     amount.classList.add('weekly-results-amount'); percent.classList.add('weekly-results-percent');
     if (!metric?.available) {
@@ -322,7 +323,11 @@
       if (showPercent && metric.percentPartial && metric.percent != null && key !== 'inventoryShortage') partialTag(percent);
       if (key === 'collectionDifference') amount.classList.add(metric.amount === 0 ? 'weekly-results-balanced' : 'weekly-results-difference');
     }
-    if (inboundLabels[key] && detailContext && Array.isArray(result?.sources?.[key]?.items)) {
+    if (key === 'centralWarehouseInbound' && detailContext?.location.type === 'warehouse') {
+      const note = document.createElement('span'); note.className = 'weekly-results-inventory-dates';
+      note.textContent = 'Reversas / devoluciones'; amount.append(note);
+    }
+    if (inboundLabels[key] && metric?.status !== 'not-applicable' && detailContext && Array.isArray(result?.sources?.[key]?.items)) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'weekly-results-inbound-button';
       button.textContent = amount.firstChild.textContent;
       button.title = 'Ver ingredientes, cantidades e importes'; button.setAttribute('aria-haspopup', 'dialog');
@@ -354,6 +359,7 @@
     if (close && dailyDialog.open) dailyDialog.close();
   }
   function renderDaily(detail, weeklyResult) {
+    const units = detail.location.type === 'warehouse' ? ['Importe'] : ['Importe', '%'];
     const totalLabel = detail.periodType === 'month' ? 'Total mes' : 'Total semana';
     const wrap = document.createElement('div'); wrap.className = 'weekly-results-table-wrap'; wrap.tabIndex = 0;
     wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', `Detalle diario y ${totalLabel.toLowerCase()}; tabla desplazable`);
@@ -361,11 +367,11 @@
     const head = table.createTHead(), daysRow = head.insertRow(), unitsRow = head.insertRow();
     const concept = document.createElement('th'); concept.textContent = 'Concepto'; concept.rowSpan = 2; concept.scope = 'col'; daysRow.append(concept);
     for (const day of [...detail.days, null]) {
-      const th = document.createElement('th'); th.colSpan = 2; th.scope = 'colgroup';
+      const th = document.createElement('th'); th.colSpan = units.length; th.scope = 'colgroup';
       th.textContent = day ? `${new Intl.DateTimeFormat('es-CL', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${day.date}T12:00:00Z`))} · ${date(day.date)}` : totalLabel;
       if (!day) th.className = 'weekly-results-weekly-total';
       daysRow.append(th);
-      for (const unit of ['Importe', '%']) {
+      for (const unit of units) {
         const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = unit; unitsRow.append(cell);
       }
     }
@@ -374,7 +380,7 @@
       const row = metricRow(body, key, label);
       for (const day of detail.days) metricCells(row, key, day, false, { location: detail.location, period: { from: day.date, through: day.date } });
       metricCells(row, key, weeklyResult, true, { location: detail.location, period: detail.period });
-      row.cells[row.cells.length - 2].classList.add('weekly-results-weekly-total');
+      row.cells[row.cells.length - units.length].classList.add('weekly-results-weekly-total');
     }
     wrap.append(table); dailyBody.replaceChildren(wrap);
     const messages = [...new Set(detail.days.flatMap(day => (day.warnings || []).map(message => `${date(day.date)}: ${message}`)))];
@@ -445,7 +451,11 @@
     const labels = { sales: 'Ventas', margin: 'Margen', payments: 'Pagos TotEat', mercadoPago: 'Mercado Pago', mercadoPagoFee: 'Comision Mercadopago',
       marketing: 'Marketing', employees: 'Consumo personal', waste: 'Merma', inventory: 'Inventario',
       centralWarehouseInbound: 'Entradas Bodega Central', directSupplierInbound: 'Entradas Proveedores Directos' };
+    if (location.type === 'warehouse') {
+      labels.centralWarehouseInbound = 'Reversas / devoluciones'; labels.suppliesOutbound = 'Salidas Insumos';
+    }
     for (const [key, label] of Object.entries(labels)) {
+      if (location.type === 'warehouse' && !['waste', 'inventory', 'centralWarehouseInbound', 'directSupplierInbound', 'suppliesOutbound'].includes(key)) continue;
       const source = result?.sources?.[key];
       const heading = document.createElement('h4'); heading.textContent = label; detailBody.append(heading);
       if (!source || (Array.isArray(source) && !source.length)) {
@@ -487,14 +497,14 @@
   function render(data) {
     exportData = data; pdfButton.disabled = !data.locations.length; xlsxButton.disabled = !data.locations.length;
     document.getElementById('weekly-results-context').textContent = window.WeeklyResultsExport.reportContext(data);
-    if (!data.locations.length) { paragraph(container, 'No hay cafeterías activas para mostrar.'); return; }
+    if (!data.locations.length) { paragraph(container, 'No hay ubicaciones activas para mostrar.'); return; }
     const wrap = document.createElement('div'); wrap.className = 'weekly-results-table-wrap';
     wrap.tabIndex = 0; wrap.setAttribute('role', 'region'); wrap.setAttribute('aria-label', `${window.WeeklyResultsExport.reportTitle(data)} por sucursal; tabla desplazable`);
     const table = document.createElement('table'); table.className = 'weekly-results-table';
     const head = table.createTHead(), weeksRow = head.insertRow(), storesRow = head.insertRow(), unitsRow = head.insertRow();
     const concept = document.createElement('th'); concept.textContent = 'Concepto'; concept.rowSpan = 3; concept.scope = 'col'; weeksRow.append(concept);
     for (const [index, week] of data.weeks.entries()) {
-      const th = document.createElement('th'); th.colSpan = data.locations.length * 2; th.scope = 'colgroup'; th.className = 'weekly-results-week-start';
+      const th = document.createElement('th'); th.colSpan = data.locations.reduce((sum, location) => sum + (location.type === 'warehouse' ? 1 : 2), 0); th.scope = 'colgroup'; th.className = 'weekly-results-week-start';
       const heading = document.createElement('div'); heading.className = 'weekly-results-week-heading';
       const weekLabel = document.createElement('span');
       weekLabel.textContent = `${window.WeeklyResultsExport.periodLabel(data, index)} · ${date(week.period.from)} – ${date(week.period.to)}`;
@@ -504,14 +514,15 @@
       heading.append(weekLabel, dailyButton); th.append(heading);
       weeksRow.append(th);
       for (const [storeIndex, location] of data.locations.entries()) {
+        const units = location.type === 'warehouse' ? ['Importe'] : ['Importe', '%'];
         const result = week.locations.find(item => item.locationId === location.id);
-        const store = document.createElement('th'); store.colSpan = 2; store.scope = 'colgroup';
+        const store = document.createElement('th'); store.colSpan = units.length; store.scope = 'colgroup';
         if (!storeIndex) store.className = 'weekly-results-week-start';
         const label = document.createElement('span'); label.textContent = location.name; store.append(label);
         const button = document.createElement('button'); button.type = 'button'; button.className = 'weekly-results-review'; button.textContent = 'Fechas y fuentes';
         button.setAttribute('aria-label', `Revisar fechas y fuentes de ${location.name}, ${data.options?.period === 'month' ? 'mes' : 'semana'} del ${date(week.period.from)}`);
         button.addEventListener('click', () => openDetail(data, week, location, result)); store.append(button); storesRow.append(store);
-        for (const unit of ['Importe', '%']) {
+        for (const unit of units) {
           const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = unit;
           if (!storeIndex && unit === 'Importe') cell.className = 'weekly-results-week-start';
           unitsRow.append(cell);

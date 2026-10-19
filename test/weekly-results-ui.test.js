@@ -6,6 +6,68 @@ const { createApp } = require('../server');
 const { buildWeeklyResults, buildDailyResultsWithProgress, currentWeeks, value } = require('../weekly-results');
 const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+test('warehouse column precedes cafes with one amount, returns, dispatches and daily/monthly layouts', { skip: !fs.existsSync(chrome) }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-warehouse-results-ui-'));
+  const server = createApp({ uploadsRoot: root, reportToday: '2026-10-13' }).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); fs.rmSync(root, { recursive: true, force: true }); });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const locations = [{ id: 'main-warehouse', name: 'Bodega Principal', type: 'warehouse' },
+    { id: 'store-1', name: 'La Concepción', type: 'store' }, { id: 'store-2', name: 'Portal Lyon', type: 'store' }];
+  const source = () => ({ values: { netSales: value(1000, 'complete'),
+    centralWarehouseInbound: value(20, 'complete'), directSupplierInbound: value(100, 'complete'),
+    suppliesOutbound: value(50, 'complete'), finalInventory: value(2000, 'complete'), waste: value(-10, 'complete') },
+    sources: { centralWarehouseInbound: { items: [], costCutoff: '2026-10-11' }, suppliesOutbound: { items: [], costCutoff: '2026-10-11' } } });
+  let report;
+  await page.route('**/api/weekly-results/stream?*', route => {
+    report = buildWeeklyResults({ today: '2026-10-13', locations, ...Object.fromEntries(new URL(route.request().url()).searchParams) }, source);
+    return route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data: report }) + '\n' });
+  });
+  await page.route('**/api/weekly-results/daily/stream?*', async route => {
+    const query = new URL(route.request().url()).searchParams;
+    const data = await buildDailyResultsWithProgress({ today: report.date,
+      period: report.weeks.find(week => week.period.from === query.get('from')).period,
+      location: locations.find(location => location.id === query.get('location')) }, source, () => {});
+    await route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data }) + '\n' });
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('#weekly-results-refresh').click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  const table = page.locator('#weekly-results-table table');
+  assert.deepEqual(await table.locator('thead tr').nth(1).locator('th').allTextContents(),
+    Array(2).fill(['Bodega PrincipalFechas y fuentes', 'La ConcepciónFechas y fuentes', 'Portal LyonFechas y fuentes']).flat());
+  assert.deepEqual(await table.locator('thead tr').nth(2).locator('th').allTextContents(),
+    ['Importe', 'Importe', '%', 'Importe', '%', 'Importe', 'Importe', '%', 'Importe', '%']);
+  assert.equal(await table.locator('thead tr').first().locator('th').nth(1).getAttribute('colspan'), '5');
+  assert.equal(await table.locator('[data-metric="netSales"] td').first().innerText(), '—');
+  assert.equal(await table.locator('[data-metric="netSales"] .weekly-results-percent').count(), 4);
+  assert.match(await table.locator('[data-metric="centralWarehouseInbound"] td').first().innerText(), /\$20.*Reversas/s);
+  await table.locator('[data-metric="centralWarehouseInbound"] button').first().click();
+  assert.equal(await page.locator('#weekly-results-inbound-title').innerText(), 'Reversas / devoluciones');
+  await page.locator('#weekly-results-inbound-close').click();
+  await table.locator('[data-metric="suppliesOutbound"] button').first().click();
+  assert.match(await page.locator('#weekly-results-inbound-body').innerText(), /Total de salidas: \$50/);
+  await page.locator('#weekly-results-inbound-close').click();
+  await page.screenshot({ path: '/private/tmp/brewit-warehouse-weekly-results.png' });
+  await table.locator('.weekly-results-daily-button').first().click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-daily-status').textContent === 'Detalle diario actualizado.');
+  const daily = page.locator('#weekly-results-daily');
+  assert.equal(await daily.locator('.weekly-results-percent').count(), 0);
+  assert.equal(await daily.locator('thead tr').nth(1).locator('th').count(), 8);
+  assert.equal(await daily.locator('[data-metric="suppliesOutbound"] td').count(), 8);
+  await page.locator('#weekly-results-daily-location').selectOption('store-1');
+  await page.waitForFunction(() => document.querySelectorAll('#weekly-results-daily .weekly-results-percent').length > 0);
+  await page.locator('#weekly-results-daily-close').click();
+  await page.locator('#weekly-results-period').selectOption('month');
+  await page.locator('#weekly-results-refresh').click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados mensuales actualizados.');
+  assert.equal(await table.locator('thead tr').nth(1).locator('th').first().getAttribute('colspan'), '1');
+  assert.deepEqual(errors, []);
+});
+
 test('daily popup loads on demand, keeps weekly inventory totals, switches branches and cancels stale details', { skip: !fs.existsSync(chrome) }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-daily-results-ui-'));
   const server = createApp({ uploadsRoot: root, reportToday: '2026-10-13' }).listen(0, '127.0.0.1');
@@ -116,14 +178,14 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   assert.equal(url.searchParams.get('includeCurrent'), 'false');
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(await page.locator('#weekly-results-workspace').isVisible(), true);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 26);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 27);
   assert.equal(await page.locator('.weekly-results-table thead tr').count(), 3);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 3);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 8);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 10);
   assert.equal(await page.locator('#weekly-results-progress').getAttribute('value'), '100');
   assert.ok((await page.locator('[data-metric="netSales"] .weekly-results-percent').allTextContents()).every(text => text === '—'));
-  assert.ok((await page.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').allTextContents()).every(text => text === 'Sin datos'));
-  assert.ok((await page.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').allTextContents()).every(text => text === 'Incompleto'));
+  assert.ok((await page.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').allTextContents()).every(text => text.startsWith('Sin datos')));
+  assert.ok((await page.locator('[data-metric="inventoryConsumptionTotal"] .weekly-results-amount').allTextContents()).every(text => text === 'Incompleto' || text === '—'));
   assert.match(await page.locator('.weekly-results-table thead tr').first().innerText(), /05-10-2026.*11-10-2026/);
 
   const locations = [{ id: 'store-1', name: 'La Concepción' }, { id: 'store-2', name: 'Lyon' }, { id: 'store-3', name: 'Nueva sucursal' }];
@@ -319,9 +381,9 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(requests, 1);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 3);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 8);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 10);
   for (const key of ['inventoryShortage', 'otherConsumables', 'inventoryConsumptionTotal']) {
-    assert.ok((await page.locator(`[data-metric="${key}"] .weekly-results-amount`).allTextContents()).every(value => value === 'No incluido'));
+    assert.ok((await page.locator(`[data-metric="${key}"] .weekly-results-amount`).allTextContents()).every(value => value === 'No incluido' || value === '—'));
     assert.ok((await page.locator(`[data-metric="${key}"] .weekly-results-percent`).allTextContents()).every(value => value === '—'));
   }
   assert.match(await page.locator('#weekly-results-context').innerText(), /2 semanas · Inventario no incluido/);
@@ -333,7 +395,7 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(requests, 2);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 4);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 12);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 15);
 
   await page.locator('#weekly-results-current').selectOption('false');
   await page.locator('#weekly-results-weeks').selectOption('4');
@@ -372,7 +434,9 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   const popup = page.locator('#weekly-results-daily');
   assert.equal(await popup.locator('thead tr').first().locator('th').count(), 33);
   assert.match(await popup.locator('thead tr').first().locator('th').last().innerText(), /Total mes/);
-  assert.equal(await popup.locator('[data-metric="netSales"] .weekly-results-amount').nth(13).innerText(), 'Sin transcurrir');
+  assert.equal(await page.locator('#weekly-results-daily-location').inputValue(), 'main-warehouse');
+  assert.equal(await popup.locator('[data-metric="netSales"] .weekly-results-amount').nth(13).innerText(), '—');
+  assert.equal(await popup.locator('[data-metric="suppliesInbound"] .weekly-results-amount').nth(13).innerText(), 'Sin transcurrir');
   assert.equal(await popup.locator('[data-metric="inventoryShortage"] .weekly-results-amount').first().innerText(), 'Solo total mensual');
   await page.locator('#weekly-results-daily-close').click();
   await page.setViewportSize({ width: 390, height: 844 });

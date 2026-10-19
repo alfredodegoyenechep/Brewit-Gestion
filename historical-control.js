@@ -293,7 +293,7 @@ function snapshot(source, descriptors) {
   const missing = descriptors.filter(d => !existing.has(d.dataset));
   if (missing.length) return captureCurrent({ body: source, name: 'fuentes-originales.json', datasets: missing });
 }
-function register(app, history) {
+function register(app, history, presentationOptions = {}) {
   const base = '/api/historical-control';
   const wrap = fn => (req, res, next) => { try { fn(req, res); } catch (e) { if(e.status)return res.status(e.status).json({error:e.message});next(e); } };
   const filtered = query => history.manifests().filter(r => (!query.date || localDay(r.startedAt) === query.date)
@@ -328,17 +328,19 @@ function register(app, history) {
       return res.attachment(`alertas-historicas-${date}-${dateTo}.csv`).type('text/csv; charset=utf-8').send(alerts.csv(report,{locations}));
     }
     const offset=Math.max(0,Math.floor(Number(req.query.offset)||0)),limit=Math.min(100,Math.max(1,Math.floor(Number(req.query.limit)||30)));
-    res.json({...report,total:report.alerts.length,alerts:report.alerts.slice(offset,offset+limit)});
+    const present=require('./historical-change-presentation').presenter(history,presentationOptions);
+    res.json({...report,total:report.alerts.length,alerts:report.alerts.slice(offset,offset+limit).map(present)});
   }));
   app.get(base + '/runs/:id', wrap((req, res) => { const run = history.load(req.params.id); return run ? res.json(run) : res.sendStatus(404); }));
   app.get(base + '/runs/:id/changes', wrap((req, res) => {
     const run = history.load(req.params.id); if (!run) return res.sendStatus(404);
     const report = history.report(run.id); if (!report) return res.json({ status: run.comparison, changes: [], total: 0 });
     const sources = report.sources.filter(s => (!req.query.dataset || s.dataset === req.query.dataset) && (!req.query.location || s.location === req.query.location));
-    const changes = sources.flatMap(s => [...s.changes.map(c => ({ ...c, dataset: s.dataset, location: s.location })), ...s.ambiguous.map(c => ({ ...c, type: 'ambiguous', dataset: s.dataset, location: s.location }))])
+    const changes = sources.flatMap(s => [...s.changes.map(c => ({ ...c, sourceKey:s.key, dataset: s.dataset, location: s.location })), ...s.ambiguous.map(c => ({ ...c, type: 'ambiguous', dataset: s.dataset, location: s.location }))])
       .filter(c=>!req.query.warehouse || c.warehouses?.includes(req.query.warehouse) || c.warehouse===req.query.warehouse);
     const offset = Math.max(0, Number(req.query.offset) || 0), limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
-    res.json({ status: 'done', total: changes.length, changes: changes.slice(offset, offset + limit), sources: sources.map(({ changes, ambiguous, ...s }) => s) });
+    const present=require('./historical-change-presentation').presenter(history,presentationOptions);
+    res.json({ status: 'done', total: changes.length, changes: changes.slice(offset, offset + limit).map(present), sources: sources.map(({ changes, ambiguous, ...s }) => s) });
   }));
   app.get(base + '/runs/:id/files/:fileId/download', wrap((req, res) => {
     const run = history.load(req.params.id), file = run?.artifacts.find(a => a.id === req.params.fileId); if (!file) return res.sendStatus(404);

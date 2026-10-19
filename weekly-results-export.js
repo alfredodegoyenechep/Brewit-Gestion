@@ -5,7 +5,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
   const states = { 'no-data': 'Sin datos', 'no-physical-count': 'Sin toma física',
     'no-opening-inventory': 'Sin inventario inicial', incomplete: 'Incompleto', pending: 'Pendiente',
-    partial: 'Parcial', 'not-included': 'No incluido' };
+    partial: 'Parcial', 'not-included': 'No incluido', 'not-applicable': '—' };
   const compactKeys = new Set(['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'mercadoPagoTips', 'cashTips', 'centralWarehouseInbound', 'directSupplierInbound', 'cogs', 'otherVariableCosts']);
   const borderlessKeys = new Set(['netSales', 'grossSales', 'discounts', 'tips', 'mercadoPagoTips', 'suppliesInbound', 'centralWarehouseInbound', 'variableCosts', 'cogs']);
   const defaults = { bg: '#f7f2ea', soft: '#fffdf8', text: '#33291e', muted: '#9d968a',
@@ -21,16 +21,20 @@
   }
   function reportContext(data) {
     const monthly = data.options?.period === 'month', cutoff = data.weeks[0]?.period.through || data.date;
-    return `Consulta: ${date(data.date)} · ${data.locations.length} sucursales · ${data.weeks.length} ${monthly ? 'meses' : 'semanas'} · Inventario ${data.options?.includeInventory === false ? 'no incluido' : 'incluido'} · ${data.options?.includeCurrent === false ? (monthly ? 'Mes actual excluido' : 'Semana actual excluida') : (monthly ? 'Mes actual incluido' : 'Semana actual incluida')} · Datos hasta ${date(cutoff)}`;
+    return `Consulta: ${date(data.date)} · ${data.locations.filter(location => location.type !== 'warehouse').length} sucursales${data.locations.some(location => location.type === 'warehouse') ? ' + Bodega Principal' : ''} · ${data.weeks.length} ${monthly ? 'meses' : 'semanas'} · Inventario ${data.options?.includeInventory === false ? 'no incluido' : 'incluido'} · ${data.options?.includeCurrent === false ? (monthly ? 'Mes actual excluido' : 'Semana actual excluida') : (monthly ? 'Mes actual incluido' : 'Semana actual incluida')} · Datos hasta ${date(cutoff)}`;
   }
 
   function model(data, palette = {}, fontSize = 12) {
     const colors = { ...defaults, ...palette };
-    const columns = data.weeks.flatMap((week, weekIndex) => data.locations.map((location, storeIndex) => ({
-      weekIndex, weekStart: storeIndex === 0, location: location.name,
-      week: `${periodLabel(data, weekIndex)} · ${date(week.period.from)} – ${date(week.period.to)}`,
-      result: week.locations.find(result => result.locationId === location.id)
-    })));
+    let cellStart = 0;
+    const columns = data.weeks.flatMap((week, weekIndex) => data.locations.map((location, storeIndex) => {
+      const units = location.type === 'warehouse' ? 1 : 2, start = cellStart; cellStart += units;
+      return { units, cellStart: start,
+        weekIndex, weekStart: storeIndex === 0, location: location.name,
+        week: `${periodLabel(data, weekIndex)} · ${date(week.period.from)} – ${date(week.period.to)}`,
+        result: week.locations.find(result => result.locationId === location.id)
+      };
+    }));
     const rows = data.metrics.map(([key, label]) => {
       const compact = compactKeys.has(key), subtotal = ['netSales', 'inventoryConsumptionTotal'].includes(key);
       const cells = columns.flatMap(column => {
@@ -38,6 +42,7 @@
         const inventory = column.result?.inventory;
         const note = available && key === 'finalInventory' && metric.date
           ? `${metric.basis === 'physical' ? 'Físico' : 'Inventario teórico'} · ${date(metric.date)}${metric.status === 'partial' ? ' · Parcial' : ''}`
+          : key === 'centralWarehouseInbound' && column.units === 1 ? `Reversas / devoluciones${available && metric.status === 'partial' ? ' · Parcial' : ''}`
           : available && key === 'inventoryShortage' && inventory?.initialDate && inventory?.finalDate
           ? `${date(inventory.initialDate)} → ${date(inventory.finalDate)}`
           : available && metric.status === 'partial' && key !== 'inventoryShortage' ? 'Parcial' : '';
@@ -50,7 +55,7 @@
         { value: knownPercent ? metric.percent / 100 : hasPercent ? '—' : '',
           text: knownPercent ? percent(metric.percent) : hasPercent ? '—' : '', color: colors.muted,
           note: knownPercent && metric.percentPartial && key !== 'inventoryShortage' ? 'Parcial' : '', numeric: knownPercent, format: 'percent',
-          fontSize: compact ? fontSize - 3 : fontSize }];
+          fontSize: compact ? fontSize - 3 : fontSize }].slice(0, column.units);
       });
       return { key, label, compact, subtotal, separator: !borderlessKeys.has(key), cells };
     });
@@ -84,22 +89,30 @@
     for (let offset = 0; offset < report.columns.length;) {
       const count = branches > capacity ? Math.min(capacity, branches - offset % branches) : capacity;
       const columns = report.columns.slice(offset, offset + count);
-      const pairWidth = (width - margin * 2 - conceptWidth) / columns.length;
-      const amountWidth = pairWidth * .68;
+      const weights = columns.map(column => column.units === 1 ? .68 : 1);
+      const unitWidth = (width - margin * 2 - conceptWidth) / weights.reduce((sum, weight) => sum + weight, 0);
+      const positions = [0];
+      const columnWidths = weights.map(weight => weight * unitWidth);
+      columnWidths.forEach(w => positions.push(positions.at(-1) + w));
+      const cellLayout = columns.flatMap((column, index) => column.units === 1
+        ? [{ x: positions[index], width: columnWidths[index] }]
+        : [{ x: positions[index], width: columnWidths[index] * .68 },
+          { x: positions[index] + columnWidths[index] * .68, width: columnWidths[index] * .32 }]);
+      const sliceCells = row => row.cells.slice(columns[0].cellStart, columns.at(-1).cellStart + columns.at(-1).units);
       let weekHeaderHeight = 26;
       for (let start = 0; start < columns.length;) {
         let end = start + 1;
         while (end < columns.length && columns[end].weekIndex === columns[start].weekIndex) end++;
-        weekHeaderHeight = Math.max(weekHeaderHeight, lines(columns[start].week, (end - start) * pairWidth - 10, 8, true).length * 9 + 8);
+        weekHeaderHeight = Math.max(weekHeaderHeight, lines(columns[start].week, positions[end] - positions[start] - 10, 8, true).length * 9 + 8);
         start = end;
       }
-      const nameHeaderHeight = Math.max(19, ...columns.map(column => lines(column.location, pairWidth - 12, 9, true).length * 10.5 + 5));
+      const nameHeaderHeight = Math.max(19, ...columns.map((column, index) => lines(column.location, columnWidths[index] - 12, 9, true).length * 10.5 + 5));
       const headerHeight = weekHeaderHeight + nameHeaderHeight + 17;
       let heights = report.rows.map(row => {
         const size = row.compact ? compactFont : baseFont, padding = row.compact ? 2 : 3.5;
         let contentHeight = lines(row.label, conceptWidth - (row.compact ? 22 : 14), size, !row.compact).length * size * 1.15;
-        row.cells.slice(offset * 2, (offset + columns.length) * 2).forEach((cell, index) => {
-          const cellWidth = index % 2 ? pairWidth - amountWidth : amountWidth;
+        sliceCells(row).forEach((cell, index) => {
+          const cellWidth = cellLayout[index].width;
           const cellSize = cell.fontSize / report.fontSize * baseFont;
           const mainHeight = lines(cell.text, cellWidth - 12, cellSize, row.subtotal).length * cellSize * 1.15;
           const noteHeight = cell.note ? lines(cell.note, cellWidth - 12, 6.5).length * 7.5 + 2 : 0;
@@ -124,16 +137,16 @@
       for (const block of blocks) {
         const blockHeight = block.reduce((sum, index) => sum + heights[index], 0);
         if (pageRows.length && used + blockHeight > bottom - top - headerHeight + .01) {
-          plans.push({ offset, columns, pairWidth, amountWidth, heights, pageRows, scale, headerHeight, weekHeaderHeight, nameHeaderHeight }); pageRows = []; used = 0;
+          plans.push({ offset, columns, positions, columnWidths, cellLayout, sliceCells, heights, pageRows, scale, headerHeight, weekHeaderHeight, nameHeaderHeight }); pageRows = []; used = 0;
         }
         pageRows.push(...block); used += blockHeight;
       }
-      if (pageRows.length) plans.push({ offset, columns, pairWidth, amountWidth, heights, pageRows, scale, headerHeight, weekHeaderHeight, nameHeaderHeight });
+      if (pageRows.length) plans.push({ offset, columns, positions, columnWidths, cellLayout, sliceCells, heights, pageRows, scale, headerHeight, weekHeaderHeight, nameHeaderHeight });
       offset += columns.length;
     }
     plans.forEach((plan, pageIndex) => {
       if (pageIndex) doc.addPage('a4', 'landscape');
-      const { offset, columns, pairWidth, amountWidth, heights, pageRows, scale, headerHeight, weekHeaderHeight, nameHeaderHeight } = plan;
+      const { offset, columns, positions, columnWidths, cellLayout, sliceCells, heights, pageRows, scale, headerHeight, weekHeaderHeight, nameHeaderHeight } = plan;
       box(0, 0, width, height, report.colors.bg);
       font(16, true); doc.text(report.title, margin, 31);
       font(8, false, report.colors.muted); doc.text(report.context, margin, 46);
@@ -143,17 +156,18 @@
       while (start < columns.length) {
         let end = start + 1;
         while (end < columns.length && columns[end].weekIndex === columns[start].weekIndex) end++;
-        const x = margin + conceptWidth + start * pairWidth, w = (end - start) * pairWidth;
+        const x = margin + conceptWidth + positions[start], w = positions[end] - positions[start];
         const title = lines(columns[start].week, w - 10, 8, true);
         font(8, true); doc.text(title, x + w / 2, top + 11, { align: 'center', lineHeightFactor: 1.15 });
         rule(x, top + weekHeaderHeight, x + w, top + weekHeaderHeight); start = end;
       }
       columns.forEach((column, index) => {
-        const x = margin + conceptWidth + index * pairWidth;
+        const x = margin + conceptWidth + positions[index], pairWidth = columnWidths[index];
+        const amountWidth = column.units === 1 ? pairWidth : pairWidth * .68;
         const name = lines(column.location, pairWidth - 12, 9, true);
         font(9, true); doc.text(name, x + pairWidth / 2, top + weekHeaderHeight + 11, { align: 'center' });
         font(8, true); doc.text('Importe', x + amountWidth / 2, top + headerHeight - 6, { align: 'center' });
-        doc.text('%', x + amountWidth + (pairWidth - amountWidth) / 2, top + headerHeight - 6, { align: 'center' });
+        if (column.units === 2) doc.text('%', x + amountWidth + (pairWidth - amountWidth) / 2, top + headerHeight - 6, { align: 'center' });
         rule(x, top + weekHeaderHeight + nameHeaderHeight, x + pairWidth, top + weekHeaderHeight + nameHeaderHeight);
       });
       rule(margin, top + headerHeight, width - margin, top + headerHeight);
@@ -164,9 +178,9 @@
         const padding = (row.compact ? 2 : 3.5) * scale, indent = row.compact ? 15 : 7;
         const label = lines(row.label, conceptWidth - indent - 7, size, !row.compact);
         font(size, !row.compact); doc.text(label, margin + indent, y + padding + size, { lineHeightFactor: 1.15 });
-        row.cells.slice(offset * 2, (offset + columns.length) * 2).forEach((cell, index) => {
-          const pair = Math.floor(index / 2), x = margin + conceptWidth + pair * pairWidth + (index % 2 ? amountWidth : 0);
-          const cellWidth = index % 2 ? pairWidth - amountWidth : amountWidth;
+        sliceCells(row).forEach((cell, index) => {
+          const x = margin + conceptWidth + cellLayout[index].x;
+          const cellWidth = cellLayout[index].width;
           const cellSize = cell.fontSize / report.fontSize * baseFont * scale;
           const content = lines(cell.text, cellWidth - 12, cellSize, row.subtotal);
           font(cellSize, row.subtotal, cell.color); doc.text(content, x + cellWidth - 6, y + padding + cellSize, { align: 'right', lineHeightFactor: 1.15 });
@@ -181,7 +195,7 @@
       }
       rule(margin, top, margin, y); rule(width - margin, top, width - margin, y);
       columns.forEach((column, index) => {
-        if (!index || column.weekStart) rule(margin + conceptWidth + index * pairWidth, top, margin + conceptWidth + index * pairWidth, y, true);
+        if (!index || column.weekStart) rule(margin + conceptWidth + positions[index], top, margin + conceptWidth + positions[index], y, true);
       });
       font(7, false, report.colors.muted);
       report.notes.forEach((note, index) => doc.text(note, margin, height - 30 + index * 10));
@@ -192,7 +206,8 @@
 
   function workbook(report, XLSX) {
     const sheet = {}, styles = {}, merges = [], heights = [];
-    const lastColumn = report.columns.length * 2;
+    const lastColumn = report.columns.reduce((sum, column) => sum + column.units, 0);
+    const cellColumns = report.columns.flatMap(column => Array.from({ length: column.units }, (_, unit) => ({ column, unit })));
     const put = (r, c, value, style, format) => {
       const address = XLSX.utils.encode_cell({ r, c });
       sheet[address] = { t: typeof value === 'number' ? 'n' : 's', v: value,
@@ -214,14 +229,14 @@
     while (start < report.columns.length) {
       let end = start + 1;
       while (end < report.columns.length && report.columns[end].weekIndex === report.columns[start].weekIndex) end++;
-      put(2, start * 2 + 1, report.columns[start].week, { ...heading, left: true });
-      merges.push({ s: { r: 2, c: start * 2 + 1 }, e: { r: 2, c: end * 2 } }); start = end;
+      put(2, report.columns[start].cellStart + 1, report.columns[start].week, { ...heading, left: true });
+      merges.push({ s: { r: 2, c: report.columns[start].cellStart + 1 }, e: { r: 2, c: report.columns[end - 1].cellStart + report.columns[end - 1].units } }); start = end;
     }
-    report.columns.forEach((column, index) => {
-      const c = index * 2 + 1;
+    report.columns.forEach(column => {
+      const c = column.cellStart + 1;
       put(3, c, column.location, { ...heading, left: column.weekStart });
-      merges.push({ s: { r: 3, c }, e: { r: 3, c: c + 1 } });
-      put(4, c, 'Importe', { ...heading, left: column.weekStart }); put(4, c + 1, '%', heading);
+      if (column.units === 2) merges.push({ s: { r: 3, c }, e: { r: 3, c: c + 1 } });
+      put(4, c, 'Importe', { ...heading, left: column.weekStart }); if (column.units === 2) put(4, c + 1, '%', heading);
     });
     let r = 5;
     for (const row of report.rows) {
@@ -229,10 +244,10 @@
       const rowStyle = { ...base, size, fill: row.subtotal ? report.colors.soft : report.colors.bg, bottom: row.separator && !annotated };
       put(r, 0, row.label, { ...rowStyle, align: 'left', bold: !row.compact, indent: row.compact ? 1 : 0, right: true });
       const labelLines = Math.ceil(row.label.length / ((row.compact ? 34 : 38) * 11 / size));
-      const cellHeight = Math.max(...row.cells.map((cell, index) => Math.ceil(cell.text.length / ((index % 2 ? 10 : 18) * 11 / cell.fontSize)) * cell.fontSize * 1.15));
+      const cellHeight = Math.max(...row.cells.map((cell, index) => Math.ceil(cell.text.length / ((cellColumns[index].unit ? 10 : 18) * 11 / cell.fontSize)) * cell.fontSize * 1.15));
       heights[r] = { hpt: Math.max(row.compact ? 14 : 23, Math.max(labelLines * size * 1.15, cellHeight) + (row.compact ? 4 : 6)) };
       row.cells.forEach((cell, index) => put(r, index + 1, cell.value, { ...rowStyle, size: cell.fontSize, color: cell.color, bold: row.subtotal,
-        left: index % 2 === 0 && report.columns[Math.floor(index / 2)].weekStart }, cell.numeric ? cell.format : null));
+        left: cellColumns[index].unit === 0 && cellColumns[index].column.weekStart }, cell.numeric ? cell.format : null));
       if (annotated) {
         const noteStyle = { ...base, fill: rowStyle.fill, color: report.colors.muted, size: 7.5, bottom: row.separator };
         fillRow(r + 1, noteStyle); styles[XLSX.utils.encode_cell({ r: r + 1, c: 0 })].right = true;
@@ -240,7 +255,7 @@
         merges.push({ s: { r, c: 0 }, e: { r: r + 1, c: 0 } });
         styles[XLSX.utils.encode_cell({ r, c: 0 })].bottom = row.separator;
         row.cells.forEach((cell, index) => put(r + 1, index + 1, cell.note, { ...noteStyle,
-          left: index % 2 === 0 && report.columns[Math.floor(index / 2)].weekStart }));
+          left: cellColumns[index].unit === 0 && cellColumns[index].column.weekStart }));
         heights[r + 1] = { hpt: 13 }; r++;
       }
       r++;
@@ -252,7 +267,7 @@
     }
     sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: lastColumn } });
     sheet['!merges'] = merges; sheet['!rows'] = heights;
-    sheet['!cols'] = [{ wch: 38 }, ...report.columns.flatMap(() => [{ wch: 18 }, { wch: 10 }])];
+    sheet['!cols'] = [{ wch: 38 }, ...report.columns.flatMap(column => column.units === 1 ? [{ wch: 18 }] : [{ wch: 18 }, { wch: 10 }])];
     sheet['!margins'] = { left: .25, right: .25, top: .35, bottom: .35, header: .15, footer: .15 };
     sheet['!weeklyStyles'] = styles;
     sheet['!weeklyPalette'] = report.colors;

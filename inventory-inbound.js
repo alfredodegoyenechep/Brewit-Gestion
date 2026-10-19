@@ -1,4 +1,4 @@
-// Value actual receipts into the cafeteria's operative warehouse, independently
+// Value actual receipts and central dispatches, independently
 // of physical counts. Aggregated Kardex columns cannot establish transfer origin.
 const { value } = require('./weekly-results');
 
@@ -6,7 +6,8 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
   if (state?.sourceKind !== 'native-documents' || !Array.isArray(state.movements)) {
     throw Error('Actualiza los documentos originales del Kardex para calcular las entradas.');
   }
-  const warehouse = state.warehouses.find(item => Number(item.custom_id) === 2);
+  const centralLocation = location.type === 'warehouse';
+  const warehouse = state.warehouses.find(item => Number(item.custom_id) === (centralLocation ? 1 : 2));
   if (!warehouse) throw Error('No está disponible la bodega operativa de la sucursal.');
   const warehouses = new Map(state.warehouses.map(item => [item.id, item]));
   const documents = new Map((state.documents || []).map(item => [item.key, item]));
@@ -16,6 +17,15 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
       ? state.sourceCoverage?.transfers : state.sourceCoverage?.localTransfers },
     directSupplierInbound: { lines: [], unresolvedOrigins: [], coverage: state.sourceCoverage?.purchases }
   };
+  if (centralLocation) {
+    // Both transfer feeds must cover the interval to certify an empty flow.
+    const ranges = [state.sourceCoverage?.transfers, state.sourceCoverage?.localTransfers];
+    const coverage = ranges.every(Boolean) ? {
+      from: ranges.map(range => range.from).sort().at(-1), to: ranges.map(range => range.to).sort()[0]
+    } : null;
+    groups.centralWarehouseInbound.coverage = coverage;
+    groups.suppliesOutbound = { lines: [], unresolvedOrigins: [], errors: [], coverage };
+  }
   groups.centralWarehouseInbound.errors = [];
   groups.directSupplierInbound.errors = (state.issues || []).filter(issue => (['purchase-line', 'purchase-date'].includes(issue.kind)
       || issue.kind === 'unit-conversion' && issue.source === 'purchases')
@@ -29,6 +39,25 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
     const doc = documents.get(line.document) || {};
     if (doc.status && doc.status !== 'APPROVED') continue;
     if (line.column === 'purchase') { groups.directSupplierInbound.lines.push(line); continue; }
+    if (centralLocation) {
+      if (line.column === 'transfer_local_in') {
+        if (line.originWarehouseCode == null || !doc.originIdentity) groups.centralWarehouseInbound.unresolvedOrigins.push(line.id);
+        else if ([1, 2].includes(Number(line.originWarehouseCode))) groups.centralWarehouseInbound.lines.push(line);
+      } else if (line.column === 'transfer_local_out') groups.suppliesOutbound.lines.push(line);
+      else if (['transfer_warehouse_in', 'transfer_warehouse_out'].includes(line.column)) {
+        const incoming = line.column === 'transfer_warehouse_in', group = incoming ? groups.centralWarehouseInbound : groups.suppliesOutbound;
+        let counterpart = incoming ? doc.originWarehouse : doc.destinationWarehouse;
+        if (!counterpart) {
+          const matches = [...lines.values()].filter(other => other.document === line.document && other.code === line.code
+            && other.column === (incoming ? 'transfer_warehouse_out' : 'transfer_warehouse_in'));
+          const ids = new Set(matches.map(other => other.warehouse));
+          if (ids.size === 1) counterpart = [...ids][0];
+        }
+        if (!counterpart || !warehouses.has(counterpart)) group.unresolvedOrigins.push(line.id);
+        else if (Number(warehouses.get(counterpart).custom_id) === 2) group.lines.push(line);
+      }
+      continue;
+    }
     if (!['transfer_warehouse_in', 'transfer_local_in'].includes(line.column)) continue;
     const code = String(line.code).trim().toUpperCase(), product = products.get(code);
     if (product && product.type !== 'ingredient' && code !== 'SUB005') continue;
@@ -61,7 +90,7 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
   for (const [key, group] of Object.entries(groups)) {
     const items = group.lines.map(line => {
       const code = String(line.code).trim().toUpperCase(), product = products.get(code);
-      const cost = line.conversionPending || (key === 'centralWarehouseInbound' && !product && code !== 'SUB005')
+      const cost = line.conversionPending || (!centralLocation && key === 'centralWarehouseInbound' && !product && code !== 'SUB005')
         ? null : costResolver.resolve(code, line.unit, product);
       const available = !!cost && cost.source !== 'missing' && !cost.costIncomplete
         && Number.isFinite(cost.unitCost) && cost.unitCost >= 0;
@@ -82,7 +111,10 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
     values[key] = value(available ? known.reduce((sum, item) => sum + item.amount, 0) : null,
       available ? complete ? 'complete' : 'partial' : 'no-data',
       { missingCostCodes, coveredLineCount: known.length, totalLineCount: items.length, unresolvedOriginCount: group.unresolvedOrigins.length });
-    sources[key] = { name: key === 'centralWarehouseInbound' ? 'Entradas desde Bodega Central Local 001 La Concepcion'
+    sources[key] = { name: centralLocation && key === 'centralWarehouseInbound' ? 'Reversas / devoluciones de cafeterías'
+      : key === 'suppliesOutbound' ? 'Despachos desde Bodega Principal a cafeterías (excluye merma)'
+      : key === 'centralWarehouseInbound' ? 'Entradas desde Bodega Central Local 001 La Concepcion'
+      : centralLocation ? 'Compras recibidas directamente en Bodega Principal'
       : 'Compras recibidas directamente en la bodega operativa', range: range || null,
       costCutoff: period.valuationThrough || period.through, capturedAt: state.sourceCapturedAt,
       items, missingCostCodes, unresolvedOriginCount: group.unresolvedOrigins.length, issues: group.errors.map(issue => issue.message) };

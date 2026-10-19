@@ -119,3 +119,34 @@ test('daily valuation retains the parent period cutoff and missing provenance ma
   assert.equal(f.result().values.centralWarehouseInbound.amount, 20);
   assert.throws(() => inboundResults({ ...f.options, state: null }), /documentos originales/);
 });
+
+test('main warehouse separates supplier receipts, returns and dispatches without counting waste twice', () => {
+  const f = fixture();
+  f.options.location = { id: 'main-warehouse', type: 'warehouse' };
+  f.state.warehouses.push({ id: 'central-waste', custom_id: 4 });
+  const move = (id, column, quantity, other = {}) => f.add(id, column, quantity, { warehouse: 'central', ...other });
+  move('purchase', 'purchase', 10);
+  move('cafeteria-purchase', 'purchase', 100, { warehouse: 'operative' });
+  f.state.documents.push({ key: 'return', originWarehouse: 'operative' },
+    { key: 'dispatch', destinationWarehouse: 'operative' },
+    { key: 'waste', destinationWarehouse: 'central-waste' },
+    { key: 'local-return', originIdentity: { restaurantId: 'r', localId: '2' } });
+  move('return', 'transfer_warehouse_in', 2);
+  move('local-return', 'transfer_local_in', 3, { originWarehouseCode: 2 });
+  move('dispatch', 'transfer_warehouse_out', 4);
+  move('local-dispatch', 'transfer_local_out', 5);
+  move('waste', 'transfer_warehouse_out', 100);
+  move('cancelled', 'transfer_local_out', 100, { active: false });
+  move('future', 'purchase', 100, { date: '2026-10-12' });
+  const data = f.result();
+  assert.equal(data.values.directSupplierInbound.amount, 100);
+  assert.equal(data.values.centralWarehouseInbound.amount, 50);
+  assert.equal(data.values.suppliesOutbound.amount, 90);
+  assert.equal(data.values.suppliesOutbound.status, 'complete');
+  assert.deepEqual(data.sources.suppliesOutbound.items.map(item => item.id), ['dispatch', 'local-dispatch']);
+  delete f.state.sourceCoverage.localTransfers;
+  assert.equal(f.result().values.suppliesOutbound.status, 'partial');
+  move('unknown', 'transfer_warehouse_in', 100);
+  assert.equal(f.result().values.centralWarehouseInbound.unresolvedOriginCount, 1);
+  assert.equal(f.result().values.centralWarehouseInbound.amount, 50);
+});

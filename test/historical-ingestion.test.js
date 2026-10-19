@@ -107,10 +107,44 @@ test('audit alerts are the default view, filter findings, show before and after 
   await page.locator('#historical-alert-type').selectOption('modified');await filtered;await page.waitForFunction(()=>!document.getElementById('historical-status').textContent);
   assert.equal(await page.locator('.historical-alert-badge').count(),1);
   await page.getByRole('button',{name:'Ver detalle de alerta',exact:true}).click();
-  const content=await page.locator('#historical-detail-content').innerText();assert.match(content,/operación del 2020-01-02/);assert.match(content,/amount/);assert.match(content,/100/);assert.match(content,/150/);
+  const content=await page.locator('#historical-detail-content').innerText();assert.match(content,/operación del 2020-01-02/);assert.match(content,/Importe/);assert.match(content,/100/);assert.match(content,/150/);
   const exported=await fetch(base+await page.getByRole('link',{name:'Descargar reporte CSV',exact:true}).getAttribute('href'));const csv=await exported.text();assert.match(csv,/Registro modificado/);assert.doesNotMatch(csv,/Registro eliminado/);assert.match(csv,/150/);
   await page.getByRole('button',{name:'Consultar carga y respaldos',exact:true}).click();await page.getByRole('link',{name:'Descargar respuesta.json',exact:true}).waitFor();
   await page.screenshot({path:'/private/tmp/brewit-historical-alerts.png',fullPage:true});
   await page.getByRole('button',{name:'Cerrar',exact:true}).click();
   await page.getByRole('tab',{name:'Cambios del día',exact:true}).click();assert.equal(await page.locator('#historical-date-to').isVisible(),false);
+});
+
+test('historical details show named article changes, readable values and search, and distinguish reordered equivalents',{skip:!fs.existsSync(chrome)},async t=>{
+  const {base,history}=await service(t);
+  const salsa=(quantity,cost)=>({pl:'SSR008',np:'Salsa chocolate',cant:quantity,costo:cost,unit_select:'KG'});
+  const chips={pl:'CCB002',np:'Chips Chocolate',cant:1,unit_select:'KG',conv:[{cden:1,cnum:16,umed:'BOLSA',umedb:'KG'},{cden:1,cnum:1,umed:'KG',umedb:'KG'}]};
+  for(const current of [false,true])await history.track({origin:'manual',location:'store-1'},run=>history.capture(run,{body:[
+    {id:'T-readable',date:'2020-01-02',det:{listas:[[],[],[salsa(current?4:2,current?8500:8000)],[salsa(current?4:2,current?8500:8000)]]}},
+    {id:'T-order',date:'2020-01-02',det:{listas:[[],[],[{...chips,conv:current?[...chips.conv].reverse():chips.conv}]]}}
+  ],datasets:[{dataset:'local-transfers',range:{from:'2020-01-01',to:'2020-01-03'},complete:true}]}));
+  await history.idle();
+  const browser=await chromium.launch({executablePath:chrome,headless:true});t.after(()=>browser.close());
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(base);await page.getByRole('link',{name:'Control histórico',exact:true}).click();
+  await page.locator('.historical-alerts-table tbody tr').filter({hasText:'T-readable'}).getByRole('button',{name:'Ver detalle de alerta'}).click();
+  const modal=page.locator('#historical-detail'),content=page.locator('#historical-detail-content');
+  assert.match(await content.innerText(),/Salsa chocolate/);assert.match(await content.innerText(),/SSR008/);
+  assert.match(await content.innerText(),/2 kg/);assert.match(await content.innerText(),/4 kg/);assert.match(await content.innerText(),/\+2 kg/);
+  assert.match(await content.innerText(),/Costo unitario/);assert.match(await content.innerText(),/\$8.000/);assert.match(await content.innerText(),/\$8.500/);
+  assert.doesNotMatch(await content.innerText(),/det\.listas|unit_select|"cant"|Versiones:/);
+  assert.equal(await content.locator('pre').count(),0);
+  await content.getByRole('searchbox').fill('costo');
+  assert.equal(await content.locator('.historical-readable-table tbody tr').count(),2);
+  await content.getByRole('searchbox').fill('inexistente');assert.match(await content.innerText(),/No hay cambios que coincidan/);
+  await content.getByRole('searchbox').fill('SSR008');
+  await page.screenshot({path:'/private/tmp/brewit-historical-readable-changes.png'});
+  await page.setViewportSize({width:390,height:844});
+  assert.ok(await modal.evaluate(dialog=>dialog.getBoundingClientRect().width<=innerWidth));
+  assert.ok(await content.locator('.historical-readable-table').evaluate(wrap=>wrap.scrollWidth>wrap.clientWidth));
+  await page.getByRole('button',{name:'Cerrar',exact:true}).click();
+  await page.locator('.historical-alerts-table tbody tr').filter({hasText:'T-order'}).getByRole('button',{name:'Ver detalle de alerta'}).click();
+  assert.match(await content.innerText(),/Solo cambió el orden/);assert.match(await content.innerText(),/Chips Chocolate/);
+  assert.match(await content.innerText(),/CCB002/);assert.equal(await content.locator('.historical-readable-table').count(),0);
+  assert.deepEqual(errors,[]);
 });
