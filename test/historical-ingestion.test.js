@@ -72,3 +72,20 @@ test('historical UI opens below data sync, separates baseline from no changes an
   await page.getByRole('tab',{name:'Almacenamiento',exact:true}).click();await page.getByText('Promedio diario',{exact:true}).waitFor();assert.equal(await page.locator('.historical-kpi').count(),6);
   await page.screenshot({path:'/private/tmp/brewit-historical-control.png',fullPage:true});
 });
+test('historical UI explains missing assets and retries initialization after an unavailable endpoint',{skip:!fs.existsSync(chrome)},async t=>{
+  const {base}=await service(t);
+  const browser=await chromium.launch({executablePath:chrome,headless:true});t.after(()=>browser.close());
+  const page=await browser.newPage();
+  await page.route('**/historical-control-view.js',route=>route.abort());
+  await page.goto(base);await page.getByRole('link',{name:'Control histórico',exact:true}).click();
+  assert.match(await page.locator('#historical-status').innerText(),/Reinicia el servidor/);
+  await page.unroute('**/historical-control-view.js');
+  await page.route('**/api/historical-control/options',route=>route.fulfill({status:404,contentType:'text/html',body:'Cannot GET /api/historical-control/options'}));
+  await page.reload();await page.getByRole('link',{name:'Control histórico',exact:true}).click();
+  await page.getByText('El servidor no tiene disponible esta consulta de Control histórico.',{exact:false}).waitFor();
+  await page.unroute('**/api/historical-control/options');
+  await page.getByRole('button',{name:'Actualizar vista',exact:true}).click();
+  await page.getByText('No hay cargas registradas para estos filtros.',{exact:true}).waitFor();
+  assert.equal(await page.locator('#historical-status').innerText(),'');
+  assert.ok(await page.locator('#historical-dataset option').count()>1);
+});

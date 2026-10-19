@@ -297,7 +297,12 @@ function setView(view) {
     return;
   }
   if (view === 'historical-control') {
-    const history = document.getElementById('historical-workspace');history.hidden=false;history.style.display='';window.openHistoricalControl?.();return;
+    const history = document.getElementById('historical-workspace');
+    history.hidden = false;
+    history.style.display = '';
+    if (typeof window.openHistoricalControl === 'function') window.openHistoricalControl();
+    else document.getElementById('historical-status').textContent = 'No se pudo cargar Control histórico. Reinicia el servidor y vuelve a cargar la página.';
+    return;
   }
   if (view === 'config') {
     const settings = document.getElementById('location-settings');

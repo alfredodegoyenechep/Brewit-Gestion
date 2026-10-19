@@ -9,7 +9,11 @@
   const bytes = n => { const units=['KB','MB','GB']; n/=1000; let i=0; while(n>=1000 && i<units.length-1){n/=1000;i++;} return `${new Intl.NumberFormat('es-CL',{maximumFractionDigits:n<0.01?3:2}).format(n)} ${units[i]}`; };
   const valueText = (v, present=true) => !present ? 'Campo ausente' : v === null ? 'null' : typeof v === 'object' ? JSON.stringify(v,null,2) : String(v);
   let options, locations = {}, tab='changes', offset=0, detailOffset=0, detailId, requestId=0, timer;
-  async function api(url) { const response=await fetch(url); if(!response.ok)throw Error((await response.json().catch(()=>({}))).error || 'No se pudo consultar el control histórico.'); return response.json(); }
+  async function api(url) {
+    const response=await fetch(url);
+    if(!response.ok)throw Error((await response.json().catch(()=>({}))).error || (response.status===404 ? 'El servidor no tiene disponible esta consulta de Control histórico. Reinicia el servidor y vuelve a cargar la página.' : 'No se pudo consultar el control histórico.'));
+    return response.json();
+  }
   const name = dataset => options?.datasets[dataset] || dataset;
   const locationName = id => locations[id] || ({shared:'Compartido',all:'Todas las ubicaciones','*':'Todas las bodegas'}[id]) || id;
   const warehouseName = id => options?.warehouseLabels?.[id] || id;
@@ -110,6 +114,7 @@
   }
   window.openHistoricalControl = async () => {
     if(!options){
+      el('historical-status').textContent='Consultando respaldos…';
       try {
         const [data,registry]=await Promise.all([api('/api/historical-control/options'),api('/api/config/locations')]);options=data;
         locations=Object.fromEntries([...(registry.active || []),...(registry.trash || [])].map(l=>[l.id,l.name]));
@@ -120,7 +125,7 @@
     await refresh();
   };
   for(const id of ['historical-date','historical-dataset','historical-origin','historical-location','historical-warehouse-filter'])el(id).addEventListener('change',()=>{offset=0;refresh();});
-  el('historical-refresh').addEventListener('click',refresh);
+  el('historical-refresh').addEventListener('click',()=>window.openHistoricalControl());
   for(const button of document.querySelectorAll('[data-historical-tab]'))button.addEventListener('click',()=>{
     tab=button.dataset.historicalTab;offset=0;for(const b of document.querySelectorAll('[data-historical-tab]'))b.setAttribute('aria-selected',String(b===button));
     for(const id of ['historical-dataset','historical-origin','historical-location','historical-warehouse-filter'])el(id).disabled=tab==='storage';refresh();

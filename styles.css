@@ -9324,7 +9324,7 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .historical-notice { background: #fff5de; color: #795211; border-radius: 6px; padding: .75rem; }
 .historical-table-wrap { width: 100%; overflow-x: auto; margin: .75rem 0; }
 .historical-table-wrap table { width: 100%; min-width: 650px; border-collapse: collapse; }
-.historical-table-wrap th, .historical-table-wrap td { text-align: left; padding: .7rem; border-bottom: 1px solid #e5eae5; vertical-align: top; overflow-wrap: anywhere; }
+.historical-table-wrap th, .historical-table-wrap td { text-align: left; padding: .7rem; border-bottom: 1px solid #e5eae5; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
 .historical-table-wrap th { background: #f3f6f2; font-size: .85rem; }
 .historical-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 1rem; margin: 1rem 0; }
 .historical-kpi { display: grid; gap: .6rem; border: 1px solid #dce5dc; background: white; padding: 1rem; border-radius: 10px; }
