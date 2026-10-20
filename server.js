@@ -5288,8 +5288,11 @@ function createApp(options = {}) {
       const filePath = purchaseOrderPath(req.params.orderId);
       const existing = filePath ? readJson(filePath, null) : null;
       if (!existing) return res.status(404).json({ error: 'No se encontró la orden de compra.' });
-      const projection = purchaseOrderProjection(existing.location.id, req.body?.projectionId);
-      const availableItems = projection.items.filter(item => item.supplierKey === existing.supplier.key);
+      // Editing saved quantities/costs only needs the order itself. Additional
+      // supplier items must come from the projection the user already reviewed.
+      const projection = req.body?.projectionId
+        ? purchaseOrderProjection(existing.location.id, req.body.projectionId) : null;
+      const availableItems = projection?.items.filter(item => item.supplierKey === existing.supplier.key) || [];
       const items = normalizedPurchaseOrderItems(req.body?.items, availableItems, existing.items);
       const updatedAt = new Date().toISOString();
       const order = {

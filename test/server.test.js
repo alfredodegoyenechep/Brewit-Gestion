@@ -2122,6 +2122,7 @@ test('limits purchase projections to ingredients and the five explicit exception
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      projectionId: decimalProjection.projectionId,
       items: [
         { key: 'I100', quantity: 2.72, unitCost: 100 },
         { key: 'SUB005', quantity: 2, unitCost: 200 }

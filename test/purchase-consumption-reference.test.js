@@ -239,6 +239,17 @@ test('orders save and update the reviewed warehouse projection without recalcula
   assert.equal(updated.total, 720);
   assert.equal((await json('/api/purchase-orders/' + saved.id)).total, 720);
   assert.equal(JSON.parse(fs.readFileSync(file)).total, 720);
+  // Reopening without a loaded projection can still edit saved lines directly.
+  const updateWithoutProjection = items => fetch(base + '/api/purchase-orders/' + saved.id, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
+  });
+  assert.equal((await updateWithoutProjection([{ key: 'A', quantity: 4, unitCost: 120 }])).status, 400);
+  assert.equal((await updateWithoutProjection([{ key: 'D', quantity: 3, unitCost: 120 }])).status, 400);
+  const directUpdate = await updateWithoutProjection([{ key: 'A', quantity: 9, unitCost: 120, unitsPerPurchaseUnit: 999 }]);
+  assert.equal(directUpdate.status, 200);
+  const directOrder = await directUpdate.json();
+  assert.equal(directOrder.items[0].internalQuantity, 18);
+  assert.equal(directOrder.total, 1080);
   assert.equal(recalculations, 0);
 });
 
@@ -863,10 +874,19 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   await page.locator('#print-purchase-order').click();
   const editorRow = page.locator('#purchase-order-editor-body tr[data-key="A"]');
   const quantity = editorRow.locator('.purchase-order-quantity');
-  assert.equal(await page.locator('.purchase-order-editor-table th').nth(3).innerText(), 'Un. de Abast.');
-  assert.equal(await editorRow.locator('td').nth(4).innerText(), '0,75 L por Botella');
+  assert.equal(await page.locator('.purchase-order-editor-table th').nth(10).innerText(), 'Un. de Abast.');
+  assert.equal(await editorRow.locator('td').nth(11).innerText(), '0,75 L por Botella');
   assert.equal(await editorRow.locator('.purchase-order-quantity-unit').innerText(), 'Botella');
   assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '45 L');
+  assert.equal(await editorRow.locator('.purchase-order-daily-consumption').innerText(), '3 L/día');
+  assert.equal(await editorRow.locator('.purchase-order-inventory').innerText(), '-3 L');
+  assert.equal(await editorRow.locator('.purchase-order-coverage-current').innerText(), '-1,0 días');
+  assert.equal(await editorRow.locator('.purchase-order-coverage-after').innerText(), '14,0 días');
+  assert.equal(await editorRow.locator('td').count(), await page.locator('.purchase-order-editor-table th').count());
+  await editorRow.locator('.purchase-order-select').uncheck();
+  assert.equal(await editorRow.locator('.purchase-order-coverage-after').innerText(), '-1,0 días');
+  assert.equal(await editorRow.locator('.purchase-order-coverage-low').count(), 1);
+  await editorRow.locator('.purchase-order-select').check();
   assert.equal(await quantity.inputValue(), '60');
   assert.equal(await quantity.getAttribute('step'), '6');
   await quantity.fill('61');
@@ -875,6 +895,8 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.equal(await page.locator('#print-saved-purchase-order').isDisabled(), true);
   await quantity.fill('66');
   assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '49,5 L');
+  assert.equal(await editorRow.locator('.purchase-order-coverage-after').innerText(), '15,5 días');
+  assert.equal(await editorRow.locator('.purchase-order-coverage-high').count(), 1);
   let releaseSave;
   const saveGate = new Promise(resolve => { releaseSave = resolve; });
   let failSave = true;
@@ -906,6 +928,7 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.equal(savedOrder.items[0].quantity, 66);
   assert.equal(savedOrder.items[0].internalQuantity, 49.5);
   assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '49,5 L');
+  assert.equal(await editorRow.locator('.purchase-order-coverage-after').innerText(), '15,5 días');
   await quantity.fill('72');
   assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '54 L');
   await page.locator('#confirm-purchase-order').click();
@@ -913,6 +936,121 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.equal((await json('/api/purchase-orders/' + savedOrder.id)).items[0].internalQuantity, 54);
   await page.screenshot({ path: '/private/tmp/brewit-purchase-order-units.png' });
   assert.deepEqual(errors, []);
+});
+
+test('saved order editor reuses the displayed projection and opens and saves without inventory recalculation', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base, app, project, json } = await setup(t);
+  const projection = await project('store-2');
+  const order = await json('/api/purchase-orders', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', supplierKey: '111', projectionId: projection.projectionId,
+      items: [{ key: 'A', quantity: 24, unitCost: 100 }] })
+  });
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  let projectionRequests = 0, recalculations = 0;
+  await page.locator('[data-view="purchase-projection"]').click();
+  await page.route('**/api/purchase-projections?*', route => {
+    projectionRequests++;
+    return route.fulfill({ status: 500, json: { error: 'Opening an order must not request a projection' } });
+  });
+  app.locals.toteatStockSync.current = () => { recalculations++; throw Error('Do not recalculate when reopening an order'); };
+  await page.evaluate(projection => {
+    purchaseProjectionState = projection;
+    document.getElementById('projection-location-filter').value = projection.location.id;
+    openPastPurchaseOrders();
+  }, projection);
+  await page.locator(`[data-order-action="edit"][data-order-id="${order.id}"]`).click();
+  const editor = page.locator('#purchase-order-editor-dialog');
+  await editor.waitFor();
+  const row = page.locator('#purchase-order-editor-body tr[data-key="A"]');
+  assert.equal(await row.locator('.purchase-order-quantity').inputValue(), '24');
+  assert.equal(await row.locator('.purchase-order-coverage-after').innerText(), '7,0 días');
+  await page.locator('#purchase-order-show-all-supplier-items').check();
+  const additional = page.locator('#purchase-order-editor-body tr[data-key="B"]');
+  await additional.locator('.purchase-order-select').check();
+  await additional.locator('.purchase-order-quantity').fill('2');
+  const saveRequest = page.waitForRequest(request => request.method() === 'PUT' && new URL(request.url()).pathname.endsWith(order.id));
+  await page.locator('#confirm-purchase-order').click();
+  assert.equal((await saveRequest).postDataJSON().projectionId, projection.projectionId);
+  await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
+  assert.deepEqual((await json('/api/purchase-orders/' + order.id)).items.map(item => item.key), ['A', 'B']);
+  for (const available of [null, { ...projection, location: { id: 'store-1' } }]) {
+    await page.locator('#close-purchase-order-editor').click();
+    await page.evaluate(({ orderId, available }) => {
+      purchaseProjectionState = available;
+      return openSavedPurchaseOrder(orderId);
+    }, { orderId: order.id, available });
+    await editor.waitFor();
+    assert.equal(await row.locator('.purchase-order-inventory').innerText(), 'Sin datos');
+    assert.equal(await page.locator('#purchase-order-show-all-supplier-items').isDisabled(), true);
+    await row.locator('.purchase-order-quantity').fill(available ? '26' : '25');
+    await page.locator('#confirm-purchase-order').click();
+    await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
+    assert.equal((await json('/api/purchase-orders/' + order.id)).items[0].quantity, available ? 26 : 25);
+  }
+  assert.equal(projectionRequests, 0);
+  assert.equal(recalculations, 0);
+  assert.deepEqual(errors, []);
+});
+
+test('purchase order coverage uses consolidated warehouse demand and handles unavailable metrics', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base } = await setup(t);
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1360, height: 960 } });
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.evaluate(() => {
+    purchaseOrderEditorState = {
+      supplier: { name: 'Proveedor' }, location: { name: 'Bodega' },
+      items: [editablePurchaseOrderSupplierItem({ key: 'A', name: 'Leche', internalUnit: 'L', purchaseUnit: 'Botella',
+        currentInventory: 2, totalInventory: 20, averageDailyConsumption: 1, localsDailyConsumption: 4,
+        minDays: 7, maxDays: 14, unitsPerPurchaseUnit: 2, unitsPerPackage: 1, unitsPerPackageBasis: 'purchase',
+        quantity: 6, unitCost: 100, suggestedPurchaseUnits: 6
+      }, { selected: true, editorDefaultVisible: true })]
+    };
+    renderPurchaseOrderEditor();
+    document.getElementById('purchase-order-editor-dialog').showModal();
+  });
+  const row = page.locator('#purchase-order-editor-body tr[data-key="A"]');
+  const coverage = row.locator('.purchase-order-coverage-after');
+  assert.equal(await row.locator('.purchase-order-daily-consumption').innerText(), '4 L/día');
+  assert.equal(await row.locator('.purchase-order-inventory').innerText(), '20 L');
+  assert.equal(await row.locator('.purchase-order-coverage-current').innerText(), '5,0 días');
+  assert.equal(await row.locator('.purchase-order-min-days').innerText(), '7 días');
+  assert.equal(await row.locator('.purchase-order-max-days').innerText(), '14 días');
+  assert.equal(await coverage.innerText(), '8,0 días');
+  assert.match(await coverage.getAttribute('title'), /Dentro del rango/);
+  for (const [change, expected] of [
+    [{ localsDailyConsumption: 0 }, 'Sin consumo'],
+    [{ localsDailyConsumption: null }, 'Sin datos'],
+    [{ localsDailyConsumption: 4, unitsPerPurchaseUnit: null }, 'Sin conversión'],
+    [{ selected: false }, '5,0 días'],
+    [{ selected: true, unitsPerPurchaseUnit: 2, totalInventory: null }, 'Sin datos'],
+    [{ totalInventory: -8 }, '1,0 días']
+  ]) {
+    await page.evaluate(change => {
+      Object.assign(purchaseOrderEditorState.items[0], change);
+      renderPurchaseOrderEditor();
+    }, change);
+    assert.equal(await coverage.innerText(), expected);
+  }
+  await page.evaluate(() => {
+    purchaseOrderEditorState = editableSavedPurchaseOrder({
+      id: 'old', updatedAt: '2026-09-26', supplier: { name: 'Proveedor' }, location: { name: 'Local' },
+      items: [{ key: 'A', name: 'Leche', quantity: 6, unitCost: 100, unitsPerPurchaseUnit: 2 }]
+    });
+    renderPurchaseOrderEditor();
+  });
+  assert.equal(await coverage.innerText(), 'Sin datos');
+  assert.equal(await row.locator('.purchase-order-coverage-current').innerText(), 'Sin datos');
+  assert.equal(await row.locator('.purchase-order-min-days').innerText(), 'Sin datos');
 });
 
 test('UI saves reference configuration without loading projection, then shows comparable consumption on refresh', { skip: !fs.existsSync(chrome) }, async t => {

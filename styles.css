@@ -5594,9 +5594,36 @@ body {
 
 .purchase-order-editor-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1900px;
   border-collapse: collapse;
   font-size: calc(12px * var(--font-scale));
+}
+
+.purchase-order-editor-table th:nth-child(3),
+.purchase-order-editor-table td:nth-child(3) {
+  min-width: 180px;
+}
+
+.purchase-order-daily-consumption,
+.purchase-order-inventory,
+.purchase-order-coverage-current,
+.purchase-order-min-days,
+.purchase-order-max-days,
+.purchase-order-coverage-after {
+  white-space: nowrap;
+}
+
+.purchase-order-coverage-after {
+  background: var(--chip);
+  font-weight: 900;
+}
+
+.purchase-order-coverage-after.purchase-order-coverage-low {
+  color: var(--red);
+}
+
+.purchase-order-coverage-after.purchase-order-coverage-high {
+  color: var(--clay);
 }
 
 .purchase-order-editor-table th,

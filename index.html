@@ -1587,11 +1587,12 @@
         </div>
         <div class="purchase-order-editor-table-wrap">
           <table class="purchase-order-editor-table">
-            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Un. de Abast.</th><th>Un. de Consumo x Un. de Abast.</th><th>Multiplo Min. Abast.</th><th>Un Abast. Sugeridas</th><th>Cantidad UDA</th><th>Cantidad Un. de Cons.</th><th>Costo UDA</th><th>Total</th><th>Aviso</th></tr></thead>
+            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Promedio diario</th><th>Inventario disponible</th><th>Días actuales</th><th>Días mín.</th><th>Días máx.</th><th>Cantidad UDA</th><th>Días con esta orden</th><th>Un. de Abast.</th><th>Un. de Consumo x Un. de Abast.</th><th>Multiplo Min. Abast.</th><th>Un Abast. Sugeridas</th><th>Cantidad Un. de Cons.</th><th>Costo UDA</th><th>Total</th><th>Aviso</th></tr></thead>
             <tbody id="purchase-order-editor-body"></tbody>
-            <tfoot><tr><td colspan="10">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
+            <tfoot><tr><td colspan="16">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
           </table>
         </div>
+        <p class="form-status muted">Días con esta orden = (inventario disponible + compra incluida en unidades de consumo) ÷ promedio diario. Se actualiza al cambiar cantidades o incluir productos. Rojo: bajo el mínimo; naranja: sobre el máximo.</p>
         <div class="purchase-order-editor-actions">
           <button id="confirm-purchase-order" class="primary" type="button">Confirmar y guardar orden</button>
           <button id="print-saved-purchase-order" class="icon-button" type="button" disabled>Imprimir / PDF</button>

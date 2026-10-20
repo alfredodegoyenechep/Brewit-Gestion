@@ -8224,6 +8224,23 @@ function purchaseOrderEditorIsDirty() {
         || Number(item.unitCost) !== Number(item.savedUnitCost))));
 }
 
+function purchaseOrderCoverageMetrics(item) {
+  // Use the same inventory and daily demand as the projection, including locals for warehouses.
+  const inventory = item.totalInventory === undefined ? item.currentInventory : item.totalInventory;
+  const daily = item.localsDailyConsumption === undefined ? item.averageDailyConsumption : item.localsDailyConsumption;
+  const currentDays = Number.isFinite(inventory) && Number.isFinite(daily) && daily > 0
+    ? inventory / daily : null;
+  const addedQuantity = !item.selected ? 0
+    : Number.isFinite(item.quantity) && item.quantity >= 0
+      && Number.isFinite(item.unitsPerPurchaseUnit) && item.unitsPerPurchaseUnit > 0
+      ? item.quantity * item.unitsPerPurchaseUnit : null;
+  const afterDays = currentDays !== null && addedQuantity !== null
+    ? (inventory + addedQuantity) / daily : null;
+  const unavailable = !Number.isFinite(inventory) || !Number.isFinite(daily) ? 'Sin datos'
+    : daily <= 0 ? 'Sin consumo' : addedQuantity === null ? 'Sin conversión' : 'Sin datos';
+  return { inventory, daily, currentDays, afterDays, unavailable };
+}
+
 function updatePurchaseOrderEditorTotals() {
   if (!purchaseOrderEditorState) return;
   const rows = [...document.querySelectorAll('#purchase-order-editor-body tr[data-key]')];
@@ -8243,6 +8260,17 @@ function updatePurchaseOrderEditorTotals() {
       && item.unitsPerPurchaseUnit > 0 ? Number((item.quantity * item.unitsPerPurchaseUnit).toPrecision(12)) : null;
     row.querySelector('.purchase-order-consumption-quantity').textContent = consumptionQuantity === null
       ? 'Sin conversión' : `${formatProjectionQuantity(consumptionQuantity)} ${item.internalUnit || ''}`.trim();
+    const coverage = purchaseOrderCoverageMetrics(item);
+    const coverageCell = row.querySelector('.purchase-order-coverage-after');
+    coverageCell.textContent = coverage.afterDays === null ? coverage.unavailable
+      : `${formatProjectionOneDecimal(coverage.afterDays)} días`;
+    const belowMinimum = coverage.afterDays !== null && Number.isFinite(item.minDays) && coverage.afterDays < item.minDays;
+    const aboveMaximum = coverage.afterDays !== null && Number.isFinite(item.maxDays) && coverage.afterDays > item.maxDays;
+    coverageCell.classList.toggle('purchase-order-coverage-low', belowMinimum);
+    coverageCell.classList.toggle('purchase-order-coverage-high', aboveMaximum);
+    coverageCell.title = coverage.afterDays === null ? coverage.unavailable
+      : `${item.selected ? '(Inventario disponible + cantidad de esta orden en unidades de consumo)' : 'Inventario disponible (ítem excluido)'} ÷ promedio diario.`
+        + (belowMinimum ? ' Bajo el mínimo.' : aboveMaximum ? ' Sobre el máximo.' : ' Dentro del rango mínimo y máximo.');
     row.querySelector('.purchase-order-row-warning').textContent = [
       changed ? 'Costo modificado' : '', packageWarning,
       !item.editorDefaultVisible && item.selected ? 'Ítem adicional' : ''
@@ -8296,16 +8324,33 @@ function renderPurchaseOrderEditor() {
     checkbox.setAttribute('aria-label', `Incluir ${item.name}`);
     selectCell.appendChild(checkbox);
     row.appendChild(selectCell);
-    [item.code || '—', item.name, item.purchaseUnit || '—',
-      item.unitsPerPurchaseUnit == null ? 'Sin conversión'
-        : `${formatProjectionQuantity(item.unitsPerPurchaseUnit)} ${item.internalUnit || ''} por ${item.purchaseUnit || 'Un. de Abast.'}`.trim(),
-      formatProjectionQuantity(item.unitsPerPackage || 1),
-      item.suggestedPurchaseUnits === null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits)]
+    [item.code || '—', item.name]
       .forEach(value => {
         const cell = document.createElement('td');
         cell.textContent = value;
         row.appendChild(cell);
       });
+    const coverage = purchaseOrderCoverageMetrics(item);
+    const consolidated = item.localsDailyConsumption !== undefined;
+    [
+      { className: 'purchase-order-daily-consumption', value: Number.isFinite(coverage.daily)
+        ? `${formatProjectionQuantity(coverage.daily)} ${item.internalUnit || ''}/día` : 'Sin datos',
+        title: consolidated ? 'Consumo diario consolidado de las cafeterías.' : 'Promedio diario utilizado para reposición, incluida la referencia cuando corresponde.' },
+      { className: 'purchase-order-inventory', value: Number.isFinite(coverage.inventory)
+        ? `${formatProjectionQuantity(coverage.inventory)} ${item.internalUnit || ''}`.trim() : 'Sin datos',
+        title: consolidated ? 'Inventario de bodega más inventario de las cafeterías.' : 'Inventario actual en unidades de consumo.' },
+      { className: 'purchase-order-coverage-current', value: coverage.currentDays === null
+        ? (Number.isFinite(coverage.inventory) && Number.isFinite(coverage.daily) && coverage.daily <= 0 ? 'Sin consumo' : 'Sin datos') : `${formatProjectionOneDecimal(coverage.currentDays)} días`,
+        title: 'Inventario disponible ÷ promedio diario.' },
+      { className: 'purchase-order-min-days', value: Number.isFinite(item.minDays) ? `${formatProjectionQuantity(item.minDays)} días` : 'Sin datos' },
+      { className: 'purchase-order-max-days', value: Number.isFinite(item.maxDays) ? `${formatProjectionQuantity(item.maxDays)} días` : 'Sin datos' }
+    ].forEach(entry => {
+      const cell = document.createElement('td');
+      cell.className = entry.className;
+      cell.textContent = entry.value;
+      if (entry.title) cell.title = entry.title;
+      row.appendChild(cell);
+    });
     const quantityCell = document.createElement('td');
     const quantity = document.createElement('input');
     quantity.type = 'number';
@@ -8322,6 +8367,19 @@ function renderPurchaseOrderEditor() {
     quantityControl.append(quantity, quantityUnit);
     quantityCell.appendChild(quantityControl);
     row.appendChild(quantityCell);
+    const coverageCell = document.createElement('td');
+    coverageCell.className = 'purchase-order-coverage-after';
+    row.appendChild(coverageCell);
+    [item.purchaseUnit || '—',
+      item.unitsPerPurchaseUnit == null ? 'Sin conversión'
+        : `${formatProjectionQuantity(item.unitsPerPurchaseUnit)} ${item.internalUnit || ''} por ${item.purchaseUnit || 'Un. de Abast.'}`.trim(),
+      formatProjectionQuantity(item.unitsPerPackage || 1),
+      item.suggestedPurchaseUnits == null ? '—' : formatProjectionQuantity(item.suggestedPurchaseUnits)]
+      .forEach(value => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
     const consumptionCell = document.createElement('td');
     consumptionCell.className = 'purchase-order-consumption-quantity';
     row.appendChild(consumptionCell);
@@ -8489,7 +8547,7 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   documentSection.replaceChildren(heading, supplierBlock, table, note);
   documentSection.hidden = false;
   const previousTitle = document.title;
-  document.title = `${order.orderNumber} - ${order.supplier.name}`;
+  document.title = `${order.orderNumber} - ${order.supplier.name} - ${order.location.name}`;
   document.body.classList.add('printing-purchase-order');
   try {
     window.print();
@@ -8595,15 +8653,9 @@ async function openSavedPurchaseOrder(orderId, printOnly = false) {
   try {
     const order = await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}`);
     if (printOnly) return printPurchaseOrder(order);
-    let supplierItems = [];
-    let projectionId;
-    try {
-      const projection = await apiRequest(`/api/purchase-projections?location=${encodeURIComponent(order.location.id)}`);
-      supplierItems = projection.items.filter(item => item.supplierKey === order.supplier.key);
-      projectionId = projection.projectionId;
-    } catch {
-      supplierItems = [];
-    }
+    const projection = purchaseProjectionState?.location.id === order.location.id ? purchaseProjectionState : null;
+    const supplierItems = projection?.items.filter(item => item.supplierKey === order.supplier.key) || [];
+    const projectionId = projection?.projectionId;
     document.getElementById('past-purchase-orders-dialog').close();
     purchaseOrderEditorState = { ...editableSavedPurchaseOrder(order, supplierItems), projectionId };
     renderPurchaseOrderEditor();
