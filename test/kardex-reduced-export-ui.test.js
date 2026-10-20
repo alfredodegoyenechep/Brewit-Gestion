@@ -41,8 +41,48 @@ test('reduced Kardex exports keep hierarchy, filtered order, numeric signs and m
     await page.locator('#inventory-kardex-reduced-xlsx').click();
     const download = await promise;
     assert.match(download.suggestedFilename(),/kardex-resumido.*\.xlsx$/);
-    const workbook = XLSX.readFile(await download.path());
+    const bytes = fs.readFileSync(await download.path());
+    const workbook = XLSX.read(bytes, { cellNF: true });
     assert.deepEqual(workbook.SheetNames,['Kardex resumido']);
+    const zip = XLSX.CFB.read(bytes, { type: 'buffer' });
+    const xml = name => Buffer.from(XLSX.CFB.find(zip, '/' + name).content).toString();
+    const presentation = await page.evaluate(({ sheetXml, stylesXml }) => {
+      const parser = new DOMParser();
+      const sheet = parser.parseFromString(sheetXml, 'application/xml');
+      const styles = parser.parseFromString(stylesXml, 'application/xml');
+      if (sheet.querySelector('parsererror') || styles.querySelector('parsererror')) throw Error('Invalid workbook XML');
+      const xfs = styles.getElementsByTagName('cellXfs')[0].children;
+      const fonts = styles.getElementsByTagName('fonts')[0].children;
+      const fills = styles.getElementsByTagName('fills')[0].children;
+      const format = address => {
+        const cell = [...sheet.getElementsByTagName('c')].find(cell => cell.getAttribute('r') === address);
+        const xf = xfs[Number(cell.getAttribute('s') || 0)], font = fonts[Number(xf.getAttribute('fontId'))];
+        return { bold: !!font.getElementsByTagName('b').length, color: font.getElementsByTagName('color')[0].getAttribute('rgb'),
+          size: Number(font.getElementsByTagName('sz')[0].getAttribute('val')),
+          fill: fills[Number(xf.getAttribute('fillId'))].getElementsByTagName('fgColor')[0]?.getAttribute('rgb') || null,
+          alignment: xf.getElementsByTagName('alignment')[0].getAttribute('horizontal'),
+          border: Number(xf.getAttribute('borderId')) };
+      };
+      return { header: format('A1'), hierarchy: format('A2'), code: format('B2'), product: format('C2'), unit: format('D2'),
+        quantity: format('F2'), negative: format('H3'),
+        total: format('A' + sheet.getElementsByTagName('row').length),
+        frozen: sheet.getElementsByTagName('pane')[0]?.getAttribute('topLeftCell') };
+    }, { sheetXml: xml('xl/worksheets/sheet1.xml'), stylesXml: xml('xl/styles.xml') });
+    assert.equal(presentation.header.fill, 'FFD9D9D9');
+    assert.equal(presentation.header.size, 12);
+    assert.ok(presentation.header.bold && presentation.hierarchy.bold && presentation.code.bold && presentation.product.bold && presentation.total.bold);
+    assert.equal(presentation.unit.bold, false);
+    assert.equal(presentation.quantity.alignment, 'right');
+    assert.ok(presentation.quantity.border > 0);
+    assert.equal(presentation.quantity.fill, null);
+    assert.equal(presentation.negative.color, 'FFFF0000');
+    assert.equal(presentation.frozen, 'E2');
+    for (const cell of Object.values(workbook.Sheets['Kardex resumido'])) {
+      if (cell?.t === 'n') {
+        assert.equal(cell.z, '#,##0.00');
+        assert.match(XLSX.SSF.format(cell.z, cell.v), /\d\.\d{2}$/);
+      }
+    }
     return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]],{header:1,defval:''});
   }
   const rows = await exportRows();

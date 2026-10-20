@@ -48,6 +48,12 @@ test('HTTP derives movement dates, exposes take dates, and keeps unknown physica
  // A later capture must not change details for an already-open report.
  app.locals.toteatStockSync.current=()=>({...state,daily:[]});
  assert.equal((await fetch(url+'/api/inventory/item-detail?'+params).then(r=>r.json())).daily.length,5);
+ const movementRes=await fetch(url+'/api/inventory/movement-report?'+new URLSearchParams({report:data.itemDetailReportId}));
+ assert.equal(movementRes.status,200);assert.equal(movementRes.headers.get('cache-control'),'no-store');
+ const movementReport=await movementRes.json();assert.equal(movementReport.items[0].incoming,8);assert.equal(movementReport.items[0].outgoing,20);
+ assert.equal(movementReport.items[0].finalInventory,data.report.items[0].adjustedTheoreticalFinal);
+ assert.deepEqual(movementReport.dates,['2026-08-25','2026-08-26','2026-08-27','2026-08-28']);
+ assert.equal((await fetch(url+'/api/inventory/movement-report?report=expired')).status,410);
  params.set('code','FOREIGN');assert.equal((await fetch(url+'/api/inventory/item-detail?'+params)).status,404);
  params.set('report','expired');assert.equal((await fetch(url+'/api/inventory/item-detail?'+params)).status,410);
 });

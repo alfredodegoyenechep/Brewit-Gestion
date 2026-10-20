@@ -3467,6 +3467,7 @@ function createApp(options = {}) {
   app.get('/sales-clusters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-clusters-view.js')));
   app.get('/weekly-results-view.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-view.js')));
   app.get('/weekly-results-export.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-export.js')));
+  app.get('/kardex-movement-export.js', (req, res) => res.sendFile(path.join(__dirname, 'kardex-movement-export.js')));
   app.get('/vendor/jspdf.umd.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'jspdf', 'dist', 'jspdf.umd.min.js')));
   app.get('/vendor/xlsx.full.min.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'xlsx', 'dist', 'xlsx.full.min.js')));
   app.get('/docs/brewit-final-01.jpg', (req, res) => res.sendFile(path.join(__dirname, 'docs', 'brewit-final-01.jpg')));
@@ -8329,6 +8330,15 @@ function createApp(options = {}) {
     res.set('Cache-Control','no-store').json(require('./inventory-item-detail').buildItemDetail(snapshot.stock, snapshot.location, snapshot.report, item, {consumption:snapshot.consumption,convertQuantity:convertQuantityUnit}));
   });
 
+  app.get('/api/inventory/movement-report', (req, res) => {
+    const snapshot = inventoryDetailReports.get(req.query.report);
+    if (!snapshot || Date.now() - snapshot.createdAt > 3600000) return res.status(410).json({ error: 'El detalle de este informe venció. Vuelve a procesar el inventario para exportar sus movimientos.' });
+    if (!activeLocation(snapshot.location.id)) return res.status(400).json({ error: 'La ubicación del informe ya no está activa.' });
+    try {
+      res.set('Cache-Control', 'no-store').json(require('./inventory-movement-report').buildMovementReport(snapshot, { convertQuantity: convertQuantityUnit, numericValue }));
+    } catch (error) { res.status(error.status || 500).json({ error: error.message }); }
+  });
+
   function buildInventoryProcessPayload(body = {}, { stockState = null, retainDetails = true, costCutoff = null } = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
@@ -8551,7 +8561,7 @@ function createApp(options = {}) {
         for (const [id, snapshot] of inventoryDetailReports) if (Date.now()-snapshot.createdAt>3600000) inventoryDetailReports.delete(id);
         while (inventoryDetailReports.size >= 10) inventoryDetailReports.delete(inventoryDetailReports.keys().next().value);
         itemDetailReportId = crypto.randomUUID();
-        inventoryDetailReports.set(itemDetailReportId, { createdAt: Date.now(), stock: originalMode ? stock : null, consumption, location, report, items: [...report.items, ...(otherConsumables?.items || [])] });
+        inventoryDetailReports.set(itemDetailReportId, { createdAt: Date.now(), stock: originalMode ? stock : null, parsed: originalMode ? null : parsed, consumption, location, report, items: [...report.items, ...(otherConsumables?.items || [])] });
       }
       const { filePath, ...source } = kardex;
       const publicMaster = record => record ? (({ filePath, ...value }) => value)(record) : null;

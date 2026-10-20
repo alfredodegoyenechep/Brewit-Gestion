@@ -470,9 +470,14 @@ function prepareWorksheetForConfiguredExport(sheet) {
       if (!cell || cell.f) continue;
       if (sheet['!brewitTextColumns']?.includes(column)) continue;
       if (cell.t === 'n' && Number.isFinite(cell.v)) {
+        if (sheet['!brewitNumberFormat']) {
+          cell.z = sheet['!brewitNumberFormat'];
+          delete cell.w;
+          continue;
+        }
         const columnFormat = sheet['!brewitColumnNumberFormats']?.[column];
         if (columnFormat) {
-          cell.z = sheet['!brewitInventoryStyle']
+          cell.z = sheet['!brewitInventoryStyle'] === true
             ? columnFormat.integer ? '#,##0' : `#,##0.${'0'.repeat(columnFormat.decimalPlaces)}`
             : configuredExcelNumberFormat(columnFormat);
           delete cell.w;
@@ -493,7 +498,7 @@ function prepareWorksheetForConfiguredExport(sheet) {
       if (!parsed) continue;
       cell.t = 'n';
       cell.v = parsed.value;
-      cell.z = configuredExcelNumberFormat({
+      cell.z = sheet['!brewitNumberFormat'] || configuredExcelNumberFormat({
         currency: parsed.currency,
         percent: parsed.percent,
         integer: parsed.decimalPlaces === 0 && Number.isInteger(parsed.value) && !parsed.percent,
@@ -546,15 +551,25 @@ function inventoryStyledExcelBytes(workbook) {
     return id;
   };
   const fonts = styles.getElementsByTagNameNS(ns, 'fonts')[0];
-  const fontIds = [false, true].map(bold => {
+  const fontIds = new Map();
+  const fontId = (bold, negative = false, size = 11) => {
+    const key = `${bold}:${negative}:${size}`;
+    if (fontIds.has(key)) return fontIds.get(key);
     const font = element('font');
     if (bold) font.appendChild(element('b'));
-    font.appendChild(element('sz', { val: 11 }));
-    font.appendChild(element('color', { rgb: 'FF000000' }));
+    font.appendChild(element('sz', { val: size }));
+    font.appendChild(element('color', { rgb: negative ? 'FFFF0000' : 'FF000000' }));
     font.appendChild(element('name', { val: 'Calibri' }));
     font.appendChild(element('family', { val: 2 }));
-    return append(fonts, font);
-  });
+    const id = append(fonts, font);
+    fontIds.set(key, id);
+    return id;
+  };
+  const fill = element('fill'), pattern = element('patternFill', { patternType: 'solid' });
+  pattern.appendChild(element('fgColor', { rgb: 'FFD9D9D9' }));
+  pattern.appendChild(element('bgColor', { indexed: 64 }));
+  fill.appendChild(pattern);
+  const headerFillId = append(styles.getElementsByTagNameNS(ns, 'fills')[0], fill);
   const border = element('border');
   ['left', 'right', 'top', 'bottom'].forEach(side => {
     const edge = element(side, { style: 'thin' });
@@ -568,19 +583,27 @@ function inventoryStyledExcelBytes(workbook) {
   workbook.SheetNames.forEach((name, index) => {
     const sheet = workbook.Sheets[name];
     if (!sheet['!brewitInventoryStyle']) return;
+    const presentation = sheet['!brewitInventoryStyle'];
+    const kardex = typeof presentation === 'object';
     const file = `xl/worksheets/sheet${index + 1}.xml`;
     const doc = parse(file);
     const lastRow = XLSX.utils.decode_range(sheet['!ref']).e.r + 1;
     [...doc.getElementsByTagNameNS(ns, 'c')].forEach(cell => {
       const address = cell.getAttribute('r');
-      const row = XLSX.utils.decode_cell(address).r + 1;
-      const bold = row === 1 || row === lastRow;
+      const position = XLSX.utils.decode_cell(address);
+      const row = position.r + 1;
+      const header = row === 1;
+      const bold = header || (row === lastRow && (!kardex || presentation.hasTotalRow))
+        || (kardex && presentation.boldColumns.includes(position.c));
       const numeric = sheet[address]?.t === 'n';
+      const negative = kardex && numeric && sheet[address].v < 0;
+      const fillId = kardex && header ? headerFillId : 0;
+      const font = fontId(bold, negative, kardex && header ? 12 : 11);
       const original = Number(cell.getAttribute('s') || 0);
-      const key = `${original}:${bold}:${numeric}`;
+      const key = `${original}:${font}:${fillId}:${numeric}`;
       if (!formats.has(key)) {
         const xf = xfs.children[original].cloneNode(true);
-        Object.entries({ fontId: fontIds[Number(bold)], borderId, fillId: 0,
+        Object.entries({ fontId: font, borderId, fillId,
           applyFont: 1, applyBorder: 1, applyFill: 1, applyAlignment: 1 })
           .forEach(([key, value]) => xf.setAttribute(key, String(value)));
         [...xf.getElementsByTagNameNS(ns, 'alignment')].forEach(node => node.remove());
@@ -591,12 +614,26 @@ function inventoryStyledExcelBytes(workbook) {
       cell.setAttribute('s', String(formats.get(key)));
     });
     [...doc.getElementsByTagNameNS(ns, 'row')].forEach(row => {
-      row.setAttribute('ht', '15');
+      row.setAttribute('ht', kardex && row.getAttribute('r') === '1' ? '20' : '15');
       row.setAttribute('customHeight', '1');
     });
     [...doc.getElementsByTagNameNS(ns, 'sheetView')].forEach(view => {
       view.setAttribute('zoomScale', '80');
       view.setAttribute('showGridLines', '1');
+      if (kardex) {
+        const columns = presentation.freezeColumns || 0;
+        const topLeftCell = XLSX.utils.encode_cell({ r: 1, c: columns });
+        [...view.children].filter(node => ['pane', 'selection'].includes(node.localName)).forEach(node => node.remove());
+        const pane = doc.createElementNS(ns, 'pane');
+        Object.entries({ ...(columns ? { xSplit: columns } : {}), ySplit: 1, topLeftCell,
+          activePane: columns ? 'bottomRight' : 'bottomLeft', state: 'frozen' })
+          .forEach(([key, value]) => pane.setAttribute(key, String(value)));
+        view.prepend(pane);
+        const selection = doc.createElementNS(ns, 'selection');
+        Object.entries({ pane: columns ? 'bottomRight' : 'bottomLeft', activeCell: topLeftCell, sqref: topLeftCell })
+          .forEach(([key, value]) => selection.setAttribute(key, value));
+        view.appendChild(selection);
+      }
     });
     save(file, doc);
   });
@@ -10323,6 +10360,7 @@ function renderInventoryExecutiveSummary(summary) {
 
 function renderInventoryResults(data) {
   inventoryProcessedProvenance = data.provenance || null;
+  setStatus(document.getElementById('inventory-kardex-export-status'), '');
   const report = data.report;
   const physicalInventoryQuantity = item => report.selection ? item.finalInventory : item.physicalFinal;
   const inventoryValue = (item, quantity) => (Number(quantity) || 0) * (Number(item.unitCost) || 0);
@@ -11298,6 +11336,29 @@ function reducedKardexReport() {
   return { columns, items: state.visibleItems || [], state };
 }
 
+async function exportKardexMovements(format) {
+  const state = inventoryKardexTableState;
+  if (!state?.report) return;
+  const status = document.getElementById('inventory-kardex-export-status');
+  const buttons = ['inventory-kardex-movements-pdf', 'inventory-kardex-daily-xlsx'].map(id => document.getElementById(id));
+  buttons.forEach(button => { button.disabled = true; });
+  setStatus(status, 'Preparando movimientos del período…');
+  try {
+    if (!state.detailReportId) throw new Error('Vuelve a procesar el informe para exportar sus movimientos.');
+    if (format === 'pdf' && !window.jspdf?.jsPDF) throw new Error('No fue posible cargar el generador de archivos PDF.');
+    if (format === 'xlsx' && !window.XLSX) throw new Error('No fue posible cargar el generador de archivos Excel.');
+    const report = await apiRequest(`/api/inventory/movement-report?${new URLSearchParams({ report: state.detailReportId })}`);
+    const period = `${report.dateFrom}-${report.dateTo}`;
+    if (format === 'xlsx') {
+      writeConfiguredExcelWorkbook(KardexMovementExport.workbook(report, XLSX), inventoryReportFilename(`Kardex diario ${report.location} ${period}`, 'xlsx'));
+    } else {
+      KardexMovementExport.pdf(report, window.jspdf.jsPDF, exportDecimalSystem).save(inventoryReportFilename(`Kardex movimientos por producto ${report.location} ${period}`, 'pdf'));
+    }
+    setStatus(status, format === 'xlsx' ? 'Excel generado con los productos con inventario inicial o final mayor que cero, o con entradas o salidas. Cantidades con 2 decimales.' : 'PDF generado con los productos que tuvieron al menos una entrada y una salida.', 'success');
+  } catch (error) { setStatus(status, error.message, 'error'); }
+  finally { buttons.forEach(button => { button.disabled = false; }); }
+}
+
 function exportReducedKardexReport() {
   const reduced = reducedKardexReport();
   if (!reduced) return;
@@ -11315,14 +11376,12 @@ function exportReducedKardexReport() {
     rows.push(columns.map((column, index) => index === 0 ? 'TOTAL' : column.totalValue
       ? items.reduce((sum, item) => sum + (Number.isFinite(column.sortValue(item)) ? column.sortValue(item) : 0), 0) : ''));
     const sheet = XLSX.utils.aoa_to_sheet(rows);
-    const decimals = Number(document.getElementById('inventory-kardex-decimals').value) || 2;
-    for (let row = 1; row < rows.length; row++) {
-      for (let column = 4; column < columns.length; column++) {
-        const cell = sheet[XLSX.utils.encode_cell({r: row, c: column})];
-        if (cell?.t === 'n') cell.z = [4, 8, 9, 10].includes(column) ? '"$"#,##0;"$"-#,##0' : `#,##0.${'0'.repeat(decimals)}`;
-      }
-    }
-    sheet['!cols'] = [35, 14, 45, 10, 18, 24, 22, 22, 20, 30, 30].map(wch => ({wch}));
+    sheet['!brewitColumnNumberFormats'] = Object.fromEntries(columns.slice(4).map((_, index) =>
+      [index + 4, { decimalPlaces: 2 }]));
+    sheet['!brewitNumberFormat'] = '#,##0.00';
+    sheet['!brewitTextColumns'] = [0, 1, 2, 3];
+    sheet['!brewitInventoryStyle'] = { boldColumns: [0, 1, 2], hasTotalRow: true, freezeColumns: 4 };
+    sheet['!cols'] = [52, 14, 45, 10, 18, 26, 22, 24, 20, 34, 34].map(wch => ({wch}));
     sheet['!autofilter'] = {ref: XLSX.utils.encode_range({r:0,c:0}, {r:items.length,c:10})};
     const workbook = XLSX.utils.book_new();
     workbook.Props = {Title: 'Consolidado del Kardex resumido', Subject: `${reduced.state.location?.name || ''} · ${document.getElementById('inventory-report-period').textContent}`};
@@ -11422,6 +11481,14 @@ function exportInventoryReport(sectionId) {
       const sheet = currentInventory
         ? currentInventoryExcelSheet(table.id === 'current-inventory-missing-cost-table')
         : XLSX.utils.table_to_sheet(table, { raw: true });
+      if (['inventory-results-table', 'inventory-other-consumables-table'].includes(table.id)) {
+        sheet['!brewitNumberFormat'] = '#,##0.00';
+        sheet['!brewitInventoryStyle'] = { boldColumns: [0, 1, 2], hasTotalRow: true, freezeColumns: 4 };
+        sheet['!brewitTextColumns'] = [0, 1, 2, 3];
+        const range = XLSX.utils.decode_range(sheet['!ref']);
+        sheet['!cols'] = Array.from({ length: range.e.c + 1 }, (_, column) => ({ wch: [52, 14, 45, 10][column] || 26 }));
+        sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ r: 0, c: 0 }, { r: Math.max(0, range.e.r - 1), c: range.e.c }) };
+      }
       XLSX.utils.book_append_sheet(workbook, sheet, uniqueExcelSheetName(excelSheetLabel(table, index), usedNames));
     });
     if (currentInventory) XLSX.utils.book_append_sheet(workbook, information, 'Información');
@@ -12123,6 +12190,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('inventory-kardex-decimals').addEventListener('change', renderInventoryKardexTable);
   document.getElementById('inventory-kardex-reduced-pdf').addEventListener('click', printReducedKardexReport);
   document.getElementById('inventory-kardex-reduced-xlsx').addEventListener('click', exportReducedKardexReport);
+  document.getElementById('inventory-kardex-movements-pdf').addEventListener('click', () => exportKardexMovements('pdf'));
+  document.getElementById('inventory-kardex-daily-xlsx').addEventListener('click', () => exportKardexMovements('xlsx'));
   document.getElementById('clear-inventory-kardex-filters').addEventListener('click', () => {
     document.getElementById('inventory-kardex-search').value = '';
     document.getElementById('inventory-kardex-cost-filter').value = 'all';

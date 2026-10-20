@@ -29,7 +29,7 @@ function buildItemDetail(state, location, report, item, { consumption = {}, conv
     const destination = doc.destination || (line.column.startsWith('transfer_warehouse') ? warehouses.get(incoming ? line.warehouse : counterpart?.warehouse) : null);
     const effect = line.column === 'count' || line.active === false ? null : (line.column === 'use' || outgoing ? -1 : 1) * line.quantity;
     return {
-      id: line.id, date: line.date, type: labels[line.column] || line.column, source: line.source,
+      id: line.id, date: line.date, column: line.column, type: labels[line.column] || line.column, source: line.source,
       document: String(doc.id ?? line.document ?? ''), status: line.status || doc.status || 'APPROVED',
       active: line.active !== false, warehouse: warehouses.get(line.warehouse), origin, destination,
       quantity: line.quantity, unit: line.unit, effect, exactQuantity: line.exactQuantity ?? line.quantity,
