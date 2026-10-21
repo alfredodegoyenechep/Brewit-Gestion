@@ -5329,6 +5329,12 @@ body {
   border-radius: 16px;
 }
 
+.purchase-order-editor-dialog {
+  width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  padding: 16px;
+}
+
 .tentative-purchase-orders-dialog {
   max-height: calc(100vh - 32px);
 }
@@ -5594,18 +5600,20 @@ body {
 
 .purchase-order-editor-table {
   width: 100%;
-  min-width: 1900px;
   border-collapse: collapse;
   font-size: calc(12px * var(--font-scale));
+  font-variant-numeric: tabular-nums;
 }
 
 .purchase-order-editor-table th:nth-child(3),
 .purchase-order-editor-table td:nth-child(3) {
-  min-width: 180px;
+  min-width: 150px;
 }
 
 .purchase-order-daily-consumption,
 .purchase-order-inventory,
+.purchase-order-inventory-locals,
+.purchase-order-inventory-total,
 .purchase-order-coverage-current,
 .purchase-order-min-days,
 .purchase-order-max-days,
@@ -5628,7 +5636,7 @@ body {
 
 .purchase-order-editor-table th,
 .purchase-order-editor-table td {
-  padding: 9px 10px;
+  padding: 8px 6px;
   border-bottom: 1px solid var(--border-soft);
   text-align: right;
 }
@@ -5642,14 +5650,14 @@ body {
 
 .purchase-order-editor-table th:first-child,
 .purchase-order-editor-table td:first-child {
-  width: 58px;
+  width: 42px;
   text-align: center;
 }
 
 .purchase-order-editor-table input[type="number"],
 .purchase-order-editor-table input.purchase-order-cost {
   box-sizing: border-box;
-  width: 105px;
+  width: 88px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -5665,13 +5673,24 @@ body {
 }
 
 .purchase-order-quantity-control {
-  display: flex;
+  display: grid;
+  grid-template-columns: 76px 7ch;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: end;
+  gap: 6px;
 }
 
-.purchase-order-quantity-unit,
+.purchase-order-editor-table input.purchase-order-quantity {
+  width: 100%;
+  min-width: 0;
+}
+
+.purchase-order-quantity-unit {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .purchase-order-consumption-quantity {
   white-space: nowrap;
 }
@@ -5715,6 +5734,22 @@ body {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+@media (max-width: 1440px) {
+  .purchase-order-editor-table th,
+  .purchase-order-editor-table td {
+    padding-inline: 4px;
+  }
+
+  .purchase-order-editor-table th:nth-child(3),
+  .purchase-order-editor-table td:nth-child(3) {
+    min-width: 140px;
+  }
+
+  .purchase-order-editor-table input.purchase-order-cost {
+    width: 80px;
+  }
 }
 
 .past-purchase-orders-list {

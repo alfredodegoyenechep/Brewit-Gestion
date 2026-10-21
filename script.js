@@ -131,6 +131,8 @@ let ingredientPurchaseMasterState = null;
 let ingredientPurchaseMasterDrafts = new Map();
 let ingredientPurchaseMasterRequest = 0;
 let purchaseOrderEditorState = null;
+const pastPurchaseOrdersCache = new Map();
+let pastPurchaseOrdersRequestSequence = 0;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
 let transactionAuditState = null;
@@ -7499,8 +7501,8 @@ function projectionLocalMetric(item, field, subtotalField) {
   return formatProjectionMetric(item[field] ?? item[subtotalField] ?? 0);
 }
 
-function openProjectionLocalDetail(key, kind) {
-  const item = purchaseProjectionState?.items.find(candidate => candidate.key === key);
+function openProjectionLocalDetail(key, kind, item = purchaseProjectionState?.items.find(candidate => candidate.key === key),
+  locationName = purchaseProjectionState?.location.name || 'Ubicación actual') {
   if (!item?.locals) return;
   const inventory = kind === 'inventory';
   const dialog = document.getElementById('projection-local-detail-dialog');
@@ -7548,7 +7550,7 @@ function openProjectionLocalDetail(key, kind) {
     ? `Cobertura actual no disponible: ${item.coverageUnavailableReason}`
     : `Cobertura actual = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit} ÷ ${formatProjectionMetric(item.localsDailyConsumption)} ${item.internalUnit}/día = ${formatProjectionOneDecimal(item.currentCoverageDays)} días.`;
   const total = item.totalInventory === null ? 'Inventario Total no disponible: falta inventario de alguna cafetería.'
-    : `Inventario Total = ${formatProjectionMetric(item.currentInventory)} (${purchaseProjectionState.location.name}) + ${formatProjectionMetric(item.localsInventory)} (cafeterías) = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit}.`;
+    : `Inventario Total = ${formatProjectionMetric(item.currentInventory)} (${locationName}) + ${formatProjectionMetric(item.localsInventory)} (cafeterías) = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit}.`;
   document.getElementById('projection-local-detail-calculation').textContent = `${inventory ? 'Inventario Locales' : 'Consumo Diario Locales'} = ${sum}\n${inventory ? `${total}\n` : ''}${coverage}`;
   dialog.showModal();
 }
@@ -7838,7 +7840,8 @@ async function openProjectionPurchaseOrders() {
   openButton.disabled = true;
   try {
     const latest = await apiRequest(`/api/purchase-orders?location=${encodeURIComponent(purchaseProjectionState.location.id)}`);
-    const selectedIds = new Set(purchaseOrders.selectedOrderIds);
+    pastPurchaseOrdersCache.set(purchaseProjectionState.location.id, latest.orders);
+    const selectedIds = new Set(purchaseOrders.pendingSelectedOrderIds ?? purchaseOrders.selectedOrderIds);
     purchaseOrders.orders = latest.orders.map(order => ({
       ...order,
       date: String(order.confirmedAt || order.updatedAt || order.createdAt || '').slice(0, 10),
@@ -7886,12 +7889,15 @@ async function openProjectionPurchaseOrders() {
   dialog.showModal();
 }
 
-async function applyProjectionPurchaseOrders() {
+function applyProjectionPurchaseOrders() {
   const purchaseOrderIds = [...document.querySelectorAll('#projection-purchase-orders-body tr[data-order-id]')]
     .filter(row => row.querySelector('.projection-purchase-order-input').checked)
     .map(row => row.dataset.orderId);
   document.getElementById('projection-purchase-orders-dialog').close();
-  await loadPurchaseProjection({ purchaseOrderIds, preserveDraftCriteria: true });
+  if (!purchaseProjectionState?.purchaseOrders) return;
+  purchaseProjectionState.purchaseOrders.pendingSelectedOrderIds = purchaseOrderIds;
+  setStatus(document.getElementById('purchase-projection-status'),
+    'Selección de órdenes guardada. Presiona Actualizar para aplicarla a la comparación.', 'success');
 }
 
 function cancelPurchaseProjectionLoad() {
@@ -7978,7 +7984,7 @@ async function loadPurchaseProjection(options = {}) {
   const requestedPurchaseOrderIds = Array.isArray(options.purchaseOrderIds)
     ? options.purchaseOrderIds
     : (purchaseProjectionState?.location.id === location && purchaseProjectionState.purchaseOrders?.available
-      ? purchaseProjectionState.purchaseOrders.selectedOrderIds : null);
+      ? purchaseProjectionState.purchaseOrders.pendingSelectedOrderIds ?? purchaseProjectionState.purchaseOrders.selectedOrderIds : null);
   button.disabled = true;
   button.textContent = 'Actualizando…';
   document.getElementById('purchase-projection-workspace').setAttribute('aria-busy', 'true');
@@ -8017,6 +8023,9 @@ async function loadPurchaseProjection(options = {}) {
       });
     }
     purchaseProjectionState = data;
+    if (Array.isArray(data.purchaseOrders?.savedOrders)) {
+      pastPurchaseOrdersCache.set(data.location.id, data.purchaseOrders.savedOrders);
+    }
     const supplierSelect = document.getElementById('projection-supplier-filter');
     const previousSupplier = supplierSelect.value || 'all';
     supplierSelect.replaceChildren(
@@ -8111,7 +8120,9 @@ async function copyProjectionPolicies() {
     });
     dialog.close();
     if (location === document.getElementById('projection-location-filter').value) {
-      await loadPurchaseProjection({ successMessage: `${result.copied} criterios cargados de ${result.source.name} y guardados en ${result.location.name}.` });
+      resetPurchaseProjection();
+      setStatus(document.getElementById('purchase-projection-status'),
+        `${result.copied} criterios cargados de ${result.source.name} y guardados en ${result.location.name}. Presiona Actualizar para cargar la proyección con estos criterios.`, 'success');
     }
   } catch (error) {
     setStatus(status, error.message, 'error');
@@ -8125,6 +8136,7 @@ async function copyProjectionPolicies() {
 
 async function savePurchaseProjectionPolicies() {
   if (!purchaseProjectionState) return;
+  const state = purchaseProjectionState;
   const status = document.getElementById('purchase-projection-status');
   const button = document.getElementById('save-projection-policies');
   const rows = new Map([...document.querySelectorAll('#purchase-projection-body tr[data-key]')]
@@ -8145,23 +8157,37 @@ async function savePurchaseProjectionPolicies() {
   if (invalid) return setStatus(status, `Revisa los días mínimos, máximos y los múltiplos mínimos de abastecimiento de ${invalid.name}.`, 'error');
   button.disabled = true;
   try {
-    await apiRequest('/api/purchase-projections/policies', {
+    const result = await apiRequest('/api/purchase-projections/policies', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        location: purchaseProjectionState.location.id,
-        items: purchaseProjectionState.items.map(item => ({
+        location: state.location.id,
+        projectionId: state.projectionId,
+        items: state.items.map(item => ({
           key: item.key, minDays: item.minDays, maxDays: item.maxDays, unitsPerPackage: item.unitsPerPackage,
           supplierKey: item.supplierKey, managed: item.managed
         }))
       })
     });
-    setStatus(status, 'Criterios de compra guardados correctamente.', 'success');
-    await loadPurchaseProjection();
+    if (purchaseProjectionState !== state) return;
+    const clearedCosts = new Set(result.clearedCostKeys || []);
+    for (const item of state.items) {
+      const supplier = state.suppliers.find(candidate => candidate.key === item.supplierKey);
+      if (supplier) {
+        item.supplier = supplier.name;
+        item.supplierTaxId = supplier.taxId || '';
+      }
+      if (clearedCosts.has(item.key)) item.estimatedPurchaseUnitCost = null;
+      item.unitsPerPackageBasis = 'purchase';
+      recalculatePurchaseProjectionItem(item);
+    }
+    renderPurchaseProjection();
+    setStatus(status, 'Criterios de compra guardados correctamente. Se conserva el inventario calculado; presiona Actualizar cuando quieras renovarlo.'
+      + (clearedCosts.size ? ' Revisa los costos de los ítems cuyo proveedor cambió.' : ''), 'success');
   } catch (error) {
-    setStatus(status, error.message, 'error');
+    if (purchaseProjectionState === state) setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    button.disabled = !purchaseProjectionState?.items.length;
   }
 }
 
@@ -8268,8 +8294,9 @@ function updatePurchaseOrderEditorTotals() {
     const aboveMaximum = coverage.afterDays !== null && Number.isFinite(item.maxDays) && coverage.afterDays > item.maxDays;
     coverageCell.classList.toggle('purchase-order-coverage-low', belowMinimum);
     coverageCell.classList.toggle('purchase-order-coverage-high', aboveMaximum);
+    const inventoryName = item.totalInventory === undefined ? 'Inventario actual' : 'Inventario Total';
     coverageCell.title = coverage.afterDays === null ? coverage.unavailable
-      : `${item.selected ? '(Inventario disponible + cantidad de esta orden en unidades de consumo)' : 'Inventario disponible (ítem excluido)'} ÷ promedio diario.`
+      : `${item.selected ? `(${inventoryName} + cantidad de esta orden en unidades de consumo)` : `${inventoryName} (ítem excluido)`} ÷ promedio diario.`
         + (belowMinimum ? ' Bajo el mínimo.' : aboveMaximum ? ' Sobre el máximo.' : ' Dentro del rango mínimo y máximo.');
     row.querySelector('.purchase-order-row-warning').textContent = [
       changed ? 'Costo modificado' : '', packageWarning,
@@ -8296,6 +8323,12 @@ function updatePurchaseOrderEditorTotals() {
 function renderPurchaseOrderEditor() {
   const state = purchaseOrderEditorState;
   if (!state) return;
+  const showsLocals = state.location.type === 'warehouse' || state.items.some(item => item.localsDailyConsumption !== undefined);
+  document.getElementById('purchase-order-locals-inventory-header').hidden = !showsLocals;
+  document.getElementById('purchase-order-total-inventory-header').hidden = !showsLocals;
+  document.querySelector('.purchase-order-editor-table tfoot td').colSpan = showsLocals ? 18 : 16;
+  document.getElementById('purchase-order-coverage-description').textContent =
+    `Días con esta orden = (${showsLocals ? 'inventario total' : 'inventario actual'} + compra incluida en unidades de consumo) ÷ promedio diario. Se actualiza al cambiar cantidades o incluir productos. Rojo: bajo el mínimo; naranja: sobre el máximo.`;
   document.getElementById('purchase-order-editor-title').textContent = state.id
     ? `Orden de compra ${state.orderNumber}` : 'Nueva orden de compra';
   document.getElementById('purchase-order-editor-subtitle').textContent =
@@ -8336,18 +8369,34 @@ function renderPurchaseOrderEditor() {
       { className: 'purchase-order-daily-consumption', value: Number.isFinite(coverage.daily)
         ? `${formatProjectionQuantity(coverage.daily)} ${item.internalUnit || ''}/día` : 'Sin datos',
         title: consolidated ? 'Consumo diario consolidado de las cafeterías.' : 'Promedio diario utilizado para reposición, incluida la referencia cuando corresponde.' },
-      { className: 'purchase-order-inventory', value: Number.isFinite(coverage.inventory)
-        ? `${formatProjectionQuantity(coverage.inventory)} ${item.internalUnit || ''}`.trim() : 'Sin datos',
-        title: consolidated ? 'Inventario de bodega más inventario de las cafeterías.' : 'Inventario actual en unidades de consumo.' },
+      { className: 'purchase-order-inventory', value: Number.isFinite(item.currentInventory)
+        ? `${formatProjectionMetric(item.currentInventory)} ${item.internalUnit || ''}`.trim() : 'Sin datos',
+        title: 'Inventario actual de esta ubicación en unidades de consumo.' },
+      ...(showsLocals ? [
+        { className: 'purchase-order-inventory-locals', value: Number.isFinite(item.localsInventory ?? item.localsInventorySubtotal)
+          ? formatProjectionMetric(item.localsInventory ?? item.localsInventorySubtotal) : 'Sin datos',
+          title: 'Inventario de las cafeterías, convertido a la unidad de consumo del ingrediente.', localDetail: true },
+        { className: 'purchase-order-inventory-total', value: Number.isFinite(item.totalInventory)
+          ? formatProjectionMetric(item.totalInventory) : 'Sin datos',
+          title: 'Inventario actual + inventario de las cafeterías. Base de los días de cobertura.' }
+      ] : []),
       { className: 'purchase-order-coverage-current', value: coverage.currentDays === null
         ? (Number.isFinite(coverage.inventory) && Number.isFinite(coverage.daily) && coverage.daily <= 0 ? 'Sin consumo' : 'Sin datos') : `${formatProjectionOneDecimal(coverage.currentDays)} días`,
-        title: 'Inventario disponible ÷ promedio diario.' },
+        title: `${showsLocals ? 'Inventario Total' : 'Inventario actual'} ÷ promedio diario.` },
       { className: 'purchase-order-min-days', value: Number.isFinite(item.minDays) ? `${formatProjectionQuantity(item.minDays)} días` : 'Sin datos' },
       { className: 'purchase-order-max-days', value: Number.isFinite(item.maxDays) ? `${formatProjectionQuantity(item.maxDays)} días` : 'Sin datos' }
     ].forEach(entry => {
       const cell = document.createElement('td');
       cell.className = entry.className;
-      cell.textContent = entry.value;
+      if (entry.localDetail && item.locals?.length) {
+        const detail = document.createElement('button');
+        detail.type = 'button';
+        detail.className = 'projection-value-detail';
+        detail.textContent = entry.value;
+        detail.setAttribute('aria-label', `Ver detalle de Inventario Locales de ${item.name}`);
+        detail.addEventListener('click', () => openProjectionLocalDetail(item.key, 'inventory', item, state.location.name));
+        cell.appendChild(detail);
+      } else cell.textContent = entry.value;
       if (entry.title) cell.title = entry.title;
       row.appendChild(cell);
     });
@@ -8465,6 +8514,7 @@ async function confirmPurchaseOrder() {
       body: JSON.stringify(payload)
     });
     const supplierItems = purchaseOrderEditorState.items;
+    rememberSavedPurchaseOrder(saved);
     purchaseOrderEditorState = { ...editableSavedPurchaseOrder(saved, supplierItems), projectionId: purchaseOrderEditorState.projectionId };
     renderPurchaseOrderEditor();
     setStatus(status, `Orden ${saved.orderNumber} guardada correctamente. Ya puedes imprimirla o volver a modificarla.`, 'success');
@@ -8558,73 +8608,109 @@ function printPurchaseOrder(order = purchaseOrderEditorState) {
   }
 }
 
-async function openPastPurchaseOrders() {
-  const dialog = document.getElementById('past-purchase-orders-dialog');
+function rememberSavedPurchaseOrder(order) {
+  pastPurchaseOrdersRequestSequence += 1;
+  const cached = pastPurchaseOrdersCache.get(order.location.id);
+  if (!cached) return;
+  const { items, ...metadata } = order;
+  pastPurchaseOrdersCache.set(order.location.id, [
+    { ...metadata, itemCount: items.length }, ...cached.filter(item => item.id !== order.id)
+  ]);
+}
+
+function renderPastPurchaseOrders(orders) {
   const list = document.getElementById('past-purchase-orders-list');
   const status = document.getElementById('past-purchase-orders-status');
-  if (!dialog.open) dialog.showModal();
   list.replaceChildren();
-  setStatus(status, 'Cargando órdenes guardadas…');
+  const hiddenCount = orders.filter(order => order.hidden).length;
+  const showHidden = document.getElementById('show-hidden-purchase-orders').checked;
+  const displayedOrders = orders.filter(order => showHidden || !order.hidden)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  if (!orders.length) {
+    setStatus(status, 'Aún no hay órdenes de compra guardadas para esta ubicación.', 'muted');
+    return;
+  }
+  if (!displayedOrders.length) {
+    setStatus(status, `No hay órdenes visibles. ${hiddenCount} orden(es) oculta(s).`, 'muted');
+    return;
+  }
+  setStatus(status, `${displayedOrders.length} orden(es) mostrada(s)${hiddenCount ? ` · ${hiddenCount} oculta(s)` : ''}.`, 'success');
+  list.replaceChildren(...displayedOrders.map(order => {
+    const card = document.createElement('article');
+    card.className = 'past-purchase-order-card';
+    if (order.hidden) card.classList.add('is-hidden');
+    const detail = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = `${order.orderNumber} · ${order.supplier.name}`;
+    if (order.hidden) {
+      const badge = document.createElement('span');
+      badge.className = 'past-purchase-order-hidden-badge';
+      badge.textContent = 'Oculta';
+      title.append(' ', badge);
+    }
+    const meta = document.createElement('span');
+    meta.textContent = `${new Date(order.updatedAt).toLocaleString('es-CL')} · ${order.itemCount} ítem(s) · ${formatClp(order.total)}`;
+    detail.append(title, meta);
+    const actions = document.createElement('div');
+    const edit = document.createElement('button');
+    edit.type = 'button'; edit.className = 'primary'; edit.dataset.orderAction = 'edit'; edit.dataset.orderId = order.id; edit.textContent = 'Ver / modificar';
+    const print = document.createElement('button');
+    print.type = 'button'; print.className = 'icon-button'; print.dataset.orderAction = 'print'; print.dataset.orderId = order.id; print.textContent = 'Imprimir / PDF';
+    const visibility = document.createElement('button');
+    visibility.type = 'button'; visibility.className = 'icon-button'; visibility.dataset.orderAction = 'visibility'; visibility.dataset.orderId = order.id;
+    visibility.dataset.hidden = String(!order.hidden); visibility.dataset.orderNumber = order.orderNumber;
+    visibility.textContent = order.hidden ? 'Mostrar' : 'Ocultar';
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'delete-button'; remove.dataset.orderAction = 'delete'; remove.dataset.orderId = order.id;
+    remove.dataset.orderNumber = order.orderNumber; remove.textContent = 'Eliminar';
+    actions.append(edit, print, visibility, remove);
+    card.append(detail, actions);
+    return card;
+  }));
+}
+
+async function openPastPurchaseOrders() {
+  const dialog = document.getElementById('past-purchase-orders-dialog');
+  const status = document.getElementById('past-purchase-orders-status');
+  const location = document.getElementById('projection-location-filter').value;
+  const sequence = ++pastPurchaseOrdersRequestSequence;
+  if (!dialog.open) dialog.showModal();
+  const projected = purchaseProjectionState?.location.id === location
+    ? purchaseProjectionState.purchaseOrders?.savedOrders : null;
+  if (!pastPurchaseOrdersCache.has(location) && Array.isArray(projected)) {
+    pastPurchaseOrdersCache.set(location, projected);
+  }
+  const cached = pastPurchaseOrdersCache.get(location);
+  if (cached) renderPastPurchaseOrders(cached);
+  else {
+    document.getElementById('past-purchase-orders-list').replaceChildren();
+    setStatus(status, 'Cargando órdenes guardadas…');
+  }
   try {
-    const location = document.getElementById('projection-location-filter').value;
     const data = await apiRequest(`/api/purchase-orders?location=${encodeURIComponent(location)}`);
-    const hiddenCount = data.orders.filter(order => order.hidden).length;
-    const showHidden = document.getElementById('show-hidden-purchase-orders').checked;
-    const displayedOrders = data.orders.filter(order => showHidden || !order.hidden);
-    if (!data.orders.length) {
-      setStatus(status, 'Aún no hay órdenes de compra guardadas para esta ubicación.', 'muted');
-      return;
+    if (sequence !== pastPurchaseOrdersRequestSequence) return;
+    pastPurchaseOrdersCache.set(location, data.orders);
+    if (dialog.open && document.getElementById('projection-location-filter').value === location) {
+      renderPastPurchaseOrders(data.orders);
     }
-    if (!displayedOrders.length) {
-      setStatus(status, `No hay órdenes visibles. ${hiddenCount} orden(es) oculta(s).`, 'muted');
-      return;
-    }
-    setStatus(status, `${displayedOrders.length} orden(es) mostrada(s)${hiddenCount ? ` · ${hiddenCount} oculta(s)` : ''}.`, 'success');
-    list.replaceChildren(...displayedOrders.map(order => {
-      const card = document.createElement('article');
-      card.className = 'past-purchase-order-card';
-      if (order.hidden) card.classList.add('is-hidden');
-      const detail = document.createElement('div');
-      const title = document.createElement('strong');
-      title.textContent = `${order.orderNumber} · ${order.supplier.name}`;
-      if (order.hidden) {
-        const badge = document.createElement('span');
-        badge.className = 'past-purchase-order-hidden-badge';
-        badge.textContent = 'Oculta';
-        title.append(' ', badge);
-      }
-      const meta = document.createElement('span');
-      meta.textContent = `${new Date(order.updatedAt).toLocaleString('es-CL')} · ${order.itemCount} ítem(s) · ${formatClp(order.total)}`;
-      detail.append(title, meta);
-      const actions = document.createElement('div');
-      const edit = document.createElement('button');
-      edit.type = 'button'; edit.className = 'primary'; edit.dataset.orderAction = 'edit'; edit.dataset.orderId = order.id; edit.textContent = 'Ver / modificar';
-      const print = document.createElement('button');
-      print.type = 'button'; print.className = 'icon-button'; print.dataset.orderAction = 'print'; print.dataset.orderId = order.id; print.textContent = 'Imprimir / PDF';
-      const visibility = document.createElement('button');
-      visibility.type = 'button'; visibility.className = 'icon-button'; visibility.dataset.orderAction = 'visibility'; visibility.dataset.orderId = order.id;
-      visibility.dataset.hidden = String(!order.hidden); visibility.dataset.orderNumber = order.orderNumber;
-      visibility.textContent = order.hidden ? 'Mostrar' : 'Ocultar';
-      const remove = document.createElement('button');
-      remove.type = 'button'; remove.className = 'delete-button'; remove.dataset.orderAction = 'delete'; remove.dataset.orderId = order.id;
-      remove.dataset.orderNumber = order.orderNumber; remove.textContent = 'Eliminar';
-      actions.append(edit, print, visibility, remove);
-      card.append(detail, actions);
-      return card;
-    }));
   } catch (error) {
-    setStatus(status, error.message, 'error');
+    if (sequence === pastPurchaseOrdersRequestSequence && dialog.open) {
+      setStatus(status, cached ? `Mostrando la última lista disponible. No se pudo comprobar si hay cambios: ${error.message}` : error.message, 'error');
+    }
   }
 }
 
 async function setPurchaseOrderVisibility(orderId, orderNumber, hidden) {
   const status = document.getElementById('past-purchase-orders-status');
   try {
-    await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}/visibility`, {
+    const updated = await apiRequest(`/api/purchase-orders/${encodeURIComponent(orderId)}/visibility`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hidden })
     });
+    pastPurchaseOrdersRequestSequence += 1;
+    const cached = pastPurchaseOrdersCache.get(updated.location.id);
+    if (cached) pastPurchaseOrdersCache.set(updated.location.id, cached.map(order => order.id === orderId ? updated : order));
     await openPastPurchaseOrders();
     setStatus(status, `Orden ${orderNumber} ${hidden ? 'ocultada' : 'mostrada'} correctamente.`, 'success');
   } catch (error) {
@@ -8641,6 +8727,10 @@ async function deleteSavedPurchaseOrder(orderId, orderNumber) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirmation: orderNumber })
     });
+    pastPurchaseOrdersRequestSequence += 1;
+    for (const [location, orders] of pastPurchaseOrdersCache) {
+      pastPurchaseOrdersCache.set(location, orders.filter(order => order.id !== orderId));
+    }
     await openPastPurchaseOrders();
     setStatus(status, `Orden ${orderNumber} eliminada.`, 'success');
   } catch (error) {
@@ -8977,10 +9067,10 @@ async function confirmTentativePurchaseOrder() {
         items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
       })
     });
+    rememberSavedPurchaseOrder(saved);
     group.confirmedOrder = saved;
     renderTentativePurchaseOrderReview();
     setStatus(status, `Orden tentativa confirmada y guardada como ${saved.orderNumber}.`, 'success');
-    if (purchaseProjectionState?.location.id === location.id) await loadPurchaseProjection();
   } catch (error) {
     setStatus(status, error.message, 'error');
     button.disabled = false;
@@ -12101,7 +12191,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const group = currentTentativeOrderGroup();
     if (group?.confirmedOrder) printPurchaseOrder(group.confirmedOrder);
   });
-  document.getElementById('show-hidden-purchase-orders').addEventListener('change', openPastPurchaseOrders);
+  document.getElementById('show-hidden-purchase-orders').addEventListener('change', () => {
+    const cached = pastPurchaseOrdersCache.get(document.getElementById('projection-location-filter').value);
+    if (cached) renderPastPurchaseOrders(cached);
+    else openPastPurchaseOrders();
+  });
   document.getElementById('close-purchase-order-editor').addEventListener('click', () => {
     document.getElementById('purchase-order-editor-dialog').close();
   });

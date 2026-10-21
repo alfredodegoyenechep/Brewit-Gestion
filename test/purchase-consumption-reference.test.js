@@ -250,6 +250,16 @@ test('orders save and update the reviewed warehouse projection without recalcula
   const directOrder = await directUpdate.json();
   assert.equal(directOrder.items[0].internalQuantity, 18);
   assert.equal(directOrder.total, 1080);
+  const savedCriteria = await json('/api/purchase-projections/policies', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'main-warehouse', projectionId: projection.projectionId,
+      items: [{ key: 'A', supplierKey: '111', minDays: 5, maxDays: 20, managed: true, unitsPerPackage: 6 }] })
+  });
+  assert.deepEqual(savedCriteria.clearedCostKeys, []);
+  assert.equal((await send({ items: [{ key: 'A', quantity: 3, unitCost: 120 }] })).status, 400);
+  const orderWithNewMultiple = await send({ items: [{ key: 'A', quantity: 6, unitCost: 120 }] });
+  assert.equal(orderWithNewMultiple.status, 201);
+  assert.equal((await orderWithNewMultiple.json()).items[0].unitsPerPackage, 6);
   assert.equal(recalculations, 0);
 });
 
@@ -867,22 +877,33 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.equal(await projectionRow.locator('.projection-suggested-consumption').innerText(), '47,25 L');
   assert.equal(await projectionRow.locator('.projection-suggestion-coverage').innerText(), '14,8 días');
   await projectionRow.locator('.projection-package-input').fill('6');
+  const inventoryBeforeSave = await page.evaluate(() => purchaseProjectionState.items.map(item => ({
+    key: item.key, inventory: item.currentInventory, daily: item.averageDailyConsumption
+  })));
+  app.locals.toteatStockSync.current = () => { throw Error('Saving criteria must reuse the displayed inventory'); };
   await page.locator('#save-projection-policies').click();
-  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Consumo considerado'));
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Criterios de compra guardados correctamente'));
+  assert.equal(projectionRequests, 1);
+  assert.equal(await page.locator('#refresh-purchase-projection').innerText(), 'Actualizar');
+  assert.equal(await page.locator('#purchase-projection-workspace').getAttribute('aria-busy'), 'false');
+  assert.deepEqual(await page.evaluate(() => purchaseProjectionState.items.map(item => ({
+    key: item.key, inventory: item.currentInventory, daily: item.averageDailyConsumption
+  }))), inventoryBeforeSave);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'config', 'purchase-projection-policies.json'))).locations['store-2'].items.A.unitsPerPackageBasis, 'purchase');
   await page.locator('#projection-supplier-filter').selectOption('111');
   await page.locator('#print-purchase-order').click();
   const editorRow = page.locator('#purchase-order-editor-body tr[data-key="A"]');
   const quantity = editorRow.locator('.purchase-order-quantity');
-  assert.equal(await page.locator('.purchase-order-editor-table th').nth(10).innerText(), 'Un. de Abast.');
+  assert.equal(await page.locator('.purchase-order-editor-table th:not([hidden])').nth(10).innerText(), 'Un. de Abast.');
   assert.equal(await editorRow.locator('td').nth(11).innerText(), '0,75 L por Botella');
   assert.equal(await editorRow.locator('.purchase-order-quantity-unit').innerText(), 'Botella');
   assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '45 L');
   assert.equal(await editorRow.locator('.purchase-order-daily-consumption').innerText(), '3 L/día');
-  assert.equal(await editorRow.locator('.purchase-order-inventory').innerText(), '-3 L');
+  assert.equal(await editorRow.locator('.purchase-order-inventory').innerText(), '-3,00 L');
+  assert.equal(await editorRow.locator('.purchase-order-inventory-locals').count(), 0);
   assert.equal(await editorRow.locator('.purchase-order-coverage-current').innerText(), '-1,0 días');
   assert.equal(await editorRow.locator('.purchase-order-coverage-after').innerText(), '14,0 días');
-  assert.equal(await editorRow.locator('td').count(), await page.locator('.purchase-order-editor-table th').count());
+  assert.equal(await editorRow.locator('td').count(), await page.locator('.purchase-order-editor-table th:not([hidden])').count());
   await editorRow.locator('.purchase-order-select').uncheck();
   assert.equal(await editorRow.locator('.purchase-order-coverage-after').innerText(), '-1,0 días');
   assert.equal(await editorRow.locator('.purchase-order-coverage-low').count(), 1);
@@ -938,6 +959,85 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   assert.deepEqual(errors, []);
 });
 
+test('past orders show the projection list before a delayed refresh and preserve it on failure', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base, project, json } = await setup(t);
+  const initial = await project('store-2');
+  const create = () => json('/api/purchase-orders', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', supplierKey: '111', projectionId: initial.projectionId,
+      items: [{ key: 'A', quantity: 24, unitCost: 100 }] })
+  });
+  const order = await create(), hidden = await create();
+  await json(`/api/purchase-orders/${hidden.id}/visibility`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true })
+  });
+  const projection = await project('store-2');
+  assert.equal(projection.purchaseOrders.savedOrders.length, 2);
+  assert.equal(projection.purchaseOrders.savedOrders.find(item => item.id === hidden.id).hidden, true);
+  assert.equal(projection.purchaseOrders.savedOrders[0].items, undefined);
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  page.on('dialog', dialog => dialog.accept());
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  const waiting = [], arrived = [];
+  let requests = 0;
+  const nextRoute = () => arrived.length ? Promise.resolve(arrived.shift()) : new Promise(resolve => waiting.push(resolve));
+  await page.route('**/api/purchase-orders?*', route => {
+    requests++;
+    if (waiting.length) waiting.shift()(route); else arrived.push(route);
+  });
+  await page.evaluate(projection => {
+    purchaseProjectionState = projection;
+    document.getElementById('projection-location-filter').value = projection.location.id;
+    void openPastPurchaseOrders();
+  }, projection);
+  const firstRefresh = await nextRoute();
+  const cards = page.locator('.past-purchase-order-card');
+  assert.equal(await cards.count(), 1);
+  assert.match(await cards.first().innerText(), new RegExp(order.orderNumber));
+  assert.doesNotMatch(await page.locator('#past-purchase-orders-status').innerText(), /Cargando/);
+  await page.locator('#show-hidden-purchase-orders').check();
+  assert.equal(await cards.count(), 2);
+  assert.equal(requests, 1);
+  const latest = await json('/api/purchase-orders?location=store-2');
+  latest.orders.find(item => item.id === order.id).total = 3333;
+  await firstRefresh.fulfill({ json: latest });
+  await page.locator('.past-purchase-order-card').filter({ hasText: '$3.333' }).waitFor();
+  await page.locator('#close-past-purchase-orders').click();
+  await page.locator('#past-purchase-orders').click();
+  const failedRefresh = await nextRoute();
+  assert.equal(await cards.count(), 2);
+  await failedRefresh.fulfill({ status: 500, json: { error: 'Servidor ocupado' } });
+  await page.waitForFunction(() => document.getElementById('past-purchase-orders-status').textContent.includes('última lista disponible'));
+  assert.equal(await cards.count(), 2);
+  // Mutations update the visible list before their background refresh returns.
+  await page.locator(`[data-order-action="visibility"][data-order-id="${order.id}"]`).click();
+  const hiddenRefresh = await nextRoute();
+  assert.equal(await page.locator('.past-purchase-order-card.is-hidden').count(), 2);
+  await hiddenRefresh.fulfill({ json: await json('/api/purchase-orders?location=store-2') });
+  await page.locator(`[data-order-action="delete"][data-order-id="${hidden.id}"]`).click();
+  const deletedRefresh = await nextRoute();
+  assert.equal(await cards.count(), 1);
+  await deletedRefresh.fulfill({ json: await json('/api/purchase-orders?location=store-2') });
+  // An old response must not replace another location's list.
+  await page.evaluate(() => { void openPastPurchaseOrders(); });
+  const staleRefresh = await nextRoute();
+  await page.evaluate(() => {
+    purchaseProjectionState = { location: { id: 'store-1' }, purchaseOrders: { savedOrders: [] } };
+    document.getElementById('projection-location-filter').value = 'store-1';
+    void openPastPurchaseOrders();
+  });
+  const otherRefresh = await nextRoute();
+  assert.equal(await cards.count(), 0);
+  await otherRefresh.fulfill({ json: { orders: [] } });
+  await staleRefresh.fulfill({ json: latest });
+  assert.equal(await cards.count(), 0);
+  assert.match(await page.locator('#past-purchase-orders-status').innerText(), /Aún no hay órdenes/);
+});
+
 test('saved order editor reuses the displayed projection and opens and saves without inventory recalculation', { skip: !fs.existsSync(chrome) }, async t => {
   const { base, app, project, json } = await setup(t);
   const projection = await project('store-2');
@@ -980,6 +1080,7 @@ test('saved order editor reuses the displayed projection and opens and saves wit
   assert.equal((await saveRequest).postDataJSON().projectionId, projection.projectionId);
   await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
   assert.deepEqual((await json('/api/purchase-orders/' + order.id)).items.map(item => item.key), ['A', 'B']);
+  assert.equal(await page.evaluate(orderId => pastPurchaseOrdersCache.get('store-2').find(item => item.id === orderId).itemCount, order.id), 2);
   for (const available of [null, { ...projection, location: { id: 'store-1' } }]) {
     await page.locator('#close-purchase-order-editor').click();
     await page.evaluate(({ orderId, available }) => {
@@ -1004,13 +1105,19 @@ test('purchase order coverage uses consolidated warehouse demand and handles una
   const browser = await chromium.launch({ executablePath: chrome, headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1360, height: 960 } });
+  let projectionRequests = 0;
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/purchase-projections') projectionRequests++; });
   await page.goto(base);
   await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
   await page.evaluate(() => {
     purchaseOrderEditorState = {
       supplier: { name: 'Proveedor' }, location: { name: 'Bodega' },
       items: [editablePurchaseOrderSupplierItem({ key: 'A', name: 'Leche', internalUnit: 'L', purchaseUnit: 'Botella',
-        currentInventory: 2, totalInventory: 20, averageDailyConsumption: 1, localsDailyConsumption: 4,
+        currentInventory: 2, localsInventory: 18, totalInventory: 20, averageDailyConsumption: 1, localsDailyConsumption: 4,
+        localsInventorySubtotal: 18, localsInventoryComplete: true, currentCoverageDays: 5,
+        locals: [{ locationId: 'store-1', locationName: 'Cafetería', sourceInventory: 18, sourceUnit: 'L',
+          inventory: 18, inventoryIncluded: true, inventoryDate: '2026-09-26' }],
         minDays: 7, maxDays: 14, unitsPerPurchaseUnit: 2, unitsPerPackage: 1, unitsPerPackageBasis: 'purchase',
         quantity: 6, unitCost: 100, suggestedPurchaseUnits: 6
       }, { selected: true, editorDefaultVisible: true })]
@@ -1021,7 +1128,16 @@ test('purchase order coverage uses consolidated warehouse demand and handles una
   const row = page.locator('#purchase-order-editor-body tr[data-key="A"]');
   const coverage = row.locator('.purchase-order-coverage-after');
   assert.equal(await row.locator('.purchase-order-daily-consumption').innerText(), '4 L/día');
-  assert.equal(await row.locator('.purchase-order-inventory').innerText(), '20 L');
+  assert.equal(await row.locator('.purchase-order-inventory').innerText(), '2,00 L');
+  assert.equal(await row.locator('.purchase-order-inventory-locals').innerText(), '18,00');
+  assert.equal(await row.locator('.purchase-order-inventory-total').innerText(), '20,00');
+  assert.equal(await row.locator('td').count(), await page.locator('.purchase-order-editor-table th:not([hidden])').count());
+  assert.equal(await page.locator('.purchase-order-editor-table tfoot td').first().getAttribute('colspan'), '18');
+  await row.locator('.purchase-order-inventory-locals button').click();
+  await page.locator('#projection-local-detail-dialog').waitFor();
+  assert.match(await page.locator('#projection-local-detail-body').innerText(), /Cafetería.*18,00/);
+  assert.match(await page.locator('#projection-local-detail-calculation').innerText(), /2,00 \(Bodega\).*18,00.*20,00/);
+  await page.locator('#close-projection-local-detail').click();
   assert.equal(await row.locator('.purchase-order-coverage-current').innerText(), '5,0 días');
   assert.equal(await row.locator('.purchase-order-min-days').innerText(), '7 días');
   assert.equal(await row.locator('.purchase-order-max-days').innerText(), '14 días');
@@ -1051,6 +1167,9 @@ test('purchase order coverage uses consolidated warehouse demand and handles una
   assert.equal(await coverage.innerText(), 'Sin datos');
   assert.equal(await row.locator('.purchase-order-coverage-current').innerText(), 'Sin datos');
   assert.equal(await row.locator('.purchase-order-min-days').innerText(), 'Sin datos');
+  assert.equal(await page.locator('#purchase-order-locals-inventory-header').isVisible(), false);
+  assert.equal(await page.locator('.purchase-order-editor-table tfoot td').first().getAttribute('colspan'), '16');
+  assert.equal(projectionRequests, 0);
 });
 
 test('UI saves reference configuration without loading projection, then shows comparable consumption on refresh', { skip: !fs.existsSync(chrome) }, async t => {

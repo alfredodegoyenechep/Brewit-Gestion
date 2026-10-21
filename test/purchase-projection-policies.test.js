@@ -107,9 +107,12 @@ test('UI loads projections only on refresh when opening the view or changing loc
   t.after(() => browser.close());
   const page = await browser.newPage();
   const requests = [];
+  const orderFilters = [];
   await page.route('**/api/purchase-projections?*', route => {
-    const location = new URL(route.request().url()).searchParams.get('location');
+    const query = new URL(route.request().url()).searchParams;
+    const location = query.get('location');
     requests.push(location);
+    orderFilters.push(query.get('orders'));
     return route.fulfill({ json: {
       location: { id: location, name: location },
       period: { from: '2026-09-15', to: '2026-10-14', dataThrough: '2026-10-14' },
@@ -148,6 +151,21 @@ test('UI loads projections only on refresh when opening the view or changing loc
   assert.match(await status.innerText(), /Presiona Actualizar/);
   assert.equal(await summary.innerText(), '');
   assert.deepEqual(requests, ['store-2', 'store-1']);
+  await refresh.click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Consumo considerado'));
+  await page.evaluate(() => {
+    purchaseProjectionState.purchaseOrders.available = true;
+    purchaseProjectionState.purchaseOrders.selectedOrderIds = [];
+    document.getElementById('projection-purchase-orders-body').innerHTML =
+      '<tr data-order-id="OC-selected"><td><input type="checkbox" class="projection-purchase-order-input" checked></td></tr>';
+    document.getElementById('projection-purchase-orders-dialog').showModal();
+  });
+  await page.locator('#apply-projection-purchase-orders').click();
+  assert.deepEqual(requests, ['store-2', 'store-1', 'store-1']);
+  assert.match(await status.innerText(), /Presiona Actualizar/);
+  await refresh.click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('Consumo considerado'));
+  assert.equal(orderFilters.at(-1), 'OC-selected');
 });
 
 test('UI requires an origin and confirmation, leaves data intact on cancellation, and copies to a location without inventory', { skip: !fs.existsSync(chrome) }, async t => {
@@ -156,7 +174,9 @@ test('UI requires an origin and confirmation, leaves data intact on cancellation
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
+  let projectionRequests = 0;
   page.on('pageerror', error => errors.push(error.message));
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/purchase-projections') projectionRequests++; });
   await page.goto(base);
   await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
   await page.locator('[data-view="purchase-projection"]').click();
@@ -195,9 +215,9 @@ test('UI requires an origin and confirmation, leaves data intact on cancellation
   assert.equal(await dialog.isVisible(), false);
   assert.equal(read().locations['store-2'].items.A.unitsPerPackage, 12);
   assert.deepEqual(read().locations['store-1'], initial.locations['store-1']);
+  assert.equal(projectionRequests, 0);
 
-  // Once stock is available, a confirmed copy also refreshes the displayed fields
-  // and discards the draft criteria warned about in the confirmation.
+  // Copying discards the old view; inventory loads only after an explicit refresh.
   await page.route('**/api/purchase-projections?*', route => {
     const policy = read().locations['store-2'].items.A;
     return route.fulfill({ json: {
@@ -223,8 +243,12 @@ test('UI requires an origin and confirmation, leaves data intact on cancellation
   await source.selectOption('store-1');
   page.once('dialog', d => d.accept());
   await replace.click();
-  await page.waitForFunction(() => !document.getElementById('copy-projection-policies-dialog').open
-    && document.querySelector('#purchase-projection-body tr[data-key="A"] .projection-min-input')?.value === '3');
+  await page.waitForFunction(() => !document.getElementById('copy-projection-policies-dialog').open);
+  assert.equal(await page.locator('#purchase-projection-body tr[data-key]').count(), 0);
+  assert.equal(projectionRequests, 1);
+  await page.locator('#refresh-purchase-projection').click();
+  await row.waitFor();
+  assert.equal(projectionRequests, 2);
   assert.equal(await row.locator('.projection-max-input').inputValue(), '10');
   assert.equal(await row.locator('.projection-package-input').inputValue(), '12');
   assert.equal(await row.locator('.projection-supplier-input').inputValue(), 'supplier-a');

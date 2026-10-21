@@ -4475,8 +4475,9 @@ function createApp(options = {}) {
 
   function projectionPurchaseOrderSelection(locationId, selectedOrderIds) {
     const dateForOrder = order => order.confirmedAt || order.updatedAt || order.createdAt || '';
-    const orders = readPurchaseOrders()
-      .filter(order => order.status === 'confirmed' && order.location?.id === locationId)
+    const savedOrders = readPurchaseOrders().filter(order => order.location?.id === locationId);
+    const orders = savedOrders
+      .filter(order => order.status === 'confirmed')
       .sort((left, right) => dateForOrder(right).localeCompare(dateForOrder(left)));
     const allowedIds = new Set(orders.map(order => order.id));
     const selectedIds = new Set((selectedOrderIds || []).filter(id => allowedIds.has(id)));
@@ -4499,6 +4500,7 @@ function createApp(options = {}) {
       }
     }
     return {
+      savedOrders: savedOrders.map(purchaseOrderMetadata),
       selectedOrderIds: [...selectedIds],
       selectedOrderCount: selectedIds.size,
       orders: orders.map(order => {
@@ -4855,6 +4857,7 @@ function createApp(options = {}) {
         : 'Consumo por ventas, transferencias y transformaciones salientes del Kardex',
       purchaseOrders: {
         available: true,
+        savedOrders: purchaseOrders.savedOrders,
         selectedOrderIds: purchaseOrders.selectedOrderIds,
         selectedOrderCount: purchaseOrders.selectedOrderCount,
         orders: purchaseOrders.orders,
@@ -4885,7 +4888,8 @@ function createApp(options = {}) {
     while (purchaseOrderProjections.size >= 64) purchaseOrderProjections.delete(purchaseOrderProjections.keys().next().value);
     const projectionId = crypto.randomUUID();
     const fields = ['key', 'code', 'name', 'supplierKey', 'internalUnit', 'purchaseUnit', 'unitsPerPurchaseUnit',
-      'unitsPerPackage', 'unitsPerPackageBasis', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost'];
+      'unitsPerPackage', 'unitsPerPackageBasis', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost',
+      'currentInventory', 'averageDailyConsumption'];
     purchaseOrderProjections.set(projectionId, { createdAt: Date.now(), projection: {
       location: projection.location, company: projection.company, period: projection.period,
       suppliers: projection.suppliers,
@@ -5042,7 +5046,30 @@ function createApp(options = {}) {
       };
     }
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
-    return res.json({ ok: true, saved: requested.length });
+    // Update ordering rules against the reviewed inventory snapshot; do not read stock again.
+    const snapshot = purchaseOrderProjections.get(req.body?.projectionId);
+    const clearedCostKeys = [];
+    if (snapshot?.projection.location.id === location.id
+      && Date.now() - snapshot.createdAt <= purchaseOrderProjectionLifetime) {
+      const requestedKeys = new Set(requested.map(item => String(item.key || '').trim().toUpperCase()));
+      for (const item of snapshot.projection.items) {
+        if (!requestedKeys.has(item.key)) continue;
+        const policy = registry.locations[location.id].items[item.key];
+        if (item.supplierKey !== policy.supplierKey) {
+          item.estimatedPurchaseUnitCost = null;
+          clearedCostKeys.push(item.key);
+        }
+        item.supplierKey = policy.supplierKey;
+        item.unitsPerPackage = policy.unitsPerPackage;
+        item.unitsPerPackageBasis = 'purchase';
+        const daily = item.averageDailyConsumption, inventory = item.currentInventory;
+        const needed = daily > 0
+          ? (inventory <= daily * policy.minDays ? Math.max(0, daily * policy.maxDays - inventory) : 0)
+          : Math.max(0, -inventory);
+        item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(needed, item.unitsPerPurchaseUnit, item.unitsPerPackage);
+      }
+    }
+    return res.json({ ok: true, saved: requested.length, clearedCostKeys });
   });
 
   app.get('/api/purchase-projections/policies/sources', (req, res) => {
@@ -5168,7 +5195,7 @@ function createApp(options = {}) {
     return purchaseOrderFiles()
       .flatMap(name => {
         const order = readJson(path.join(purchaseOrdersRoot, name), null);
-        return order?.id ? [purchaseOrderWithCurrentDetails(order)] : [];
+        return order?.id ? [order] : [];
       });
   }
 
