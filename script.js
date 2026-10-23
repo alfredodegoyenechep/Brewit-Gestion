@@ -2942,33 +2942,39 @@ const NETWORK_SALES_COLUMNS = [
   ['today', 'sales', 'Venta', 'Venta neta sin IVA de hoy hasta la hora indicada.'],
   ['today', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['today', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['today', 'transactions', 'Transacciones', 'Número de órdenes de hoy hasta la hora de corte, utilizadas para calcular el ticket promedio.'],
   ['today', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['today', 'vsYesterday', 'vs ayer', 'Hoy hasta la hora actual frente a ayer hasta la misma hora.'],
   ['today', 'vsEquivalentDays', 'vs 8 días equiv.', 'Hoy hasta la hora actual frente al promedio de los ocho mismos días de la semana anteriores, con igual hora de corte.'],
   ['yesterday', 'sales', 'Venta', 'Venta neta sin IVA de ayer.'],
   ['yesterday', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['yesterday', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['yesterday', 'transactions', 'Transacciones', 'Número de órdenes de ayer utilizadas para calcular el ticket promedio.'],
   ['yesterday', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['yesterday', 'vsEquivalentDays', 'vs 8 días equiv.', 'Ayer frente al promedio de los ocho mismos días de la semana anteriores a ayer.'],
   ['yesterday', 'vsFourWeeks', 'vs prom. 4 sem.', 'Ayer frente al promedio diario de las fechas con operación registrada durante las cuatro semanas anteriores.'],
   ['currentWeek', 'sales', 'Venta', 'Venta neta acumulada desde el lunes hasta hoy a la hora indicada.'],
   ['currentWeek', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['currentWeek', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['currentWeek', 'transactions', 'Transacciones', 'Número de órdenes de la semana actual hasta la hora de corte.'],
   ['currentWeek', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['currentWeek', 'vsPreviousWeek', 'vs sem. ant.', 'Semana actual hasta hoy y hora actual frente al mismo tramo de la semana anterior.'],
   ['previousWeek', 'sales', 'Venta', 'Venta neta de la semana anterior completa, lunes a domingo.'],
   ['previousWeek', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['previousWeek', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['previousWeek', 'transactions', 'Transacciones', 'Número de órdenes de la semana anterior completa.'],
   ['previousWeek', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['previousWeek', 'vsEightWeeks', 'vs 8 sem.', 'Semana anterior completa frente al promedio de las ocho semanas completas anteriores a ella.'],
   ['currentMonth', 'sales', 'Venta', 'Venta neta acumulada desde el día 1 hasta hoy a la hora indicada.'],
   ['currentMonth', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['currentMonth', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['currentMonth', 'transactions', 'Transacciones', 'Número de órdenes del mes actual hasta la hora de corte.'],
   ['currentMonth', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.'],
   ['currentMonth', 'vsPreviousMonth', 'vs mes ant.', 'Mes actual hasta hoy y hora actual frente a un tramo equivalente del mes anterior.'],
   ['previousMonth', 'sales', 'Venta', 'Venta neta del mes anterior completo.'],
   ['previousMonth', 'marginPercent', 'Margen %', 'Margen monetario dividido por venta neta.'],
   ['previousMonth', 'discountPercent', 'Desc. %', 'Descuentos totales divididos por venta bruta antes de descuentos.'],
+  ['previousMonth', 'transactions', 'Transacciones', 'Número de órdenes del mes anterior completo.'],
   ['previousMonth', 'averageTicket', 'Ticket con IVA', 'Venta con IVA después de descuentos dividida por número de transacciones.']
 ];
 
@@ -2980,6 +2986,8 @@ function networkMetricCell(period, metric) {
     cell.className = 'network-empty';
   } else if (metric === 'sales' || metric === 'averageTicket') {
     cell.textContent = metric === 'averageTicket' && !period.transactions ? '—' : formatClp(value);
+  } else if (metric === 'transactions') {
+    cell.textContent = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
   } else {
     const comparison = metric.startsWith('vs');
     cell.textContent = `${comparison && value > 0 ? '+' : ''}${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value)}%`;

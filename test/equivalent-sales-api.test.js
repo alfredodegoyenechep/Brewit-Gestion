@@ -65,7 +65,13 @@ test('classic, grid and intraday share eight exact weekdays, the Santiago cutoff
       assert.match(await page.locator('#report-chart-subtitle').innerText(), /Corte 10:30/);
       await page.locator('#report-chart-close').click();
       await page.locator('#report-view-filter').selectOption('grid');
-      await page.waitForFunction(() => document.querySelector('#network-sales-rows td:nth-child(7)')?.textContent === '-42,9%');
+      await page.waitForFunction(() => document.querySelector('#network-sales-rows td:nth-child(8)')?.textContent === '-42,9%');
+      const headings = await page.locator('#network-sales-metric-headings th').allTextContents();
+      assert.equal(headings.filter(label => label === 'Transacciones').length, 6);
+      headings.forEach((label, index) => { if (label === 'Ticket con IVA') assert.equal(headings[index - 1], 'Transacciones'); });
+      assert.equal(await page.locator('#network-sales-rows tr').first().locator('td').nth(3).innerText(), '1');
+      assert.equal(await page.locator('#network-sales-rows tr').first().locator('td').nth(10).innerText(), '2');
+      assert.equal(await page.locator('#network-sales-total td').nth(3).innerText(), '1');
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   }
