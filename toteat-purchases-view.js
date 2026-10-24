@@ -23,6 +23,8 @@
     polling = true;
     try {
       states = (await request('/status')).locations;
+      form.elements.frequency.closest('label').hidden = !!states[0]?.manualOnly;
+      if (states[0]?.manualOnly) form.elements.frequency.value = 'manual';
       form.elements.from.readOnly = !!states.find(s => s.location === location.value)?.lastSuccess;
       if (populated !== location.value) populate();
       let changed = false;

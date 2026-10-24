@@ -3,7 +3,7 @@ const {registerUploadOverview}=require('../upload-overview');
 test('one unreadable inventory source does not block overview or refresh of other sources',async t=>{
  const app=express();app.use(express.json());const calls=[],status=()=>({configured:true,from:'2026-09-01'});
  registerUploadOverview(app,{locations:()=>[{id:'store-1',name:'La Concepción',type:'store',status:'active'}],
- sales:{status,synchronize:async()=>calls.push('sales'),purchases:{status,synchronize:async()=>calls.push('purchases')}},
+ sales:{status,synchronize:async(id,options)=>{assert.deepEqual(options,{recentOnly:true});calls.push('sales');},purchases:{status,synchronize:async()=>calls.push('purchases')}},
  masters:{sharedStatus:()=>({}),synchronizeShared:async()=>calls.push('masters')},
  stock:{status:()=>{throw Error('private-source-error');},synchronize:async()=>{calls.push('stock');return {warnings:['Producto C pendiente de conversión.']};}},
  files:()=>[],masterFiles:()=>[]});
@@ -13,6 +13,21 @@ test('one unreadable inventory source does not block overview or refresh of othe
  assert.equal((await fetch(url+'/api/uploads/refresh',{method:'POST'})).status,202);
  let data;for(let i=0;i<30;i++){data=await read();if(!data.job.running)break;}
  assert.deepEqual(calls,['masters','sales','purchases','stock']);assert.equal(data.job.summary.complete,4);assert.match(data.job.steps[3].message,/observaciones/);
+});
+test('full manual refresh publishes physical counts from the inventory capture once', async t => {
+ const calls=[],app=express();app.use(express.json());
+ const status=()=>({configured:true,from:'2026-09-01'}),capture={range:{from:'2026-09-01',to:'2026-09-10'},operations:{counts:[]}};
+ registerUploadOverview(app,{locations:()=>[{id:'store-1',name:'La Concepción',type:'store',status:'active'}],
+  sales:{status,synchronize:async()=>{},purchases:{status,synchronize:async()=>{}}},
+  masters:{sharedStatus:()=>({}),synchronizeShared:async()=>{}},
+  stock:{status:()=>({range:capture.range}),synchronize:async()=>{calls.push('read-inventory');return {};},original:()=>capture,rebuild:()=>{calls.push('rebuild');}},
+  counts:{status:()=>({}),synchronize:async()=>{calls.push('read-counts');},publish:(id,source)=>{assert.equal(source,capture);calls.push('publish-counts');}},
+  files:()=>[],masterFiles:()=>[]});
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const base=`http://127.0.0.1:${server.address().port}`;
+ await fetch(base+'/api/uploads/refresh',{method:'POST'});
+ for(let i=0;i<30;i++){const data=await fetch(base+'/api/uploads/overview').then(response=>response.json());if(!data.job.running)break;}
+ assert.deepEqual(calls,['read-inventory','publish-counts','rebuild']);
 });
 test('authentication pauses the plan and resumes the same step without repeating completed groups',async t=>{
  const calls=[],app=express();app.use(express.json());let authenticated=false;

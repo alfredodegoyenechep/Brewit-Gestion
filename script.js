@@ -143,6 +143,33 @@ let hourlyAnalysisState = null;
 let findingsViewState = null;
 let salesIngredientsState = null;
 let financialResultsState = null;
+const calculatedViewRequests = new Map();
+const calculatedViewKeys = new Map();
+function selectedCalculationKey(ids) {
+  return JSON.stringify(ids.map(id => document.getElementById(id)?.value || ''));
+}
+function invalidateCalculation(view, statusId) {
+  const active = calculatedViewRequests.get(view);
+  if (active) active.controller.abort();
+  calculatedViewRequests.delete(view);
+  const buttonId = { financial: 'financial-results-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
+  const control = document.getElementById(buttonId);
+  const button = view === 'financial' ? control?.querySelector('button[type="submit"]') : control;
+  if (button) button.disabled = false;
+  const previous = calculatedViewKeys.get(view);
+  setStatus(document.getElementById(statusId), previous
+    ? 'Los filtros cambiaron. El resultado visible corresponde a la última consulta; pulsa Consultar para aplicar la nueva selección.'
+    : 'Selecciona los filtros y pulsa Consultar para calcular con los datos guardados.', 'muted');
+}
+function beginCalculation(view, key) {
+  calculatedViewRequests.get(view)?.controller.abort();
+  const request = { key, controller: new AbortController() };
+  calculatedViewRequests.set(view, request);
+  return request;
+}
+function isCurrentCalculation(view, request, ids) {
+  return calculatedViewRequests.get(view) === request && selectedCalculationKey(ids) === request.key;
+}
 let financialGeneralExpensesGridState = null;
 let salesHierarchyPath = [];
 let hourlySalesHierarchyPath = [];
@@ -186,11 +213,18 @@ function organizeWorkspaceNavigation() {
   const links = new Map([...document.querySelectorAll('.nav-link[data-view]')]
     .map(link => [link.dataset.view, link]));
   const operationsLink = navigation.querySelector('a[href="/operaciones"]');
+  const savedOrdersLink = document.createElement('a');
+  savedOrdersLink.href = '#';
+  savedOrdersLink.className = 'nav-link';
+  savedOrdersLink.dataset.view = 'past-orders';
+  savedOrdersLink.innerHTML = '<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg><span class="nav-text">Órdenes guardadas</span>';
+  links.set('past-orders', savedOrdersLink);
   const groups = [
-    { label: 'Visión ejecutiva', views: ['report', 'financial-results', 'weekly-results'] },
-    { label: 'Inteligencia comercial', views: ['sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients'] },
-    { label: 'Operación y costos', views: ['products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings'] },
-    { label: 'Administración', views: ['uploads', 'historical-control', 'config'] }
+    { label: 'Ventas y resultados', views: ['report', 'financial-results', 'weekly-results'] },
+    { label: 'Análisis de ventas', views: ['sales', 'demand-analysis', 'sales-ingredients'] },
+    { label: 'Inventario y compras', views: ['inventory', 'purchases', 'purchase-projection', 'past-orders'] },
+    { label: 'Productos y costos', views: ['products', 'ingredients', 'cost-review'] },
+    { label: 'Control y configuración', views: ['findings', 'transaction-audit', 'uploads', 'historical-control', 'config'] }
   ];
   navigation.replaceChildren(...groups.map(group => {
     const section = document.createElement('section');
@@ -294,6 +328,13 @@ function setView(view) {
     section.hidden = true;
     section.style.display = 'none';
   });
+  if (view === 'past-orders') {
+    const projection = document.getElementById('purchase-projection-workspace');
+    projection.hidden = false;
+    projection.style.display = '';
+    openPastPurchaseOrders();
+    return;
+  }
   if (view === 'uploads' || view === 'uploads-previous') {
     const loader = document.getElementById('upload-overview');
     loader.hidden = false;
@@ -361,7 +402,7 @@ function setView(view) {
     const financialResults = document.getElementById('financial-results-workspace');
     financialResults.hidden = false;
     financialResults.style.display = '';
-    loadFinancialResults();
+    if (!financialResultsState) invalidateCalculation('financial', 'financial-results-status');
     return;
   }
   if (view === 'demand-analysis') {
@@ -391,21 +432,22 @@ function setView(view) {
     const ingredients = document.getElementById('ingredients-workspace');
     ingredients.hidden = false;
     ingredients.style.display = '';
-    loadIngredientsView();
+    if (!ingredientsViewState) invalidateCalculation('ingredients', 'ingredients-status');
     return;
   }
   if (view === 'cost-review') {
     const review = document.getElementById('cost-review-workspace');
     review.hidden = false;
     review.style.display = '';
-    loadCostReview();
+    if (!costReviewState) invalidateCalculation('costs', 'cost-review-status');
     return;
   }
   if (view === 'purchases') {
     const purchases = document.getElementById('purchases-workspace');
     purchases.hidden = false;
     purchases.style.display = '';
-    loadPurchasesView();
+    initializePurchaseDates();
+    if (!purchasesViewState) invalidateCalculation('purchases', 'purchases-status');
     return;
   }
   if (view === 'purchase-projection') {
@@ -1053,9 +1095,10 @@ async function confirmTransactionUpload(overlapAction, { automatic = false } = {
       importMessages.push(imported.newTransactions
         ? `${imported.newTransactions} transacción(es) MercadoPago nueva(s) guardada(s); ${imported.duplicateTransactions} fila(s) repetida(s) omitida(s).`
         : `MercadoPago procesado sin duplicar datos: no había transacciones nuevas y ${imported.duplicateTransactions} fila(s) ya existía(n).`);
+      if (imported.conflictingTransactions) importMessages.push(`${imported.conflictingTransactions} corrección(es) MercadoPago pendiente(s) de revisión. Se conservó el importe anterior; revisa los originales en Control histórico.`);
       for (const assignment of result.assignments || []) {
         const stats = assignment.imports?.mercadopago;
-        importMessages.push(`${assignment.name} (STORE_ID ${assignment.storeId}): ${stats?.newTransactions || 0} registro(s) nuevo(s), ${stats?.duplicateTransactions || 0} repetido(s) omitido(s).`);
+        importMessages.push(`${assignment.name} (STORE_ID ${assignment.storeId}): ${stats?.newTransactions || 0} registro(s) nuevo(s), ${stats?.duplicateTransactions || 0} repetido(s) omitido(s), ${stats?.conflictingTransactions || 0} corrección(es) pendiente(s).`);
       }
       if (result.skippedCount) importMessages.push(`${result.skippedCount} registro(s) sin cafetería asociada no fueron procesados.`);
     }
@@ -1477,7 +1520,7 @@ function renderFinancialStatement(data) {
     label: 'Costo directo de productos',
     amount: productCostAmount,
     percentage: percentOfSales(productCostAmount),
-    context: `${data.revenue.costValuationDate === 'sale-date' ? 'Fuentes vigentes en la fecha de cada venta' : 'Fuentes vigentes al corte del reporte (método anterior)'}. Costo disponible en ${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas; ${data.revenue.costSources?.['sales-export'] || 0} usan Costo del archivo de ventas como respaldo. Confirmar base sin IVA de cada fuente.`, className: 'financial-cost-row'
+    context: `Fuentes vigentes al corte del reporte. Costo disponible en ${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas; ${data.revenue.costSources?.['sales-export'] || 0} usan Costo del archivo de ventas como respaldo. Confirmar base sin IVA de cada fuente.`, className: 'financial-cost-row'
   });
   append({
     label: 'Margen de Contribución', amount: statement.contributionMargin,
@@ -1635,7 +1678,7 @@ function renderFinancialResults(data) {
     return card;
   }));
   document.getElementById('financial-statement-context').textContent =
-    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo ${data.revenue.costValuationDate === 'sale-date' ? 'en la fecha de venta (en prueba)' : 'al corte (respaldo)'}.`;
+    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo al corte del reporte.`;
   const badge = document.getElementById('financial-statement-badge');
   badge.textContent = statement.dataCoverageComplete ? 'EBITDA 4 Wall · cobertura completa' : 'EBITDA 4 Wall · revisar cobertura';
   badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
@@ -1738,24 +1781,30 @@ async function loadFinancialResults() {
   const location = document.getElementById('financial-results-location').value || 'all';
   const dateFrom = document.getElementById('financial-results-from').value;
   const dateTo = document.getElementById('financial-results-to').value;
-  const costValuation = document.getElementById('financial-cost-valuation').value;
   if (!dateFrom || !dateTo || dateFrom > dateTo) {
     setStatus(status, 'Selecciona un período válido.', 'error');
     return;
   }
+  const filterIds = ['financial-results-location', 'financial-results-from', 'financial-results-to'];
+  const request = beginCalculation('financial', selectedCalculationKey(filterIds));
   button.disabled = true;
   setStatus(status, 'Calculando ventas, márgenes, inventario y cobros de MercadoPago…');
   try {
-    const params = new URLSearchParams({ location, dateFrom, dateTo, costValuation });
-    const data = await apiRequest(`/api/financial-results?${params}`);
-    if (location !== document.getElementById('financial-results-location').value) return;
+    const params = new URLSearchParams({ location, dateFrom, dateTo });
+    const data = await apiRequest(`/api/financial-results?${params}`, { signal: request.controller.signal });
+    if (!isCurrentCalculation('financial', request, filterIds)) return;
     financialResultsState = data;
+    calculatedViewKeys.set('financial', request.key);
     renderFinancialResults(data);
     setStatus(status, `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`, 'success');
   } catch (error) {
+    if (!isCurrentCalculation('financial', request, filterIds)) return;
     setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get('financial') === request) {
+      calculatedViewRequests.delete('financial');
+      button.disabled = false;
+    }
   }
 }
 
@@ -2886,8 +2935,7 @@ async function loadWeeklySalesReport() {
   setStatus(status, 'Calculando ventas netas…');
   try {
     if (networkMode) {
-      const costValuation = document.getElementById('network-cost-valuation').value;
-      const report = await apiRequest(`/api/reports/network-sales?costValuation=${encodeURIComponent(costValuation)}`);
+      const report = await apiRequest('/api/reports/network-sales');
       if (sequence !== reportLoadSequence) return;
       renderNetworkSalesDashboard(report);
       document.getElementById('report-scope-description').textContent = 'Venta neta sin IVA y ticket promedio con IVA, comparados por local y para toda la red.';
@@ -3051,9 +3099,7 @@ function renderNetworkSalesDashboard(report) {
     ? `En ${coverage.ordersWithNetFieldConsistentCost || 0} pedido(s), todos los costos concuerdan con el campo «Monto neto» de Compras; los demás usan fuentes no cotejadas. Esto no sustituye la revisión tributaria de las facturas.`
     : '';
   const missingSources = missingStores.length ? ` Sin archivos legibles: ${missingStores.join(', ')}.` : '';
-  const valuationNote = coverage.costValuationDate === 'sale-date'
-    ? 'Costo según fuentes vigentes en la fecha de cada venta; un costo positivo del archivo de ventas se usa solo como respaldo sin cotejo.'
-    : 'Costo según fuentes vigentes al corte del reporte (método anterior de respaldo); puede cambiar el margen histórico al ingresar nuevas compras.';
+  const valuationNote = 'Costo según fuentes vigentes al corte del reporte.';
   document.getElementById('network-sales-coverage').textContent = `${costCoverage} ${valuationNote} ${costBasisCoverage}${missingSources} ${report.coverageNote || ''}`.trim();
   setReportChart('report-network', {
     type: 'bar',
@@ -5047,19 +5093,26 @@ async function loadCostReview() {
   const params = new URLSearchParams({ location: document.getElementById('cost-review-location').value || 'all' });
   const dateTo = document.getElementById('cost-review-date').value;
   if (dateTo) params.set('dateTo', dateTo);
+  const filterIds = ['cost-review-location', 'cost-review-date'];
+  const request = beginCalculation('costs', selectedCalculationKey(filterIds));
   button.disabled = true;
   setStatus(status, 'Revisando compras, recetas y costos del maestro…');
   try {
-    costReviewState = await apiRequest(`/api/cost-review?${params}`);
+    const data = await apiRequest(`/api/cost-review?${params}`, { signal: request.controller.signal });
+    if (!isCurrentCalculation('costs', request, filterIds)) return;
+    costReviewState = data;
+    calculatedViewKeys.set('costs', request.key);
     document.getElementById('cost-review-date').value = costReviewState.dateTo;
     renderCostReview();
     setStatus(status, `Costos al ${formatReportDate(costReviewState.dateTo)} · ${costReviewState.scope.label}.`, 'success');
   } catch (error) {
-    costReviewState = null;
-    renderCostReview();
+    if (!isCurrentCalculation('costs', request, filterIds)) return;
     setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get('costs') === request) {
+      calculatedViewRequests.delete('costs');
+      button.disabled = false;
+    }
   }
 }
 
@@ -6663,11 +6716,15 @@ async function loadIngredientsView() {
   const params = new URLSearchParams({ location });
   if (dateFrom) params.set('dateFrom', dateFrom);
   if (dateTo) params.set('dateTo', dateTo);
+  const filterIds = ['ingredients-location-filter', 'ingredients-date-from', 'ingredients-date-to'];
+  const request = beginCalculation('ingredients', selectedCalculationKey(filterIds));
   button.disabled = true;
   setStatus(status, 'Calculando uso, costos, proveedores y recetas…');
   try {
-    const data = await apiRequest(`/api/ingredients?${params}`);
+    const data = await apiRequest(`/api/ingredients?${params}`, { signal: request.controller.signal });
+    if (!isCurrentCalculation('ingredients', request, filterIds)) return;
     ingredientsViewState = data;
+    calculatedViewKeys.set('ingredients', request.key);
     document.getElementById('ingredients-date-from').value = data.period.from;
     document.getElementById('ingredients-date-to').value = data.period.to;
     const supplierSelect = document.getElementById('ingredients-supplier-filter');
@@ -6677,11 +6734,13 @@ async function loadIngredientsView() {
     renderIngredientsView();
     setStatus(status, `Período ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} para ${data.scope.label}.`, 'success');
   } catch (error) {
-    ingredientsViewState = null;
-    renderIngredientsView();
+    if (!isCurrentCalculation('ingredients', request, filterIds)) return;
     setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get('ingredients') === request) {
+      calculatedViewRequests.delete('ingredients');
+      button.disabled = false;
+    }
   }
 }
 
@@ -6848,29 +6907,37 @@ function renderPurchasesView() {
   }
 }
 
+function initializePurchaseDates() {
+  const today = browserIsoToday();
+  const weekAgo = new Date(`${today}T12:00:00Z`);
+  weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+  if (!document.getElementById('purchases-date-from').value) document.getElementById('purchases-date-from').value = weekAgo.toISOString().slice(0, 10);
+  if (!document.getElementById('purchases-date-to').value) document.getElementById('purchases-date-to').value = today;
+}
+
 async function loadPurchasesView() {
   const status = document.getElementById('purchases-status');
   const button = document.getElementById('refresh-purchases');
   const location = document.getElementById('purchases-location-filter').value || 'all';
   const supplier = document.getElementById('purchases-supplier-filter').value || 'all';
   const product = document.getElementById('purchases-product-filter').value.trim();
+  initializePurchaseDates();
   const today = browserIsoToday();
-  const weekAgo = new Date(`${today}T12:00:00Z`);
-  weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
-  if (!document.getElementById('purchases-date-from').value) document.getElementById('purchases-date-from').value = weekAgo.toISOString().slice(0, 10);
-  if (!document.getElementById('purchases-date-to').value) document.getElementById('purchases-date-to').value = today;
   const dateFrom = document.getElementById('purchases-date-from').value;
   const dateTo = document.getElementById('purchases-date-to').value;
   const params = new URLSearchParams({ location, supplier });
   if (product) params.set('product', product);
   if (dateFrom) params.set('dateFrom', dateFrom);
   if (dateTo) params.set('dateTo', dateTo);
+  const filterIds = ['purchases-location-filter', 'purchases-supplier-filter', 'purchases-product-filter', 'purchases-date-from', 'purchases-date-to'];
+  const request = beginCalculation('purchases', selectedCalculationKey(filterIds));
   button.disabled = true;
   setStatus(status, 'Procesando el historial de compras…');
   try {
-    const data = await apiRequest(`/api/purchases?${params}`);
-    if (location !== document.getElementById('purchases-location-filter').value) return;
+    const data = await apiRequest(`/api/purchases?${params}`, { signal: request.controller.signal });
+    if (!isCurrentCalculation('purchases', request, filterIds)) return;
     purchasesViewState = data;
+    calculatedViewKeys.set('purchases', request.key);
     const supplierSelect = document.getElementById('purchases-supplier-filter');
     supplierSelect.replaceChildren(
       new Option('Todos los proveedores', 'all'),
@@ -6898,11 +6965,13 @@ async function loadPurchasesView() {
         : `${data.sourceFileCount} archivo(s) procesado(s) para ${data.scope.label}.`
       : 'No hay información de compras disponible para la selección.', data.sourceFileCount ? 'success' : 'muted');
   } catch (error) {
-    purchasesViewState = null;
-    renderPurchasesView();
+    if (!isCurrentCalculation('purchases', request, filterIds)) return;
     setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get('purchases') === request) {
+      calculatedViewRequests.delete('purchases');
+      button.disabled = false;
+    }
   }
 }
 
@@ -11923,7 +11992,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-view-filter').addEventListener('change', changeReportView);
-  document.getElementById('network-cost-valuation').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
@@ -11931,8 +11999,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     event.preventDefault();
     loadFinancialResults();
   });
-  document.getElementById('financial-results-period').addEventListener('change', syncFinancialResultsPeriod);
+  document.getElementById('financial-results-period').addEventListener('change', () => {
+    syncFinancialResultsPeriod();
+    invalidateCalculation('financial', 'financial-results-status');
+  });
+  for (const id of ['financial-results-from', 'financial-results-to']) {
+    document.getElementById(id).addEventListener('change', () => invalidateCalculation('financial', 'financial-results-status'));
+  }
   document.getElementById('financial-results-location').addEventListener('change', event => {
+    invalidateCalculation('financial', 'financial-results-status');
     if (event.target.value !== 'all' && locationRegistry[event.target.value]?.type === 'store') {
       document.getElementById('financial-general-expenses-location').value = event.target.value;
       loadFinancialGeneralExpenses();
@@ -12020,8 +12095,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('relevant-products-dialog').close();
     loadProductsView();
   });
-  document.getElementById('cost-review-location').addEventListener('change', loadCostReview);
-  document.getElementById('cost-review-date').addEventListener('change', loadCostReview);
+  document.getElementById('cost-review-location').addEventListener('change', () => invalidateCalculation('costs', 'cost-review-status'));
+  document.getElementById('cost-review-date').addEventListener('change', () => invalidateCalculation('costs', 'cost-review-status'));
   document.getElementById('refresh-cost-review').addEventListener('click', loadCostReview);
   document.getElementById('cost-review-type').addEventListener('change', renderCostReview);
   document.getElementById('cost-review-state').addEventListener('change', renderCostReview);
@@ -12065,10 +12140,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('ingredients-location-filter').addEventListener('change', () => {
     document.getElementById('ingredients-supplier-filter').value = 'all';
-    loadIngredientsView();
+    invalidateCalculation('ingredients', 'ingredients-status');
   });
-  document.getElementById('ingredients-date-from').addEventListener('change', loadIngredientsView);
-  document.getElementById('ingredients-date-to').addEventListener('change', loadIngredientsView);
+  document.getElementById('ingredients-date-from').addEventListener('change', () => invalidateCalculation('ingredients', 'ingredients-status'));
+  document.getElementById('ingredients-date-to').addEventListener('change', () => invalidateCalculation('ingredients', 'ingredients-status'));
   document.getElementById('ingredients-supplier-filter').addEventListener('change', renderIngredientsView);
   document.getElementById('ingredients-search').addEventListener('input', renderIngredientsView);
   document.getElementById('ingredients-only-changed').addEventListener('change', renderIngredientsView);
@@ -12108,12 +12183,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     purchaseCostVariationState = null;
     document.getElementById('purchases-supplier-filter').value = 'all';
     document.getElementById('purchases-product-filter').value = '';
-    loadPurchasesView();
+    invalidateCalculation('purchases', 'purchases-status');
   });
-  document.getElementById('purchases-supplier-filter').addEventListener('change', loadPurchasesView);
-  document.getElementById('purchases-product-filter').addEventListener('change', loadPurchasesView);
-  document.getElementById('purchases-date-from').addEventListener('change', loadPurchasesView);
-  document.getElementById('purchases-date-to').addEventListener('change', loadPurchasesView);
+  for (const id of ['purchases-supplier-filter', 'purchases-product-filter', 'purchases-date-from', 'purchases-date-to']) {
+    document.getElementById(id).addEventListener('change', () => invalidateCalculation('purchases', 'purchases-status'));
+  }
   document.getElementById('refresh-purchases').addEventListener('click', loadPurchasesView);
   document.getElementById('purchases-groups').addEventListener('click', event => {
     const header = event.target.closest('th[data-sort-key]');
@@ -12506,8 +12580,15 @@ async function loadUploadOverview() {
   uploadOverviewBusy = true;
   const el = id => document.getElementById(id);
   const date = value => value ? new Date(value).toLocaleString('es-CL') : 'Sin actualizar';
+  setStatus(el('upload-overview-status'), 'Consultando el estado de las fuentes guardadas…');
   try {
     const data = await apiRequest('/api/uploads/overview');
+    el('upload-native-schedule').hidden = !!data.manualOnly;
+    const historyLocation = el('source-history-location');
+    const selectedHistoryLocation = historyLocation.value;
+    historyLocation.replaceChildren(new Option('Ambas cafeterías', 'all'),
+      ...data.rows.filter(row => row.id !== 'main-warehouse').map(row => new Option(row.name, row.id)));
+    if ([...historyLocation.options].some(option => option.value === selectedHistoryLocation)) historyLocation.value = selectedHistoryLocation;
     const cell = (tag, text) => { const e=document.createElement(tag);e.textContent=text;return e; };
     el('upload-master-list').replaceChildren(...data.masters.map(m=>{
       const item=document.createElement('button');item.type='button';item.setAttribute('aria-label',`Ver maestro: ${m.label}`);
@@ -12567,13 +12648,18 @@ async function loadUploadOverview() {
             });actions.append(refresh);
           }
           td.append(actions);
-          td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
+          td.append(cell('small',`${item.origin}${item.sharedFrom?' · '+item.sharedFrom:''}`));
+          if(item.lastCheck)td.append(cell('small',`Última comprobación: ${date(item.lastCheck.finishedAt)} · ${(item.lastCheck.durationMs/1000).toFixed(1)} s · ${item.lastCheck.windows.map(w=>`${w.from}–${w.to}`).join(', ')}`));
+          if(item.lastHistoricalReview)td.append(cell('small',`Última revisión anterior: ${item.lastHistoricalReview.from}–${item.lastHistoricalReview.to} · ${date(item.lastHistoricalReview.completedAt)}`));
+          if(item.lastFullSuccess)td.append(cell('small',`Última revisión completa: ${date(item.lastFullSuccess)}`));
+          if(item.running)td.append(cell('small','Actualizando…'));if(item.error)td.append(cell('small',item.error));
         }row.append(td);
       }body.append(row);
     }table.replaceChildren(head,body);
     el('upload-refresh-schedule').replaceChildren(...data.rows.flatMap(r=>r.schedules.map(s=>cell('div',`${r.name} · ${s.label}: ${s.enabled?'cada '+s.minutes+' minutos':'automático desactivado'}`))),...Object.entries(data.schedule).map(([key,value])=>cell('div',`${key==='masters'?'Maestros compartidos':'Fuentes de inventario'}: ${value.minutes?'cada '+value.minutes+' minutos':'manual'}`)));
     if(!uploadScheduleDirty)for(const key of ['masters','inventory'])el(`upload-${key}-frequency`).value=data.schedule[key].minutes || '';
     el('refresh-upload-api').disabled=data.job.running || data.masterStatus.running || data.rows.some(r=>r.cells.some(c=>c.running));
+    el('review-recent-sales-windows').disabled=data.job.running || data.rows.some(r=>r.cells.some(c=>['sales','payment-details'].includes(c.key)&&c.running));
     el('upload-master-connection').textContent = `${data.masterStatus.connection || 'Servicios internos · sesión web'} · Última lectura exitosa: ${date(data.masterStatus.observedAt)} · Último intento fallido: ${date(data.masterStatus.lastFailedAt)}${data.masterStatus.credentialExpiresAt ? ' · Vencimiento de credencial: '+date(data.masterStatus.credentialExpiresAt) : ''}${data.masterStatus.lastError ? ' · '+data.masterStatus.lastError : ''}`;
     el('upload-refresh-methods').textContent = `Ventas, pagos y compras: API pública con token. Tomas, transformaciones y transferencias originales: API interna con sesión autorizada. Maestros: ${data.masterStatus.connection || 'servicios internos con sesión web'}.`;
     const job=data.job,summary=job.summary || {};
@@ -12602,6 +12688,52 @@ document.getElementById('refresh-upload-api').addEventListener('click',async()=>
   try{await apiRequest('/api/uploads/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
   catch(error){setStatus(document.getElementById('upload-overview-status'),error.message,'error');button.disabled=false;}
 });
+document.getElementById('review-recent-sales-windows').addEventListener('click',async event=>{
+  const button=event.currentTarget,status=document.getElementById('source-history-status');
+  button.disabled=true;
+  setStatus(status,'Iniciando revisión de las dos últimas ventanas de ventas y pagos…');
+  try{
+    const location=document.getElementById('source-history-location').value;
+    await apiRequest('/api/integrations/toteat/api/sales/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location})});
+    setStatus(status,'Revisión de las dos últimas ventanas iniciada. Consulta el período comprobado en la tabla de fuentes.','success');
+    await loadUploadOverview();
+  }catch(error){setStatus(status,error.message,'error');}
+  finally{button.disabled=false;}
+});
+document.getElementById('source-history-review').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = document.getElementById('source-history-status');
+  const button = form.querySelector('button[type="submit"]');
+  const location = document.getElementById('source-history-location').value;
+  const reviewRange = { from: document.getElementById('source-history-from').value,
+    to: document.getElementById('source-history-to').value };
+  const sources = [
+    ['source-history-sales', '/api/integrations/toteat/api/sales/sync', 'Ventas y pagos Toteat'],
+    ['source-history-purchases', '/api/integrations/toteat/api/purchases/sync', 'Compras Toteat'],
+    ['source-history-mp', '/api/integrations/mercadopago/sync', 'MercadoPago']
+  ].filter(([id]) => document.getElementById(id).checked);
+  if (!sources.length || !reviewRange.from || !reviewRange.to || reviewRange.from > reviewRange.to) {
+    setStatus(status, 'Selecciona al menos una fuente y un período válido.', 'error');
+    return;
+  }
+  button.disabled = true;
+  setStatus(status, 'Iniciando revisión histórica de las fuentes seleccionadas…');
+  const outcomes = await Promise.allSettled(sources.map(async ([, route, label]) => {
+    await apiRequest(route, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location, reviewRange }) });
+    return label;
+  }));
+  const started = outcomes.filter(item => item.status === 'fulfilled').map(item => item.value);
+  const failed = outcomes.filter(item => item.status === 'rejected').map(item => item.reason.message);
+  setStatus(status, `${started.length ? `Revisión iniciada: ${started.join(', ')}. Consulta su avance en esta pantalla.` : ''}${failed.length ? ` ${failed.join(' ')}` : ''}`.trim(),
+    failed.length ? 'error' : 'success');
+  button.disabled = false;
+  await loadUploadOverview();
+  await loadMercadoPagoWebStatus();
+});
+document.getElementById('source-history-to').value = browserIsoToday();
+document.getElementById('source-history-from').value = offsetIsoDate(browserIsoToday(), -30);
 document.getElementById('resume-upload-api').addEventListener('click',async event=>{
   event.currentTarget.disabled=true;
   try{await apiRequest('/api/uploads/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await loadUploadOverview();}
@@ -12618,6 +12750,7 @@ function renderMercadoPagoWebStatus(data) {
   button.disabled = data.running || mercadoPagoWebBusy;
   button.textContent = data.running ? 'Actualizando MercadoPago…' : 'Actualizar MercadoPago desde web';
   const daily = document.getElementById('mercadopago-daily');
+  daily.closest('label').hidden = !!data.manualOnly;
   if (!mercadoPagoScheduleBusy) daily.checked = data.enabled;
   const auth = data.status === 'waiting-auth';
   document.getElementById('resume-mercadopago-web').hidden = !auth;

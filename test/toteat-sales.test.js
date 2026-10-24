@@ -74,6 +74,66 @@ function service(t, request) {
   for (const id of ['store-1', 'store-2']) sync.configure(id, { from: '2026-09-14', enabled: true, intervalMinutes: 5 });
   return { sync, uploadsRoot, options };
 }
+test('manual historical review reloads complete sales windows and records coverage', async t => {
+  const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-sales-review-'));
+  t.after(async () => { await require('../historical-control').get(uploadsRoot).idle(); fs.rmSync(uploadsRoot,{recursive:true,force:true}); });
+  const calls=[];
+  const sync=createSalesSync({uploadsRoot,activeLocation:id=>id==='store-1'?{id,type:'store'}:null,
+    credentials:()=>({'store-1':{localId:'1'}}),clock:()=> '2026-10-20',
+    request:async (config,route,params)=>{if(route==='sales')calls.push(params.ini);return {ok:true,data:route==='shiftstatus'?{status:'closed',localNumber:'1'}:[]};}});
+  sync.configure('store-1',{from:'2026-09-01',enabled:false,intervalMinutes:5});
+  await sync.synchronize('store-1',{full:true});calls.length=0;
+  await sync.synchronize('store-1',{reviewRange:{from:'2026-09-10',to:'2026-09-11'}});
+  assert.deepEqual(calls,['20260901']);
+  assert.deepEqual(sync.status('store-1').lastHistoricalReview.from,'2026-09-10');
+});
+test('recent sales refresh checks only the current window, retains closed-window data and records coverage', async t => {
+  const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-sales-recent-'));
+  t.after(async () => { await require('../historical-control').get(uploadsRoot).idle(); fs.rmSync(uploadsRoot,{recursive:true,force:true}); });
+  const calls=[];
+  let fail=false, oldTotal=3430;
+  const oldPayment=()=>payment({orderId:'old-order',paymentId:'old-payment',dateOpen:'2026-09-16T12:00:00',dateClosed:'2026-09-16T12:03:00',
+    total:oldTotal,discounts:0,payed:oldTotal,change:0,gratuity:0,products:[line({lineId:'old-line',payed:oldTotal,discounts:0})],
+    paymentForms:[{id:1000,name:'CASH',amount:oldTotal,tip:0}]});
+  const currentPayment=payment({orderId:'current-order',paymentId:'current-payment',dateOpen:'2026-10-20T12:00:00',dateClosed:'2026-10-20T12:03:00',
+    products:[line({lineId:'current-line'})]});
+  const sync=createSalesSync({uploadsRoot,activeLocation:id=>id==='store-1'?{id,type:'store'}:null,
+    credentials:()=>({'store-1':{localId:'1'}}),clock:()=> '2026-10-20',
+    request:async (config,route,params,onDiagnostic)=>{
+      onDiagnostic?.({queueWaitMs:10,networkMs:2,bodyMs:1,requestMs:3,responseBytes:100,status:200,rows:route==='sales'?1:null});
+      if(route==='shiftstatus')return {ok:true,data:{status:'closed',localNumber:'1'}};
+      calls.push(params.ini);
+      if(fail)throw Error('Fuente incompleta');
+      return {ok:true,data:params.ini==='20260916'?[oldPayment()]:params.ini==='20261016'?[currentPayment]:[]};
+    }});
+  sync.configure('store-1',{from:'2026-09-01',enabled:false,intervalMinutes:5});
+  await sync.synchronize('store-1',{recentOnly:true});
+  assert.deepEqual(calls,['20260901','20260916','20261001','20261016'],'first load still fills missing windows');
+  assert.equal(sync.status('store-1').lastCheck.scope,'recent');
+  calls.length=0;
+  await sync.synchronize('store-1',{recentOnly:true});
+  assert.deepEqual(calls,['20261016']);
+  assert.deepEqual(sync.status('store-1').lastCheck.windows,[{from:'2026-10-16',to:'2026-10-20'}]);
+  assert.equal(sync.status('store-1').lastCheck.requestCount,2);
+  assert.equal(sync.status('store-1').completedWindows,4);
+  assert.equal(sync.status('store-1').paymentCount,2);
+  oldTotal=4000;
+  await sync.synchronize('store-1',{recentOnly:true});
+  assert.equal(sync.get('store-1').payments.find(p=>p.paymentId==='old-payment').total,3430,'quick refresh preserves the last verified closed window');
+  const settingsFile=path.join(uploadsRoot,'.integrations/toteat-api/sales/settings.json');
+  const previous=JSON.parse(fs.readFileSync(settingsFile))['store-1'].lastCheck;
+  assert.deepEqual(previous.calls.map(call=>call.route),['shiftstatus','sales']);
+  assert.equal(previous.calls[1].queueWaitMs,10);
+  calls.length=0;
+  await sync.synchronize('store-1',{reviewRange:{from:'2026-09-16',to:'2026-09-16'}});
+  assert.deepEqual(calls,['20260916']);
+  assert.equal(sync.get('store-1').payments.find(p=>p.paymentId==='old-payment').total,4000,'historical review publishes the corrected payment');
+  assert.equal(sync.status('store-1').lastCheck.scope,'period');
+  fail=true;
+  const checked=sync.status('store-1').lastCheck;
+  await assert.rejects(sync.synchronize('store-1',{recentOnly:true}),/Fuente incompleta/);
+  assert.deepEqual(sync.status('store-1').lastCheck,checked,'a failed refresh cannot advance checked coverage');
+});
 test('one shared sales schedule controls every store, preserves manual mode and survives restarts', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: new Date('2026-09-21T12:00:00Z') });
   const calls = [];
@@ -200,9 +260,9 @@ test('refresh includes an old open shift and windows stay at most 15 days', asyn
   });
   const sync = createSalesSync(options); sync.configure('store-1', { from: '2026-05-18', enabled: true, intervalMinutes: 5 });
   await sync.synchronize('store-1'); queries.length = 0;
-  await sync.synchronize('store-1');
+  await sync.synchronize('store-1',{recentOnly:true});
   assert(queries.some(q => q.ini === '20260518'));
-  assert(queries.length >= 3);
+  assert(queries.some(q => q.ini === windows('2026-05-18','2026-09-21').at(-1).from.replaceAll('-','')));
   queries.length = 0;
   await sync.synchronize('store-1', { full: true });
   assert.equal(queries.length, windows('2026-05-18', '2026-09-21').length);

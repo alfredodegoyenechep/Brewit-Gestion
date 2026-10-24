@@ -151,7 +151,9 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     const s = get(location), config = settings()[location];
     return { location, historicalRunId:require('./historical-control').get(uploadsRoot).latest(location,['purchases']), configured: !!credentials()[location], enabled: config?.enabled || false, from: config?.from || null,
       intervalMinutes: config?.intervalMinutes || 15, running: jobs.has(location), progress: jobs.get(location)?.progress || null,
-      lastSuccess: s?.syncedAt || null, lastError: config?.lastError || null, documentCount: s?.documents.length || 0,
+      lastSuccess: s?.syncedAt || null, lastError: config?.lastError || null,
+      lastFullSuccess: config?.lastFullSuccess || null, lastHistoricalReview: config?.lastHistoricalReview || null,
+      documentCount: s?.documents.length || 0,
       lineCount: s?.lineCount || 0, warnings: [...(s?.warnings || []), ...(receiptReader && s && !s.receiptSource ? [{type: 'warehouse-receipts-pending', message: 'Actualiza Compras para verificar sus bodegas contra las recepciones originales.'}] : [])],
       excludedCashMovements: Object.values(s?.excludedByRange || {}).reduce((sum, value) => sum + value, 0),
       state: jobs.has(location) ? 'syncing' : config?.lastError ? 'error' : !s ? 'not-synced' : s.documents.length ? 'connected' : 'connected-empty' };
@@ -166,11 +168,13 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
     all[location] = { ...all[location], from, intervalMinutes, enabled: body.enabled };
     atomicJson(settingsFile, all); return status(location);
   }
-  async function synchronize(location, { full = false } = {}) {
+  async function synchronize(location, { full = false, reviewRange = null } = {}) {
     if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     if (jobs.has(location)) return jobs.get(location).promise;
     const config = settings()[location], credential = credentials()[location];
     if (activeLocation(location)?.type !== 'store' || !config || !credential) throw new Error('Configura primero la conexión y el período de compras.');
+    if (reviewRange && (!/^\d{4}-\d{2}-\d{2}$/.test(reviewRange.from) || !/^\d{4}-\d{2}-\d{2}$/.test(reviewRange.to)
+      || reviewRange.from > reviewRange.to || reviewRange.from < config.from || reviewRange.to > clock())) throw Error('Selecciona un período histórico dentro de la cobertura configurada.');
     const job = { progress: 'Preparando compras…' }; jobs.set(location, job);
     job.promise = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-public-api', location, upstream:{restaurantId:credential.restaurantId,localId:credential.localId}, label: 'Compras', datasets:['purchases','receipts'] }, async () => {
       const registered = activeLocation(location);
@@ -179,7 +183,8 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
       const previous = get(location), batches = { ...(previous?.batches || {}) }, ranges = windows(config.from, clock());
       if (previous?.receiptSource && !receiptReader) throw Error('No está configurada la verificación de recepciones de Compras; se conserva la última versión completa.');
       const excludedByRange = { ...(previous?.excludedByRange || {}) };
-      const selected = ranges.filter((w, i) => full || !batches[w.from] || i >= ranges.length - 3);
+      const selected = ranges.filter((w, i) => reviewRange ? w.from <= reviewRange.to && w.to >= reviewRange.from
+        : full || !batches[w.from] || i >= ranges.length - 3);
       let count = 0;
       for (const w of selected) {
         job.progress = `Consultando ${++count} de ${selected.length}: ${w.from}…`;
@@ -227,6 +232,7 @@ function createPurchaseSync({ uploadsRoot, activeLocation, credentials, request,
         excludedByRange, lineCount: converted.rows.length, warnings: [...converted.warnings, ...assigned.warnings, ...reconciled.warnings],
         owned: [...new Set([...(previous?.owned || []), ...converted.owned])]}, converted);
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
+        ...(reviewRange ? { lastHistoricalReview: { ...reviewRange, completedAt: syncedAt } } : {}),
         lastFullSuccess: selected.length === ranges.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
       require('./storage-retention').safePrune(uploadsRoot,'purchases',location);
     }).catch(error => {

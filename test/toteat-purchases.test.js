@@ -28,6 +28,19 @@ test('purchases preserve SKU, independent quantities, line total and rounding wi
   for (const [label, type] of [['Sin Documento', 'WITHOUT_DOCUMENT'], ['Factura Exenta', 'EXEMPT_INVOICE']])
     assert.equal(legacyKey({ RUT: '761111523', 'Tipo Documento': label, Documento: '0012' }), documentKey('761111523', type, '12'));
 });
+test('manual historical review reloads only intersecting purchase windows', async t => {
+  const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-purchase-review-'));
+  t.after(async()=>{await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot,{recursive:true,force:true});});
+  const calls=[];
+  const sync=createPurchaseSync({uploadsRoot,activeLocation:id=>id==='store-1'?{id,type:'store'}:null,
+    credentials:()=>({'store-1':{localId:'1'}}),clock:()=> '2026-10-20',
+    request:async(config,route,params)=>{calls.push(params.initial_date);return {ok:true,data:{purchases:[]}};}});
+  sync.configure('store-1',{from:'2026-09-01',enabled:false,intervalMinutes:15});
+  await sync.synchronize('store-1',{full:true});calls.length=0;
+  await sync.synchronize('store-1',{reviewRange:{from:'2026-09-10',to:'2026-09-11'}});
+  assert.deepEqual(calls,['20260901']);
+  assert.equal(sync.status('store-1').lastHistoricalReview.from,'2026-09-10');
+});
 
 test('purchase snapshots replace documents and preserve the last valid version on failure', async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-purchases-'));

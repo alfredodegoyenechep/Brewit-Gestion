@@ -121,7 +121,7 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
     sourceCoverage:{transfers:source.range,localTransfers:source.localTransfers?source.range:null,purchases:purchases?{from:purchases.from,to:purchases.through}:null}};
 }
 function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}){
-  const root=path.join(uploadsRoot,'.integrations/toteat-api/stock'),jobs=new Map(),errors=new Map(),rebuildFailures=new Map();
+  const root=path.join(uploadsRoot,'.integrations/toteat-api/stock'),jobs=new Map(),errors=new Map();
   function locationKey(id){const actual=id==='main-warehouse'?'store-1':id;if(activeLocation(actual)?.type!=='store')throw Error('Selecciona un local activo.');return actual;}
   const current=id=>{
     const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));
@@ -131,24 +131,13 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     if(state?.sourceKind==='native-documents') {
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
       const dependencies={sales:version('sales'),purchases:version('purchases'),counts:version('original-counts'),master:masters()?.observedAt};
-      if(state.detailSchemaVersion!==3 || state.dependencies?.sales!==dependencies.sales || state.dependencies?.purchases!==dependencies.purchases || state.dependencies?.counts!==dependencies.counts || state.masterObservedAt!==dependencies.master) {
-        const signature=JSON.stringify({version:pointer.version,...dependencies});
-        if(rebuildFailures.get(key)?.signature!==signature) {
-          try {
-            publish(key,read(path.join(root,key,pointer.version,'original.json')));
-            rebuildFailures.delete(key);
-            const latest=read(path.join(root,key,'current.json'));
-            return read(path.join(root,key,latest.version,'state.json'));
-          } catch(error) {rebuildFailures.set(key,{signature,message:'No se pudo recalcular el inventario con las fuentes actuales. Se conserva la última versión completa; vuelve a actualizar inventario.'});}
-        }
-        return {...state,rebuildError:rebuildFailures.get(key).message};
-      }
+      if(state.detailSchemaVersion!==3 || state.dependencies?.sales!==dependencies.sales || state.dependencies?.purchases!==dependencies.purchases || state.dependencies?.counts!==dependencies.counts || state.masterObservedAt!==dependencies.master)
+        return {...state,stale:true,rebuildError:'El inventario está pendiente de recálculo con las fuentes actuales. Pulsa Actualizar inventario para renovarlo.'};
     }
-    rebuildFailures.delete(key);
     return state;
   };
   const dependency=(kind,id)=>{const base=path.join(uploadsRoot,'.integrations/toteat-api',kind,id),pointer=read(path.join(base,'current.json'));return pointer?read(path.join(base,pointer.version,'state.json')):null;};
-  function status(id){const key=locationKey(id),state=current(key);return {location:key,running:jobs.has(key),error:errors.get(key)||state?.rebuildError||null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],excluded:state?.excluded||[],range:state?.range||null,updatedAt:state?.sourceCapturedAt||null,sourceKind:state?.sourceKind||'native-documents',dailyRows:state?.daily.length||0,counts:state?Object.fromEntries(['counts','transfers','transformations'].map(kind=>[kind,state.sourceKind==='public-inventory'?{documents:null,approved:null,lines:state.daily.filter(r=>kind==='counts'?r.physicalCount:kind==='transfers'?[r.transfer_local_in,r.transfer_local_out,r.transfer_warehouse_in,r.transfer_warehouse_out].some(n=>n!==0):r.transformed_in!==0||r.transformed_out!==0).length}:{documents:state.documents.filter(d=>d.kind===kind).length,approved:state.documents.filter(d=>d.kind===kind&&d.status==='APPROVED').length,lines:state.operationLines.filter(l=>l.source===kind).length}])):null};}
+  function status(id){const key=locationKey(id),state=current(key);return {location:key,running:jobs.has(key),stale:!!state?.stale,error:errors.get(key)||state?.rebuildError||null,warnings:[...new Set((state?.issues||[]).filter(issue=>issue.kind==='unit-conversion').map(issue=>issue.message))],excluded:state?.excluded||[],range:state?.range||null,updatedAt:state?.sourceCapturedAt||null,sourceKind:state?.sourceKind||'native-documents',dailyRows:state?.daily.length||0,counts:state?Object.fromEntries(['counts','transfers','transformations'].map(kind=>[kind,state.sourceKind==='public-inventory'?{documents:null,approved:null,lines:state.daily.filter(r=>kind==='counts'?r.physicalCount:kind==='transfers'?[r.transfer_local_in,r.transfer_local_out,r.transfer_warehouse_in,r.transfer_warehouse_out].some(n=>n!==0):r.transformed_in!==0||r.transformed_out!==0).length}:{documents:state.documents.filter(d=>d.kind===kind).length,approved:state.documents.filter(d=>d.kind===kind&&d.status==='APPROVED').length,lines:state.operationLines.filter(l=>l.source===kind).length}])):null};}
   function publish(id,source){if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');const key=locationKey(id),config=credentials()[key];if(!config||source.restaurantId!==config.restaurantId||source.localId!==config.localId)throw Error('La fuente no corresponde al local.');
     const master=masters();if(!master)throw Error('Actualiza primero los maestros compartidos de La Concepción.');
     const products=master.products.map(p=>({...p,custom_id:p.code,stock_enabled:p.stockManaged,stock_unit:p.stockUnit,name:{translations:{default:p.name}}}));
@@ -210,6 +199,8 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     }
     return XLSX.write(wb,{type:'buffer',bookType:'xlsx',compression:true});
   }
-  return {status,current,view,publish,synchronize,workbook,rebuild(id) { const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));if(!pointer)throw Error('Actualiza primero las fuentes originales.');publish(key,read(path.join(root,key,pointer.version,'original.json')));return current(key); }};
+  return {status,current,view,publish,synchronize,workbook,
+    original(id) { const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));return pointer?read(path.join(root,key,pointer.version,'original.json')):null; },
+    rebuild(id) { const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));if(!pointer)throw Error('Actualiza primero las fuentes originales.');publish(key,read(path.join(root,key,pointer.version,'original.json')));return current(key); }};
 }
 module.exports={normalizeOperations,buildLedger,createStockSync};

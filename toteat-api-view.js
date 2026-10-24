@@ -233,17 +233,21 @@
       if (savingResolution || currentResolutionRevision !== resolutionRevision) return;
       salesStates = data.locations;
       salesSchedule = data.schedule || null;
+      const frequencyLabel = salesForm.elements.frequency.closest('label');
+      if (frequencyLabel) frequencyLabel.hidden = !!salesStates[0]?.manualOnly;
+      if (salesStates[0]?.manualOnly) salesForm.elements.frequency.value = 'manual';
       let changed = false;
       const lines = salesStates.map(s => {
         if (previousVersions.has(s.location) && previousVersions.get(s.location) !== s.lastSuccess && s.lastSuccess) changed = true;
         previousVersions.set(s.location, s.lastSuccess);
         const updated = s.lastSuccess ? ` · última actualización ${new Date(s.lastSuccess).toLocaleString('es-CL')}` : '';
+        const checked = s.lastCheck ? ` · comprobado ${new Date(s.lastCheck.finishedAt).toLocaleString('es-CL')} (${(s.lastCheck.durationMs / 1000).toFixed(1)} s; ${s.lastCheck.windows.map(w => `${w.from}–${w.to}`).join(', ')})` : '';
         const frequency = s.enabled ? `Automática cada ${s.intervalMinutes} min` : 'Solo manual';
         const message = s.running ? `Actualizando… ${s.progress || ''}` : s.lastError ? `No se pudo actualizar: ${s.lastError}` : !s.configured ? 'Falta conectar la API' : !s.lastSuccess ? 'Pendiente de sincronizar' : s.state === 'connected-empty' ? 'Conectado · sin ventas todavía' : `${s.orderCount} órdenes · ${s.paymentCount} pagos`;
         const pending = s.detailWarnings?.filter(item => !item.cancelled).length || 0;
         const cancelled = s.detailWarnings?.filter(item => item.cancelled).length || 0;
         const warning = pending || cancelled ? ` · Sin productos: ${pending} pagos incluidos en totales, pendientes de verificar; ${cancelled} anulados excluidos.` : '';
-        return `${s.name}: ${message} · ${frequency}${updated}${warning}`;
+        return `${s.name}: ${message} · ${frequency}${updated}${checked}${warning}`;
       });
       document.querySelectorAll('[data-toteat-sales-status]').forEach(e => {
         lines.forEach((line, index) => {
@@ -264,7 +268,7 @@
     finally { polling = false; }
   }
   async function synchronize(location, full = false) {
-    await request('/api/integrations/toteat/api/sales/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location, full }) });
+    await request('/api/integrations/toteat/api/sales/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location, full, recentOnly: !full }) });
     await pollSales();
   }
   salesForm.addEventListener('submit', async event => {

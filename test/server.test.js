@@ -1750,7 +1750,7 @@ test('MercadoPago collection is independent of fees and preserves signed amounts
 });
 
 test('lists purchases by supplier and filters price history by cafeteria and dates', async t => {
-  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15', enableBackgroundCalculations: true });
   const supplierMaster = await fetch(`${baseUrl}/upload/master`, {
     method: 'POST',
     body: fileForm([{
@@ -3432,7 +3432,7 @@ test('audits transactions with date, amount and discount filters and complete or
   assert.equal(invalid.status, 400);
 });
 
-test('values historical sales with only costs effective on each sale date', async t => {
+test('uses report-cutoff costs for network and financial reports even with a retired valuation override', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-20' });
   const catalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
@@ -3467,35 +3467,32 @@ test('values historical sales with only costs effective on each sale date', asyn
   ]).then(response => response.json());
   assert.equal((await confirmTransactions(baseUrl, purchaseInspection)).status, 200);
 
-  const legacyNetwork = await fetch(`${baseUrl}/api/reports/network-sales`).then(response => response.json());
-  assert.equal(legacyNetwork.rows[0].currentMonth.cost, 60);
-  assert.equal(legacyNetwork.sourceCoverage.costValuationDate, 'period-end');
+  const defaultNetwork = await fetch(`${baseUrl}/api/reports/network-sales`).then(response => response.json());
+  assert.equal(defaultNetwork.rows[0].currentMonth.cost, 60);
+  assert.equal(defaultNetwork.sourceCoverage.costValuationDate, 'period-end');
   const networkResponse = await fetch(`${baseUrl}/api/reports/network-sales?costValuation=historical`);
   assert.equal(networkResponse.status, 200);
   const network = await networkResponse.json();
   assert.equal(network.rows[0].currentMonth.sales, 200);
-  assert.equal(network.rows[0].currentMonth.cost, 40, JSON.stringify({ row: network.rows[0], coverage: network.sourceCoverage }));
-  assert.equal(network.rows[0].currentMonth.marginPercent, 80);
-  assert.equal(network.rows[0].previousMonth.marginPercent, null);
-  assert.equal(network.sourceCoverage.ordersWithCost, 2);
-  assert.equal(network.sourceCoverage.costValuationDate, 'sale-date');
+  assert.equal(network.rows[0].currentMonth.cost, 60);
+  assert.equal(network.rows[0].currentMonth.marginPercent, 70);
+  assert.deepEqual(network.sourceCoverage, defaultNetwork.sourceCoverage);
 
-  const legacyFinancial = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20`).then(response => response.json());
-  assert.equal(legacyFinancial.statement.productCost, 60);
-  assert.equal(legacyFinancial.revenue.costValuationDate, 'period-end');
+  const defaultFinancial = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20`).then(response => response.json());
+  assert.equal(defaultFinancial.statement.productCost, 60);
+  assert.equal(defaultFinancial.revenue.costValuationDate, 'period-end');
   const financialResponse = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20&costValuation=historical`);
   assert.equal(financialResponse.status, 200);
   const financial = await financialResponse.json();
-  assert.equal(financial.statement.productCost, 40, JSON.stringify({ revenue: financial.revenue, warnings: financial.warnings }));
-  assert.equal(financial.revenue.costValuationDate, 'sale-date');
-  assert.deepEqual(financial.revenue.costSources, { recipe: 0, purchase: 1, master: 1, 'sales-export': 0, missing: 0 });
+  assert.equal(financial.statement.productCost, 60);
+  assert.equal(financial.revenue.costValuationDate, 'period-end');
+  assert.deepEqual(financial.revenue.costSources, defaultFinancial.revenue.costSources);
 
-  const beforeCatalog = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-07-30&dateTo=2026-07-30&costValuation=historical`)
+  const beforePurchase = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-10&dateTo=2026-08-10&costValuation=historical`)
     .then(response => response.json());
-  assert.equal(beforeCatalog.statement.productCost, null);
-  assert.deepEqual(beforeCatalog.revenue.missingCostProducts.map(item => [item.code, item.reason, item.lines, item.netSales]), [
-    ['P1', 'no-effective-catalog', 1, 100]
-  ]);
+  assert.equal(beforePurchase.statement.productCost, 10); // The purchase after the cutoff cannot apply.
+  assert.equal(beforePurchase.revenue.costValuationDate, 'period-end');
+  assert.deepEqual(beforePurchase.revenue.costSources, { recipe: 0, purchase: 0, master: 1, 'sales-export': 0, missing: 0 });
 });
 
 test('prioritizes comparable last purchase cost and lists catalog items needing cost review', async t => {

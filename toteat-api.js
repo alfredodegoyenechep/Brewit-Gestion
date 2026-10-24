@@ -4,23 +4,38 @@ const crypto = require('node:crypto');
 const { createSalesSync } = require('./toteat-sales');
 const { createPurchaseSync } = require('./toteat-purchases');
 
-function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchImpl = fetch, enableSync = false, requestSpacing = 21000, syncClock, purchaseReceiptReader }) {
+function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchImpl = fetch, enableSync = false, manualOnly = false, requestSpacing = 21000, syncClock, purchaseReceiptReader }) {
   const root = path.join(uploadsRoot, '.integrations', 'toteat-api');
   const file = path.join(root, 'credentials.json');
   let nextRequestAt = 0;
+  const recentRequests = [];
   const read = () => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   let queue = Promise.resolve(), nextSalesRequestAt = 0;
-  const request = (config, route, params) => {
+  const request = (config, route, params, onDiagnostic) => {
+    const queuedAt = Date.now();
     const task = queue.then(async () => {
       const delay = Math.max(0, nextSalesRequestAt - Date.now(), nextRequestAt - Date.now());
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+      const startedAt = Date.now();
       nextSalesRequestAt = Date.now() + requestSpacing;
       const url = new URL(`https://api.toteat.com/mw/or/1.0/${route}`);
       url.search = new URLSearchParams({ xir: config.restaurantId, xil: config.localId, xiu: config.userId, xapitoken: config.token, ...params });
-      let response, payload;
-      try { response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(45000), headers: { Accept: 'application/json' } }); payload = await require('./historical-control').responseBody(response, { name: route + '.json' }); }
-      catch (error) { if (error.code === 'HISTORICAL_BACKUP_FAILED') throw error; throw new Error('No se pudo consultar Toteat. Se conserva la última actualización.'); }
-      if (response.status === 429) throw new Error('Toteat limitó las consultas. Se reintentará en el próximo ciclo.');
+      let response, payload, responseAt;
+      try { response = await fetchImpl(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(45000), headers: { Accept: 'application/json' } });
+        responseAt = Date.now(); payload = await require('./historical-control').responseBody(response, { name: route + '.json' }); }
+      catch (error) { if (error.code === 'HISTORICAL_BACKUP_FAILED') throw error; throw Object.assign(new Error('No se pudo consultar Toteat. Se conserva la última actualización.'), { code: error.name === 'TimeoutError' ? 'TOTEAT_TIMEOUT' : 'TOTEAT_REQUEST_FAILED' }); }
+      finally {
+        const diagnostic = { route, queuedAt: new Date(queuedAt).toISOString(), queueWaitMs: startedAt - queuedAt,
+          networkMs: responseAt ? responseAt - startedAt : null, bodyMs: responseAt ? Date.now() - responseAt : null,
+          requestMs: Date.now() - startedAt, responseBytes: Number(response?.headers?.get?.('content-length')) || null,
+          status: response?.status || null,
+          rows: Array.isArray(payload?.data) ? payload.data.length : Array.isArray(payload?.data?.purchases) ? payload.data.purchases.length : null };
+        recentRequests.push(diagnostic);
+        try { onDiagnostic?.(diagnostic); } catch { /* Diagnostics must never interrupt a source update. */ }
+        if (recentRequests.length > 100) recentRequests.shift();
+      }
+      if (response.status === 429) throw Object.assign(new Error('Toteat limitó las consultas. Se reintentará en el próximo ciclo.'), { code: 'TOTEAT_RATE_LIMIT' });
+      if ([401, 403].includes(response.status)) throw Object.assign(new Error('Toteat rechazó las credenciales o permisos de este local.'), { code: 'TOTEAT_AUTH_REQUIRED' });
       if (!response.ok || payload.ok !== true) throw new Error(`Toteat no autorizó o no completó la lectura de ${route}. Revisa el permiso y las credenciales del local.`);
       return payload;
     });
@@ -35,11 +50,18 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     userId: config.userId, verifiedAt: config.verifiedAt, productCount: config.productCount
   } : { configured: false };
   const base = '/api/integrations/toteat/api';
+  app.get(`${base}/diagnostics`, (req, res) => res.set('Cache-Control', 'no-store').json({ requestSpacingMs: requestSpacing,
+    connection: 'API pública · token por local', recentRequests: recentRequests.slice(-30) }));
+  const validReviewRange = (range, stores, service) => !range || (typeof range === 'object'
+    && /^\d{4}-\d{2}-\d{2}$/.test(range.from) && /^\d{4}-\d{2}-\d{2}$/.test(range.to)
+    && range.from <= range.to && range.to <= new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago' }).format(new Date())
+    && stores.every(store => service.status(store.id).from <= range.from));
   app.get(`${base}/purchases/status`, (req, res) => {
     res.set('Cache-Control', 'no-store');
-    return res.json({ locations: (locations?.() || []).filter(l => l.type === 'store' && l.status === 'active').map(l => ({ ...purchases.status(l.id), name: l.name })) });
+    return res.json({ locations: (locations?.() || []).filter(l => l.type === 'store' && l.status === 'active').map(l => ({ ...purchases.status(l.id), manualOnly, enabled: manualOnly ? false : purchases.status(l.id).enabled, name: l.name })) });
   });
   app.put(`${base}/purchases/settings`, (req, res) => {
+    if (manualOnly && req.body?.enabled) return res.status(400).json({ error: 'Las compras se actualizan manualmente.' });
     try { return res.json(purchases.configure(String(req.body?.location || ''), req.body || {})); }
     catch (error) { return res.status(400).json({ error: error.message }); }
   });
@@ -48,7 +70,8 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     const stores = (locations?.() || []).filter(l => l.type === 'store' && l.status === 'active' && (selected === 'all' || l.id === selected)
       && purchases.status(l.id).from && purchases.status(l.id).configured);
     if (!stores.length) return res.status(400).json({ error: 'Configura primero la actualización de compras de esta cafetería.' });
-    for (const l of stores) purchases.synchronize(l.id, { full: req.body?.full === true }).catch(() => {});
+    if (!validReviewRange(req.body?.reviewRange, stores, purchases)) return res.status(400).json({ error: 'El período debe estar dentro de la cobertura configurada para compras.' });
+    for (const l of stores) purchases.synchronize(l.id, { full: req.body?.full === true, reviewRange: req.body?.reviewRange || null }).catch(() => {});
     return res.status(202).json({ locations: stores.map(l => purchases.status(l.id)) });
   });
   app.get(`${base}/purchases/export`, (req, res) => {
@@ -62,7 +85,8 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     const selected = String(req.query.location || 'all');
     const stores = (locations?.() || []).filter(l => l.type === 'store' && l.status === 'active' && (selected === 'all' || l.id === selected));
     if (!stores.length && selected !== 'all') return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
-    return res.json({ schedule: sync.schedule(), locations: stores.map(l => ({ ...sync.status(l.id), name: l.name })) });
+    return res.json({ schedule: { ...sync.schedule(), enabled: manualOnly ? false : sync.schedule().enabled },
+      locations: stores.map(l => ({ ...sync.status(l.id), manualOnly, enabled: manualOnly ? false : sync.status(l.id).enabled, name: l.name })) });
   });
   app.patch(`${base}/sales/warning-resolution`, (req, res) => {
     try { return res.json(sync.resolveWarning(String(req.body?.location || ''), req.body?.paymentId, req.body?.resolved)); }
@@ -73,6 +97,7 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     catch (error) { return res.status(400).json({ error: error.message }); }
   });
   app.put(`${base}/sales/settings`, (req, res) => {
+    if (manualOnly && req.body?.enabled) return res.status(400).json({ error: 'Las ventas se actualizan manualmente.' });
     try { return res.json(sync.configure(String(req.body?.location || ''), req.body || {})); }
     catch (error) { return res.status(400).json({ error: error.message }); }
   });
@@ -82,7 +107,9 @@ function registerToteatApi(app, { uploadsRoot, activeLocation, locations, fetchI
     if (!stores.length || (selected !== 'all' && !sync.status(selected).from)) return res.status(400).json({ error: 'Configura primero la sincronización de esta cafetería.' });
     const started = stores.filter(l => sync.status(l.id).from && sync.status(l.id).configured);
     if (!started.length) return res.status(400).json({ error: 'No hay cafeterías con ventas por API configuradas.' });
-    for (const l of started) sync.synchronize(l.id, { full: req.body?.full === true }).catch(() => {});
+    if (!validReviewRange(req.body?.reviewRange, started, sync)) return res.status(400).json({ error: 'El período debe estar dentro de la cobertura configurada para ventas.' });
+    for (const l of started) sync.synchronize(l.id, { full: req.body?.full === true, reviewRange: req.body?.reviewRange || null,
+      recentOnly: req.body?.recentOnly === true && req.body?.full !== true && !req.body?.reviewRange }).catch(() => {});
     return res.status(202).json({ locations: started.map(l => sync.status(l.id)) });
   });
   app.get(`${base}/sales/export`, (req, res) => {

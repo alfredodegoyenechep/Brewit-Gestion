@@ -12,8 +12,10 @@ test('upload view announces authentication pause and offers continuation', { ski
   await page.setContent(fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ''));
   await page.addScriptTag({ content: `
     const testOverview={masters:[],columns:[],rows:[],schedule:{masters:{},inventory:{}},masterStatus:{},job:{running:true,waitingForAuthentication:true,steps:[{state:'waiting-auth',code:'TOTEAT_AUTH_REQUIRED',label:'Maestros compartidos',message:'Inicia sesión en TotEat.'}],summary:{'waiting-auth':1}}};
-    const apiRequest=async url=>{if(url==='/api/uploads/resume'){window.resumeCalls=(window.resumeCalls||0)+1;testOverview.job.waitingForAuthentication=false;testOverview.job.steps[0].state='running';}return testOverview;};
+    const apiRequest=async (url,options)=>{if(url==='/api/uploads/resume'){window.resumeCalls=(window.resumeCalls||0)+1;testOverview.job.waitingForAuthentication=false;testOverview.job.steps[0].state='running';}if(url.endsWith('/sales/sync'))window.salesReview=JSON.parse(options.body);return testOverview;};
     const setStatus=(element,message)=>{element.textContent=message;};
+    const browserIsoToday=()=> '2026-10-24';
+    const offsetIsoDate=()=> '2026-09-24';
   ` });
   const script = fs.readFileSync(path.join(__dirname, '../script.js'), 'utf8');
   await page.addScriptTag({ content: script.slice(script.indexOf('let uploadOverviewBusy = false;'), script.indexOf('setInterval(()=>{const view=document.getElementById(\'upload-overview\')')) });
@@ -26,6 +28,9 @@ test('upload view announces authentication pause and offers continuation', { ski
   await page.waitForFunction(() => document.getElementById('resume-upload-api').hidden);
   assert.equal(await page.evaluate(() => window.resumeCalls), 1);
   assert.match(await page.locator('#upload-refresh-steps').innerText(), /Actualizando/);
+  await page.evaluate(async()=>{testOverview.job.running=false;await loadUploadOverview();});
+  await page.getByRole('button',{name:'Revisar dos últimas ventanas de ventas'}).click();
+  assert.deepEqual(await page.evaluate(()=>window.salesReview),{location:'all'});
 });
 
 test('el resumen abre el detalle de carga y permite revisar pagos sin productos', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
@@ -138,7 +143,7 @@ test('sales frequency stays shared when changing cafeterias and polling only use
   assert.deepEqual(saves, []);
   await page.getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('[data-toteat-sales-sync]').disabled);
-  assert.deepEqual(updates, [{ location: 'store-1', full: false }]);
+  assert.deepEqual(updates, [{ location: 'store-1', full: false, recentOnly: true }]);
   assert.equal(states[0].enabled, false);
   await page.locator('#toteat-api-location').selectOption('store-2');
   await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="from"]').value === '2026-09-15');
@@ -157,8 +162,8 @@ test('sales frequency stays shared when changing cafeterias and polling only use
   assert.equal(states[1].enabled, false);
   assert.equal(states[0].enabled, false);
   assert.equal(saves.length, 2);
-  assert.deepEqual(updates[1], { location: 'store-2', full: false });
-  assert.deepEqual(updates[2], { location: 'store-1', full: false });
+  assert.deepEqual(updates[1], { location: 'store-2', full: false, recentOnly: true });
+  assert.deepEqual(updates[2], { location: 'store-1', full: false, recentOnly: true });
 });
 
 test('finding evidence exposes nested source fields safely and closes with Escape', { skip: !fs.existsSync(CHROME_PATH) }, async t => {

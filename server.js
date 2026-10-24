@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('./record-store').fs;
 const os = require('os');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { buildProductAnalytics, reconcileOrderLineSales } = require('./product-analytics');
 const { reconcilePaymentDetail } = require('./payment-reconciliation');
 const { toteatPaymentCollections } = require('./payment-collections');
@@ -2070,17 +2071,38 @@ const { createToteatAutomation, TOTEAT_REPORT_URL, TOTEAT_LOGIN_URL } = require(
 
 function createApp(options = {}) {
   const app = express();
+  const calculationReads = new AsyncLocalStorage();
+  app.use((req, res, next) => calculationReads.run({ rows: new Map(), bytes: 0 }, next));
   let toteatSalesSync;
   let toteatMasterSync;
+  function cachedSourceRows(kind, filePath, read) {
+    const context = calculationReads.getStore();
+    if (!context) return read();
+    const source = require('./record-store').resolve(filePath);
+    const stat = fs.statSync(source);
+    const key = `${kind}|${source}|${stat.mtimeMs}|${stat.size}`;
+    if (context.rows.has(key)) return context.rows.get(key);
+    const rows = read();
+    const estimate = Math.max(stat.size * 8, rows.length * 256);
+    if (context.bytes + estimate <= 128 * 1024 * 1024) {
+      context.rows.set(key, rows);
+      context.bytes += estimate;
+    }
+    return rows;
+  }
   function readPurchaseRows(filePath) {
-    const workbook = XLSX.readFile(filePath, { cellDates: true });
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
-    return toteatSalesSync?.purchases ? toteatSalesSync.purchases.filterLegacy(filePath, rows) : rows;
+    return cachedSourceRows('purchases', filePath, () => {
+      const workbook = XLSX.readFile(filePath, { cellDates: true });
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
+      return toteatSalesSync?.purchases ? toteatSalesSync.purchases.filterLegacy(filePath, rows) : rows;
+    });
   }
   function readSalesRows(filePath) {
-    const workbook = XLSX.readFile(filePath, { cellDates: true });
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
-    return toteatSalesSync ? toteatSalesSync.filterLegacy(filePath, rows) : rows;
+    return cachedSourceRows('sales', filePath, () => {
+      const workbook = XLSX.readFile(filePath, { cellDates: true });
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: null, raw: true });
+      return toteatSalesSync ? toteatSalesSync.filterLegacy(filePath, rows) : rows;
+    });
   }
   const uploadsRoot = options.uploadsRoot || process.env.BREWIT_UPLOADS_ROOT || path.join(__dirname, 'uploads');
   require('./record-store').registerRoot(uploadsRoot);
@@ -3004,6 +3026,23 @@ function createApp(options = {}) {
     return crypto.createHash('sha256').update(JSON.stringify(values)).digest('hex');
   }
 
+  function mercadoPagoRowFingerprint(row, header = []) {
+    const normalized = header.map((name, index) => [String(name ?? '').trim().toUpperCase().replace(/[\s_]+/g, '_'), row[index]])
+      .filter(([name]) => name)
+      .map(([name, value]) => {
+        if (name === 'TRANSACTION_DATE' && value) {
+          const instant = new Date(value);
+          if (!Number.isNaN(instant.getTime())) return [name, instant.toISOString()];
+        }
+        if (name === 'STORE_ID' || name === 'SOURCE_ID') return [name, mercadoPagoStores.storeId(value) || String(value ?? '').trim()];
+        return [name, value instanceof Date && !Number.isNaN(value.getTime())
+          ? value.toISOString() : String(value ?? '').trim()];
+      })
+      .filter(([name, value]) => value !== '' && !(['FEE_AMOUNT', 'MP_FEE', 'COMMISSION_AMOUNT', 'FEE'].includes(name) && Number(value) === 0))
+      .sort(([left], [right]) => left.localeCompare(right));
+    return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+  }
+
   function readGenericTransactionSheets(filePath) {
     const workbook = XLSX.readFile(filePath, { cellDates: true });
     return workbook.SheetNames.map(name => ({
@@ -3018,7 +3057,7 @@ function createApp(options = {}) {
   }
 
   function genericTransactionHistory(locationId, field, additionalExcludedRanges = []) {
-    const keys = new Set();
+    const keys = field === 'mercadopago' ? new Map() : new Set();
     const storedFiles = field === 'mercadopago' ? storedWeeklyFiles(locationId, field) : storedTransactionFiles(locationId, field);
     for (const stored of storedFiles) {
       for (const sheet of readGenericTransactionSheets(stored.filePath)) {
@@ -3026,7 +3065,9 @@ function createApp(options = {}) {
         for (const row of sheet.rows.slice(1)) {
           const date = genericTransactionRowDate(row, header);
           if (date && (dateIsExcluded(date, stored.excludedRanges) || dateIsExcluded(date, additionalExcludedRanges))) continue;
-          keys.add(genericTransactionRowKey(row, header, field));
+          const key = genericTransactionRowKey(row, header, field);
+          if (field === 'mercadopago') keys.set(key, mercadoPagoRowFingerprint(row, header));
+          else keys.add(key);
         }
       }
     }
@@ -3089,20 +3130,24 @@ function createApp(options = {}) {
     const source = path.join(stagingDirectory, staged.filename);
     const sheets = readGenericTransactionSheets(source);
     const historyKeys = genericTransactionHistory(locationId, field, additionalExcludedRanges);
-    const acceptedKeys = new Set();
+    const acceptedKeys = field === 'mercadopago' ? new Map() : new Set();
     const acceptedDates = [];
     let uploadedRows = 0;
     let duplicateTransactions = 0;
+    let conflictingTransactions = 0;
     const filteredSheets = sheets.map(sheet => {
       const header = sheet.rows[0] || [];
       const rows = sheet.rows.slice(1).filter(row => {
         uploadedRows += 1;
         const key = genericTransactionRowKey(row, header, field);
+        const fingerprint = field === 'mercadopago' ? mercadoPagoRowFingerprint(row, header) : null;
         if (historyKeys.has(key) || acceptedKeys.has(key)) {
-          duplicateTransactions += 1;
+          if (field === 'mercadopago' && (historyKeys.get(key) || acceptedKeys.get(key)) !== fingerprint) conflictingTransactions += 1;
+          else duplicateTransactions += 1;
           return false;
         }
-        acceptedKeys.add(key);
+        if (field === 'mercadopago') acceptedKeys.set(key, fingerprint);
+        else acceptedKeys.add(key);
         const date = genericTransactionRowDate(row, header);
         if (date) acceptedDates.push(date);
         return true;
@@ -3113,7 +3158,7 @@ function createApp(options = {}) {
       fs.rmSync(source, { force: true });
       return {
         staged: null,
-        stats: { uploadedRows, newRows: 0, newTransactions: 0, duplicateTransactions }
+        stats: { uploadedRows, newRows: 0, newTransactions: 0, duplicateTransactions, conflictingTransactions }
       };
     }
     const workbook = XLSX.utils.book_new();
@@ -3139,7 +3184,8 @@ function createApp(options = {}) {
         uploadedRows,
         newRows: acceptedKeys.size,
         newTransactions: acceptedKeys.size,
-        duplicateTransactions
+        duplicateTransactions,
+        conflictingTransactions
       }
     };
   }
@@ -3187,9 +3233,10 @@ function createApp(options = {}) {
     const split = mercadoPagoStores.splitByStore(sheets, readLocations().locations);
     const directory = fs.mkdtempSync(path.join(stagingRoot, 'mp-web-'));
     const originals = new Map(), published = [], moved = [];
-    const result = { newTransactions: 0, duplicateTransactions: 0, skippedCount: split.summary.unassociatedCount };
+    let conflictEvidenceDirectory = null;
+    const result = { newTransactions: 0, duplicateTransactions: 0, conflictingTransactions: 0, skippedCount: split.summary.unassociatedCount };
     try {
-      for (const group of split.groups) {
+      for (const group of split.groups.filter(group => checkpoints.some(store => store.location === group.location.id))) {
         const locationId = group.location.id;
         const filename = `mercadopago-web-${crypto.randomUUID()}.xlsx`;
         const source = path.join(directory, filename);
@@ -3198,6 +3245,7 @@ function createApp(options = {}) {
         const prepared = prepareIncrementalMercadoPago(staged, locationId, directory);
         result.newTransactions += prepared.stats.newTransactions;
         result.duplicateTransactions += prepared.stats.duplicateTransactions;
+        result.conflictingTransactions += prepared.stats.conflictingTransactions || 0;
         if (!prepared.staged) continue;
         const indexPath = transactionIndexPath(locationId);
         originals.set(locationId, readJson(indexPath, null));
@@ -3217,6 +3265,23 @@ function createApp(options = {}) {
         index.updatedAt = new Date().toISOString();
         writeTransactionIndex(locationId, index); published.push(locationId);
       }
+      if (result.conflictingTransactions) {
+        const evidenceId = crypto.randomUUID();
+        conflictEvidenceDirectory = path.join(uploadsRoot, '.integrations', 'mercadopago', 'conflicts', evidenceId);
+        ensureDir(conflictEvidenceDirectory);
+        const originals = reports.map((report, index) => {
+          const filename = `${index + 1}-${path.basename(report.path)}`;
+          fs.copyFileSync(report.path, path.join(conflictEvidenceDirectory, filename));
+          return { filename, sha256: crypto.createHash('sha256').update(fs.readFileSync(report.path)).digest('hex') };
+        });
+        writeJsonAtomic(path.join(conflictEvidenceDirectory, 'manifest.json'), {
+          evidenceId, observedAt: new Date().toISOString(), from, to,
+          conflictingTransactions: result.conflictingTransactions,
+          previousRecords: 'Conservados en los archivos publicados de transacciones MercadoPago por local.',
+          downloadedReports: originals
+        });
+        result.conflictEvidenceId = evidenceId;
+      }
       return result;
     } catch (error) {
       for (const locationId of published) {
@@ -3225,6 +3290,7 @@ function createApp(options = {}) {
         else fs.rmSync(transactionIndexPath(locationId), { force: true });
       }
       for (const file of moved) fs.rmSync(file, { force: true });
+      if (conflictEvidenceDirectory) fs.rmSync(conflictEvidenceDirectory, { recursive: true, force: true });
       throw error;
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   }
@@ -3252,7 +3318,8 @@ function createApp(options = {}) {
   const mercadoPagoSync = require('./mercadopago-sync').createMercadoPagoSync({
     uploadsRoot, checkpoints: mercadoPagoCheckpoints, importReports: importMercadoPagoReports,
     browser: options.mercadoPagoBrowser, clock: options.mercadoPagoClock,
-    enableScheduler: options.enableMercadoPagoSync !== false && options.enableToteatSync !== false
+    enableScheduler: options.enableMercadoPagoSync !== false && options.enableToteatSync !== false && !options.manualExternalSources,
+    manualOnly: options.manualExternalSources === true
   });
   require('./historical-control').register(app,historicalControl, {
     catalog: location => toteatMasterSync.current(['shared','main-warehouse','all'].includes(location) ? 'store-1' : location)?.products
@@ -3266,8 +3333,13 @@ function createApp(options = {}) {
     catch (error) { res.status(400).json({ error: error.message }); }
   });
   app.post('/api/integrations/mercadopago/sync', (req, res) => {
-    mercadoPagoSync.synchronize().catch(() => {});
-    res.status(202).json(mercadoPagoSync.status());
+    try {
+      const location = String(req.body?.location || 'all');
+      if (location !== 'all' && (!activeLocation(location) || activeLocation(location).type !== 'store'))
+        return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
+      mercadoPagoSync.synchronize({ reviewRange: req.body?.reviewRange || null, location }).catch(() => {});
+      res.status(202).json(mercadoPagoSync.status());
+    } catch (error) { res.status(400).json({ error: error.message }); }
   });
   app.use('/api', (req,res,next)=>{
     if(!synchronizedOnly || !/^\/(reports\/|sales\/|products(?:\/|$)|ingredients$|sales-by-ingredients$|financial-results(?:\/weekly)?$|findings$|purchase-projections$|inventory\/)/.test(req.path))return next();
@@ -3299,9 +3371,13 @@ function createApp(options = {}) {
     res.json=payload=>send(decoratePayload(payload));
     next();
   });
+  if (options.enableBackgroundCalculations) require('./report-worker-proxy').registerReportWorkerProxy(app, {
+    uploadsRoot, sourceMode: options.sourceMode, reportToday: options.reportToday, projectionToday: options.projectionToday
+  });
 
   toteatSalesSync = registerToteatApi(app, { uploadsRoot, activeLocation, locations: () => readLocations().locations,
-    fetchImpl: options.toteatApiFetch, enableSync: options.enableToteatSync,
+    fetchImpl: options.toteatApiFetch, enableSync: options.enableToteatSync && !options.manualExternalSources,
+    manualOnly: options.manualExternalSources === true,
     requestSpacing: options.toteatRequestSpacing, syncClock: options.toteatSyncClock,
     purchaseReceiptReader: options.toteatPurchaseReceiptReader || ((restaurant, readOptions) => toteatAutomation.readNativeSources(restaurant, {...readOptions, allowSavedProfileFallback: true})) });
   app.locals.toteatSalesSync = toteatSalesSync;
@@ -3327,7 +3403,9 @@ function createApp(options = {}) {
     catch (error) { res.status(400).json({ error: error.message }); }
   });
 
-  require('./upload-overview').registerUploadOverview(app, { uploadsRoot, enableSync: options.enableToteatSync, locations: () => readLocations().locations, sales: toteatSalesSync, masters: toteatMasterSync, stock: stockSync, counts: countSync, files: (id, field) => storedFieldFiles(id, field).map(item => item.record), masterFiles: field => masterFiles(field) });
+  require('./upload-overview').registerUploadOverview(app, { uploadsRoot, enableSync: options.enableToteatSync && !options.manualExternalSources,
+    manualOnly: options.manualExternalSources === true, locations: () => readLocations().locations, sales: toteatSalesSync, masters: toteatMasterSync, stock: stockSync, counts: countSync,
+    files: (id, field) => storedFieldFiles(id, field).map(item => item.record), masterFiles: field => masterFiles(field) });
   require('./upload-records').registerUploadRecords(app, {location:activeLocation,load(location,field,from,to) {
     const central=location.id==='main-warehouse',id=central?'store-1':location.id;
     const within=d=>d&&d>=from&&d<=to;
@@ -3395,7 +3473,15 @@ function createApp(options = {}) {
     catch (e) { res.status(400).json({ error: e.message }); }
   });
   app.post('/api/integrations/toteat/stock/sync', (req, res) => {
-    try { stockSync.synchronize(req.body.location, req.body).catch(() => {}); countSync.synchronize(req.body.location, req.body).catch(() => {}); res.status(202).json({ started: true }); }
+    try {
+      const stockJob = stockSync.synchronize(req.body.location, req.body);
+      stockJob.then(() => {
+        const original = stockSync.original(req.body.location);
+        if (original) countSync.publish(req.body.location, original);
+        stockSync.rebuild(req.body.location);
+      }).catch(() => {});
+      res.status(202).json({ started: true });
+    }
     catch (e) { res.status(400).json({ error: e.message }); }
   });
   app.get('/api/integrations/toteat/stock/current', (req, res) => {
@@ -4884,6 +4970,8 @@ function createApp(options = {}) {
   // repeat inventory and consumption calculations for every cafeteria.
   const purchaseOrderProjections = new Map();
   const purchaseOrderProjectionLifetime = 4 * 60 * 60 * 1000;
+  const projectionCacheRoot = path.join(uploadsRoot, '.cache', 'purchase-projections');
+  const projectionCacheFile = id => path.join(projectionCacheRoot, `${id}.json`);
   function retainPurchaseOrderProjection(projection) {
     for (const [id, snapshot] of purchaseOrderProjections) {
       if (Date.now() - snapshot.createdAt > purchaseOrderProjectionLifetime) purchaseOrderProjections.delete(id);
@@ -4893,16 +4981,24 @@ function createApp(options = {}) {
     const fields = ['key', 'code', 'name', 'supplierKey', 'internalUnit', 'purchaseUnit', 'unitsPerPurchaseUnit',
       'unitsPerPackage', 'unitsPerPackageBasis', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost',
       'currentInventory', 'averageDailyConsumption'];
-    purchaseOrderProjections.set(projectionId, { createdAt: Date.now(), projection: {
+    const snapshot = { createdAt: Date.now(), projection: {
       location: projection.location, company: projection.company, period: projection.period,
       suppliers: projection.suppliers,
       items: projection.items.map(item => Object.fromEntries(fields.map(key => [key, item[key]])))
-    } });
+    } };
+    fs.mkdirSync(projectionCacheRoot, { recursive: true, mode: 0o700 });
+    require('./toteat-sales').atomicJson(projectionCacheFile(projectionId), snapshot);
+    purchaseOrderProjections.set(projectionId, snapshot);
+    const files = fs.readdirSync(projectionCacheRoot).filter(name => /^[0-9a-f-]{36}\.json$/.test(name))
+      .map(name => ({ name, time: fs.statSync(path.join(projectionCacheRoot, name)).mtimeMs })).sort((a, b) => b.time - a.time);
+    files.forEach((item, index) => { if (index >= 64 || Date.now() - item.time > purchaseOrderProjectionLifetime)
+      fs.rmSync(path.join(projectionCacheRoot, item.name), { force: true }); });
     return { ...projection, projectionId };
   }
   function purchaseOrderProjection(locationId, projectionId) {
     if (!projectionId) return buildPurchaseProjection(locationId);
-    const snapshot = purchaseOrderProjections.get(projectionId);
+    const snapshot = /^[0-9a-f-]{36}$/.test(projectionId)
+      ? purchaseOrderProjections.get(projectionId) || readJson(projectionCacheFile(projectionId), null) : null;
     if (!snapshot || Date.now() - snapshot.createdAt > purchaseOrderProjectionLifetime
       || snapshot.projection.location.id !== locationId || !activeLocation(locationId)) {
       const error = new Error('La proyección de esta orden venció o ya no está disponible. Cierra la orden y actualiza la proyección antes de guardar.');
@@ -7390,7 +7486,6 @@ function createApp(options = {}) {
       throw error;
     }
     const selectedStores = selectedStore ? [selectedStore] : stores;
-    const costValuation = query.costValuation === 'historical' ? 'historical' : 'period-end';
     const warnings = [];
     const weeklyOrderDiscounts = new Map();
     const weeklyLineDiscounts = new Map();
@@ -7424,10 +7519,7 @@ function createApp(options = {}) {
 
     const hotIds = extrasLookup?.descendantIds('BA.001') || new Set(['BA.001']);
     const coldIds = extrasLookup?.descendantIds('BA.002') || new Set(['BA.002']);
-    const periodEndCostResolver = costValuation === 'period-end'
-      ? buildCostResolver(valuationDate, selectedStores.map(location => location.id)) : null;
-    const historicalCostResolvers = costValuation === 'historical'
-      ? new Map(selectedStores.map(location => [location.id, buildHistoricalCostResolver(dateTo, [location.id])])) : null;
+    const periodEndCostResolver = buildCostResolver(valuationDate, selectedStores.map(location => location.id));
     const facts = [];
     const seenRows = new Set();
     let salesFilesRead = 0;
@@ -7464,13 +7556,10 @@ function createApp(options = {}) {
               }
             }
             const catalogItem = costCatalog.get(code);
-            const costReference = costValuation === 'historical'
-              ? historicalCostResolvers.get(location.id).resolve(date, code)
-              : periodEndCostResolver.resolve(code, catalogItem?.unit, catalogItem);
+            const costReference = periodEndCostResolver.resolve(code, catalogItem?.unit, catalogItem);
             const reportedCost = numericValue(rowValue(row, ['Costo']));
             const usesResolvedCost = costReference.source !== 'missing';
-            const usesSalesExportCost = !usesResolvedCost && reportedCost !== null
-              && (costValuation === 'period-end' || reportedCost > 0);
+            const usesSalesExportCost = !usesResolvedCost && reportedCost !== null;
             const totalCost = usesResolvedCost ? quantity * costReference.unitCost
               : usesSalesExportCost ? reportedCost : null;
             const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim();
@@ -7662,7 +7751,7 @@ function createApp(options = {}) {
         linesWithNetFieldConsistentCost: facts.filter(fact => fact.costAvailable && fact.costBasisEvidence === 'net-field-consistent').length,
         linesWithUnverifiedCost: unverifiedCostLines,
         unverifiedCostProducts: require('./financial-warning-details').unverifiedProducts(facts),
-        costValuationDate: costValuation === 'historical' ? 'sale-date' : 'period-end',
+        costValuationDate: 'period-end',
         costSources: Object.fromEntries(['recipe', 'purchase', 'master', 'sales-export', 'missing']
           .map(source => [source, facts.filter(fact => fact.costSource === source).length])),
         missingCostProducts: [...missingCostProducts.values()].sort((left, right) =>
@@ -7831,7 +7920,7 @@ function createApp(options = {}) {
     const failure = (label, error) => warnings.push(`${label}: ${error.message}`);
     if (!isWarehouse) try {
       const payload = buildFinancialResultsPayload({ location: location.id, dateFrom: from, dateTo: through,
-        costValuation: 'period-end', skipInventory: true }, { costCutoff,
+        skipInventory: true }, { costCutoff,
         onRevenueFacts: facts => { details.netSales = weeklyDetailBuilder.sales(facts); } });
       const files = storedSalesFiles(location.id), coverage = fileCoverage(files);
       const available = payload.revenue.filesRead > 0 && (coverage.available || payload.revenue.lineCount > 0);
@@ -11391,7 +11480,6 @@ function createApp(options = {}) {
     try {
       const stores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
       const clock = salesReportClock();
-      const costValuation = req.query.costValuation === 'historical' ? 'historical' : 'period-end';
       const catalogMaster = latestMasterFile('master-catalog', clock.today);
       let costCatalog = new Map();
       if (catalogMaster) costCatalog = parseIngredientCatalog(catalogMaster.filePath);
@@ -11400,9 +11488,7 @@ function createApp(options = {}) {
       let filesRead = 0;
       const sourceStores = [];
       for (const location of stores) {
-        const resolver = costValuation === 'historical'
-          ? buildHistoricalCostResolver(clock.today, [location.id])
-          : buildCostResolver(clock.today, [location.id], { catalog: costCatalog });
+        const resolver = buildCostResolver(clock.today, [location.id], { catalog: costCatalog });
         const orders = new Map();
         const seenRows = new Set();
         const storedFiles = storedSalesFiles(location.id);
@@ -11441,12 +11527,10 @@ function createApp(options = {}) {
               }
               const quantity = numericValue(rowValue(row, ['Cantidad'])) || 0;
               const catalogItem = costCatalog.get(code);
-              const costReference = costValuation === 'historical'
-                ? resolver.resolve(dateTime.slice(0, 10), code)
-                : resolver.resolve(code, catalogItem?.unit, catalogItem);
+              const costReference = resolver.resolve(code, catalogItem?.unit, catalogItem);
               const reportedCost = numericValue(rowValue(row, ['Costo']));
               const totalCost = costReference.source !== 'missing' ? quantity * costReference.unitCost
-                : reportedCost !== null && (costValuation === 'period-end' || reportedCost > 0) ? reportedCost : null;
+                : reportedCost;
               if (totalCost === null) order.costAvailable = false;
               else order.cost += totalCost;
               if (costReference.source === 'missing' || costReference.costBasisEvidence !== 'net-field-consistent') {
@@ -11478,7 +11562,7 @@ function createApp(options = {}) {
           ordersWithCost: facts.filter(fact => fact.costAvailable).length,
           ordersWithNetFieldConsistentCost: facts.filter(fact => fact.costAvailable && fact.costBasisEvidence === 'net-field-consistent').length,
           ordersTotal: facts.length,
-          costValuationDate: costValuation === 'historical' ? 'sale-date' : 'period-end',
+          costValuationDate: 'period-end',
           stores: sourceStores
         },
         coverageNote: stores.some(store => !store.operatingWeekdays?.length)
@@ -11863,10 +11947,11 @@ function createApp(options = {}) {
         writtenIndexes.push(locationId);
       }
       if (manifest.assignments) {
-        imports.mercadopago = { newTransactions: 0, duplicateTransactions: 0 };
+        imports.mercadopago = { newTransactions: 0, duplicateTransactions: 0, conflictingTransactions: 0 };
         for (const value of Object.values(locationImports)) {
           imports.mercadopago.newTransactions += value.mercadopago?.newTransactions || 0;
           imports.mercadopago.duplicateTransactions += value.mercadopago?.duplicateTransactions || 0;
+          imports.mercadopago.conflictingTransactions += value.mercadopago?.conflictingTransactions || 0;
         }
       }
       historicalControl.finish(manifest.historicalRunId);
@@ -12361,7 +12446,8 @@ if (require.main === module) {
   const envFile = path.join(__dirname, '.env');
   if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
   const port = Number(process.env.PORT) || DEFAULT_PORT;
-  createApp({ enableToteatSync: process.env.BREWIT_DISABLE_SYNC !== '1' }).listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
+  createApp({ enableToteatSync: process.env.BREWIT_DISABLE_SYNC !== '1', manualExternalSources: true,
+    enableBackgroundCalculations: true }).listen(port, () => console.log(`Brewit running at http://localhost:${port}`));
 }
 
 module.exports = {

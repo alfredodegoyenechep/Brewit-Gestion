@@ -1,0 +1,149 @@
+Auditoría Brewit 2026-10-24. Registros de pruebas existentes.
+Comando del grupo principal:
+env -u BREWIT_DATABASE_URL -u BREWIT_TEST_DATABASE_URL -u BREWIT_AUTH_KEY BREWIT_DISABLE_SYNC=1 node --test --test-concurrency=2 test/toteat-api.test.js test/toteat-sales.test.js test/toteat-purchases.test.js test/toteat-direct-masters.test.js test/toteat-native-purchases.test.js test/toteat-public-inventory.test.js test/toteat-stock.test.js test/toteat-counts.test.js test/toteat-local-transfers.test.js test/mercadopago-sync.test.js test/storage-retention.test.js test/historical-ingestion.test.js test/purchase-projection-policies.test.js test/weekly-results-details-ui.test.js test/weekly-results-export-ui.test.js test/sales-projection.test.js test/financial-warning-ui.test.js test/upload-overview.test.js
+
+Grupo principal:
+✔ every warning opens an accessible evidence dialog and restores focus on Escape (6253.785083ms)
+✔ manual MercadoPago backs up the unsplit original, reports corrections before dedup and survives operational removal (279.88325ms)
+✔ original backup failure blocks manual confirmation and leaves previous operational data intact (16.48975ms)
+✔ real source formats support daily Kardex keys, purchase documents and every shared master family (1734.419583ms)
+✖ historical UI opens below data sync, separates baseline from no changes and exposes details, backups and storage (3406.841125ms)
+✔ historical UI explains missing assets and retries initialization after an unavailable endpoint (1103.567625ms)
+✔ audit alerts are the default view, filter findings, show before and after values and export the selected report (1193.343667ms)
+✔ historical details show named article changes, readable values and search, and distinguish reordered equivalents (1321.450875ms)
+✔ period parsing uses the period cell, accepts Chilean month names and rejects impossible dates (0.806209ms)
+✔ web updates include each store last day and deduplicate manual records, reordered columns and overlapping reports (370.623208ms)
+✔ invalid later report leaves all stores unchanged and does not publish the earlier valid download (35.214791ms)
+✔ schedule is opt-in, persists, runs once at 08:00 Santiago, and recovers missed starts (167.552792ms)
+✔ auth pauses can resume without concurrent downloads or exposing browser errors (78.494125ms)
+✔ browser downloads overlapping CSV reports across pages and uses period instead of creation date (890.895875ms)
+✔ browser preserves the login window and resumes authenticated CSV download (969.845875ms)
+✔ UI separates manual and web imports, offers authentication continuation, and saves the daily preference (11041.237ms)
+✔ copies saved criteria by code without inventory, replacing destination criteria and administration flags (74.746958ms)
+✔ rejects unconfirmed replacement, invalid origins, empty or invalid source criteria without changing saved data (31.432541ms)
+✔ UI loads projections only on refresh when opening the view or changing location (1067.5415ms)
+✔ UI requires an origin and confirmation, leaves data intact on cancellation, and copies to a location without inventory (1307.512541ms)
+✔ uses a fixed window of equivalent dates, skips zeros within it and never feeds projections back into history (1.190375ms)
+✔ averages available positive values, keeps past actuals, and excludes only the closed locations (0.691541ms)
+✔ switches between 2, 4, 6 and 8 calendar references without replacing zero dates with older positive sales (0.549833ms)
+✔ compares matching elapsed dates and real closes, then compares next month against the current projected close (0.387792ms)
+✔ builds true month boundaries across New Year, leap February and Santiago clock changes (0.380625ms)
+✔ API shares real net sales with the monthly report, validates closures and persists them independently by location (105.349042ms)
+✔ UI shows two calendars, real and projected monthly totals, and restores saved closures without rereading sales (1344.192542ms)
+✔ UI changes the forecast from cached history when selecting 6 or 8 days and displays zero-sale Sundays as $0 (724.595292ms)
+✔ audit is read-only, manifests delete only confirmed candidates, repeat application is safe (25.941792ms)
+✔ unique coverage, changed candidates and active readers are preserved (12.647ms)
+✔ manifest cannot remove masters, escape root or follow symlinks (13.731291ms)
+✔ a newer confirmed window replaces cancellations rather than unioning old documents (0.147125ms)
+✔ retired aggregate inventory is replaceable only by complete documents of the same verified local (0.08775ms)
+✔ connects with read-only menu request, persists private credentials and exposes only summary (56.4815ms)
+✔ sales frequency is shared across cafeterias while historical start dates remain local (22.028166ms)
+✔ rejects invalid inputs without calling Toteat (10.812125ms)
+✔ rejected permission never exposes secrets or overwrites saved credentials (9.915209ms)
+✔ application failure never exposes secrets or overwrites saved credentials (10.260458ms)
+✔ invalid menu never exposes secrets or overwrites saved credentials (10.463959ms)
+✔ network error never exposes secrets or overwrites saved credentials (9.023417ms)
+✔ rate limit never exposes secrets or overwrites saved credentials (10.8715ms)
+✔ connection form saves a verified connection and clears the token in the browser (3274.133084ms)
+✔ original counts retain documents, zeros, units and statuses and filter warehouse records (14.161125ms)
+✔ invalid/incomplete reads preserve last publication; later success clears persisted error (87.886ms)
+✔ record and overview endpoints expose original count documents as their own source (217.190125ms)
+✔ expired session gives actionable feedback, preserves counts and clears after login (87.737958ms)
+✔ reads complete masters with GET only and preserves costs, recipes and package conversions (50.66675ms)
+✔ rejects expired authentication without leaking credential or publishing partial data (2.679166ms)
+✔ rejects wrong locations and paginated incomplete masters (2.97625ms)
+✔ does not invent a positive conversion for a zero factor present in Toteat (0.072417ms)
+✔ connection presence never claims active authentication and expired JWT is rejected before network access (3.180875ms)
+✔ received transfer debits dispatch warehouse and credits receiving warehouse exactly once (1.867417ms)
+✔ origin warehouse follows dispatch product identity even if receipt order changes; mixed origins remain unknown (0.106ms)
+✔ pending and cancelled requests do not move stock; confirmed dispatch uses its own date (0.170791ms)
+✔ foreign locations, missing details, unknown warehouses and invalid quantities fail closed (0.176583ms)
+✔ document outside movement period is excluded and legitimate repeated product lines are preserved (0.084708ms)
+✔ native purchases read receipt headers with source=web in bounded date windows, without fetching Kardex balances (2.751834ms)
+✔ native purchases reject incomplete pages or rejected sessions instead of accepting partial headers (0.453375ms)
+✔ API preserves signed purchase, zero cost and actual sales without recipes; rejects malformed arithmetic (6.635834ms)
+✔ sparse dates carry known balances without inventing physical counts; unexplained gaps stay incomplete (0.187625ms)
+✔ API costing uses warehouse, cutoff and units, keeps zero and never falls back to master (0.646ms)
+✔ public reads request all windows and propagate authorization failure without partial publication (0.182167ms)
+✔ purchases preserve SKU, independent quantities, line total and rounding without inventing fields (1.119667ms)
+✔ purchase snapshots replace documents and preserve the last valid version on failure (284.405333ms)
+✔ purchase reports use the API source once and expose a preview and protected export (227.913833ms)
+✔ adapter preserves final sales, discounts, change, line identity and Chilean time (1.139ms)
+✔ repeated extras stay distinct and references preserve parent adjacency (0.46525ms)
+✔ credit notes reverse positive source lines exactly once without mutating API data (0.320791ms)
+✔ separate payments sum once per order and ambiguous shared lines are blocked (0.630834ms)
+✔ one shared sales schedule controls every store, preserves manual mode and survives restarts (506.906042ms)
+✔ conflicting legacy frequencies migrate to shared manual mode while retaining each historical range (6.179ms)
+✔ a frequency change during synchronization stays shared after the running job finishes (77.698375ms)
+✔ synchronization publishes both files atomically, is idempotent, and preserves legacy history (298.972291ms)
+✔ warning timestamps are recovered from historical payments in Chilean time (83.017542ms)
+✔ refresh includes an old open shift and windows stay at most 15 days (247.559084ms)
+✔ all report readers use API data without double counting an old upload (300.923333ms)
+✔ warning resolutions persist across synchronization and restart and stay scoped to the store (220.14325ms)
+✔ confirmed cancellations exclude money and products while preserving raw payment evidence (0.59ms)
+✔ cancelled order with a credit note offsets the original exactly once (0.187666ms)
+✔ sync verifies missing-product order states, retains known cancellations on API failure and supports persistent confirmation (294.088625ms)
+✔ a linked credit note on another order retains the original to avoid reversing twice (0.447833ms)
+✔ confirmation corrects daily and network reports immediately and survives resync (170.042625ms)
+✔ a master unit change keeps original records and excludes only the unconvertible product (8.147041ms)
+✔ a failed dependency rebuild preserves the last version and status remains readable until recovery (22.749875ms)
+✔ corrected purchase warehouse replaces old local receipts automatically without reading Toteat Kardex (19.339709ms)
+✔ stock sales consume finished units; transformation consumes original ingredient lines exactly once (4.109208ms)
+✔ transfers balance, preserve identical legitimate lines and pending counts never change stock (0.207917ms)
+✔ physical count resets balance once and exposes discrepancy; negative received quantities reduce stock (0.131791ms)
+✔ ambiguous sales and unknown references are visible, not fabricated (0.255375ms)
+✔ duplicate documents, wrong local and unknown warehouses fail closed (0.254208ms)
+✔ atomic version replacement is idempotent, preserves previous generation on failed source (15.486083ms)
+✔ transformation ledger preserves full precision while posting each input at three decimals (0.1645ms)
+✔ extra sales include base and replacement once, leaving compensation to the report (0.348125ms)
+✔ independent counts rebuild the ledger and close the next day without extending movement coverage (37.083875ms)
+✔ unchanged rebuilds do not create snapshots and real changes retain three generations (27.500167ms)
+✔ disk failure while writing a replacement retains the current pointer and removes the partial generation (6.407292ms)
+✔ one unreadable inventory source does not block overview or refresh of other sources (31.84925ms)
+✔ authentication pauses the plan and resumes the same step without repeating completed groups (8.8665ms)
+✔ overview distinguishes manual files, central source, schedules and sequential API refresh (4.423625ms)
+✔ native schedules persist, respect due times, avoid overlap and retry failures at the selected interval (21.565666ms)
+✔ refresh exposes the full plan before execution and preserves success and failure results after restart (12.651292ms)
+✔ failed master step reflects a later successful publication without overwriting the original run (5.326292ms)
+✔ individual refresh targets only the selected local source and rejects manual or inactive cells (16.354375ms)
+✔ eight figures open accessible reports with reconciled totals, filtering, sorting, XLSX and cancellation (1947.958625ms)
+✔ PDF and XLSX preview and download the calculated report with matching styles, repeated titles and numeric values (1415.866584ms)
+ℹ tests 105
+ℹ suites 0
+ℹ pass 104
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23958.92875
+
+✖ failing tests:
+
+test at test/historical-ingestion.test.js:61:1
+✖ historical UI opens below data sync, separates baseline from no changes and exposes details, backups and storage (3406.841125ms)
+  locator.waitFor: Error: strict mode violation: getByText('Promedio diario', { exact: true }) resolved to 2 elements:
+      1) <th>Promedio diario</th> aka getByLabel('Nueva orden de compra').getByText('Promedio diario', { exact: true })
+      2) <span>Promedio diario</span> aka locator('#historical-content').getByText('Promedio diario')
+  
+  Call log:
+    - waiting for getByText('Promedio diario', { exact: true }) to be visible
+      - locator resolved to hidden <th>Promedio diario</th>
+  
+      at TestContext.<anonymous> (<repo>/test/historical-ingestion.test.js:73:127) {
+    log: [ "  - waiting for getByText('Promedio diario', { exact: true }) to be visible", '    - locator resolved to hidden <th>Promedio diario</th>' ]
+  }
+
+
+Grupo adicional: node --test --test-name-pattern="lists purchases by supplier|limits purchase projections|warehouse projection ignores|MercadoPago collection is independent" test/server.test.js
+✔ MercadoPago collection is independent of fees and preserves signed amounts (181.787625ms)
+✔ lists purchases by supplier and filters price history by cafeteria and dates (388.02675ms)
+✔ limits purchase projections to ingredients and the five explicit exceptions (163.787708ms)
+✔ warehouse projection ignores cafeteria orders after removing OC Suc (163.610583ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1238.028667

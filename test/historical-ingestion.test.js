@@ -65,12 +65,12 @@ test('historical UI opens below data sync, separates baseline from no changes an
   await page.goto(base);await page.getByRole('link',{name:'Control histórico',exact:true}).click();
   await page.getByRole('tab',{name:'Cambios del día',exact:true}).click();
   await page.locator('#historical-content .historical-run').first().waitFor();
-  assert.deepEqual(await page.locator('.nav-group:last-of-type .nav-link').evaluateAll(links=>links.map(l=>l.dataset.view)),['uploads','historical-control','config']);
+  assert.deepEqual(await page.locator('.nav-group:last-of-type .nav-link').evaluateAll(links=>links.map(l=>l.dataset.view)),['findings','transaction-audit','uploads','historical-control','config']);
   assert.ok(await page.getByText('Sin cambios históricos detectados',{exact:true}).count());assert.ok(await page.getByText('Línea base',{exact:true}).count());
   await page.getByRole('button',{name:'Ver detalle de comparación'}).first().click();await page.getByText('Valor anterior',{exact:true}).waitFor();
   assert.match(await page.locator('#historical-detail-content').innerText(),/purchase-1/);assert.match(await page.locator('#historical-detail-content').innerText(),/100/);assert.match(await page.locator('#historical-detail-content').innerText(),/150/);
   await page.getByRole('button',{name:'Cerrar',exact:true}).click();await page.getByRole('tab',{name:'Respaldos',exact:true}).click();await page.getByRole('link',{name:'Descargar',exact:true}).first().waitFor();
-  await page.getByRole('tab',{name:'Almacenamiento',exact:true}).click();await page.getByText('Promedio diario',{exact:true}).waitFor();assert.equal(await page.locator('.historical-kpi').count(),6);
+  await page.getByRole('tab',{name:'Almacenamiento',exact:true}).click();await page.locator('#historical-content').getByText('Promedio diario',{exact:true}).waitFor();assert.equal(await page.locator('#historical-content .historical-kpi').count(),6);
   await page.screenshot({path:'/private/tmp/brewit-historical-control.png',fullPage:true});
 });
 test('historical UI explains missing assets and retries initialization after an unavailable endpoint',{skip:!fs.existsSync(chrome)},async t=>{

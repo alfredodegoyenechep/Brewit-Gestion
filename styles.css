@@ -3325,8 +3325,6 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
 .network-sales-intro { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
 .network-sales-intro h3 { margin: 5px 0 0; }
 .network-sales-controls { display: flex; align-items: end; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
-.network-sales-controls label { display: grid; gap: 5px; color: var(--text-soft); font-size: calc(11px * var(--font-scale)); }
-.network-sales-controls select { max-width: 240px; }
 .network-sales-controls > span { color: var(--text-soft); font-size: calc(12px * var(--font-scale)); }
 .network-sales-scroll {
   margin-top: 18px;
@@ -9471,3 +9469,4 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .historical-change pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 360px; max-height: 300px; overflow: auto; margin: 0; font-size: .85rem; }
 .historical-empty { padding: 2rem; text-align: center; background: #f4f7f2; border-radius: 10px; color: #536b59; }
 @media (max-width: 700px) { .historical-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .historical-workspace { padding: .75rem; } .historical-filters label { width: 100%; } }
+.upload-overview-actions[hidden], .mercadopago-web-controls label[hidden], .create-location-form label[hidden] { display: none !important; }

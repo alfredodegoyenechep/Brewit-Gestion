@@ -17,24 +17,26 @@ test('a master unit change keeps original records and excludes only the unconver
  canonical[0].conversions=[{conversion_unit:'KG',base_unit:'BOT',numerator:1,denominator:2}];
  const resolved=buildLedger(s,canonical,empty,empty);assert.equal(resolved.excluded.length,0);assert.equal(resolved.daily.find(r=>r.code==='C').opening,.5);
 });
-test('a failed dependency rebuild preserves the last version and status remains readable until recovery',t=>{
+test('a changed dependency leaves the last stock version readable until explicit rebuild',t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-rebuild-failure-'));t.after(async () => {await require('../historical-control').get(root).idle();fs.rmSync(root, {recursive:true,force:true});});
  let master={observedAt:'v1',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))};
  const sync=createStockSync({uploadsRoot:root,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>master});
  sync.publish('store-1',source());const original=sync.current('store-1'),pointer=path.join(root,'.integrations/toteat-api/stock/store-1/current.json'),version=fs.readFileSync(pointer,'utf8');
  master=null;
- for(let i=0;i<3;i++){assert.match(sync.status('store-1').error,/Se conserva/);assert.deepEqual(sync.current('store-1').daily,original.daily);}
+ for(let i=0;i<3;i++){assert.equal(sync.status('store-1').stale,true);assert.match(sync.status('store-1').error,/pendiente de recálculo/);assert.deepEqual(sync.current('store-1').daily,original.daily);}
  assert.equal(fs.readFileSync(pointer,'utf8'),version);
  master={observedAt:'v2',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))};
- assert.equal(sync.status('store-1').error,null);assert.equal(sync.current('store-1').masterObservedAt,'v2');
+ assert.equal(sync.status('store-1').stale,true);assert.equal(fs.readFileSync(pointer,'utf8'),version);
+ sync.rebuild('store-1');assert.equal(sync.status('store-1').error,null);assert.equal(sync.current('store-1').masterObservedAt,'v2');
 });
-test('corrected purchase warehouse replaces old local receipts automatically without reading Toteat Kardex',t=>{
+test('corrected purchase warehouse applies on explicit rebuild without reading Toteat Kardex',t=>{
  const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-independent-'));t.after(async () => {await require('../historical-control').get(uploadsRoot).idle();fs.rmSync(uploadsRoot, {recursive:true,force:true});});
  const base=path.join(uploadsRoot,'.integrations/toteat-api/purchases/store-1');
  const purchase=(version,warehouse)=>{fs.mkdirSync(path.join(base,version),{recursive:true});fs.writeFileSync(path.join(base,version,'state.json'),JSON.stringify({...empty,version,documents:[{movement_id:'22978',received_date:'20260823',products:[{sku:'C',warehouse,received_quantity:3.4,received_measurement:'KG'}]}]}));fs.writeFileSync(path.join(base,'current.json'),JSON.stringify({version}));};
  const sync=createStockSync({uploadsRoot,activeLocation:()=>({type:'store'}),credentials:()=>({'store-1':{restaurantId:'r',localId:'1'}}),masters:()=>({observedAt:'now',products:products.map(p=>({...p,code:p.custom_id,stockManaged:p.stock_enabled,stockUnit:p.stock_unit,name:p.custom_id}))}),reader:()=>{throw Error('No remote read required');}});
  purchase('v1',2);sync.publish('store-1',source());assert.equal(sync.current('store-1').daily.find(r=>r.code==='C'&&r.warehouse==='w2').purchase,3.4);
- purchase('v2',1);const updated=sync.current('store-1');assert.equal(updated.sourceKind,'native-documents');assert.equal(updated.daily.find(r=>r.code==='C'&&r.warehouse==='w2').purchase,0);assert.equal(updated.daily.find(r=>r.code==='C'&&r.warehouse==='w1').purchase,3.4);assert.equal(updated.dependencies.purchases,'v2');assert.deepEqual(sync.current('store-1').daily,updated.daily);
+ purchase('v2',1);assert.equal(sync.current('store-1').stale,true);assert.equal(sync.current('store-1').daily.find(r=>r.code==='C'&&r.warehouse==='w2').purchase,3.4);
+ const updated=sync.rebuild('store-1');assert.equal(updated.sourceKind,'native-documents');assert.equal(updated.daily.find(r=>r.code==='C'&&r.warehouse==='w2').purchase,0);assert.equal(updated.daily.find(r=>r.code==='C'&&r.warehouse==='w1').purchase,3.4);assert.equal(updated.dependencies.purchases,'v2');assert.deepEqual(sync.current('store-1').daily,updated.daily);
 });
 test('stock sales consume finished units; transformation consumes original ingredient lines exactly once',()=>{
  const s=source();s.operations.transformations=[{id:2,status:'APPROVED',local_ref:'l1',registration_date:'2026-08-23',product_ref:'sandwich',quantity_produce:3,measure_unit:'UN',target_warehouse_ref:'w2',transformation_details:[{id:3,product_ref:'coffee',warehouse_ref:'w2',quantity:250,measure_unit:'G'}]}];
@@ -71,14 +73,15 @@ test('independent counts rebuild the ledger and close the next day without exten
  const counts=require('../toteat-counts').createCountSync(config);
  const fresh=source();fresh.range.to='2026-08-25';fresh.operations.counts.push({...fresh.operations.counts[0],id:2,registration_date:'2026-08-25',take_inventory_products:[{id:3,product_ref:'coffee',quantity:0,measure_unit_ref:'KG'}]});
  counts.publish('store-1',fresh);
- let state=sync.current('store-1');assert.equal(state.range.to,'2026-08-24');assert.equal(state.daily.find(r=>r.date==='2026-08-25'&&r.code==='C').physicalCount,true);
+ assert.equal(sync.current('store-1').stale,true);
+ let state=sync.rebuild('store-1');assert.equal(state.range.to,'2026-08-24');assert.equal(state.daily.find(r=>r.date==='2026-08-25'&&r.code==='C').physicalCount,true);
  const report=()=>require('../inventory-boundaries').countBoundaryReport(sync.current('store-1'),{type:'store'},'2026-08-23','2026-08-25');
  assert.equal(report().items.find(i=>i.code==='C').finalInventory,0);assert.equal(report().items.find(i=>i.code==='S').finalInventory,null);
  const version=state.dependencies.counts;assert.ok(version);assert.equal(sync.current('store-1').dependencies.counts,version);
  assert.throws(()=>require('../inventory-boundaries').countBoundaryReport(state,{type:'store'},'2026-08-23','2026-08-26'),/cubrir/);
- fresh.operations.counts[1].status='CANCELLED';counts.publish('store-1',fresh);
+ fresh.operations.counts[1].status='CANCELLED';counts.publish('store-1',fresh);sync.rebuild('store-1');
  assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
- fresh.operations.counts.pop();counts.publish('store-1',fresh);assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
+ fresh.operations.counts.pop();counts.publish('store-1',fresh);sync.rebuild('store-1');assert.equal(report().items.find(i=>i.code==='C').finalInventory,null);
 });
 
 

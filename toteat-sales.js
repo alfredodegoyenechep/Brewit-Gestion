@@ -178,6 +178,12 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       historicalRunId: require('./historical-control').get(uploadsRoot).latest(location, ['sales']),
       lastSuccess: s?.syncedAt || null, paymentCount: s?.payments.length || 0, orderCount: s?.orderCount || 0,
       completedWindows: Object.keys(s?.batches || {}).length, lastError: config?.lastError || null,
+      lastCheck: config?.lastCheck ? {
+        startedAt:config.lastCheck.startedAt, finishedAt:config.lastCheck.finishedAt,
+        durationMs:config.lastCheck.durationMs, scope:config.lastCheck.scope,
+        windows:config.lastCheck.windows, requestCount:config.lastCheck.calls?.length || 0
+      } : null,
+      lastFullSuccess: config?.lastFullSuccess || null, lastHistoricalReview: config?.lastHistoricalReview || null,
       detailWarnings, cancellationCheckError: s?.cancellationCheckError || null,
       state: running.has(location) ? 'syncing' : config?.lastError ? 'error' : !s ? 'not-synced' : s.payments.length ? 'connected' : 'connected-empty',
       progress: running.get(location)?.progress || null };
@@ -207,19 +213,32 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
     for (const [id, config] of Object.entries(all)) if (id !== '_schedule') Object.assign(config, all._schedule);
     atomicJson(settingsFile, all); return status(location);
   }
-  async function synchronize(location, { full = false } = {}) {
+  async function synchronize(location, { full = false, reviewRange = null, recentOnly = false } = {}) {
     if(fs.existsSync(path.join(uploadsRoot,'.storage-maintenance.lock')))throw Error('Mantenimiento de almacenamiento en curso.');
     if (running.has(location)) return running.get(location).promise;
     const config = settings()[location];
     const credential = credentials()[location];
     if (activeLocation(location)?.type !== 'store' || !credential || !config) throw new Error('Configura la conexión y la fecha inicial de la cafetería.');
+    if (reviewRange && (!dateKey(reviewRange.from) || !dateKey(reviewRange.to) || reviewRange.from > reviewRange.to
+      || reviewRange.from < config.from || reviewRange.to > clock())) throw Error('Selecciona un período histórico dentro de la cobertura configurada.');
     const registered = activeLocation(location);
     if ((registered.toteatRestaurantId && String(registered.toteatRestaurantId) !== credential.restaurantId)
       || (registered.toteatLocalId && String(registered.toteatLocalId) !== credential.localId)) throw new Error('La conexión API no corresponde a los identificadores configurados para esta cafetería.');
     const job = { progress: 'Consultando turno…' };
     running.set(location, job);
+    const startedAt = new Date().toISOString(), startedMs = Date.now(), calls = [];
+    const timedRequest = async (route, params, window = null) => {
+      const calledAt = Date.now();
+      let diagnostic = null;
+      try { return await request(credential, route, params, metric => { diagnostic = metric; }); }
+      finally {
+        calls.push({ route, ...(window ? { window } : {}), elapsedMs: Date.now() - calledAt,
+          ...(diagnostic ? Object.fromEntries(['queueWaitMs','networkMs','bodyMs','requestMs','responseBytes','status','rows']
+            .map(key => [key, diagnostic[key] ?? null])) : {}) });
+      }
+    };
     job.promise = require('./historical-control').get(uploadsRoot).track({ origin: 'toteat-public-api', location, upstream:{restaurantId:credential.restaurantId,localId:credential.localId}, label: 'Ventas y pagos', datasets:['sales','payment-details'] }, async () => {
-      const shift = await request(credential, 'shiftstatus', {});
+      const shift = await timedRequest('shiftstatus', {});
       if (!shift.data || !['open', 'closed'].includes(String(shift.data.status).toLowerCase())) throw new Error('Toteat no confirmó el estado del turno.');
       if (shift.data.localNumber != null && String(shift.data.localNumber) !== credential.localId) throw new Error('Toteat respondió con otro local.');
       const opened = String(shift.data.status).toLowerCase() === 'open' ? localTimestamp(shift.data.date).date : null;
@@ -227,12 +246,16 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       const batches = { ...(previous?.batches || {}) };
       const allWindows = windows(config.from, clock());
       // Fixed windows let a refresh replace a whole shift range, including payments later cancelled.
-      const selected = allWindows.filter((w, i) => full || !batches[w.from] || i >= allWindows.length - 2 || (opened && opened >= w.from && opened <= w.to) || (previous?.openShift && previous.openShift >= w.from && previous.openShift <= w.to));
+      const selected = allWindows.filter((w, i) => reviewRange
+        ? w.from <= reviewRange.to && w.to >= reviewRange.from
+        : full || !batches[w.from] || i >= allWindows.length - (recentOnly ? 1 : 2)
+          || (opened && opened >= w.from && opened <= w.to) || (previous?.openShift && previous.openShift >= w.from && previous.openShift <= w.to));
       if (opened && opened < config.from) throw new Error('Hay un turno abierto anterior al inicio configurado. Amplía el período antes de sincronizar.');
       let count = 0;
       for (const w of selected) {
         job.progress = `Consultando ${++count} de ${selected.length}: ${w.from}…`;
-        const response = await request(credential, 'sales', { ini: w.from.replaceAll('-', ''), end: (w.to > clock() ? clock() : w.to).replaceAll('-', ''), detail_cancel_order: 'true' });
+        const checkedTo = w.to > clock() ? clock() : w.to;
+        const response = await timedRequest('sales', { ini: w.from.replaceAll('-', ''), end: checkedTo.replaceAll('-', ''), detail_cancel_order: 'true' }, { from: w.from, to: checkedTo });
         if (!Array.isArray(response.data)) throw new Error('Toteat no entregó una lista de ventas válida.');
         require('./historical-control').annotate(response, ['sales', 'payment-details'].map(dataset => ({ dataset, selector: 'data', complete: true, range: { from: w.from, to: w.to > clock() ? clock() : w.to } })), 'ventas-pagos.json');
         if(response.next || response.has_more || response.hasMore || response.pagination?.next) throw new Error('La respuesta de ventas está incompleta o paginada; se conserva la versión anterior.');
@@ -254,7 +277,7 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       for (const orderId of candidates) {
         job.progress = 'Verificando anulaciones…';
         try {
-          const response = await request(credential, 'orderstatus', { ic: orderId, det: 'false' });
+          const response = await timedRequest('orderstatus', { ic: orderId, det: 'false' });
           const data = response.data;
           if (response.ok !== true || !data || normalizeId(data.orderId) !== orderId || !['OPEN', 'CLOSED', 'CANCELLED', 'CANCELED'].includes(data.orderStatus)) throw new Error('Estado no verificable');
           orderStatuses[orderId] = data.orderStatus;
@@ -271,7 +294,13 @@ function createSalesSync({ uploadsRoot, activeLocation, credentials, request, cl
       const syncedAt = new Date().toISOString();
       publish(location, { syncedAt, batches, payments, ownedOrders, paymentClassifications, orderStatuses,
         cancellationCheckError, openShift: opened, from: config.from, through: clock() }, converted);
+      const finishedAt = new Date().toISOString();
+      const lastCheck = { startedAt, finishedAt, durationMs: Date.now() - startedMs,
+        scope: reviewRange ? 'period' : full ? 'full' : recentOnly ? 'recent' : 'standard',
+        windows: selected.map(w => ({ from: w.from, to: w.to > clock() ? clock() : w.to })), calls };
       const all = settings(); all[location] = { ...all[location], lastError: null, lastAttempt: syncedAt,
+        lastCheck,
+        ...(reviewRange ? { lastHistoricalReview: { ...reviewRange, completedAt: syncedAt } } : {}),
         lastFullSuccess: selected.length === allWindows.length ? syncedAt : all[location]?.lastFullSuccess }; atomicJson(settingsFile, all);
     }).catch(error => {
       const all = settings(); all[location] = { ...all[location], lastError: error.message, lastAttempt: new Date().toISOString() }; atomicJson(settingsFile, all);

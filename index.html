@@ -32,7 +32,7 @@
           <rect x="3" y="4" width="18" height="18" rx="3" />
           <path d="M8 2v4M16 2v4M3 10h18" />
         </svg>
-        <span class="nav-text">Análisis y Estadísticas</span>
+        <span class="nav-text">Estadísticas por producto y horario</span>
       </a>
       <a href="#" class="nav-link" data-view="transaction-audit">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -117,7 +117,7 @@
       </a>
       <a href="#" class="nav-link" data-view="demand-analysis">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
-        <span class="nav-text">Análisis de la Venta</span>
+        <span class="nav-text">Demanda y oportunidades</span>
       </a>
       <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -304,7 +304,7 @@
             <select id="sales-dashboard-location"><option value="all">Todas las cafeterías</option></select>
           </label>
           <button id="refresh-sales-dashboard" class="icon-button" type="button">Actualizar vista</button>
-          <button class="primary" type="button" data-toteat-sales-sync="dashboard">Actualizar Ventas</button>
+          <button class="primary" type="button" data-toteat-sales-sync="dashboard">Actualizar ventas recientes</button>
         </div>
       </div>
       <div id="sales-dashboard-status" class="form-status" aria-live="polite"></div>
@@ -661,7 +661,7 @@
           <select id="report-location-filter">
             <option value="all">Todas las cafeterías</option>
           </select>
-          <button class="primary" type="button" data-toteat-sales-sync="report">Actualizar Ventas</button>
+          <button class="primary" type="button" data-toteat-sales-sync="report">Actualizar ventas recientes</button>
         </div>
       </div>
       <div class="report-status-row">
@@ -677,12 +677,6 @@
         <div class="network-sales-intro">
           <div><div class="panel-eyebrow">PERFORMANCE DE LA RED</div><h3>Comparativo por local</h3></div>
           <div class="network-sales-controls">
-            <label for="network-cost-valuation">Valorización del costo
-              <select id="network-cost-valuation">
-                <option value="period-end">Al corte del reporte · respaldo</option>
-                <option value="historical">En la fecha de venta · en prueba</option>
-              </select>
-            </label>
             <span id="network-sales-cutoff"></span>
           </div>
         </div>
@@ -1291,7 +1285,7 @@
           <label class="ingredients-change-filter" for="ingredients-only-changed">
             <input id="ingredients-only-changed" type="checkbox" /> Solo con variación de costo
           </label>
-          <button id="refresh-ingredients" class="icon-button" type="button">Actualizar</button>
+          <button id="refresh-ingredients" class="icon-button" type="button">Consultar ingredientes</button>
           <div class="ingredients-report-actions">
             <button id="print-ingredients-report" class="icon-button" type="button" disabled>Imprimir / PDF</button>
             <div class="ingredients-export-actions">
@@ -1357,7 +1351,7 @@
             <input id="purchases-product-filter" type="search" list="purchases-product-options" placeholder="Código o nombre" autocomplete="off" />
             <datalist id="purchases-product-options"></datalist>
           </label>
-          <button id="refresh-purchases" class="icon-button" type="button">Actualizar</button>
+          <button id="refresh-purchases" class="icon-button" type="button">Consultar compras guardadas</button>
           <button class="primary" type="button" data-toteat-purchases-sync="report">Actualizar compras por API</button>
           <div class="purchases-report-actions">
             <button id="open-purchase-master" class="icon-button" type="button">Reporte maestro de compras</button>
@@ -1834,12 +1828,6 @@
           </label>
           <label id="financial-results-to-field" for="financial-results-to">Hasta
             <input id="financial-results-to" type="date" required />
-          </label>
-          <label for="financial-cost-valuation">Valorización del costo
-            <select id="financial-cost-valuation">
-              <option value="period-end">Al corte · respaldo</option>
-              <option value="historical">Fecha de venta · en prueba</option>
-            </select>
           </label>
           <button class="primary" type="submit">Generar resultados</button>
         </form>
@@ -2323,7 +2311,21 @@
       <div class="panel-head">
         <div><div class="panel-eyebrow">Datos de Brewit</div><h2>Datos y sincronización</h2><p class="panel-description">Estado de las fuentes compartidas y de cada ubicación.</p></div>
       </div>
-      <div class="upload-overview-actions"><button id="refresh-upload-api" class="primary" type="button">Actualizar datos vía API</button><div id="upload-refresh-schedule" class="panel-description"></div></div>
+      <div class="upload-overview-actions"><button id="refresh-upload-api" class="primary" type="button">Actualizar fuentes recientes</button><div id="upload-refresh-schedule" class="panel-description"></div></div>
+      <p class="panel-description">Ventas y pagos: se comprueba la ventana vigente de cada cafetería. Si faltan períodos o hay un turno abierto anterior, también se consultan esas ventanas. Usa «Revisar período anterior» para buscar correcciones de fechas cerradas.</p>
+      <form id="source-history-review" class="upload-overview-actions">
+        <strong>Revisar período anterior</strong>
+        <label>Ubicación <select id="source-history-location"><option value="all">Ambas cafeterías</option></select></label>
+        <label>Desde <input id="source-history-from" type="date" required></label>
+        <label>Hasta <input id="source-history-to" type="date" required></label>
+        <label><input id="source-history-sales" type="checkbox" checked> Ventas y pagos Toteat</label>
+        <label><input id="source-history-purchases" type="checkbox" checked> Compras Toteat</label>
+        <label><input id="source-history-mp" type="checkbox"> MercadoPago</label>
+        <button id="review-recent-sales-windows" class="icon-button" type="button">Revisar dos últimas ventanas de ventas</button>
+        <button class="icon-button" type="submit">Revisar período</button>
+        <span id="source-history-status" class="form-status" role="status" aria-live="polite"></span>
+      </form>
+      <p class="panel-description">La revisión consulta todas las ventanas que cruzan el período elegido y puede tardar más que la actualización reciente. Los originales se conservan en Control histórico.</p>
       <form id="upload-native-schedule" class="upload-overview-actions">
         <label>Maestros compartidos <select id="upload-masters-frequency"><option value="">Manual</option><option value="15">Cada 15 min</option><option value="60">Cada 1 hora</option><option value="1440">Cada 24 horas</option></select></label>
         <label>Fuentes de inventario <select id="upload-inventory-frequency"><option value="">Manual</option><option value="15">Cada 15 min</option><option value="60">Cada 1 hora</option><option value="1440">Cada 24 horas</option></select></label>
@@ -2347,7 +2349,7 @@
       <p class="panel-description">MercadoPago: carga un archivo con todos los locales. Cada registro se asigna a su cafetería por la columna STORE_ID, configurada en Configuración.</p>
       <div class="mercadopago-web-controls">
         <label><input id="mercadopago-daily" type="checkbox"> Actualizar MercadoPago automáticamente todos los días a las 8:00 (hora de Chile)</label>
-        <p class="panel-description">La actualización web revisa desde el último día registrado de cada cafetería, inclusive, y agrega solo transacciones nuevas. Requiere que el servidor esté encendido y existan reportes CSV en MercadoPago.</p>
+        <p class="panel-description">La actualización manual revisa desde el último día registrado de cada cafetería, inclusive, y agrega solo transacciones nuevas. Para corregir fechas anteriores usa «Revisar período anterior».</p>
         <p id="mercadopago-web-status" class="form-status" role="status" aria-live="polite"></p>
         <button id="resume-mercadopago-web" class="icon-button" type="button" hidden>Ya inicié sesión, continuar</button>
         <a id="mercadopago-report-link" href="https://www.mercadopago.cl/balance/reports/settlement_v2" target="_blank" rel="noopener noreferrer" hidden>Ver reportes en MercadoPago</a>
@@ -2580,10 +2582,10 @@
           <label><span>Obtener ventas desde</span><input name="from" type="date" required /><small>Incluye el histórico que deseas consultar. Para nuevos locales, usa su fecha de creación en Toteat.</small></label>
           <label><span>Actualización de ventas · Todas las cafeterías</span><select name="frequency"><option value="5">Automática cada 5 minutos</option><option value="15">Automática cada 15 minutos</option><option value="manual">Solo manual</option></select></label>
           <button class="primary" type="submit">Guardar y sincronizar ventas</button>
-          <button class="icon-button" type="button" data-toteat-sales-sync="selected">Actualizar ahora</button>
+          <button class="icon-button" type="button" data-toteat-sales-sync="selected">Actualizar ventas recientes</button>
           <button class="icon-button" type="button" data-toteat-sales-sync="history">Revisar todo el histórico</button>
         </form>
-        <p class="panel-description">La frecuencia se aplica a todas las cafeterías. La fecha inicial y los botones de actualización manual corresponden a la cafetería seleccionada. Con «Solo manual», las ventas se actualizan únicamente cuando solicitas una actualización. La actualización automática funciona mientras el servidor Brewit esté encendido. Toteat entrega órdenes cerradas; las cuentas aún abiertas aparecerán cuando se cierren.</p>
+        <p class="panel-description">La fecha inicial y los botones de actualización corresponden a la cafetería seleccionada. Las ventas se actualizan solo cuando lo solicitas. Toteat entrega órdenes cerradas; las cuentas aún abiertas aparecerán cuando se cierren.</p>
         <div data-toteat-sales-status class="form-status" aria-live="polite"></div>
       </div>
 

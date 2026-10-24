@@ -1,0 +1,13 @@
+escenario,n,mediana_ms,min_ms,max_ms,fuente
+proyeccion_antes,5,64229.7,63459.3,64795.4,TIEMPOS_API.csv
+proyeccion_cache_directa,5,17344.9,17125.9,17925.6,measure-after.json
+proyeccion_trabajador,5,19404.0,18545.0,19910.0,measure-worker-projection.json
+ordenes_con_proyeccion_trabajador,5,9.3,7.0,14.7,measure-worker-projection.json
+ordenes_con_finanzas_antes,5,10430.0,,,AUDITORIA_BREWIT.md
+ordenes_con_finanzas_trabajador,5,7.4,6.7,14.2,measure-after.json
+finanzas_trabajador,5,10797.9,10725.3,11104.3,measure-after.json
+ingredientes_antes,5,4547.9,4525.5,4743.5,TIEMPOS_API.csv
+ingredientes_cache_directa,5,4758.1,4409.0,4996.8,medicion_aislada_2026-10-24
+ingredientes_trabajador,5,5401.0,5234.7,5568.9,medicion_aislada_2026-10-24
+proyeccion_trabajador_rss_base_mb,1,195.5,195.5,195.5,muestreo_25ms_2026-10-24
+proyeccion_trabajador_rss_max_mb,1,1828.6,1828.6,1828.6,muestreo_25ms_2026-10-24

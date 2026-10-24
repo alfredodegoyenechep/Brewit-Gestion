@@ -91,6 +91,33 @@ test('invalid later report leaves all stores unchanged and does not publish the 
   }
 });
 
+test('changed amount with the same MercadoPago identity is reported as a correction and preserves the prior published record', async t => {
+  const root = temporary(t);
+  const browser = { async download({ directory }) {
+    const file = path.join(directory, 'corrected.csv');
+    fs.writeFileSync(file, csv([[ '82010740', 'same', 'SETTLEMENT', '2026-10-13T10:00:00-03:00', 900 ]]));
+    return [{ path: file, period }];
+  } };
+  const app = createApp({ uploadsRoot: root, enableToteatSync: false, mercadoPagoBrowser: browser,
+    mercadoPagoClock: () => new Date('2026-10-16T12:00:00Z') });
+  t.after(() => app.locals.mercadoPagoSync.close());
+  const base = await serve(t, app);
+  await seed(base, csv([[ '82010740', 'same', 'SETTLEMENT', '2026-10-13T10:00:00-03:00', 1000 ]]));
+  await app.locals.mercadoPagoSync.synchronize();
+  const state = app.locals.mercadoPagoSync.status();
+  assert.equal(state.result.conflictingTransactions, 1);
+  assert.equal(state.result.duplicateTransactions, 0);
+  assert.match(state.result.conflictEvidenceId, /^[0-9a-f-]{36}$/);
+  assert.match(state.message, /correcciones pendientes/);
+  const evidenceDirectory = path.join(root, '.integrations', 'mercadopago', 'conflicts', state.result.conflictEvidenceId);
+  const manifest = JSON.parse(fs.readFileSync(path.join(evidenceDirectory, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.conflictingTransactions, 1);
+  assert.equal(manifest.downloadedReports.length, 1);
+  assert.match(fs.readFileSync(path.join(evidenceDirectory, manifest.downloadedReports[0].filename), 'utf8'), /900/);
+  const files = await fetch(base + '/api/transactions?location=store-1').then(response => response.json());
+  assert.equal(files.files.mercadopago.fileCount, 1);
+});
+
 test('schedule is opt-in, persists, runs once at 08:00 Santiago, and recovers missed starts', async t => {
   const root = temporary(t), attempts = [];
   let now = new Date('2026-10-16T10:59:00Z');

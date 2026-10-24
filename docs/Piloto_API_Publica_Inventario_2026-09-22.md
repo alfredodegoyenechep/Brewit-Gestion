@@ -110,7 +110,7 @@ El análisis reutiliza los archivos registrados en los índices locales; sus nom
 
 ## Adopción autorizada de la API pública
 
-Tras la decisión del usuario de utilizar la API, se incorporó `inventorystate` a la actualización manual y programada de inventario de ambas cafeterías. Se habilitó exclusivamente el permiso de lectura de movimientos en Lyon y se actualizaron ambos locales del 23-08 al 22-09-2026. La Concepción entrega datos; Lyon respondió correctamente sin movimientos identificados. La Bodega Principal y sus bodegas de merma se consultan con La Concepción.
+Tras la decisión del usuario de utilizar la API, se incorporó `inventorystate` a la actualización de inventario de ambas cafeterías. La ejecución normal de Brewit usa actualización manual desde el 24-10-2026. Se habilitó exclusivamente el permiso de lectura de movimientos en Lyon y se actualizaron ambos locales del 23-08 al 22-09-2026. La Concepción entrega datos; Lyon respondió correctamente sin movimientos identificados. La Bodega Principal y sus bodegas de merma se consultan con La Concepción.
 
 El informe usa las cantidades y el costo de última compra de API por bodega y fecha de corte, incluidos los ceros y las compras negativas. Los costos de productos sin dato directo pueden calcularse desde sus recetas usando costos API de sus ingredientes; no se sustituye silenciosamente un costo API por el costo del archivo o del maestro. El consumo de ventas ya no se reconstruye con las recetas actuales. Las compensaciones y consumos internos siguen aplicándose en el consolidado.
 
@@ -156,7 +156,7 @@ El 22-09-2026 se corrigió la conexión del lector: estaba utilizando un perfil 
 
 Se comprobaron dos lecturas consecutivas y la publicación mediante el botón de actualización: a las 17:05 de Santiago quedaron publicados los seis maestros, con 240 productos, 128 ingredientes, 53 extras, 286 recetas (1.187 líneas), jerarquías de productos/ingredientes/extras de 22/13/15 registros y 42 proveedores. El estado del proceso pasó a completado.
 
-Los maestros completos siguen dependiendo de los servicios internos y de una sesión web vigente; no se presentan como API pública. Si el navegador no está disponible o no se confirma el local, el proceso informa un diagnóstico específico y conserva la última versión compartida completa. El navegador conectado debe permanecer abierto para las actualizaciones programadas.
+Los maestros completos siguen dependiendo de los servicios internos y de una sesión web vigente; no se presentan como API pública. Si el navegador no está disponible o no se confirma el local, el proceso informa un diagnóstico específico y conserva la última versión compartida completa. Existe una vía de credencial directa; si no está vigente, el código puede recurrir a la sesión del navegador. La ejecución normal ya no programa estas actualizaciones.
 
 ## Hallazgos: fuentes sincronizadas y saldos corregidos
 

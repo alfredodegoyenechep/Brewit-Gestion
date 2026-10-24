@@ -21,7 +21,7 @@ test('Análisis de la Venta abre sus cuatro capas y conserva el detalle aun sin 
   });
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('link', { name: 'Análisis de la Venta' }).click();
+  await page.getByRole('link', { name: 'Demanda y oportunidades' }).click();
   assert.equal(await page.locator('#demand-location-options input').count(), 2);
   await page.waitForFunction(() => document.getElementById('demand-status')?.textContent.includes('Análisis actualizado.'));
   assert.equal(await page.locator('#demand-category option').first().innerText(), 'Sin categorías con ventas');
@@ -64,13 +64,15 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole('heading', { name: 'Resumen de ventas' }).waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#network-cost-valuation, #financial-cost-valuation').count(), 0);
   assert.deepEqual(await page.locator('.navigation .nav-group-label').allTextContents(),
-    ['Visión ejecutiva', 'Inteligencia comercial', 'Operación y costos', 'Administración']);
+    ['Ventas y resultados', 'Análisis de ventas', 'Inventario y compras', 'Productos y costos', 'Control y configuración']);
   assert.deepEqual(await page.locator('.navigation .nav-link').evaluateAll(links => links.map(link => link.dataset.view)), [
     'report', 'financial-results', 'weekly-results',
-    'sales', 'demand-analysis', 'transaction-audit', 'sales-ingredients',
-    'products', 'ingredients', 'cost-review', 'inventory', 'purchases', 'purchase-projection', 'findings',
-    'uploads', 'historical-control', 'config'
+    'sales', 'demand-analysis', 'sales-ingredients',
+    'inventory', 'purchases', 'purchase-projection', 'past-orders',
+    'products', 'ingredients', 'cost-review',
+    'findings', 'transaction-audit', 'uploads', 'historical-control', 'config'
   ]);
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-summary-day"]')?.disabled);
   assert.equal(await page.locator('#weekly-report [data-report-chart]').count(), 22);
@@ -107,7 +109,9 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   await page.getByRole('button', { name: 'Gráfico de barras' }).click();
   assert.equal(await page.getByRole('button', { name: 'Gráfico de barras' }).getAttribute('aria-pressed'), 'true');
   await page.locator('#report-chart-close').click();
+  const networkRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/api/reports/network-sales');
   await page.locator('#report-view-filter').selectOption('grid');
+  assert.equal(new URL((await networkRequest).url()).searchParams.has('costValuation'), false);
   await page.locator('#network-sales-dashboard').waitFor({ state: 'visible' });
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-network"]')?.disabled);
   await page.getByRole('button', { name: 'Ver gráfico: Comparativo por local' }).click();
@@ -115,7 +119,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.equal(await page.getByRole('button', { name: 'Gráfico circular' }).isVisible(), true);
   await page.locator('#report-chart-close').click();
 
-  await page.getByRole('link', { name: 'Análisis y Estadísticas' }).click();
+  await page.getByRole('link', { name: 'Estadísticas por producto y horario' }).click();
   await page.getByRole('heading', { name: 'Panel de indicadores comerciales' }).waitFor();
   await page.waitForFunction(() => !document.getElementById('refresh-sales-dashboard')?.disabled);
   await page.locator('#sales-location-body').evaluate(body => {
@@ -217,7 +221,7 @@ test('Análisis de la Venta muestra un error visible si el servidor aún no sirv
   const page = await browser.newPage();
   await page.route('**/demand-view.js', route => route.fulfill({ status: 404, body: 'Not Found' }));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('link', { name: 'Análisis de la Venta' }).click();
+  await page.getByRole('link', { name: 'Demanda y oportunidades' }).click();
   assert.match(await page.locator('#demand-status').innerText(), /Reinicia el servidor de Brewit/);
 });
 
@@ -288,4 +292,27 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
   await page.reload();await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('upload-masters-frequency').value==='60');
   assert.equal(await page.locator('#upload-inventory-frequency').inputValue(),'15');
+});
+
+test('Órdenes guardadas opens directly without calculating a purchase projection', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+  const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-orders-nav-'));
+  const app = createApp({ uploadsRoot, enableToteatSync: false, enableMercadoPagoSync: false });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
+  t.after(async () => { await browser.close(); await app.locals.mercadoPagoSync.close(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve)); fs.rmSync(uploadsRoot, { recursive: true, force: true }); });
+  const page = await browser.newPage();
+  let projections = 0, orders = 0;
+  page.on('request', request => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/purchase-projections') projections++;
+    if (pathname === '/api/purchase-orders') orders++;
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.getByRole('link', { name: 'Órdenes guardadas' }).click();
+  await page.getByRole('dialog', { name: 'Órdenes de Compra Pasadas' }).waitFor();
+  await page.waitForFunction(() => /rdenes de compra guardadas/.test(document.getElementById('past-purchase-orders-status').textContent));
+  assert.equal(projections, 0);
+  assert.equal(orders, 1);
 });

@@ -1,8 +1,9 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const removeRoot=root=>fs.rmSync(root,{recursive:true,force:true,maxRetries:20,retryDelay:100});
 test('unavailable recovery browser reports a connection failure without claiming a login window', async t=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-no-browser-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-no-browser-'));t.after(()=>removeRoot(root));
  const reader=require('../server').createToteatAutomation(root,{cdpEndpoint:'http://127.0.0.1:9224',executablePath:chrome,
   chromium:{connectOverCDP:async()=>{throw Error('private endpoint failure');},launchPersistentContext:async()=>{throw Error('private launch failure');}}});
  await assert.rejects(reader.readNativeSources({restaurantId:'r',localId:'1'}),error=>{
@@ -14,7 +15,7 @@ test('native reader recognizes login redirect and leaves a visible login context
  const app=require('express')();app.get('/restaurant',(req,res)=>res.redirect('/login'));app.get('/login',(req,res)=>res.send('<input type="password"><button>Ingresar</button>'));
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>{server.closeAllConnections();return new Promise(r=>server.close(r));});
  const origin=`http://127.0.0.1:${server.address().port}`,contexts=[],launches=[];
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-session-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-session-'));t.after(()=>removeRoot(root));
  const chromium={launchPersistentContext:async(dir,options)=>{
   launches.push(options.headless);
   const context=await require('playwright-core').chromium.launchPersistentContext(dir,{...options,headless:true});contexts.push(context);return context;
@@ -33,7 +34,7 @@ test('native reader recognizes login redirect and leaves a visible login context
 
 test('stale CDP opens a retained recovery profile and resumes the same update after login', {skip:!fs.existsSync(chrome)}, async t=>{
  const contexts=[],launches=[];let connections=0,source;
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-cdp-session-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-cdp-session-'));t.after(()=>removeRoot(root));
  // The persisted endpoint reproduces a browser that has been closed.
  fs.writeFileSync(path.join(root,'browser-connection.json'),JSON.stringify({cdpEndpoint:'http://127.0.0.1:9224'}));
  const chromium={
@@ -85,7 +86,7 @@ test('stale CDP opens a retained recovery profile and resumes the same update af
 });
 
 test('receipt verification can use the saved authenticated profile when the configured browser is unavailable', {skip:!fs.existsSync(chrome)}, async t=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-receipt-session-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-receipt-session-'));t.after(()=>removeRoot(root));
  const contexts=[],launches=[];let connections=0;
  const chromium={connectOverCDP:async()=>{connections++;throw Error('private connection failure');},launchPersistentContext:async(dir,options)=>{
   launches.push(options.headless);const context=await require('playwright-core').chromium.launchPersistentContext(dir,options);contexts.push(context);
