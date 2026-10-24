@@ -4,6 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const settingsMarkup = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8')
+  .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<link\b[^>]*>/gi, '');
+async function mountSettings(page) {
+  const script = fs.readFileSync(path.join(__dirname, '../script.js'), 'utf8');
+  await page.addScriptTag({ content: script.slice(script.indexOf('function initializeSettingsWorkspace()'), script.indexOf('function setView(view,')) });
+  await page.evaluate(() => {
+    for (const id of ['location-settings', 'upload-overview']) { const el = document.getElementById(id); el.hidden = false; el.style.display = 'block'; }
+    document.getElementById('upload-panel-status').append(document.getElementById('source-sync-workspace'));
+    document.querySelector('[data-settings-tab="integrations"]').click();
+    document.querySelectorAll('details').forEach(el => { el.open = true; });
+  });
+}
+
 
 test('upload view announces authentication pause and offers continuation', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true });
@@ -29,6 +42,7 @@ test('upload view announces authentication pause and offers continuation', { ski
   assert.equal(await page.evaluate(() => window.resumeCalls), 1);
   assert.match(await page.locator('#upload-refresh-steps').innerText(), /Actualizando/);
   await page.evaluate(async()=>{testOverview.job.running=false;await loadUploadOverview();});
+  await page.getByRole('tab',{name:'Revisar períodos anteriores'}).click();
   await page.getByRole('button',{name:'Revisar dos últimas ventanas de ventas'}).click();
   assert.deepEqual(await page.evaluate(()=>window.salesReview),{location:'all'});
 });
@@ -58,10 +72,11 @@ test('el resumen abre el detalle de carga y permite revisar pagos sin productos'
       body = update;
     }
     else if (url.includes('/api/config?')) body = { configured: false };
-    else return route.fulfill({ contentType: 'text/html', body: '<form id="toteat-api-form"><select id="toteat-api-location"></select><input name="token"><input name="restaurantId"><input name="localId"><input name="userId"></form><p id="toteat-api-status"></p><button id="toteat-api-refresh"></button><form id="toteat-sales-settings"><input name="from"><input name="frequency"><button type="submit"></button></form><div data-toteat-sales-status></div>' });
+    else return route.fulfill({ contentType: 'text/html', body: settingsMarkup });
     return route.fulfill({ json: body });
   });
   await page.goto('http://brewit.test/');
+  await mountSettings(page);
   await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../toteat-api-view.js'), 'utf8') });
   const trigger = page.getByRole('button', { name: /La Concepción:.*Ver detalle/ });
   await trigger.focus();
@@ -69,6 +84,9 @@ test('el resumen abre el detalle de carga y permite revisar pagos sin productos'
   const dialog = page.getByRole('dialog');
   await dialog.waitFor({ state: 'visible' });
   assert.match(await dialog.innerText(), /2026-09-01 → 2026-09-23/);
+  assert.match(await trigger.innerText(), /Ventas por producto y detalle de pagos guardados/);
+  assert.equal(await dialog.getByRole('link', { name: 'Descargar ventas por producto' }).getAttribute('href'), '/api/integrations/toteat/api/sales/export?location=store-1&field=sales');
+  assert.equal(await dialog.getByRole('link', { name: 'Descargar detalle de pagos' }).getAttribute('href'), '/api/integrations/toteat/api/sales/export?location=store-1&field=payment-details');
   assert.match(await dialog.innerText(), /incluidos en los totales/);
   assert.deepEqual(await dialog.locator('tbody td').allTextContents(), ['<orden>', 'p-12', '23-09-2026', '10:19:37', '$4.500', 'Sin productos asociados.', '', 'Pendiente de verificar. Confirmar anulación']);
   await dialog.getByRole('button', { name: 'Confirmar anulación' }).click();
@@ -121,19 +139,16 @@ test('sales frequency stays shared when changing cafeterias and polling only use
       states.forEach(state => Object.assign(state, schedule)); body = update;
     } else if (pathname.endsWith('/sales/sync')) {
       const update = route.request().postDataJSON(); updates.push(update); body = {};
-    } else return route.fulfill({ contentType: 'text/html', body: `
-      <form id="toteat-api-form"><select id="toteat-api-location"></select><input name="token"><input name="restaurantId"><input name="localId"><input name="userId"></form>
-      <p id="toteat-api-status"></p><button id="toteat-api-refresh"></button>
-      <form id="toteat-sales-settings"><input name="from" type="date"><select name="frequency"><option value="5">Cada 5 min</option><option value="15">Cada 15 min</option><option value="manual">Solo manual</option></select><button type="submit">Guardar y sincronizar ventas</button></form>
-      <button data-toteat-sales-sync="selected">Actualizar ahora</button><div data-toteat-sales-status></div>` });
+    } else return route.fulfill({ contentType: 'text/html', body: settingsMarkup });
     return route.fulfill({ json: body });
   });
   await page.goto('http://brewit.test/');
+  await mountSettings(page);
   await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../toteat-api-view.js'), 'utf8') });
   const frequency = page.locator('#toteat-sales-settings [name="frequency"]');
   await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="frequency"]').value === 'manual');
-  assert.match(await page.locator('[data-sales-load-location="store-1"]').innerText(), /Solo manual/);
-  assert.match(await page.locator('[data-sales-load-location="store-2"]').innerText(), /Solo manual/);
+  assert.match(await page.locator('[data-sales-load-location="store-1"]').first().textContent(), /Solo manual/);
+  assert.match(await page.locator('[data-sales-load-location="store-2"]').first().textContent(), /Solo manual/);
   for (let index = 0; index < 3; index++) {
     const polled = page.waitForResponse(response => response.url().endsWith('/sales/status'));
     await page.clock.fastForward(15 * 60000); await polled;
@@ -141,7 +156,7 @@ test('sales frequency stays shared when changing cafeterias and polling only use
   assert.equal(await frequency.inputValue(), 'manual');
   assert.deepEqual(updates, []);
   assert.deepEqual(saves, []);
-  await page.getByRole('button', { name: 'Actualizar ahora', exact: true }).click();
+  await page.getByRole('button', { name: 'Iniciar carga o actualizar ventas', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('[data-toteat-sales-sync]').disabled);
   assert.deepEqual(updates, [{ location: 'store-1', full: false, recentOnly: true }]);
   assert.equal(states[0].enabled, false);
@@ -149,7 +164,7 @@ test('sales frequency stays shared when changing cafeterias and polling only use
   await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="from"]').value === '2026-09-15');
   assert.equal(await frequency.inputValue(), 'manual');
   await frequency.selectOption('15');
-  await page.getByRole('button', { name: 'Guardar y sincronizar ventas' }).click();
+  await page.getByRole('button', { name: 'Guardar configuración de ventas' }).click();
   await page.waitForFunction(() => !document.querySelector('#toteat-sales-settings [type="submit"]').disabled);
   assert.equal(states[0].enabled, true);
   assert.equal(states[0].intervalMinutes, 15);
@@ -157,13 +172,12 @@ test('sales frequency stays shared when changing cafeterias and polling only use
   await page.locator('#toteat-api-location').selectOption('store-1');
   await page.waitForFunction(() => document.querySelector('#toteat-sales-settings [name="frequency"]').value === '15');
   await frequency.selectOption('manual');
-  await page.getByRole('button', { name: 'Guardar y sincronizar ventas' }).click();
+  await page.getByRole('button', { name: 'Guardar configuración de ventas' }).click();
   await page.waitForFunction(() => !document.querySelector('#toteat-sales-settings [type="submit"]').disabled);
   assert.equal(states[1].enabled, false);
   assert.equal(states[0].enabled, false);
   assert.equal(saves.length, 2);
-  assert.deepEqual(updates[1], { location: 'store-2', full: false, recentOnly: true });
-  assert.deepEqual(updates[2], { location: 'store-1', full: false, recentOnly: true });
+  assert.equal(updates.length, 1, 'guardar ajustes no debe iniciar descargas');
 });
 
 test('finding evidence exposes nested source fields safely and closes with Escape', { skip: !fs.existsSync(CHROME_PATH) }, async t => {

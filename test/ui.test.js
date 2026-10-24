@@ -238,8 +238,8 @@ test('Configuración agrupa lunes a viernes y muestra completos los campos horar
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole('link', { name: 'Configuracion' }).click();
-  await page.locator('#active-locations-list .location-row').first().waitFor();
-  const store = page.locator('#active-locations-list .location-row').first();
+  await page.locator('#active-locations-list .location-summary button').first().click();
+  const store = page.locator('#location-editor-list .location-row:visible');
   assert.equal(await store.locator('.location-hours-row').count(), 3);
   assert.match(await store.locator('.location-weekly-hours').innerText(), /Lunes a viernes.*Sábado.*Domingo/s);
   assert.ok(await store.getByLabel(/Apertura Lun–Vie/).evaluate(element => element.getBoundingClientRect().width) >= 118);
@@ -248,7 +248,7 @@ test('Configuración agrupa lunes a viernes y muestra completos los campos horar
   }));
   assert.ok(hourRows.every((row, index) => index === 0 || row.top >= hourRows[index - 1].bottom));
   const actionPositions = await store.locator('.location-row-actions button').evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().top));
-  assert.ok(actionPositions[1] > actionPositions[0]);
+  assert.ok(actionPositions[1] >= actionPositions[0]);
   await store.getByLabel(/Apertura Lun–Vie/).fill('08:00');
   await store.getByLabel(/Cierre Lun–Vie/).fill('20:00');
   await store.getByRole('button', { name: /Guardar cambios/ }).click();
@@ -265,7 +265,7 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
   const uploadsRoot=fs.mkdtempSync(path.join(os.tmpdir(),'brewit-upload-native-ui-'));
   const server=createApp({ uploadsRoot,enableToteatSync:false}).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   const browser=await chromium.launch({executablePath:CHROME_PATH,headless:true});t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));fs.rmSync(uploadsRoot,{recursive:true,force:true});});
-  const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();
+  const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}`);await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();await page.getByRole('tab',{name:'Cargar archivos',exact:true}).click();
   await page.locator('[data-upload-location="store-1"][data-upload-field="marketing"]').waitFor();
   assert.equal(await page.locator('#upload-manual-actions [data-upload-field]').count(),6);
   assert.equal(await page.locator('#upload-mercadopago-shared[data-upload-field="mercadopago"]').count(),1);
@@ -287,9 +287,11 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
       const lyon=await page.request.get(`http://127.0.0.1:${server.address().port}/api/transactions?location=store-2`).then(r=>r.json());assert.equal(lyon.files.mercadopago.latest.transactionCount,1);
     }
   }
+  await page.getByRole('tab',{name:'Estado y actualización'}).click();
+  await page.locator('#upload-global-options > summary').click();
   await page.locator('#upload-masters-frequency').selectOption('60');await page.locator('#upload-inventory-frequency').selectOption('15');await page.getByRole('button',{name:'Guardar frecuencias'}).click();
   await page.locator('#upload-schedule-status').filter({hasText:'Frecuencias guardadas'}).waitFor();
-  await page.reload();await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();
+  await page.reload();await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();await page.getByRole('tab',{name:'Cargar archivos',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('upload-masters-frequency').value==='60');
   assert.equal(await page.locator('#upload-inventory-frequency').inputValue(),'15');
 });

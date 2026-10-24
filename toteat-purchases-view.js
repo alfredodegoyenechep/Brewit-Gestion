@@ -1,7 +1,9 @@
 (() => {
-  const form = document.getElementById('toteat-purchases-settings'), location = document.getElementById('toteat-api-location');
+  const form = document.getElementById('toteat-purchases-settings');
+  const settings = window.brewitSettings;
+  const settingsStatus = document.getElementById('settings-purchases-status');
   const base = '/api/integrations/toteat/api/purchases';
-  let states = [], populated = null, polling = false;
+  let states = [], polling = false;
   const versions = new Map();
   async function request(route, body, method = 'POST') {
     const response = await fetch(base + route, body ? { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' });
@@ -11,12 +13,13 @@
   }
   function message(text) { document.querySelectorAll('[data-toteat-purchases-status]').forEach(e => { e.textContent = text; }); }
   function populate() {
-    if (!location.value) return;
-    const s = states.find(s => s.location === location.value);
+    if (settings.dirty(form)) return;
+    form.querySelector('[type=submit]').disabled = !settings.context.location;
+    const s = states.find(s => s.location === settings.context.location);
     form.elements.from.value = s?.from || new Intl.DateTimeFormat('sv-SE').format(new Date());
     form.elements.from.readOnly = !!s?.lastSuccess;
     form.elements.frequency.value = s?.enabled ? String(s.intervalMinutes) : 'manual';
-    populated = location.value;
+    settings.clean(form);
   }
   async function poll() {
     if (polling) return;
@@ -24,9 +27,10 @@
     try {
       states = (await request('/status')).locations;
       form.elements.frequency.closest('label').hidden = !!states[0]?.manualOnly;
-      if (states[0]?.manualOnly) form.elements.frequency.value = 'manual';
-      form.elements.from.readOnly = !!states.find(s => s.location === location.value)?.lastSuccess;
-      if (populated !== location.value) populate();
+      form.elements.from.readOnly = !!states.find(s => s.location === settings.context.location)?.lastSuccess;
+      populate();
+      const selectedState = states.find(s => s.location === settings.context.location);
+      document.getElementById('settings-purchases-summary').textContent = !selectedState ? 'Sin cafetería seleccionada' : selectedState.running ? 'Actualizando…' : selectedState.lastError ? `Error: ${selectedState.lastError}` : !selectedState.configured ? 'Pendiente de conectar' : !selectedState.lastSuccess ? 'Pendiente de primera carga' : selectedState.state === 'connected-empty' ? 'Conectado · sin compras todavía' : `Última carga: ${new Date(selectedState.lastSuccess).toLocaleString('es-CL')}`;
       let changed = false;
       const lines = states.map(s => {
         if (versions.has(s.location) && versions.get(s.location) !== s.lastSuccess && s.lastSuccess) changed = true;
@@ -44,22 +48,29 @@
     } catch (error) { message(error.message); }
     finally { polling = false; }
   }
-  location.addEventListener('change', populate);
+  window.addEventListener('brewit-settings-location', () => { settingsStatus.textContent = ''; populate(); poll(); });
   form.addEventListener('submit', async event => {
     event.preventDefault(); const button = form.querySelector('[type=submit]'); button.disabled = true;
+    const selectedLocation = settings.context.location; settings.setBusy(form, true);
+    settingsStatus.textContent = 'Guardando configuración de compras…';
     try {
       const f = form.elements.frequency.value;
-      await request('/settings', { location: location.value, from: form.elements.from.value, intervalMinutes: f === 'manual' ? 15 : Number(f), enabled: f !== 'manual' }, 'PUT');
-      await request('/sync', { location: location.value }); await poll();
-    } catch (error) { message(error.message); }
-    finally { button.disabled = false; }
+      await request('/settings', { location: selectedLocation, from: form.elements.from.value, intervalMinutes: f === 'manual' ? 15 : Number(f), enabled: f !== 'manual' }, 'PUT');
+      if (selectedLocation === settings.context.location) { settings.clean(form); settingsStatus.textContent = 'Configuración guardada. Usa «Ir a sincronizar compras» para iniciar la carga.'; }
+      await poll();
+    } catch (error) { if (selectedLocation === settings.context.location) settingsStatus.textContent = error.message; }
+    finally { button.disabled = false; settings.setBusy(form, false); }
   });
   document.querySelectorAll('[data-toteat-purchases-sync]').forEach(button => button.addEventListener('click', async () => {
     button.disabled = true;
+    const scope = button.dataset.toteatPurchasesSync;
+    const selectedLocation = scope === 'report' ? document.getElementById('purchases-location-filter').value || 'all' : settings.context.syncLocation;
     try {
-      const scope = button.dataset.toteatPurchasesSync;
-      await request('/sync', { location: scope === 'report' ? document.getElementById('purchases-location-filter').value || 'all' : location.value, full: scope === 'history' }); await poll();
-    } catch (error) { message(error.message); }
+      if (!selectedLocation) throw Error('Selecciona una cafetería.');
+      settings.syncMessage('Iniciando actualización de compras…', selectedLocation, 'purchases');
+      await request('/sync', { location: selectedLocation, full: scope === 'history' }); await poll();
+      settings.syncMessage('Solicitud de compras enviada. Consulta el estado y advertencias de compras.', selectedLocation, 'purchases');
+    } catch (error) { message(error.message); settings.syncMessage(error.message, selectedLocation, 'purchases'); }
     finally { button.disabled = false; }
   }));
   setInterval(poll, 10000); poll();

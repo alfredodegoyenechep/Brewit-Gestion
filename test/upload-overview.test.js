@@ -144,3 +144,32 @@ test('individual refresh targets only the selected local source and rejects manu
  calls.length=0;assert.equal((await fetch(url+'/api/uploads/refresh',{method:'POST'})).status,202);await finish();
  assert.deepEqual(calls,['masters:undefined','sales:store-1','purchases:store-1','stock:store-1','counts:store-1','sales:store-2','purchases:store-2','stock:store-2','counts:store-2']);
 });
+
+test('selected refresh validates all targets, shares sources once and resumes the remaining selection', async t => {
+ const app=express();app.use(express.json());const calls=[];let authenticated=false;
+ const status=()=>({configured:true,from:'2026-09-01'});
+ registerUploadOverview(app,{locations:()=>[
+  {id:'store-1',name:'La Concepción',type:'store',status:'active'}, {id:'store-2',name:'Lyon',type:'store',status:'active'},
+  {id:'main-warehouse',name:'Bodega',type:'warehouse',status:'active'}],
+  sales:{status,synchronize:async id=>calls.push('sales:'+id),purchases:{status,synchronize:async id=>calls.push('purchases:'+id)}},
+  masters:{sharedStatus:()=>({}),synchronizeShared:async()=>calls.push('masters')},
+  stock:{status:()=>({range:{from:'2026-09-01'}}),synchronize:async id=>{calls.push('inventory:'+id);if(!authenticated)throw Object.assign(Error('session'),{code:'TOTEAT_AUTH_REQUIRED'});return {};},original:()=>({}),rebuild:()=>calls.push('rebuild')},
+  counts:{status:()=>({}),synchronize:async id=>calls.push('counts:'+id),publish:()=>calls.push('publish-counts')},files:()=>[],masterFiles:()=>[]});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>new Promise(r=>server.close(r)));
+ const base=`http://127.0.0.1:${server.address().port}`;
+ const send=targets=>fetch(base+'/api/uploads/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({targets})});
+ for(const targets of [[],[{location:'store-1',key:'sales'},{location:'bad',key:'purchases'}],[{location:'main-warehouse',key:'sales'}],[{location:'store-1',key:'mercadopago'}]])assert.equal((await send(targets)).status,400);
+ assert.deepEqual(calls,[]);
+ const response=await send([{location:'store-1',key:'sales'},{location:'store-1',key:'payment-details'},{location:'main-warehouse',key:'transfers'},
+  {location:'store-1',key:'inventory'},{location:'store-1',key:'counts'},{location:'store-2',key:'purchases'},{location:'shared',key:'masters'}]);
+ assert.equal(response.status,202);
+ const read=()=>fetch(base+'/api/uploads/overview').then(r=>r.json());
+ let data;for(let i=0;i<30;i++){data=await read();if(data.job.waitingForAuthentication)break;}
+ assert.equal(data.capabilities.selectedRefresh,true);assert.equal(data.job.steps.length,4);assert.equal(data.job.waitingForAuthentication,true);
+ assert.deepEqual(calls,['masters','sales:store-1','inventory:store-1']);
+ assert.equal((await send([{location:'store-2',key:'sales'}])).status,409);
+ authenticated=true;await fetch(base+'/api/uploads/resume',{method:'POST'});
+ for(let i=0;i<30;i++){data=await read();if(!data.job.running)break;}
+ assert.equal(data.job.summary.complete,4);
+ assert.deepEqual(calls,['masters','sales:store-1','inventory:store-1','inventory:store-1','publish-counts','rebuild','purchases:store-2']);
+});

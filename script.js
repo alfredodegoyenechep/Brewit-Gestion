@@ -321,7 +321,188 @@ window.addEventListener('brewit-purchases-updated', () => {
   if (view && !view.hidden && view.style.display !== 'none') loadPurchasesView();
 });
 
-function setView(view) {
+/* Configuration navigation and source scope; independent from integration forms. */
+function initializeSettingsWorkspace() {
+  const byId = id => document.getElementById(id);
+  const root = byId('location-settings');
+  const snapshots = new Map();
+  const lockedControls = new WeakMap();
+  const context = { location: '', syncLocation: '', syncSource: 'sales' };
+  let locations = [], editorId = null, pendingNavigation = null;
+  const controls = container => [...container.querySelectorAll('input, select, textarea')];
+  const value = input => input.type === 'checkbox' ? input.checked : input.value;
+  const clean = container => {
+    if (typeof container === 'string') container = byId(container);
+    if (container) snapshots.set(container, controls(container).map(input => [input, value(input)]));
+  };
+  const dirty = container => (snapshots.get(typeof container === 'string' ? byId(container) : container) || [])
+    .some(([input, original]) => input.isConnected && value(input) !== original);
+  function setBusy(container, busy) {
+    container.dataset.saving = String(busy);
+    if (busy) {
+      lockedControls.set(container, controls(container).map(input => [input, input.disabled]));
+      controls(container).forEach(input => { input.disabled = true; });
+    } else {
+      for (const [input, disabled] of lockedControls.get(container) || []) input.disabled = disabled;
+      lockedControls.delete(container);
+    }
+  }
+  function guard(action) {
+    for (const container of snapshots.keys()) if (!container.isConnected) snapshots.delete(container);
+    if ([...snapshots.keys()].some(container => container.dataset.saving === 'true')) return false;
+    const changed = [...snapshots.keys()].filter(dirty);
+    if (!changed.length) { action(); return true; }
+    if (byId('settings-unsaved-dialog').open) return false;
+    pendingNavigation = () => {
+      for (const container of changed) for (const [input, original] of snapshots.get(container)) {
+        if (input.type === 'checkbox') input.checked = original;
+        else input.value = original;
+        input.dispatchEvent(new Event('brewit-settings-discarded'));
+      }
+      action();
+    };
+    byId('settings-unsaved-dialog').showModal();
+    return false;
+  }
+  byId('settings-keep-editing').onclick = () => { pendingNavigation = null; byId('settings-unsaved-dialog').close(); };
+  byId('settings-discard').onclick = () => {
+    const action = pendingNavigation; pendingNavigation = null;
+    byId('settings-unsaved-dialog').close(); action?.();
+  };
+  byId('settings-unsaved-dialog').addEventListener('cancel', () => { pendingNavigation = null; });
+  window.addEventListener('beforeunload', event => {
+    if ([...snapshots.keys()].some(dirty)) { event.preventDefault(); event.returnValue = ''; }
+  });
+  function tab(name, focus = false) {
+    root.querySelectorAll('[data-settings-tab]').forEach(button => {
+      const selected = button.dataset.settingsTab === name;
+      button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+      byId(button.getAttribute('aria-controls')).hidden = !selected;
+      if (selected && focus) button.focus();
+    });
+  }
+  const tabs = [...root.querySelectorAll('[data-settings-tab]')];
+  tabs.forEach((button, index) => {
+    button.onclick = () => guard(() => tab(button.dataset.settingsTab));
+    button.onkeydown = event => {
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+        : event.key === 'ArrowRight' ? (index + 1) % tabs.length
+        : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : null;
+      if (next === null) return;
+      event.preventDefault(); guard(() => tab(tabs[next].dataset.settingsTab, true));
+    };
+  });
+  function showLocations(mode = 'list', id = null, focus = true) {
+    editorId = mode === 'edit' ? id : null;
+    byId('location-list-view').hidden = mode !== 'list';
+    byId('location-editor-view').hidden = !['edit', 'create'].includes(mode);
+    byId('location-trash-view').hidden = mode !== 'trash';
+    byId('location-create-view').hidden = mode !== 'create';
+    byId('location-editor-list').hidden = mode !== 'edit';
+    byId('location-editor-list').querySelectorAll('.location-row').forEach(row => { row.hidden = row.dataset.locationId !== id; });
+    if (mode === 'edit' || mode === 'create') {
+      byId('location-editor-title').textContent = mode === 'create' ? 'Nueva ubicación' : `Editar ${locations.find(item => item.id === id)?.name || 'ubicación'}`;
+      if (focus) byId('location-editor-title').focus();
+    } else if (focus) byId(mode === 'trash' ? 'location-trash-back' : 'new-location-open').focus();
+  }
+  byId('new-location-open').onclick = () => guard(() => { byId('create-location-form').reset(); clean('create-location-form'); showLocations('create'); });
+  byId('location-editor-back').onclick = () => guard(() => showLocations());
+  byId('location-trash-back').onclick = () => showLocations();
+  byId('location-trash-open').onclick = () => guard(() => showLocations('trash'));
+  function editLocation(id) {
+    guard(() => {
+      if (!locations.some(item => item.id === id)) return;
+      setView('config'); tab('locations'); showLocations('edit', id);
+    });
+  }
+  root.querySelectorAll('[data-edit-integration-location]').forEach(button => { button.onclick = () => editLocation(context.location); });
+  function associations() {
+    const location = locations.find(item => item.id === context.location);
+    byId('toteat-association').textContent = location ? `Restaurant ID: ${location.toteatRestaurantId || 'Sin asignar'} · Local ID: ${location.toteatLocalId || 'Sin asignar'}` : 'Primero crea una cafetería.';
+    byId('mercadopago-association').textContent = location?.mercadoPagoStoreId ? `Asociado · STORE_ID ${location.mercadoPagoStoreId}` : 'Sin asociación de MercadoPago';
+    root.querySelectorAll('[data-edit-integration-location], [data-open-sync="sales"], [data-open-sync="purchases"]').forEach(button => { button.disabled = !location; });
+  }
+  function selectLocation(id) {
+    context.location = id; byId('toteat-api-location').value = id;
+    byId('toteat-api-form').elements.location.value = id;
+    associations();
+    window.dispatchEvent(new CustomEvent('brewit-settings-location', { detail: { location: id } }));
+  }
+  byId('toteat-api-location').addEventListener('change', () => {
+    const id = byId('toteat-api-location').value;
+    byId('toteat-api-location').value = context.location;
+    guard(() => selectLocation(id));
+  });
+  function updateSyncScope() {
+    byId('source-sync-location').value = context.syncLocation;
+    byId('source-sync-kind').value = context.syncSource;
+    const location = locations.find(item => item.id === context.syncLocation);
+    byId('source-sync-scope').textContent = location
+      ? `${location.name} · ${context.syncSource === 'sales' ? 'Ventas y pagos' : 'Compras'} · Actualización manual`
+      : 'Crea una cafetería y configura su conexión antes de sincronizar.';
+    document.querySelectorAll('[data-sync-source]').forEach(section => {
+      section.hidden = section.dataset.syncSource !== context.syncSource;
+      section.querySelectorAll('button').forEach(button => { button.disabled = !location; });
+    });
+    byId('source-sync-configure').disabled = !location;
+    byId('source-sync-status').textContent = '';
+  }
+  byId('source-sync-location').onchange = event => { context.syncLocation = event.target.value; updateSyncScope(); };
+  byId('source-sync-kind').onchange = event => { context.syncSource = event.target.value; updateSyncScope(); };
+  root.querySelectorAll('[data-open-sync]').forEach(button => {
+    button.onclick = () => guard(() => {
+      const source = button.dataset.openSync;
+      context.syncLocation = context.location;
+      if (source !== 'masters') context.syncSource = source;
+      updateSyncScope(); setView('uploads');
+      uploadWorkspace.open(context.location, source);
+      const target = byId(source === 'masters' ? 'shared-masters-title' : 'upload-title');
+      target.tabIndex = -1; target.focus(); target.scrollIntoView({ block: 'start' });
+    });
+  });
+  byId('source-sync-configure').onclick = () => guard(() => {
+    byId('source-sync-dialog').close();
+    setView('config'); tab('integrations'); selectLocation(context.syncLocation); byId('toteat-api-location').focus();
+  });
+  function setLocations(data) {
+    locations = data.active;
+    const stores = locations.filter(item => item.type === 'store');
+    for (const id of ['toteat-api-location', 'source-sync-location']) byId(id).replaceChildren(...stores.map(item => new Option(item.name, item.id)));
+    context.syncLocation = stores.some(item => item.id === context.syncLocation) ? context.syncLocation : stores[0]?.id || '';
+    const selected = stores.some(item => item.id === context.location) ? context.location : stores[0]?.id || '';
+    updateSyncScope();
+    if (![byId('toteat-api-form'), byId('toteat-sales-settings'), byId('toteat-purchases-settings')].some(dirty)) selectLocation(selected);
+    else { byId('toteat-api-location').value = context.location; associations(); }
+    if (editorId) showLocations(locations.some(item => item.id === editorId) ? 'edit' : 'list', editorId, false);
+  }
+  window.brewitSettings = { context, clean, dirty, guard, setBusy, setLocations, editLocation, selectLocation,
+    getLocation(id) { return locations.find(item => item.id === id); },
+    openIntegration(id) { guard(() => { setView('config'); tab('integrations'); selectLocation(id); byId('toteat-api-location').focus(); }); },
+    registerEditor(row, location) {
+      clean(row);
+      const summary = document.createElement('article'); summary.className = 'location-summary';
+      const info = document.createElement('div'), name = document.createElement('h4'), address = document.createElement('p');
+      name.textContent = location.name; address.textContent = location.address || 'Sin dirección registrada'; info.append(name, address);
+      const type = document.createElement('span'); type.className = 'location-type-badge'; type.textContent = location.type === 'store' ? 'Cafetería' : 'Bodega';
+      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-button'; edit.textContent = 'Editar'; edit.setAttribute('aria-label', `Editar ${location.name}`); edit.onclick = () => editLocation(location.id);
+      summary.append(info, type, edit); byId('active-locations-list').append(summary);
+      row.dataset.locationId = location.id; row.hidden = location.id !== editorId;
+    },
+    created(id) { clean('create-location-form'); editLocation(id); },
+    syncMessage(text, location, source) {
+      if (context.syncLocation === location && context.syncSource === source) byId('source-sync-status').textContent = text;
+    }
+  };
+  ['company-profile-form', 'create-location-form', 'toteat-api-form', 'toteat-sales-settings', 'toteat-purchases-settings'].forEach(clean);
+}
+
+initializeSettingsWorkspace();
+
+function setView(view, { confirmed = false } = {}) {
+  if (!confirmed && view !== 'config' && !document.getElementById('location-settings').hidden && document.getElementById('location-settings').style.display !== 'none' && window.brewitSettings) {
+    return window.brewitSettings.guard(() => setView(view, { confirmed: true }));
+  }
+  document.querySelectorAll('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.view === view));
   if (view !== 'purchase-projection') cancelPurchaseProjectionLoad();
   if (view !== 'weekly-results') window.cancelCafeWeeklyResults?.();
   document.querySelectorAll('.main-content > section').forEach(section => {
@@ -2940,7 +3121,7 @@ async function loadWeeklySalesReport() {
       renderNetworkSalesDashboard(report);
       document.getElementById('report-scope-description').textContent = 'Venta neta sin IVA y ticket promedio con IVA, comparados por local y para toda la red.';
       const latest = `Última venta registrada: ${formatReportDate(report.sourceCoverage?.latestSaleDate)}.`;
-      setStatus(status, report.warnings.length ? `${latest} ${report.warnings.join(' ')}` : `${report.filesRead} archivo(s) de ventas procesado(s). ${latest}`,
+      setStatus(status, report.warnings.length ? `${latest} ${report.warnings.join(' ')}` : `${report.filesRead} fuente(s) de ventas con detalle por producto procesada(s). ${latest}`,
         report.warnings.length ? 'error' : 'success');
       return;
     }
@@ -3003,7 +3184,7 @@ async function loadWeeklySalesReport() {
     } else if (report.warnings.length) {
       setStatus(status, `${sourceSummary}${missingStores}${futureDates} ${report.warnings.join(' ')}`, 'error');
     } else {
-      setStatus(status, `${report.filesRead} archivo(s) de ventas procesado(s). ${sourceSummary}${missingStores}${futureDates}`,
+      setStatus(status, `${report.filesRead} fuente(s) de ventas con detalle por producto procesada(s). ${sourceSummary}${missingStores}${futureDates}`,
         missingStores || futureDates ? 'muted' : 'success');
     }
   } catch (error) {
@@ -11000,10 +11181,13 @@ async function refreshLocationConfiguration() {
       apiRequest('/api/config/locations'),
       apiRequest('/api/config/company')
     ]);
-    document.getElementById('company-name').value = company.name || 'CODE SPA';
-    document.getElementById('company-tax-id').value = company.taxId || '';
-    exportDecimalSystem = company.exportDecimalSystem === 'dot' ? 'dot' : 'comma';
-    document.getElementById('company-export-decimal-system').value = exportDecimalSystem;
+    if (!window.brewitSettings?.dirty('company-profile-form')) {
+      document.getElementById('company-name').value = company.name || 'CODE SPA';
+      document.getElementById('company-tax-id').value = company.taxId || '';
+      exportDecimalSystem = company.exportDecimalSystem === 'dot' ? 'dot' : 'comma';
+      document.getElementById('company-export-decimal-system').value = exportDecimalSystem;
+      window.brewitSettings?.clean('company-profile-form');
+    }
     locationRegistry = Object.fromEntries(data.active.map(location => [location.id, location]));
     refreshReportLocationFilter();
     refreshSalesDashboardLocationFilter();
@@ -11030,6 +11214,7 @@ async function refreshLocationConfiguration() {
     select.replaceChildren(...options);
     if (locationRegistry[previous]) select.value = previous;
     renderLocationManagement(data);
+    window.brewitSettings?.setLocations(data);
     if (document.getElementById('weekly-upload-form')) updateLocationFields();
     return data;
   } catch (error) {
@@ -11041,7 +11226,10 @@ async function refreshLocationConfiguration() {
 function renderLocationManagement(data) {
   const activeList = document.getElementById('active-locations-list');
   const trashList = document.getElementById('trashed-locations-list');
+  const editorList = document.getElementById('location-editor-list');
+  if ([...editorList.children].some(row => window.brewitSettings?.dirty(row))) return;
   activeList.replaceChildren();
+  editorList.replaceChildren();
   trashList.replaceChildren();
 
   if (!data.active.length) activeList.textContent = 'No hay ubicaciones activas.';
@@ -11153,6 +11341,7 @@ function renderLocationManagement(data) {
         open.setAttribute('aria-label', `Apertura ${group.shortLabel} de ${location.name}`);
         close.setAttribute('aria-label', `Cierre ${group.shortLabel} de ${location.name}`);
         let changed = false;
+        open.addEventListener('brewit-settings-discarded', () => { changed = false; });
         open.addEventListener('input', () => { changed = true; });
         close.addEventListener('input', () => { changed = true; });
         controls.append(open, close);
@@ -11180,11 +11369,13 @@ function renderLocationManagement(data) {
     type.textContent = location.type === 'warehouse' ? 'Bodega' : 'Cafetería';
     const saveButton = document.createElement('button');
     saveButton.type = 'button';
-    saveButton.className = 'icon-button small';
-    saveButton.textContent = 'Guardar';
+    saveButton.className = 'primary';
+    saveButton.textContent = 'Guardar cambios';
     saveButton.setAttribute('aria-label', `Guardar cambios de ${location.name}`);
     saveButton.addEventListener('click', async () => {
       saveButton.disabled = true;
+      window.brewitSettings?.setBusy(row, true);
+      setStatus(document.getElementById('location-status'), 'Guardando ubicación…');
       try {
         if (weekdayHoursInputs.some(({ open, close }) => Boolean(open.value) !== Boolean(close.value))) {
           throw new Error('Completa apertura y cierre del mismo bloque, o deja ambos horarios vacíos.');
@@ -11209,24 +11400,33 @@ function renderLocationManagement(data) {
             ...Object.fromEntries(toteatInputs.map(([field, input]) => [field, input.value]))
           })
         });
-        setStatus(document.getElementById('location-status'), 'Ubicación e identificadores de TotEat y MercadoPago actualizados.', 'success');
+        window.brewitSettings?.clean(row);
+        setStatus(document.getElementById('location-status'), 'Ubicación guardada.', 'success');
         await refreshLocationConfiguration();
+        document.getElementById('location-editor-title').focus();
         window.dispatchEvent(new Event('brewit-location-settings-updated'));
       } catch (error) {
         setStatus(document.getElementById('location-status'), error.message, 'error');
-        saveButton.disabled = false;
-      }
+      } finally { saveButton.disabled = false; window.brewitSettings?.setBusy(row, false); }
     });
     const trashButton = document.createElement('button');
     trashButton.type = 'button';
     trashButton.className = 'delete-button small';
     trashButton.textContent = 'Enviar a papelera';
-    trashButton.addEventListener('click', () => openLocationTrashDialog(location));
+    trashButton.addEventListener('click', () => window.brewitSettings.guard(() => openLocationTrashDialog(location)));
     const actionStack = document.createElement('div');
     actionStack.className = 'location-row-actions';
     actionStack.append(saveButton, trashButton);
-    row.append(nameInput, addressInput, type, toteatFields, operationFields, actionStack);
-    activeList.appendChild(row);
+    const general = document.createElement('div'); general.className = 'settings-field-grid';
+    for (const [caption, input] of [['Nombre de la ubicación', nameInput], ['Dirección', addressInput]]) {
+      const label = document.createElement('label'); const span = document.createElement('span'); span.textContent = caption; label.append(span, input); general.append(label);
+    }
+    const advanced = document.createElement('details'); const advancedTitle = document.createElement('summary'); advancedTitle.textContent = 'Identificadores avanzados'; advanced.append(advancedTitle, toteatFields);
+    const heading = document.createElement('h4'); heading.textContent = 'Datos generales';
+    row.append(heading, general, type);
+    if (location.type === 'store') { const title = document.createElement('h4'); title.textContent = 'Calendario de operación'; row.append(title, operationFields); }
+    row.append(advanced, actionStack); editorList.appendChild(row);
+    window.brewitSettings?.registerEditor(row, location);
   }
 
   if (!data.trash.length) trashList.textContent = 'La papelera está vacía.';
@@ -11901,7 +12101,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     link.setAttribute('aria-label', linkLabel);
     link.addEventListener('click', event => {
       event.preventDefault();
-      document.querySelectorAll('.nav-link').forEach(item => item.classList.toggle('active', item === link));
       setView(link.dataset.view || 'report');
     });
   });
@@ -12474,6 +12673,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const uploadLink = document.querySelector('.nav-link[data-view="uploads"]');
     document.querySelectorAll('.nav-link').forEach(item => item.classList.toggle('active', item === uploadLink));
     setView('uploads');
+    uploadWorkspace.open(location, 'inventory');
     if (locationRegistry[location]) {
       document.getElementById('location-select').value = location;
       if (document.getElementById('weekly-upload-form')) updateLocationFields();
@@ -12485,8 +12685,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
+    window.brewitSettings?.setBusy(form, true);
     try {
-      await apiRequest('/api/config/locations', {
+      const created = await apiRequest('/api/config/locations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -12500,19 +12701,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         })
       });
       form.reset();
+      window.brewitSettings?.clean(form);
       setStatus(document.getElementById('location-status'), 'Ubicación creada.', 'success');
       await refreshLocationConfiguration();
+      window.brewitSettings?.setBusy(form, false);
+      window.brewitSettings?.created(created.id);
     } catch (error) {
       setStatus(document.getElementById('location-status'), error.message, 'error');
     } finally {
       button.disabled = false;
+      window.brewitSettings?.setBusy(form, false);
     }
   });
 
   document.getElementById('company-profile-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const button = event.currentTarget.querySelector('button[type="submit"]');
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
     button.disabled = true;
+    window.brewitSettings?.setBusy(form, true);
     try {
       const company = await apiRequest('/api/config/company', {
         method: 'PATCH',
@@ -12523,12 +12730,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           exportDecimalSystem: document.getElementById('company-export-decimal-system').value
         })
       });
+      window.brewitSettings?.clean('company-profile-form');
       exportDecimalSystem = company.exportDecimalSystem === 'dot' ? 'dot' : 'comma';
-      setStatus(document.getElementById('location-status'), 'Datos de Brewit y formato de exportación actualizados.', 'success');
+      setStatus(document.getElementById('company-profile-status'), 'Datos de Brewit y formato de exportación actualizados.', 'success');
     } catch (error) {
-      setStatus(document.getElementById('location-status'), error.message, 'error');
+      setStatus(document.getElementById('company-profile-status'), error.message, 'error');
     } finally {
       button.disabled = false;
+      window.brewitSettings?.setBusy(form, false);
     }
   });
 
@@ -12575,19 +12784,219 @@ document.addEventListener('DOMContentLoaded', async () => {
 let uploadOverviewBusy = false;
 let uploadScheduleDirty = false;
 let uploadManualTarget = null;
+// Source selection and presentation use the existing overview and persisted job.
+const uploadWorkspace = (() => {
+  const el = id => document.getElementById(id), selected = new Map();
+  let data = null, location = 'all', activeTab = 'status', submitting = false, signature = '', jobId = null;
+  const node = (tag, text, className) => { const e = document.createElement(tag); if (text) e.textContent = text; if (className) e.className = className; return e; };
+  const date = value => value ? new Date(value).toLocaleString('es-CL') : 'Sin actualización guardada';
+  const groups = [
+    ['sales', 'Ventas y pagos', ['sales', 'payment-details']], ['purchases', 'Compras', ['purchases']],
+    ['counts', 'Tomas físicas', ['counts']], ['inventory', 'Movimientos de inventario', ['transformations', 'transfers']],
+    ['mercadopago', 'Liquidaciones de MercadoPago', ['mercadopago']], ['marketing', 'Consumo de marketing', ['marketing']],
+    ['employees', 'Consumo de colaboradores', ['employees']], ['calibrations', 'Calibraciones y bebidas desechadas', ['calibrations']]
+  ];
+  const busy = () => submitting || data?.job.running || data?.masterStatus.running || data?.rows.some(row => row.cells.some(cell => cell.running));
+  function tab(key, focus = false) {
+    activeTab = key;
+    document.querySelectorAll('[data-upload-tab]').forEach(button => {
+      const active = button.dataset.uploadTab === key;
+      button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1;
+      el(button.getAttribute('aria-controls')).hidden = !active;
+      if (active && focus) button.focus();
+    });
+    el('upload-filter-bar').hidden = key === 'history';
+    if (key === 'history' && [...el('source-history-location').options].some(option => option.value === location)) el('source-history-location').value = location;
+  }
+  const tabs = [...document.querySelectorAll('[data-upload-tab]')];
+  tabs.forEach((button, index) => {
+    button.onclick = () => tab(button.dataset.uploadTab);
+    button.onkeydown = event => {
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : null;
+      if (next === null) return; event.preventDefault(); tab(tabs[next].dataset.uploadTab, true);
+    };
+  });
+  function summary() {
+    el('upload-selection-summary').textContent = selected.size ? `${selected.size} grupo(s): ${[...selected.values()].map(item => item.label).join(' · ')}` : 'Selecciona las fuentes que quieres actualizar.';
+    el('upload-refresh-selection').disabled = !selected.size || busy() || !data?.capabilities?.selectedRefresh;
+    el('upload-refresh-masters').disabled = !!busy();
+    el('upload-select-masters').checked = selected.has('shared:masters');
+    el('upload-select-masters').disabled = !!busy() || !data?.capabilities?.selectedRefresh;
+  }
+  function choose(key, value, checked) { if (checked) selected.set(key, value); else selected.delete(key); summary(); }
+  function configure(id) {
+    const source = id === 'main-warehouse' ? 'store-1' : id;
+    window.brewitSettings?.openIntegration(source);
+  }
+  function inspect(id, key) {
+    const context = window.brewitSettings?.context;
+    if (!context) return;
+    context.syncLocation = id === 'main-warehouse' ? 'store-1' : id;
+    context.syncSource = key === 'purchases' ? 'purchases' : 'sales';
+    el('source-sync-location').value = context.syncLocation;
+    el('source-sync-location').dispatchEvent(new Event('change'));
+    el('source-sync-kind').value = context.syncSource;
+    el('source-sync-kind').dispatchEvent(new Event('change'));
+    el('source-sync-dialog').showModal();
+  }
+  function openInventory(id) {
+    const source = id === 'main-warehouse' ? 'store-1' : id;
+    setView('inventory');
+    el('inventory-location-select').value = id;
+    el('inventory-location-select').dispatchEvent(new Event('change'));
+    el('location-select').value = source;
+    el('location-select').dispatchEvent(new Event('change'));
+    el('inventory-native-detail').open = true;
+    el('inventory-native-detail').scrollIntoView({ block: 'start' });
+  }
+  function button(label, action) { const b = node('button', label, 'icon-button'); b.type = 'button'; b.onclick = action; return b; }
+  async function refresh(targets) {
+    if (busy()) return;
+    submitting = true; summary();
+    setStatus(el('upload-overview-status'), 'Iniciando la actualización de las fuentes seleccionadas…');
+    try {
+      if (data?.capabilities?.selectedRefresh) {
+        await apiRequest('/api/uploads/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targets }) });
+      } else if (targets.length === 1) {
+        const target = targets[0];
+        if (target.key === 'masters') await apiRequest('/api/integrations/toteat/masters/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'store-1' }) });
+        else await apiRequest('/api/uploads/refresh-source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: target.location, key: target.key === 'inventory' ? 'transfers' : target.key }) });
+      } else throw Error('Reinicia Brewit para activar la actualización de varias fuentes. Las actualizaciones individuales siguen disponibles.');
+      targets.forEach(target => selected.delete(`${target.location}:${target.key}`));
+      await loadUploadOverview();
+      if (!el('upload-refresh-report').hidden) el('upload-refresh-report').scrollIntoView({ block: 'nearest' });
+    } catch (error) { setStatus(el('upload-overview-status'), error.message, 'error'); }
+    finally { submitting = false; render(); }
+  }
+  function render() {
+    if (!data) return;
+    const rows = data.rows.filter(row => location === 'all' ? row.id !== 'main-warehouse' : row.id === location);
+    const fingerprint = JSON.stringify([rows, !!busy(), !!data.capabilities?.selectedRefresh, location]);
+    if (fingerprint !== signature) {
+      signature = fingerprint;
+      const focus = document.activeElement?.dataset.uploadFocus;
+      const opened = new Set([...el('upload-source-list').querySelectorAll('details[open]')].map(item => item.dataset.detail));
+      const cards = [];
+      for (const row of rows) {
+        const group = node('section', null, 'upload-location-group'); group.append(node('h4', row.name));
+        for (const [key, label, keys] of groups) {
+          const cells = row.cells.filter(cell => keys.includes(cell.key) && cell.applicable);
+          if (!cells.length) continue;
+          const source = row.id === 'main-warehouse' ? 'store-1' : row.id;
+          const selectable = cells.some(cell => cell.refreshable);
+          const target = { location: source, key }, identity = `${source}:${key}`;
+          const card = node('article', null, 'upload-source-row'); card.dataset.source = key; card.dataset.location = row.id;
+          const heading = node('div', null, 'upload-source-heading');
+          if (selectable) {
+            const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(identity);
+            check.disabled = !!busy() || !data.capabilities?.selectedRefresh; check.setAttribute('aria-label', `Seleccionar ${label} · ${row.name}`); check.dataset.uploadFocus = `select:${row.id}:${key}`;
+            check.onchange = () => choose(identity, { ...target, label: `${row.name}: ${label}` }, check.checked);
+            heading.append(check);
+          }
+          heading.append(node('h5', label));
+          const errors = [...new Set(cells.map(cell => cell.error).filter(Boolean))];
+          const state = cells.some(cell => cell.running) ? 'Actualizando' : errors.length || cells.some(cell => cell.stale) ? 'Requiere revisión' : cells.some(cell => cell.updatedAt) ? 'Datos guardados' : 'Sin datos guardados';
+          heading.append(node('span', state, `upload-state${state === 'Requiere revisión' ? ' warning' : ''}`)); card.append(heading);
+          const info = node('div', null, 'upload-source-info');
+          info.append(node('p', `Última actualización guardada: ${date(cells[0].updatedAt)}`));
+          if (key === 'sales') info.append(node('p', 'Incluye dos conjuntos: ventas con detalle por producto y detalle de pagos. Se actualizan juntos.'));
+          if (cells[0].coverage) info.append(node('p', `Período informado: ${cells[0].coverage.from} → ${cells[0].coverage.to}`));
+          if (cells[0].lastCheck) info.append(node('p', `Última comprobación: ${date(cells[0].lastCheck.finishedAt)}`));
+          if (cells.some(cell => cell.sharedFrom)) info.append(node('p', 'Fuente compartida desde La Concepción.'));
+          if (key === 'inventory') info.append(node('p', 'Transformaciones y transferencias; la actualización puede incluir tomas vinculadas.'));
+          if (errors.length) info.append(node('p', errors.join(' '), 'upload-source-warning'));
+          card.append(info);
+          const actions = node('div', null, 'settings-actions');
+          if (selectable) { const update = button(`Actualizar ${label.toLowerCase()}`, () => refresh([target])); update.disabled = !!busy(); update.dataset.uploadFocus = `refresh:${row.id}:${key}`; actions.append(update); }
+          for (const cell of cells) {
+            const name = data.columns.find(column => column.key === cell.key)?.label || cell.key;
+            const view = button(cell.key === 'sales' ? 'Ver ventas por producto' : cells.length > 1 ? `Ver ${name.toLowerCase()}` : 'Ver registros', () => window.openUploadRecords(row.id, cell.key, `${cell.key === 'sales' ? 'Ventas con detalle por producto' : name} · ${row.name}`));
+            view.dataset.uploadFocus = `records:${row.id}:${cell.key}`; actions.append(view);
+          }
+          if (['sales','purchases'].includes(key)) {
+            actions.append(button('Configurar conexión', () => configure(row.id)), button('Ver detalle de carga', () => inspect(row.id, key)));
+          } else if (['inventory','counts'].includes(key)) actions.append(button('Abrir Inventario', () => openInventory(row.id)));
+          else if (key === 'mercadopago') actions.append(button('Ver actualización web compartida', () => el('upload-mercadopago-web').scrollIntoView({ block: 'start' })));
+          else actions.append(button('Cargar archivo', () => { tab('files'); el('upload-manual-actions').scrollIntoView({ block: 'start' }); }));
+          [...actions.children].forEach((action, index) => { action.dataset.uploadFocus ||= `action:${row.id}:${key}:${index}`; });
+          card.append(actions);
+          const detail = node('details'); detail.dataset.detail = `${row.id}:${key}`; detail.open = opened.has(detail.dataset.detail);
+          const detailSummary = node('summary', 'Detalle de la fuente'); detailSummary.dataset.uploadFocus = `detail:${row.id}:${key}`; detail.append(detailSummary);
+          for (const cell of cells) {
+            detail.append(node('p', cell.origin || 'Origen no informado'));
+            if (cell.lastHistoricalReview) detail.append(node('p', `Revisión anterior: ${cell.lastHistoricalReview.from} → ${cell.lastHistoricalReview.to} · ${date(cell.lastHistoricalReview.completedAt)}`));
+            if (cell.lastFullSuccess) detail.append(node('p', `Última revisión completa: ${date(cell.lastFullSuccess)}`));
+            if (cell.lastCheck?.windows) detail.append(node('p', `Ventanas comprobadas: ${cell.lastCheck.windows.map(w => `${w.from} → ${w.to}`).join(', ')}`));
+          }
+          card.append(detail); group.append(card);
+        }
+        cards.push(group);
+      }
+      el('upload-source-list').replaceChildren(...(cards.length ? cards : [node('p', 'No hay fuentes disponibles para esta ubicación.')]));
+      if (focus) [...el('upload-source-list').querySelectorAll('[data-upload-focus]')].find(item => item.dataset.uploadFocus === focus)?.focus({ preventScroll: true });
+    }
+    for (const row of el('upload-manual-actions').querySelectorAll('tbody tr')) {
+      const id = row.querySelector('[data-upload-location]')?.dataset.uploadLocation;
+      row.hidden = location !== 'all' && id !== location;
+    }
+    el('upload-manual-empty').hidden = [...el('upload-manual-actions').querySelectorAll('tbody tr')].some(row => !row.hidden);
+    const notices = [];
+    if (!data.capabilities?.selectedRefresh) notices.push(node('p', 'Reinicia Brewit para activar la selección de varias fuentes. Puedes seguir actualizando cada fuente individualmente.', 'upload-alert'));
+    const masters = data.masterStatus;
+    if (masters.lastError || /vencida|vencido/i.test(masters.connection || '') || (masters.credentialExpiresAt && Date.parse(masters.credentialExpiresAt) < Date.now())) {
+      const notice = node('div', null, 'upload-alert'); notice.append(node('strong', 'Maestros compartidos: revisa la conexión'), node('p', `Última lectura exitosa: ${date(masters.observedAt)}. ${masters.lastError || masters.connection || 'La credencial está vencida.'}`));
+      const retry = button('Reintentar actualización de maestros', () => refresh([{ location: 'shared', key: 'masters' }])); retry.disabled = !!busy(); notice.append(retry); notices.push(notice);
+    }
+    const problems = rows.flatMap(row => row.cells.filter(cell => cell.applicable && (cell.error || cell.stale)).map(cell => `${row.name}: ${data.columns.find(column => column.key === cell.key)?.label || cell.key}`));
+    if (problems.length) { const notice = node('details', null, 'upload-alert'); notice.append(node('summary', `${problems.length} fuente(s) requieren revisión`), node('p', problems.join(' · '))); notices.push(notice); }
+    el('upload-attention').replaceChildren(...notices);
+    el('upload-mode').textContent = data.manualOnly ? 'Actualización manual' : 'Actualización manual y programación disponible';
+    if (data.job.id !== jobId) { el('upload-progress-details').open = !!data.job.running; jobId = data.job.id; }
+    summary();
+  }
+  el('upload-location-filter').onchange = event => { location = event.target.value; selected.clear(); render(); };
+  el('upload-select-masters').onchange = event => choose('shared:masters', { location: 'shared', key: 'masters', label: 'Maestros compartidos: todas las ubicaciones' }, event.target.checked);
+  el('upload-refresh-selection').onclick = () => refresh([...selected.values()].map(({ location, key }) => ({ location, key })));
+  el('upload-refresh-masters').onclick = () => refresh([{ location: 'shared', key: 'masters' }]);
+  el('source-sync-close').onclick = () => el('source-sync-dialog').close();
+  el('upload-open-source-detail').onclick = () => {
+    const historyLocation = el('source-history-location').value;
+    inspect(historyLocation === 'all' ? window.brewitSettings?.context.syncLocation : historyLocation, 'sales');
+  };
+  return {
+    tab, openInventory, loaded: () => !!data,
+    accept(value) {
+      data = value;
+      const options = [['all','Todas las ubicaciones'], ...data.rows.map(row => [row.id,row.name])];
+      const select = el('upload-location-filter');
+      if (JSON.stringify([...select.options].map(option => [option.value,option.text])) !== JSON.stringify(options)) select.replaceChildren(...options.map(([id,name]) => new Option(name,id)));
+      if (!options.some(([id]) => id === location)) { location = 'all'; selected.clear(); }
+      select.value = location;
+      for (const [id, target] of selected) if (target.location !== 'shared' && !data.rows.some(row => row.id === target.location)) selected.delete(id);
+      render();
+    },
+    open(id, key) {
+      location = id || 'all'; selected.clear();
+      if (key === 'masters') selected.set('shared:masters', { location:'shared', key:'masters', label:'Maestros compartidos: todas las ubicaciones' });
+      else if (id) selected.set(`${id}:${key}`, { location:id, key, label:`${window.brewitSettings?.getLocation(id)?.name || id}: ${groups.find(group => group[0] === key)?.[1] || key}` });
+      tab('status'); if (data) { el('upload-location-filter').value = location; render(); }
+    }
+  };
+})();
+
 async function loadUploadOverview() {
   if (uploadOverviewBusy) return;
   uploadOverviewBusy = true;
   const el = id => document.getElementById(id);
   const date = value => value ? new Date(value).toLocaleString('es-CL') : 'Sin actualizar';
-  setStatus(el('upload-overview-status'), 'Consultando el estado de las fuentes guardadas…');
+  if (!uploadWorkspace.loaded()) setStatus(el('upload-overview-status'), 'Consultando el estado de las fuentes guardadas…');
   try {
     const data = await apiRequest('/api/uploads/overview');
     el('upload-native-schedule').hidden = !!data.manualOnly;
     const historyLocation = el('source-history-location');
     const selectedHistoryLocation = historyLocation.value;
-    historyLocation.replaceChildren(new Option('Ambas cafeterías', 'all'),
-      ...data.rows.filter(row => row.id !== 'main-warehouse').map(row => new Option(row.name, row.id)));
+    historyLocation.replaceChildren(new Option('Todas las cafeterías', 'all'),
+      ...data.rows.filter(row => row.type ? row.type === 'store' : row.id !== 'main-warehouse').map(row => new Option(row.name, row.id)));
     if ([...historyLocation.options].some(option => option.value === selectedHistoryLocation)) historyLocation.value = selectedHistoryLocation;
     const cell = (tag, text) => { const e=document.createElement(tag);e.textContent=text;return e; };
     el('upload-master-list').replaceChildren(...data.masters.map(m=>{
@@ -12605,7 +13014,7 @@ async function loadUploadOverview() {
     for(const location of data.rows.filter(r=>r.cells.some(c=>c.applicable&&manualColumns.some(m=>m.key===c.key)))) {
       const row=document.createElement('tr'),name=cell('th',location.name);name.scope='row';row.append(name);
       for(const column of manualColumns) {
-        const td=document.createElement('td');
+        const td=document.createElement('td'); td.dataset.label=column.label;
         if(location.cells.some(c=>c.key===column.key&&c.applicable)) {
           const button=cell('button','Cargar archivo');button.type='button';button.className='icon-button';
           button.dataset.uploadLocation=location.id;button.dataset.uploadField=column.key;
@@ -12620,7 +13029,7 @@ async function loadUploadOverview() {
       }
       manualBody.append(row);
     }
-    el('upload-manual-actions').replaceChildren(manualHead,manualBody);
+    if (el('upload-manual-actions').innerHTML !== manualHead.outerHTML + manualBody.outerHTML) el('upload-manual-actions').replaceChildren(manualHead,manualBody);
     const table=el('upload-transaction-matrix'),head=document.createElement('thead'),header=document.createElement('tr');
     header.append(cell('th','Ubicación'),...data.columns.map(c=>cell('th',c.label)));head.append(header);
     const body=document.createElement('tbody');
@@ -12679,6 +13088,7 @@ async function loadUploadOverview() {
     setStatus(el('upload-overview-status'),data.job.running?'Actualización en curso…':otherRunning.length?'Hay actualizaciones independientes en curso: '+otherRunning.join(', '):data.masterStatus.running?'Maestros actualizándose desde otra vista…':data.job.finishedAt?'Último proceso finalizado: '+date(data.job.finishedAt):'');
     const loginRequired=job.steps.find(step=>['waiting-auth','error'].includes(step.state)&&step.code==='TOTEAT_AUTH_REQUIRED');
     if(loginRequired)setStatus(el('upload-overview-status'),loginRequired.message,'error');
+    uploadWorkspace.accept(data);
   } catch(error){setStatus(el('upload-overview-status'),error.message,'error');}finally{uploadOverviewBusy=false;}
 }
 document.getElementById('open-previous-upload')?.addEventListener('click',()=>setView('uploads-previous'));

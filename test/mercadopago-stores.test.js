@@ -188,6 +188,7 @@ test('shared MercadoPago upload needs no selected location or date checkbox and 
   });
   await page.goto(base);
   await page.getByRole('link', { name: 'Datos y sincronización', exact: true }).click();
+  await page.getByRole('tab', {name:'Cargar archivos',exact:true}).click();
   await page.locator('[data-upload-field="marketing"]').first().waitFor();
   await page.locator('#location-select').evaluate(select => select.replaceChildren());
   for (const [index, action] of ['keep', 'keep', 'replace'].entries()) {
@@ -239,16 +240,21 @@ test('configuration shows and saves the MercadoPago STORE_ID for each selected c
   const page = await browser.newPage();
   await page.goto(base);
   await page.locator('[data-view="config"]').click();
-  const input = page.locator('#mercadopago-store-form input');
-  await page.waitForFunction(() => document.querySelector('#mercadopago-store-form input').value === '82010740');
+  await page.getByRole('tab', { name: 'Integraciones' }).click();
+  await page.locator('#mercadopago-association').filter({ hasText: '82010740' }).waitFor();
   await page.locator('#toteat-api-location').selectOption('store-2');
-  assert.equal(await input.inputValue(), '81555097');
+  await page.locator('#mercadopago-association').filter({ hasText: '81555097' }).waitFor();
+  await page.getByRole('button', { name: 'Editar asociación de MercadoPago' }).click();
+  const row = page.locator('#location-editor-list .location-row:visible');
+  await row.locator('summary').click();
+  const input = row.getByLabel(/STORE_ID MercadoPago/);
   await input.fill('87654321');
-  await page.getByRole('button', { name: 'Guardar STORE_ID de MercadoPago' }).click();
-  await page.locator('#mercadopago-store-status').filter({ hasText: 'guardado' }).waitFor();
+  await row.getByRole('button', { name: /Guardar cambios/ }).click();
+  await page.locator('#location-status.success').waitFor();
   await page.reload();
   await page.locator('[data-view="config"]').click();
+  await page.getByRole('tab', { name: 'Integraciones' }).click();
   await page.locator('#toteat-api-location option[value="store-2"]').waitFor({ state: 'attached' });
   await page.locator('#toteat-api-location').selectOption('store-2');
-  assert.equal(await input.inputValue(), '87654321');
+  await page.locator('#mercadopago-association').filter({ hasText: '87654321' }).waitFor();
 });

@@ -118,8 +118,16 @@ test('connection form saves a verified connection and clears the token in the br
   const page = await browser.newPage();
   await page.goto(app.base);
   await page.locator('[data-view="config"]').click();
+  await page.locator('#active-locations-list .location-summary button').first().click();
+  await page.locator('#location-editor-list .location-row:visible summary').click();
+  await page.locator('#location-editor-list .location-row:visible').getByLabel(/Restaurant ID TotEat/).fill(credentials.restaurantId);
+  await page.locator('#location-editor-list .location-row:visible').getByLabel(/ID Local TotEat/).fill(credentials.localId);
+  await page.locator('#location-editor-list .location-row:visible').getByRole('button', { name: /Guardar cambios/ }).click();
+  await page.locator('#location-status.success').waitFor();
+  await page.getByRole('tab', { name: 'Integraciones' }).click();
+  await page.getByText('Configurar conexión', { exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#toteat-api-form [name=token]').required);
-  for (const key of ['restaurantId', 'localId', 'userId', 'token']) {
+  for (const key of ['userId', 'token']) {
     await page.locator(`#toteat-api-form [name=${key}]`).fill(credentials[key]);
   }
   await page.getByRole('button', { name: 'Probar conexión y guardar' }).click();

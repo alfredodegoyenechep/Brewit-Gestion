@@ -81,51 +81,53 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
           if (updatedAt && origin === 'Archivo cargado') origin='Toteat API';
           if (!updatedAt && !['counts','transformations','transfers'].includes(key)) updatedAt=latest(files(source,key))?.savedAt;
           return { key, applicable: true, refreshable: store && synchronizedKeys.includes(key), updatedAt: updatedAt || null, origin, sharedFrom:central?'La Concepción':null,
+            coverage: status?.lastSuccess && status.from && status.through ? { from:status.from, to:status.through } : status?.updatedAt && status.range ? status.range : null,
             running:!!status?.running, stale:!!status?.stale, lastFullSuccess:status?.lastFullSuccess || null,
             lastCheck:['sales','payment-details'].includes(key) ? status?.lastCheck || null : null,
             lastHistoricalReview:status?.lastHistoricalReview || null,
             error:status?.lastError || status?.error || warningText(status) || null };
         });
-        return { id:location.id, name:location.name, cells,
+        return { id:location.id, name:location.name, type:location.type, cells,
           schedules:location.type==='store'?[{label:'Ventas y detalle de pagos',enabled:!manualOnly&&!!sale?.enabled,minutes:sale?.intervalMinutes},{label:'Compras',enabled:!manualOnly&&!!purchase?.enabled,minutes:purchase?.intervalMinutes}]:[] };
       });
-      res.set('Cache-Control','no-store').json({ manualOnly, columns:columns.map(([key,label])=>({key,label})), rows, job:publicJob(), schedule:schedule(),
+      res.set('Cache-Control','no-store').json({ manualOnly, capabilities:{ selectedRefresh:true }, columns:columns.map(([key,label])=>({key,label})), rows, job:publicJob(), schedule:schedule(),
         masters:masterLabels.map(([key,label])=>{const record=latest(masterFiles(key));return {key,label,updatedAt:record?.savedAt || null};}),
         masterStatus: masters.sharedStatus() });
     } catch { res.status(500).json({error:'No se pudo consultar el estado de las cargas.'}); }
   });
-  function refresh({ updateMasters=true, updateInventory=true, updateTransactions=true, target=null } = {}) {
+  function refresh({ updateMasters=true, updateInventory=true, updateTransactions=true, target=null, targets=null } = {}) {
     if(job.running)return;
     const plan=[];
+    const wants=(location,key)=>!targets || targets.some(item=>item.location===location && item.key===key);
     const shareCounts = !!counts?.publish && typeof stock.original === 'function' && typeof stock.rebuild === 'function';
     const add=(label,sources,method,execute,message=null)=>plan.push({step:{label,sources,method,state:message?'skipped':'pending',message,startedAt:null,finishedAt:null},execute});
-    if(updateMasters && !target)add('Maestros compartidos · La Concepción',masterLabels.map(([,label])=>label),require('./toteat-direct-masters').connectionStatus(uploadsRoot).label,()=>masters.synchronizeShared());
+    if(updateMasters && !target && wants('shared','masters'))add('Maestros compartidos · La Concepción',masterLabels.map(([,label])=>label),require('./toteat-direct-masters').connectionStatus(uploadsRoot).label,()=>masters.synchronizeShared());
     const stores=active().filter(l=>l.type==='store' && (!target || l.id===target.location));
     for(const location of stores) {
       const s=sourceStatus(sales,location.id,'ventas'),p=sourceStatus(sales.purchases,location.id,'compras');
       if(updateTransactions)for(const [label,sources,status,service] of [
         ['Ventas y pagos',['Transacciones de venta','Detalle Pagos'],s,sales],
         ['Compras',['Compras'],p,sales.purchases]
-      ])if(!target || (service===sales ? ['sales','payment-details'].includes(target.key) : target.key==='purchases'))add(`${location.name} · ${label}`,sources,'API pública · token',()=>service.synchronize(location.id,service===sales?{recentOnly:true}:undefined),status.configured&&status.from?null:'Sin conexión o fecha inicial configurada.');
+      ])if((!target || (service===sales ? ['sales','payment-details'].includes(target.key) : target.key==='purchases')) && wants(location.id,service===sales?'sales':'purchases'))add(`${location.name} · ${label}`,sources,'API pública · token',()=>service.synchronize(location.id,service===sales?{recentOnly:true}:undefined),status.configured&&status.from?null:'Sin conexión o fecha inicial configurada.');
       if(updateInventory){
         const from=sourceStatus(stock,location.id,'inventario').range?.from || s.from;
-        if(!target || ['transformations','transfers'].includes(target.key) || (target.key==='counts' && !counts))add(`${location.name} · Inventario${location.id==='store-1'?' (incluye Bodega Principal y mermas)':' (incluye mermas)'}`,
+        if((!target || ['transformations','transfers'].includes(target.key) || (target.key==='counts' && !counts)) && (wants(location.id,'inventory') || (!counts && wants(location.id,'counts'))))add(`${location.name} · Inventario${location.id==='store-1'?' (incluye Bodega Principal y mermas)':' (incluye mermas)'}`,
           (counts ? ['Transformaciones','Transferencias entre bodegas y locales'] : ['Tomas de Inventario','Transformaciones','Transferencias entre bodegas y locales']),'API interna · sesión autorizada',
           async()=>{ const result=await stock.synchronize(location.id,{from,to:new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Santiago'}).format(new Date())});
             if(shareCounts){const original=stock.original(location.id);if(original)counts.publish(location.id,original);stock.rebuild(location.id);}return result; },
           s.configured&&from?null:'Configura la conexión y el período inicial.');
-        if (counts && (!target ? !shareCounts : target.key==='counts')) add(`${location.name} · Tomas originales`, ['Tomas de Inventario'], 'API interna · sesión autorizada',
+        if (counts && (!target ? (!shareCounts || (targets && !wants(location.id,'inventory'))) : target.key==='counts') && wants(location.id,'counts')) add(`${location.name} · Tomas originales`, ['Tomas de Inventario'], 'API interna · sesión autorizada',
           async () => {const result=await counts.synchronize(location.id, { from, to: new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Santiago' }).format(new Date()) });
             if(shareCounts && stock.original(location.id))stock.rebuild(location.id);return result;},
           s.configured&&from?null:'Configura la conexión y el período inicial.');
       }
     }
-    job={id:require('node:crypto').randomUUID(),trigger:target?'individual':updateTransactions?'manual':'scheduled',target,running:true,startedAt:new Date(now()).toISOString(),steps:plan.map(p=>p.step),finishedAt:null,
+    job={id:require('node:crypto').randomUUID(),trigger:targets?'selection':target?'individual':updateTransactions?'manual':'scheduled',target,targets,running:true,startedAt:new Date(now()).toISOString(),steps:plan.map(p=>p.step),finishedAt:null,
       excluded:['Transacciones MercadoPago','Consumo de Marketing','Consumo de Colaboradores','Calibraciones y bebidas desechadas']};
     saveJob();
     const mark = key => { settings[key]={...settings[key],lastAttempt:new Date(now()).toISOString()};persist(); };
     const run = ()=> (async()=>{
-      if(!target){if(updateMasters)mark('masters');if(updateInventory)mark('inventory');}
+      if(!target && !targets){if(updateMasters)mark('masters');if(updateInventory)mark('inventory');}
       for(const {step,execute} of plan){
         if(['skipped','complete','error'].includes(step.state))continue;
         delete step.code;
@@ -152,8 +154,32 @@ function registerUploadOverview(app, { locations, sales, masters, stock, counts,
     try { resumeTask().catch(()=>{});res.status(202).json(publicJob()); }
     catch {res.status(500).json({error:'No se pudo continuar el proceso.'});}
   });
+  function normalizeTargets(input) {
+    if (!Array.isArray(input) || !input.length || input.length > 100) throw Error('Selecciona entre 1 y 100 fuentes.');
+    const targets = new Map();
+    for (const item of input) {
+      if (!item || typeof item !== 'object') throw Error('Selección de fuentes inválida.');
+      if (item.key === 'masters' && item.location === 'shared') { targets.set('shared:masters', {location:'shared',key:'masters'}); continue; }
+      const location = active().find(l=>l.id===item.location);
+      const key = ({'payment-details':'sales',transformations:'inventory',transfers:'inventory'})[item.key] || item.key;
+      if (!location || !['sales','purchases','inventory','counts'].includes(key)
+        || (location.type==='warehouse' && (location.id!=='main-warehouse' || key==='sales'))) throw Error('Selecciona fuentes válidas de una ubicación activa.');
+      const source = location.id==='main-warehouse'?'store-1':location.id;
+      if (!active().some(l=>l.id===source && l.type==='store')) throw Error('La cafetería de origen no está activa.');
+      targets.set(`${source}:${key}`,{location:source,key});
+    }
+    return [...targets.values()];
+  }
   app.post('/api/uploads/refresh', (req,res)=>{
-    try { const task=refresh();task?.catch(()=>{});res.status(202).json(publicJob()); }
+    let targets=null;
+    if (req.body?.targets !== undefined) {
+      try { targets=normalizeTargets(req.body.targets); } catch(error) { return res.status(400).json({error:error.message}); }
+    }
+    if (job.running && !targets) return res.status(202).json(publicJob());
+    if (job.running || masters.sharedStatus().running || active().some(l=>l.type==='store' &&
+      [sales,sales.purchases,stock,counts].filter(Boolean).some(service=>sourceStatus(service,l.id,'fuente').running)))
+      return res.status(409).json({error:'Hay una actualización en curso. Espera a que termine.'});
+    try { const task=refresh({targets});task?.catch(()=>{});res.status(202).json(publicJob()); }
     catch {res.status(500).json({error:'No se pudo iniciar o guardar el proceso de actualización.'});}
   });
   app.post('/api/uploads/refresh-source', (req,res)=>{

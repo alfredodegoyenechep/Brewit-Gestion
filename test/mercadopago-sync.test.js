@@ -210,8 +210,11 @@ test('UI separates manual and web imports, offers authentication continuation, a
   await page.getByRole('link', { name: 'Datos y sincronización', exact: true }).click();
   const manual = page.locator('#upload-mercadopago-shared'), web = page.locator('#sync-mercadopago-web');
   await web.waitFor({ state: 'visible' });
-  const bounds = await Promise.all([manual.boundingBox(), web.boundingBox()]);
-  assert.ok(bounds[1].x > bounds[0].x + bounds[0].width);
+  assert.equal(await manual.isVisible(), false);
+  await page.getByRole('tab', {name:'Cargar archivos',exact:true}).click();
+  assert.equal(await manual.isVisible(), true);
+  assert.equal(await web.isVisible(), false);
+  await page.getByRole('tab', {name:'Estado y actualización'}).click();
   assert.equal(await page.locator('#mercadopago-daily').isChecked(), false);
   await page.locator('#mercadopago-daily').check();
   await page.waitForFunction(() => !document.getElementById('mercadopago-daily').disabled);

@@ -134,6 +134,38 @@ test('recent sales refresh checks only the current window, retains closed-window
   await assert.rejects(sync.synchronize('store-1',{recentOnly:true}),/Fuente incompleta/);
   assert.deepEqual(sync.status('store-1').lastCheck,checked,'a failed refresh cannot advance checked coverage');
 });
+test('recent update publishes changed product detail and payments together and retains both on failure', async t => {
+  let current = payment();
+  const { sync } = service(t, async (credential, route) => ({ ok: true,
+    data: route === 'shiftstatus' ? { status: 'closed', localNumber: credential.localId } : [current] }));
+  const rows = field => {
+    const source = sync.source('store-1', field)[0];
+    const book = XLSX.readFile(source.filePath);
+    return XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]]);
+  };
+  await sync.synchronize('store-1', { recentOnly: true });
+  const firstVersion = sync.get('store-1').version;
+  assert.equal(rows('sales').length, 1);
+  current = payment({ total: 4000, discounts: 0, gratuity: 0, payed: 4000, change: 0,
+    products: [line({ id: 'B1', lineId: 'l1', payed: 2000, discounts: 0 }), line({ id: 'B2', lineId: 'l2', payed: 2000, discounts: 0 })],
+    paymentForms: [{ id: 1000, name: 'CASH', amount: 4000, tip: 0 }] });
+  await sync.synchronize('store-1', { recentOnly: true });
+  const published = sync.get('store-1').version;
+  assert.notEqual(published, firstVersion);
+  assert.deepEqual(rows('sales').map(row => row['ID Producto']), ['B1', 'B2']);
+  assert.equal(rows('sales').reduce((sum, row) => sum + row['Precio a Pagar'], 0), 4000);
+  assert.equal(rows('payment-details').length, 1);
+  assert.equal(rows('payment-details')[0]['A Pagar'], 4000);
+  const sales = sync.source('store-1', 'sales')[0], details = sync.source('store-1', 'payment-details')[0];
+  assert.equal(sales.destination, details.destination);
+  assert.equal(sales.record.savedAt, details.record.savedAt);
+  current = { ...current, total: 5000 };
+  await assert.rejects(sync.synchronize('store-1', { recentOnly: true }), /no concilia/);
+  assert.equal(sync.get('store-1').version, published);
+  assert.equal(rows('sales').length, 2);
+  assert.equal(rows('payment-details')[0]['A Pagar'], 4000);
+});
+
 test('one shared sales schedule controls every store, preserves manual mode and survives restarts', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: new Date('2026-09-21T12:00:00Z') });
   const calls = [];
