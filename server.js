@@ -1989,20 +1989,25 @@ function buildIntradayReport(dailySales, transactionsByDate, referenceDate, comp
     new Date(`${date}T00:00:00.000Z`).getUTCDay() === referenceWeekday));
   const monthDate = bestDate(completedDates.filter(date => date.startsWith(referenceDate.slice(0, 7))));
   const historicalDate = bestDate([...completedDates]);
-  const blocks = [
-    { label: '07:00–09:00', end: '08:59:59' },
-    { label: '09:00–11:00', end: '10:59:59' },
-    { label: '11:00–13:00', end: '12:59:59' },
-    { label: '13:00–15:00', end: '14:59:59' },
-    { label: '15:00–17:00', end: '16:59:59' },
-    { label: '17:00–19:00', end: '18:59:59' },
-    { label: '19:00–cierre', end: '23:59:59' }
-  ];
   const cumulativeAt = (date, end) => {
     if (!date) return null;
     return (transactionsByDate[date] || [])
       .filter(transaction => transaction.time <= end)
       .reduce((sum, transaction) => sum + transaction.net, 0);
+  };
+  const time = hour => `${String(hour).padStart(2, '0')}:00`;
+  const buildBlocks = hours => {
+    const closingHour = hours === 1 ? 20 : 19;
+    return [...Array.from({ length: (closingHour - 7) / hours }, (_, index) => {
+      const start = 7 + index * hours;
+      return { label: `${time(start)}–${time(start + hours)}`, end: `${String(start + hours - 1).padStart(2, '0')}:59:59` };
+    }), { label: `${time(closingHour)}–cierre`, end: '23:59:59' }].map(block => ({
+      ...block,
+      today: cumulativeAt(referenceDate, block.end),
+      sameWeekday: cumulativeAt(sameWeekdayDate, block.end),
+      month: cumulativeAt(monthDate, block.end),
+      historical: cumulativeAt(historicalDate, block.end)
+    }));
   };
   const cutoffTime = comparison.cutoff;
   const referenceNetSales = cutoffTime ? cumulativeAt(referenceDate, cutoffTime) : 0;
@@ -2034,14 +2039,8 @@ function buildIntradayReport(dailySales, transactionsByDate, referenceDate, comp
       month: { date: monthDate },
       historical: { date: historicalDate }
     },
-    blocks: blocks.map(block => ({
-      label: block.label,
-      end: block.end,
-      today: cumulativeAt(referenceDate, block.end),
-      sameWeekday: cumulativeAt(sameWeekdayDate, block.end),
-      month: cumulativeAt(monthDate, block.end),
-      historical: cumulativeAt(historicalDate, block.end)
-    }))
+    blocks: buildBlocks(2),
+    hourlyBlocks: buildBlocks(1)
   };
 }
 

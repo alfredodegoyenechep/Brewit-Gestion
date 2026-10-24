@@ -3520,6 +3520,12 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
   vertical-align: bottom;
 }
 
+.intraday-block-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.intraday-block-options { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--cream); }
+.intraday-block-options button { padding: 5px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-soft); font: inherit; font-size: calc(11px * var(--font-scale)); font-weight: 800; white-space: nowrap; cursor: pointer; }
+.intraday-block-options button[aria-pressed="true"] { background: var(--coffee); color: white; }
+.intraday-block-options button:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+
 .intraday-table th strong,
 .intraday-table th span {
   display: block;

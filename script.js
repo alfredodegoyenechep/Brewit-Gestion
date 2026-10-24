@@ -156,6 +156,9 @@ let currentInventoryTableState = null;
 let transactionUploadContext = null;
 let reportClassicLocation = 'all';
 let reportLoadSequence = 0;
+let intradayReportState = null;
+let intradayBlockHours = 2;
+const INTRADAY_BLOCK_HOURS_STORAGE_KEY = 'brewit.intradayBlockHours';
 const reportChartRegistry = new Map();
 let activeReportChart = null;
 let activeReportChartType = 'bar';
@@ -2684,7 +2687,28 @@ function updateReportChartDialog() {
   renderReportChartData(config);
 }
 
+function initializeIntradayBlockOptions() {
+  try {
+    if (localStorage.getItem(INTRADAY_BLOCK_HOURS_STORAGE_KEY) === '1') intradayBlockHours = 1;
+  } catch {}
+  const options = document.getElementById('intraday-block-options');
+  const syncSelection = () => options.querySelectorAll('[data-block-hours]').forEach(button => {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.blockHours) === intradayBlockHours));
+  });
+  syncSelection();
+  options.addEventListener('click', event => {
+    const button = event.target.closest('[data-block-hours]');
+    if (!button) return;
+    intradayBlockHours = Number(button.dataset.blockHours);
+    try { localStorage.setItem(INTRADAY_BLOCK_HOURS_STORAGE_KEY, String(intradayBlockHours)); } catch {}
+    syncSelection();
+    if (intradayReportState) renderIntradayReport(intradayReportState.intraday, intradayReportState.includeToday);
+  });
+}
+
 function renderIntradayReport(intraday, includeToday = true) {
+  intradayReportState = { intraday, includeToday };
+  const blocks = intradayBlockHours === 1 ? intraday.hourlyBlocks : intraday.blocks;
   const referenceText = value => value ? formatReportDate(value) : 'Sin referencia';
   const intradayTitle = includeToday ? 'Venta acumulada de hoy' : 'Venta acumulada del día anterior';
   const referenceTitle = includeToday ? 'Hoy' : 'Día anterior';
@@ -2716,7 +2740,7 @@ function renderIntradayReport(intraday, includeToday = true) {
   document.getElementById('intraday-month-date').textContent = referenceText(intraday.references.month.date);
   document.getElementById('intraday-historical-date').textContent = referenceText(intraday.references.historical.date);
   const body = document.getElementById('intraday-sales-body');
-  body.replaceChildren(...intraday.blocks.map(block => {
+  body.replaceChildren(...blocks.map(block => {
     const row = document.createElement('tr');
     const period = document.createElement('td');
     period.textContent = block.label;
@@ -2737,12 +2761,12 @@ function renderIntradayReport(intraday, includeToday = true) {
   ];
   setReportChart('report-intraday', {
     title: intradayTitle,
-    subtitle: `Venta neta acumulada por tramo horario · corte ${intraday.today.cutoffTime?.slice(0, 5) || 'sin hora disponible'}.`,
-    labels: intraday.blocks.map(block => block.label),
+    subtitle: `Venta neta acumulada · tramos de ${intradayBlockHours === 1 ? '1 hora' : '2 horas'} · corte ${intraday.today.cutoffTime?.slice(0, 5) || 'sin hora disponible'}.`,
+    labels: blocks.map(block => block.label),
     series: references.map(([name, key], index) => ({
       name,
       color: REPORT_CHART_COLORS[index],
-      values: intraday.blocks.map(block => block[key])
+      values: blocks.map(block => block[key])
     }))
   });
 }
@@ -11773,6 +11797,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeFontScale();
   initializeSidebarToggle();
   initializeFinancialGeneralExpensesPanel();
+  initializeIntradayBlockOptions();
   document.body.appendChild(document.getElementById('report-chart-dialog'));
   installReportChartButtons();
   initializeAnalyticalTableCharts();

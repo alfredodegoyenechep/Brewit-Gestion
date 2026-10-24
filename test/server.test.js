@@ -2263,6 +2263,25 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
   assert.equal(Math.round(report.intraday.blocks.at(-1).today), 400);
   assert.equal(Math.round(report.intraday.blocks.at(-1).month), 600);
   assert.equal(Math.round(report.intraday.blocks.at(-1).historical), 700);
+  const hourly = report.intraday.hourlyBlocks;
+  assert.equal(hourly.length, 14);
+  assert.equal(hourly[0].label, '07:00–08:00');
+  assert.equal(hourly[0].end, '07:59:59');
+  assert.equal(Math.round(hourly[0].today), 100); // Includes sales before 07:00.
+  assert.equal(Math.round(hourly[1].today), 200); // Includes 08:59:59, excludes 09:00.
+  assert.equal(Math.round(hourly[2].today), 300);
+  assert.equal(Math.round(hourly[0].sameWeekday), 0);
+  assert.equal(Math.round(hourly[1].sameWeekday), 200);
+  assert.equal(hourly.at(-2).label, '19:00–20:00');
+  assert.equal(hourly.at(-2).end, '19:59:59');
+  assert.equal(Math.round(hourly.at(-2).today), 400); // Includes 19:00 sales.
+  assert.equal(Math.round(hourly.at(-2).historical), 300); // Excludes 20:00 sales.
+  assert.equal(hourly.at(-1).label, '20:00–cierre');
+  assert.equal(Math.round(hourly.at(-1).historical), 700); // Includes 20:00 sales.
+  for (const block of report.intraday.blocks) {
+    const matching = hourly.find(item => item.end === block.end);
+    for (const key of ['today', 'sameWeekday', 'month', 'historical']) assert.equal(block[key], matching[key]);
+  }
 
   const previousDayReport = await fetch(`${baseUrl}/api/reports/weekly-sales?location=store-1`)
     .then(response => response.json());
@@ -2281,6 +2300,9 @@ test('builds cumulative intraday blocks with weekday, month, and historical refe
   assert.equal(Math.round(previousDayReport.intraday.blocks[0].today), 200);
   assert.equal(Math.round(previousDayReport.intraday.blocks[1].today), 300);
   assert.equal(Math.round(previousDayReport.intraday.blocks.at(-1).today), 300);
+  assert.equal(Math.round(previousDayReport.intraday.hourlyBlocks[0].today), 0);
+  assert.equal(Math.round(previousDayReport.intraday.hourlyBlocks[1].today), 200);
+  assert.equal(Math.round(previousDayReport.intraday.hourlyBlocks.at(-1).today), 300);
 });
 
 test('selects the most recent inventory source files for an active location', async t => {
