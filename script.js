@@ -2874,6 +2874,7 @@ async function loadWeeklySalesReport() {
     }
     const report = await apiRequest(`/api/reports/weekly-sales?location=${encodeURIComponent(selectedLocation)}&includeToday=${includeToday}`);
     if (sequence !== reportLoadSequence) return;
+    window.BrewitSalesProjection?.remember(selectedLocation, report.salesProjection);
     document.getElementById('report-scope-description').textContent = report.scope.type === 'all'
       ? 'Venta neta sin IVA y ticket promedio con IVA, consolidados para todas las cafeterías.'
       : `Venta neta sin IVA y ticket promedio con IVA para ${report.scope.label}.`;

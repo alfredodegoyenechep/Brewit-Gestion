@@ -793,7 +793,7 @@
 
       <section class="sales-statistics-grid" aria-label="Historial estadístico de ventas">
         <article class="sales-statistics-card">
-          <div class="panel-eyebrow">Historial mensual</div>
+          <div class="sales-projection-card-heading"><div class="panel-eyebrow">Historial mensual</div><button id="open-sales-projection" class="icon-button" type="button">Proyección</button></div>
           <h3>Venta de los últimos 14 meses</h3>
           <div class="sales-statistics-table-wrap">
             <table class="sales-statistics-table">
@@ -962,6 +962,28 @@
           </div>
         </article>
       </section>
+
+      <dialog id="sales-projection-dialog" class="inventory-report-dialog sales-projection-dialog" aria-labelledby="sales-projection-title">
+        <div class="preview-dialog-head">
+          <div><div class="panel-eyebrow">Planificación de ventas</div><h2 id="sales-projection-title">Proyección de venta neta</h2><p id="sales-projection-scope" class="panel-description"></p></div>
+          <button id="close-sales-projection" class="icon-button" type="button">Cerrar</button>
+        </div>
+        <div class="sales-projection-toolbar">
+          <label>Cafetería<select id="sales-projection-location"></select></label>
+          <label>Días equivalentes para el promedio<select id="sales-projection-reference-days"><option value="2">2 días</option><option value="4" selected>4 días</option><option value="6">6 días</option><option value="8">8 días</option></select></label>
+          <button id="sales-projection-edit-closures" class="icon-button" type="button" aria-pressed="false">Marcar días de cierre</button>
+          <label id="sales-projection-closure-scope" hidden>Aplicar cierres a<select id="sales-projection-closure-location"></select></label>
+        </div>
+        <p id="sales-projection-status" class="form-status" role="status" aria-live="polite"></p>
+        <p id="sales-projection-closure-help" class="panel-description" hidden>Haz clic en una fecha desde hoy para marcar o quitar un cierre. Cada cambio se guarda automáticamente.</p>
+        <div id="sales-projection-results" hidden>
+          <div id="sales-projection-totals" class="sales-projection-totals"></div>
+          <p class="sales-projection-legend"><span class="sales-projection-real">Azul: venta neta real hasta ayer</span><span class="sales-projection-estimate">Verde: proyección desde hoy</span><span><s>Tachado</s>: cierre excluido del total</span></p>
+          <p id="sales-projection-method" class="panel-description">Promedio de las últimas 4 fechas equivalentes anteriores a hoy, por local, considerando solo ventas mayores a cero. Si todas son cero, el promedio es $0. Total proyectado = real acumulado + proyección restante.</p>
+          <div id="sales-projection-calendars" class="sales-projection-calendars"></div>
+          <p id="sales-projection-coverage" class="panel-description"></p>
+        </div>
+      </dialog>
 
       <dialog id="report-chart-dialog" class="report-chart-dialog" aria-labelledby="report-chart-title">
         <div class="report-chart-dialog-card">
@@ -2682,6 +2704,8 @@
   <script src="sales-insight-filters.js"></script>
   <script src="historical-control-view.js"></script>
   <script src="script.js"></script>
+  <script src="sales-projection.js"></script>
+  <script src="sales-projection-view.js"></script>
   <script src="/vendor/jspdf.umd.min.js"></script>
   <script src="/kardex-movement-export.js"></script>
   <script src="weekly-results-export.js"></script>

@@ -16,6 +16,7 @@ const { reversalSignals } = require('./transaction-signals');
 const { buildSourceDiagnostics } = require('./source-diagnostics');
 const { businessClock, buildNetworkSalesDashboard, percentageChange } = require('./network-sales');
 const { salesCalendar, equivalentDayComparison } = require('./equivalent-sales');
+const { buildSalesProjection } = require('./sales-projection');
 const { averageTicketWithVat } = require('./metric-policy');
 const { buildDemandAnalysis, resolveDemandPeriod, orderMatches } = require('./demand-analysis');
 const { linkOrdersToSettlements } = require('./transaction-linkage');
@@ -2104,6 +2105,7 @@ function createApp(options = {}) {
   const purchaseUnitConfigurationPath = path.join(configRoot, 'purchase-unit-configuration.json');
   const findingsRegistryPath = path.join(configRoot, 'findings.json');
   const generalExpensesPath = path.join(configRoot, 'general-expenses.json');
+  const salesProjectionClosuresPath = path.join(configRoot, 'sales-projection-closures.json');
   const sourcePolicyPath = path.join(configRoot, 'source-policy.json');
   const synchronizedOnly = options.sourceMode === 'synchronized' || (options.sourceMode !== 'legacy' && readJson(sourcePolicyPath, {}).mode === 'synchronized');
   const { TRANSACTION_FIELDS, INVENTORY_FIELDS, synchronizedMaster, effectiveRecipeVersions } = require('./synchronized-sources');
@@ -3456,6 +3458,8 @@ function createApp(options = {}) {
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
+  app.get('/sales-projection.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-projection.js')));
+  app.get('/sales-projection-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-projection-view.js')));
   app.get('/operations-session.js', (req,res)=>res.sendFile(path.join(__dirname,'operations/session-fetch.js')));
   app.get('/sales-insight-filters.js', (req,res)=>res.sendFile(path.join(__dirname,'sales-insight-filters.js')));
   app.get('/toteat-api-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-api-view.js')));
@@ -11261,13 +11265,88 @@ function createApp(options = {}) {
 
   });
 
-  app.get('/api/reports/weekly-sales', (req, res) => {
-    const clock = salesReportClock();
+  function salesRevenueForProjection(stores, clock) {
     const dailySales = {};
     const transactionsByDate = {};
     const seenOrders = new Set();
     const warnings = [];
     let filesRead = 0;
+    const storesWithoutSalesFiles = [];
+    for (const location of stores) {
+      const storedFiles = storedSalesFiles(location.id);
+      if (!storedFiles.length) storesWithoutSalesFiles.push(location.name);
+      for (const stored of storedFiles) {
+        try {
+          for (const row of readSalesRows(stored.filePath)) {
+            const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
+            if (gross === null) continue;
+            const dateTime = salesTransactionDateTime(row);
+            const date = dateTime?.slice(0, 10);
+            if (!date || (date === clock.today && dateTime.slice(11) > clock.cutoff) || dateIsExcluded(date, stored.excludedRanges)) continue;
+            const uniqueOrder = `${location.id}:${salesTransactionKey(row)}`;
+            if (seenOrders.has(uniqueOrder)) continue;
+            seenOrders.add(uniqueOrder);
+            const discounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
+            const net = (gross + discounts) / 1.19;
+            dailySales[date] ||= { gross: 0, discounts: 0, net: 0, orders: 0 };
+            dailySales[date].gross += gross;
+            dailySales[date].discounts += discounts;
+            dailySales[date].net += net;
+            dailySales[date].orders += 1;
+            transactionsByDate[date] ||= [];
+            transactionsByDate[date].push({ locationId: location.id, date, time: dateTime.slice(11) || '00:00:00', net });
+          }
+          filesRead += 1;
+        } catch {
+          warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
+        }
+      }
+    }
+    return { dailySales, transactionsByDate, warnings, filesRead, storesWithoutSalesFiles };
+  }
+
+  function salesProjectionPayload(stores, clock, revenue, referenceDays = 4) {
+    const projection = buildSalesProjection({ stores, today: clock.today, referenceDays,
+      dailySales: Object.values(revenue.transactionsByDate).flat().map(fact => ({ locationId: fact.locationId, date: fact.date, netSales: fact.net })),
+      closures: readJson(salesProjectionClosuresPath, { locations: {} }) });
+    return { ...projection, warnings: [...revenue.warnings,
+      ...revenue.storesWithoutSalesFiles.map(name => `${name}: no hay archivos de ventas disponibles.`)] };
+  }
+
+  app.get('/api/reports/sales-projection/closures', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json({ ...readJson(salesProjectionClosuresPath, { locations: {} }), today: salesReportClock().today });
+  });
+
+  app.put('/api/reports/sales-projection/closures', (req, res) => {
+    const { locationIds, date, closed } = req.body || {};
+    const allowed = new Set(readLocations().locations.filter(location => location.status === 'active' && location.type === 'store').map(location => location.id));
+    if (!Array.isArray(locationIds) || !locationIds.length || locationIds.some(id => !allowed.has(id))
+      || !isValidDate(date) || date < salesReportClock().today || typeof closed !== 'boolean') {
+      return res.status(400).json({ error: 'Selecciona locales activos y una fecha desde hoy para marcar o quitar un cierre.' });
+    }
+    const registry = readJson(salesProjectionClosuresPath, { locations: {} });
+    for (const id of new Set(locationIds)) {
+      const dates = new Set(registry.locations[id] || []);
+      if (closed) dates.add(date); else dates.delete(date);
+      registry.locations[id] = [...dates].sort();
+    }
+    writeJsonAtomic(salesProjectionClosuresPath, registry);
+    return res.json(registry);
+  });
+
+  app.get('/api/reports/sales-projection', (req, res) => {
+    const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
+    const location = String(req.query.location || 'all');
+    const stores = location === 'all' ? activeStores : activeStores.filter(store => store.id === location);
+    if (location !== 'all' && !stores.length) return res.status(400).json({ error: 'Selecciona una cafetería activa.' });
+    const referenceDays = Number(req.query.referenceDays ?? 4);
+    if (![2, 4, 6, 8].includes(referenceDays)) return res.status(400).json({ error: 'Selecciona 2, 4, 6 u 8 días equivalentes.' });
+    const clock = salesReportClock();
+    res.set('Cache-Control', 'no-store').json(salesProjectionPayload(stores, clock, salesRevenueForProjection(stores, clock), referenceDays));
+  });
+
+  app.get('/api/reports/weekly-sales', (req, res) => {
+    const clock = salesReportClock();
     try {
       const activeStores = readLocations().locations.filter(location => location.status === 'active' && location.type === 'store');
       const requestedLocation = String(req.query.location || 'all');
@@ -11278,40 +11357,8 @@ function createApp(options = {}) {
         return res.status(400).json({ error: 'Select a valid cafeteria for the report.' });
       }
       const stores = selectedStore ? [selectedStore] : activeStores;
-      const storesWithoutSalesFiles = [];
-      for (const location of stores) {
-        const storedFiles = storedSalesFiles(location.id);
-        if (!storedFiles.length) storesWithoutSalesFiles.push(location.name);
-        for (const stored of storedFiles) {
-          try {
-            const rows = readSalesRows(stored.filePath);
-            rows.forEach((row, rowIndex) => {
-              const gross = numericValue(rowValue(row, ['Pago total', 'Valor de boleta', 'Total a pagar']));
-              if (gross === null) return;
-              const dateTime = salesTransactionDateTime(row);
-              const date = dateTime?.slice(0, 10);
-              if (!date) return;
-              if (date === clock.today && dateTime.slice(11) > clock.cutoff) return;
-              if (dateIsExcluded(date, stored.excludedRanges)) return;
-              const uniqueOrder = `${location.id}:${salesTransactionKey(row)}`;
-              if (seenOrders.has(uniqueOrder)) return;
-              seenOrders.add(uniqueOrder);
-              const discounts = numericValue(rowValue(row, ['Descuentos', 'Descuento'])) || 0;
-              const net = (gross + discounts) / 1.19;
-              if (!dailySales[date]) dailySales[date] = { gross: 0, discounts: 0, net: 0, orders: 0 };
-              dailySales[date].gross += gross;
-              dailySales[date].discounts += discounts;
-              dailySales[date].net += net;
-              dailySales[date].orders += 1;
-              if (!transactionsByDate[date]) transactionsByDate[date] = [];
-              transactionsByDate[date].push({ locationId: location.id, date, time: dateTime.slice(11) || '00:00:00', net });
-            });
-            filesRead += 1;
-          } catch (error) {
-            warnings.push(`No se pudo leer ${stored.record.originalName || stored.record.name} (${location.name}).`);
-          }
-        }
-      }
+      const revenue = salesRevenueForProjection(stores, clock);
+      const { dailySales, transactionsByDate, warnings, filesRead, storesWithoutSalesFiles } = revenue;
 
       const todayKey = clock.today;
       const includeToday = String(req.query.includeToday || '').toLowerCase() === 'true';
@@ -11323,6 +11370,7 @@ function createApp(options = {}) {
       const report = buildSalesReport(dailySales, todayKey, includeToday, comparison);
       return res.json({
         ...report,
+        salesProjection: salesProjectionPayload(stores, clock, revenue),
         intraday: buildIntradayReport(dailySales, transactionsByDate, report.previousDay.date, comparison),
         scope: selectedStore
           ? { type: 'location', location: selectedStore.id, label: selectedStore.name }
