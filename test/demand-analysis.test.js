@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   resolveDemandPeriod, previousPeriod, comparableDatePairs, summarizeOrders,
-  aggregateBaskets, orderMatches, buildDemandAnalysis
+  aggregateBaskets, orderMatches, resolveSaleSize, buildDemandAnalysis
 } = require('../demand-analysis');
 
 const order = (id, locationId, date, netSales, discount = 0, cost = 0, costAvailable = true, codes = ['A']) => ({
@@ -95,6 +95,18 @@ test('día en curso compara el mismo horario y un benchmark de cero no divide po
   assert.equal(zeroBenchmark.comparisons.netSalesChangePercent, null);
 });
 
+test('formato usa campos o sufijos explícitos y cruza tamaño y producto en la misma línea', () => {
+  assert.equal(resolveSaleSize({ name: 'Latte (CL)' }), 'CL');
+  assert.equal(resolveSaleSize({ name: 'Frappé (xtr) ' }), 'XTR');
+  assert.equal(resolveSaleSize({ name: 'Latte (CL)', size: '12 oz' }), '12 oz');
+  for (const name of ['Espresso Doble (Exp)', 'Sandwich grande', 'Latte clásico', 'Vaso (GR) promoción']) assert.equal(resolveSaleSize({ name }), '');
+  assert.equal(resolveSaleSize({ name: 'Extra (GR)', extraHierarchyId: 'BA.1' }), '');
+  const sample = order('1', 'one', '2026-09-01', 100, 0, 0, true, ['A', 'B']);
+  sample.lines[0].size = 'CL'; sample.lines[1].size = 'GR';
+  assert.equal(orderMatches(sample, { product: 'A', size: 'GR' }), false);
+  assert.equal(orderMatches(sample, { product: 'A', size: 'CL' }), true);
+});
+
 test('estacionalidad solo se habilita con dos años completos del mismo local', () => {
   const store = { id: 'one', name: 'Uno', openingDate: '2024-01-01',
     operatingWeekdays: [0, 1, 2, 3, 4, 5, 6],
@@ -109,4 +121,54 @@ test('estacionalidad solo se habilita con dos años completos del mismo local', 
   const incomplete = buildDemandAnalysis({ today: '2026-01-17', filters: { mode: 'all' },
     stores: [{ ...store, salesRanges: [{ from: '2024-01-01', to: '2025-11-30' }] }], orders });
   assert.equal(incomplete.annualSeasonality.available, false);
+});
+
+test('horarios distingue 24 unidades de bollería en 18 pedidos sin sumar café ni extras', () => {
+  const orders = Array.from({ length: 18 }, (_, i) => {
+    const item = order(String(i), 'one', '2026-10-23', 100, 0, 20, true, ['B', 'C']);
+    item.time = i < 6 ? '09:00' : '10:00';
+    item.lines[0] = { ...item.lines[0], categoryId: 'BAKERY.1', quantity: i < 6 ? 2 : 1, size: i < 6 ? 'GR' : 'CL' };
+    item.lines[1] = { ...item.lines[1], categoryId: 'COFFEE.1', quantity: 2 };
+    item.lines.push({ ...item.lines[0], code: 'EX', isExtra: true, quantity: 3 });
+    return item;
+  });
+  const build = filters => buildDemandAnalysis({ orders, stores: [{ id: 'one', name: 'Uno' }],
+    today: '2026-10-24', filters: { mode: 'custom', dateFrom: '2026-10-23', dateTo: '2026-10-23', ...filters } });
+  const report = build({ category: 'BAKERY' });
+  assert.equal(report.summary.orders, 18);
+  assert.equal(report.time.heatmap.reduce((sum, cell) => sum + cell.orders, 0), 18);
+  assert.equal(report.time.heatmap.reduce((sum, cell) => sum + cell.units, 0), 24);
+  for (const key of ['daily', 'weekly', 'monthly']) {
+    assert.equal(report.time[key][0].units, 24);
+    assert.equal(report.time[key][0].orders, 18);
+  }
+  assert.equal(report.time.heatmap.find(cell => cell.day === 5 && cell.hour === 9).units, 12);
+  assert.equal(build({ category: 'BAKERY', size: 'GR', product: 'B' }).time.daily[0].units, 12);
+  assert.equal(build({ product: 'C' }).time.daily[0].units, 36);
+  assert.equal(build({}).time.daily[0].units, 60, 'unfiltered units include main products, not extras');
+});
+
+test('promedio horario usa días con venta por día de semana e incluye ceros del producto en días abiertos', () => {
+  const sale = (id, date, time, code, units, netSales = 100) => {
+    const item = order(id, 'one', date, netSales, 0, 0, true, [code]);
+    item.time = time;
+    item.lines[0] = { ...item.lines[0], quantity: units, categoryId: code === 'B' ? 'BAKERY.1' : 'COFFEE.1' };
+    return item;
+  };
+  const orders = [sale('mon1', '2026-10-05', '08:00', 'B', 2), sale('mon2', '2026-10-12', '09:00', 'B', 4),
+    sale('tue', '2026-10-13', '08:00', 'C', 3), sale('zero', '2026-10-14', '08:00', 'B', 100, 0)];
+  const report = buildDemandAnalysis({ orders, stores: [{ id: 'one', name: 'Uno' }], today: '2026-10-24',
+    filters: { mode: 'month', category: 'BAKERY' } });
+  const avg = report.time.averages;
+  assert.deepEqual(avg.dates, ['2026-10-05', '2026-10-12', '2026-10-13']);
+  assert.equal(avg.totalDays, 3);
+  assert.deepEqual(avg.dayCounts, [0, 2, 1, 0, 0, 0, 0]);
+  assert.equal(avg.heatmap.find(c => c.day === 1 && c.hour === 8).units, 1);
+  assert.equal(avg.heatmap.find(c => c.day === 1 && c.hour === 9).units, 2);
+  assert.equal(avg.heatmap.filter(c => c.day === 2).reduce((sum, c) => sum + c.units, 0), 0);
+  assert.equal(avg.totals.units, 2, 'global mean is 6 units / 3 days, not the sum of weekday means');
+  assert.equal(avg.totals.orders, 2 / 3);
+  assert.equal(avg.hourlyTotals.find(c => c.hour === 8).units, 2 / 3);
+  assert.equal(avg.hourlyTotals.find(c => c.hour === 9).units, 4 / 3);
+  assert.equal(report.time.heatmap.reduce((sum, c) => sum + c.units, 0), 106, 'total mode preserves all selected transactions');
 });

@@ -117,7 +117,7 @@
       </a>
       <a href="#" class="nav-link" data-view="demand-analysis">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
-        <span class="nav-text">Demanda y oportunidades</span>
+        <span class="nav-text">Caracterización de la Venta</span>
       </a>
       <a href="#" class="nav-link" data-view="config">
         <svg class="nav-icon" viewBox="0 0 24 24">
@@ -1816,6 +1816,10 @@
           </label>
           <label for="financial-results-period">Período
             <select id="financial-results-period">
+              <option value="today">Hoy</option>
+              <option value="yesterday">Ayer</option>
+              <option value="current-week">Semana actual</option>
+              <option value="previous-week">Semana anterior</option>
               <option value="current-month">Mes actual</option>
               <option value="previous-month">Mes anterior</option>
               <option value="last-30-days" selected>Últimos 30 días</option>
@@ -2492,26 +2496,22 @@
       </dialog>
 
     <section id="demand-analysis-workspace" class="demand-workspace" style="display:none;">
-      <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Análisis de la Venta</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
+      <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Caracterización de la Venta</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
       <div id="demand-status" class="form-status demand-status" role="status" aria-live="polite">Preparando filtros de venta…</div>
+      <div id="demand-progress" class="demand-progress" hidden><label id="demand-progress-label" for="demand-progress-bar">Preparando análisis…</label><progress id="demand-progress-bar" max="5"></progress><span id="demand-progress-time"></span></div>
       <form id="demand-filters" class="demand-filters">
-        <fieldset class="demand-locations"><legend>Cafeterías</legend><div id="demand-location-options"></div></fieldset>
+        <label>Cafetería<select id="demand-location"><option value="all">Todas las cafeterías</option></select></label>
         <label>Período<select id="demand-period"><option value="month">Mes</option><option value="week">Semana</option><option value="day">Día</option><option value="ytd">Acumulado anual</option><option value="custom">Personalizado</option><option value="all">Todo el historial</option></select></label>
-        <label id="demand-anchor-label">Fecha de referencia<input id="demand-anchor" type="date" /></label>
         <label class="demand-custom-date" hidden>Desde<input id="demand-from" type="date" /></label>
         <label class="demand-custom-date" hidden>Hasta<input id="demand-to" type="date" /></label>
         <label>Categoría<select id="demand-category"><option value="">Todas</option></select></label>
         <label>Producto<select id="demand-product"><option value="">Todos</option></select></label>
         <label>Modalidad<select id="demand-mode"><option value="all">Todas</option><option value="takeaway">Para llevar</option><option value="dineIn">En local</option><option value="unknown">Sin clasificar</option></select></label>
-        <label>Canal<select id="demand-channel" disabled><option value="">Sin datos disponibles</option></select></label>
-        <label>Tamaño<select id="demand-size" disabled><option value="">Sin clasificación validada</option></select></label>
+        <label>Tamaño / formato<select id="demand-size" disabled aria-describedby="demand-size-note"><option value="">Sin formatos identificados</option></select></label>
         <label>Género estimado por nombre<select id="demand-name-gender"><option value="all">Todos</option><option value="feminine-associated">Asociación femenina</option><option value="masculine-associated">Asociación masculina</option><option value="indeterminate">Indeterminado</option><option value="unavailable">Sin nombre utilizable</option></select></label>
-        <label>Recurrencia observable<select id="demand-recurrence"><option value="all">Todos</option><option value="returning-instrument">Instrumento recurrente</option><option value="single-observed-date">Una fecha observada</option><option value="unlinked">Sin vínculo confiable</option></select></label>
         <label>Intervalo de precios (CLP)<input id="demand-price-band" type="number" value="500" min="100" max="10000" step="100" /></label>
-        <label>Fin mañana (hora)<input id="demand-morning-end" type="number" value="12" min="1" max="20" /></label>
-        <label>Fin mediodía (hora)<input id="demand-midday-end" type="number" value="16" min="2" max="22" /></label>
-        <label>Fin tarde (hora)<input id="demand-afternoon-end" type="number" value="20" min="3" max="23" /></label>
         <button class="primary" type="submit">Analizar</button>
+        <p id="demand-size-note" class="demand-filter-note">Tamaño / formato identifica el campo de venta o los sufijos CL, GR y XTR del producto. Selecciona pedidos que contienen ese formato.</p>
       </form>
       <div id="demand-report" hidden>
         <section class="demand-section"><div class="demand-section-head"><div><div class="panel-eyebrow">01 · Hechos</div><h3>Resumen del período</h3></div><button type="button" class="icon-button demand-detail" data-kind="all">Ver pedidos</button></div><div id="demand-context" class="demand-meta"></div><div id="demand-summary" class="demand-kpis"></div><div id="demand-comparison" class="demand-note"></div><div id="demand-coverage" class="demand-note"></div><h4>Calidad y capacidad actual</h4><div id="demand-quality" class="demand-kpis"></div><div class="demand-scroll"><table class="demand-table"><thead><tr><th>Local</th><th>Pedidos</th><th>Venta neta</th><th>Ticket mediano con IVA</th><th>Descuento</th><th>Margen neto</th><th>vs período equivalente</th><th></th></tr></thead><tbody id="demand-locations-body"></tbody></table></div></section>

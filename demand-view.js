@@ -1,5 +1,5 @@
-/* Análisis de la Venta: presentación. Los cálculos viven en demand-analysis.js. */
-const demandView = { options: null, report: null, tab: 'products', query: '', detail: { kind: 'all', key: '', page: 1 } };
+/* Caracterización de la Venta: presentación. Los cálculos viven en demand-analysis.js. */
+const demandView = { generation: 0, controller: null, options: null, report: null, tab: 'products', query: '', detail: { kind: 'all', key: '', page: 1 } };
 const demandMoney = value => value == null ? '—' : new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(value);
 const demandNumber = value => value == null ? '—' : new Intl.NumberFormat('es-CL', { maximumFractionDigits: 1 }).format(value);
 const demandPercent = value => value == null ? '—' : `${demandNumber(value)}%`;
@@ -20,12 +20,11 @@ const demandOptionsSelect = (id, options, firstLabel) => {
 
 async function initializeDemandView(initialLocations = []) {
   const today = browserIsoToday();
-  for (const id of ['demand-anchor', 'demand-to']) document.getElementById(id).value = today;
+  document.getElementById('demand-to').value = today;
   document.getElementById('demand-from').value = `${today.slice(0, 7)}-01`;
   document.getElementById('demand-period').addEventListener('change', () => {
     const custom = document.getElementById('demand-period').value === 'custom';
     document.querySelectorAll('.demand-custom-date').forEach(label => { label.hidden = !custom; });
-    document.getElementById('demand-anchor-label').hidden = custom || document.getElementById('demand-period').value === 'all';
   });
   document.getElementById('demand-filters').addEventListener('submit', event => { event.preventDefault(); loadDemandAnalysis(); });
   document.querySelectorAll('[data-demand-tab]').forEach(button => button.addEventListener('click', () => {
@@ -54,84 +53,123 @@ async function initializeDemandView(initialLocations = []) {
 }
 
 function renderDemandFilterOptions(options) {
-  const container = document.getElementById('demand-location-options');
-  const previous = [...container.querySelectorAll('input')];
-  const checked = new Set(previous.filter(input => input.checked).map(input => input.value));
-  const allPreviouslySelected = previous.length > 0 && checked.size === previous.length;
-  container.replaceChildren();
-  for (const location of options.locations) {
-    const label = demandEl('label');
-    const input = demandEl('input');
-    input.type = 'checkbox'; input.value = location.id;
-    input.checked = !previous.length || allPreviouslySelected || checked.has(location.id);
-    label.append(input, document.createTextNode(location.name));
-    container.append(label);
-  }
+  const location = document.getElementById('demand-location'), previousLocation = location.value;
+  location.replaceChildren(new Option('Todas las cafeterías', 'all'), ...(options.locations || []).map(item => new Option(item.name, item.id)));
+  location.value = [...location.options].some(item => item.value === previousLocation) ? previousLocation : 'all';
   const hasCategories = Boolean(options.categories?.length);
   const hasProducts = Boolean(options.products?.length);
   demandOptionsSelect('demand-category', options.categories || [], options.loading ? 'Cargando categorías…' : hasCategories ? 'Todas' : 'Sin categorías con ventas');
   demandOptionsSelect('demand-product', options.products || [], options.loading ? 'Cargando productos…' : hasProducts ? 'Todos' : 'Sin productos con ventas');
   document.getElementById('demand-category').disabled = Boolean(options.loading) || !hasCategories;
   document.getElementById('demand-product').disabled = Boolean(options.loading) || !hasProducts;
-  const channel = document.getElementById('demand-channel');
-  if (options.capabilities?.channel) demandOptionsSelect('demand-channel', options.channels, 'Todos');
-  channel.disabled = !options.capabilities?.channel;
   const size = document.getElementById('demand-size');
-  if (options.capabilities?.size) demandOptionsSelect('demand-size', options.sizes, 'Todos');
-  size.disabled = !options.capabilities?.size;
+  demandOptionsSelect('demand-size', options.sizes || [], options.loading ? 'Cargando formatos…' : options.capabilities?.size ? 'Todos' : 'Sin formatos identificados');
+  size.disabled = Boolean(options.loading) || !options.capabilities?.size;
 }
 
 function demandQuery() {
-  const locations = [...document.querySelectorAll('#demand-location-options input:checked')].map(input => input.value);
-  if (!locations.length) throw new Error('Selecciona al menos una cafetería.');
   const params = new URLSearchParams({
-    locations: locations.join(','), mode: document.getElementById('demand-period').value,
-    anchor: document.getElementById('demand-anchor').value, dateFrom: document.getElementById('demand-from').value,
+    locations: document.getElementById('demand-location').value || 'all',
+    mode: document.getElementById('demand-period').value,
+    dateFrom: document.getElementById('demand-from').value,
     dateTo: document.getElementById('demand-to').value,
-    category: document.getElementById('demand-category').value, product: document.getElementById('demand-product').value,
+    category: document.getElementById('demand-category').value,
+    product: document.getElementById('demand-product').value,
     modeOfService: document.getElementById('demand-mode').value,
     nameGender: document.getElementById('demand-name-gender').value,
-    recurrence: document.getElementById('demand-recurrence').value,
-    priceBand: document.getElementById('demand-price-band').value,
-    morningEnd: document.getElementById('demand-morning-end').value,
-    middayEnd: document.getElementById('demand-midday-end').value,
-    afternoonEnd: document.getElementById('demand-afternoon-end').value
+    priceBand: document.getElementById('demand-price-band').value
   });
-  if (!document.getElementById('demand-channel').disabled) params.set('channel', document.getElementById('demand-channel').value);
   if (!document.getElementById('demand-size').disabled) params.set('size', document.getElementById('demand-size').value);
   return params.toString();
 }
 
+async function readDemandReport(query, signal, onProgress) {
+  const response = await fetch(`/api/demand-analysis?${query}&progress=1`, { signal, cache: 'no-store' });
+  if (!response.ok) {
+    const body = await response.json();
+    throw Object.assign(new Error(body.error || 'No se pudo calcular la venta.'), { status: response.status });
+  }
+  // Older running servers can still return their normal JSON response.
+  if (!response.headers.get('Content-Type')?.includes('application/x-ndjson')) return response.json();
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let pending = '', report;
+  const consume = line => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === 'error') throw new Error(event.error);
+    if (event.type === 'progress') onProgress(event);
+    if (event.type === 'result') report = event.data;
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      pending += decoder.decode(value, { stream: !done });
+      const lines = pending.split('\n'); pending = lines.pop(); lines.forEach(consume);
+      if (done) { consume(pending); break; }
+    }
+    if (!report) throw new Error('El cálculo terminó sin entregar un reporte. Vuelve a analizar.');
+    return report;
+  } finally { await reader.cancel().catch(() => {}); }
+}
+
 async function loadDemandAnalysis() {
+  demandView.controller?.abort();
+  const controller = new AbortController(), generation = ++demandView.generation;
+  demandView.controller = controller;
+  const current = () => generation === demandView.generation;
   const status = document.getElementById('demand-status');
   const reportElement = document.getElementById('demand-report');
+  const form = document.getElementById('demand-filters');
+  const progress = document.getElementById('demand-progress');
+  const bar = document.getElementById('demand-progress-bar');
+  const label = document.getElementById('demand-progress-label');
+  const submit = form.querySelector('[type=submit]');
+  const controls = demandView.restoreControls || [...form.elements].map(element => [element, element.disabled]);
+  demandView.restoreControls = controls;
+  const started = performance.now();
+  const elapsed = () => { if (current()) document.getElementById('demand-progress-time').textContent = `${Math.floor((performance.now() - started) / 1000)} s`; };
+  const advance = event => { if (!current()) return; bar.value = event.completed; label.textContent = event.message; setStatus(status, event.message); };
+  progress.hidden = false; bar.removeAttribute('value'); form.setAttribute('aria-busy', 'true');
+  label.textContent = 'Paso 1 de 5 · Preparando cafeterías, productos y formatos…';
+  elapsed(); const timer = setInterval(elapsed, 1000);
+  [...form.elements].forEach(element => { element.disabled = true; });
+  submit.textContent = 'Procesando…';
   try {
-    setStatus(status, 'Actualizando opciones y calculando venta…');
-    const selectedLocations = [...document.querySelectorAll('#demand-location-options input:checked')].map(input => input.value);
-    if (document.querySelector('#demand-location-options input') && !selectedLocations.length) {
-      throw new Error('Selecciona al menos una cafetería.');
-    }
-    const options = await apiRequest(`/api/demand-analysis/options${selectedLocations.length ? `?locations=${encodeURIComponent(selectedLocations.join(','))}` : ''}`);
+    setStatus(status, label.textContent);
+    const selectedLocation = document.getElementById('demand-location').value || 'all';
+    const options = await apiRequest(`/api/demand-analysis/options?locations=${encodeURIComponent(selectedLocation)}`, { signal: controller.signal });
+    if (!current()) return;
     if (!demandView.options && options.today) {
-      document.getElementById('demand-anchor').value = options.today;
       document.getElementById('demand-to').value = options.today;
       document.getElementById('demand-from').value = `${options.today.slice(0, 7)}-01`;
     }
     demandView.options = options;
     renderDemandFilterOptions(options);
-    demandView.query = demandQuery();
-    setStatus(status, 'Calculando pedidos, ocasiones, precios, segmentos, recurrencia y cobertura…');
-    const report = await apiRequest(`/api/demand-analysis?${demandView.query}`);
-    demandView.report = report;
+    const query = demandQuery();
+    // Freeze the submitted filters until their result arrives.
+    [...form.elements].forEach(element => { element.disabled = true; });
+    const report = await readDemandReport(query, controller.signal, advance);
+    if (!current()) return;
+    advance({ completed: 4, message: 'Paso 5 de 5 · Preparando tablas y resultados…' });
+    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    if (!current()) return;
+    demandView.query = query; demandView.report = report;
     renderDemandReport(report);
-    reportElement.hidden = false;
+    reportElement.hidden = false; bar.value = 5;
     setStatus(status, 'Análisis actualizado.', 'success');
   } catch (error) {
+    if (!current() || error.name === 'AbortError') return;
     reportElement.hidden = true;
-    if (error.status === 404) {
-      setStatus(status, 'La API de venta no está disponible en este servidor. Reinicia Brewit y recarga la página.', 'error');
-    } else {
-      setStatus(status, error.message, 'error');
+    setStatus(status, error.status === 404
+      ? 'La API de venta no está disponible en este servidor. Reinicia Brewit y recarga la página.' : error.message, 'error');
+  } finally {
+    clearInterval(timer);
+    if (current()) {
+      controls.forEach(([element, disabled]) => { element.disabled = disabled; });
+      if (demandView.options) renderDemandFilterOptions(demandView.options);
+      submit.disabled = false; submit.textContent = 'Analizar';
+      progress.hidden = true; form.setAttribute('aria-busy', 'false');
+      demandView.controller = null; demandView.restoreControls = null;
     }
   }
 }
@@ -232,6 +270,21 @@ function demandScopeAndLimits(scope, limitations) {
   return note;
 }
 
+function demandRecurrenceDefinitions(note = demandEl('div', null, 'demand-note')) {
+  const list = demandEl('ul');
+  for (const [label, description] of [
+    ['Instrumento recurrente', 'Pedidos vinculados a un mismo instrumento de pago registrado en dos o más fechas distintas del historial disponible, hasta el cierre del período seleccionado.'],
+    ['Una fecha observada', 'Pedidos vinculados a un instrumento de pago registrado en una sola fecha del historial disponible. Puede incluir varias compras ese día; no significa que sea su primera compra real.'],
+    ['Sin vínculo confiable', 'Pedidos que no pudieron asociarse con alta confianza a un instrumento de pago, por datos insuficientes o coincidencias ambiguas. No se puede determinar su recurrencia.']
+  ]) {
+    const item = demandEl('li');
+    item.append(demandEl('strong', `${label}: `), document.createTextNode(description));
+    list.append(item);
+  }
+  note.append(list);
+  return note;
+}
+
 function demandMixText(item) {
   return (item?.mix?.products || []).slice(0, 3).map(product => `${product.name} (${demandPercent(product.penetrationPercent)} pedidos)`).join(' · ') || '—';
 }
@@ -303,7 +356,7 @@ function renderDemandExploration() {
     else root.append(demandEl('p', 'No se encontraron categorías explícitamente clasificadas como sándwiches o bollería bajo los filtros activos.', 'demand-meta'));
   } else if (demandView.tab === 'recurrence') {
     const recurrence = report.recurrence;
-    root.append(demandScopeAndLimits(recurrence.scope, recurrence.limitations),
+    root.append(demandRecurrenceDefinitions(demandScopeAndLimits(recurrence.scope, recurrence.limitations)),
       demandEl('p', `${recurrence.identifiableInstruments} instrumentos identificables; ${recurrence.returningInstruments} con dos o más fechas (${demandPercent(recurrence.returningInstrumentPercent)}). Mediana entre compras: ${recurrence.medianGapDays == null ? '—' : `${demandNumber(recurrence.medianGapDays)} días`} (P25 ${demandNumber(recurrence.p25GapDays)} · P75 ${demandNumber(recurrence.p75GapDays)}).`, 'demand-meta'));
     root.append(demandTable([
       { label: 'Segmento observable', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
@@ -350,44 +403,85 @@ function renderDemandExploration() {
     ], report.priceSignals.priceEvents, 'product', 'code'));
     else root.append(demandEl('p', 'No hay cambios persistentes con al menos 10 observaciones en cada ventana de 28 días bajo los filtros activos.', 'demand-meta'));
   } else if (demandView.tab === 'time') {
+    const supportsUnits = report.time.heatmap.every(item => Number.isFinite(item.units));
+    const hasLineFilter = Boolean(report.filters?.category || report.filters?.product || report.filters?.size);
+    const metric = supportsUnits ? demandView.timeMetric || (hasLineFilter ? 'units' : 'orders') : 'orders';
+    const isAverage = demandView.timeAggregation === 'average' && Boolean(report.time.averages);
+    const averages = report.time.averages;
+    const cells = isAverage ? averages.heatmap : report.time.heatmap;
+    const format = isAverage ? value => new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value) : demandNumber;
+    const formatPercent = isAverage ? value => `${format(value)}%` : demandPercent;
+    const measure = metric === 'units' ? 'unidades' : 'pedidos';
+    const valueOf = item => Number(item?.[metric]) || 0;
+    const measureLabel = demandEl('label', 'Mostrar ', 'demand-time-metric');
+    const selector = demandEl('select'); selector.id = 'demand-time-metric';
+    selector.append(new Option('Pedidos', 'orders'), new Option('Unidades vendidas', 'units'));
+    selector.querySelector('[value="units"]').disabled = !supportsUnits;
+    selector.value = metric;
+    selector.onchange = () => { demandView.timeMetric = selector.value; renderDemandExploration(); document.getElementById('demand-time-metric').focus(); };
+    const aggregationLabel = demandEl('label', 'Cálculo ', 'demand-time-metric');
+    const aggregation = demandEl('select'); aggregation.id = 'demand-time-aggregation';
+    aggregation.append(new Option('Total', 'total'), new Option('Promedio diario', 'average'));
+    aggregation.querySelector('[value="average"]').disabled = !averages;
+    aggregation.value = isAverage ? 'average' : 'total';
+    aggregation.onchange = () => { demandView.timeAggregation = aggregation.value; renderDemandExploration(); document.getElementById('demand-time-aggregation').focus(); };
+    aggregationLabel.append(aggregation);
+    const controls = demandEl('div', null, 'demand-time-controls');
+    measureLabel.append(selector); controls.append(measureLabel, aggregationLabel); root.append(controls);
     const heat = demandEl('div', null, 'demand-heatmap');
-    const maximum = Math.max(1, ...report.time.heatmap.map(item => item.orders));
+    const maximum = Math.max(1, ...cells.map(valueOf));
     const hours = [...new Set(report.time.heatmap.filter(item => item.orders).map(item => item.hour))].sort((left, right) => left - right);
     const hourHeader = demandEl('div', null, 'demand-heatmap-row demand-heatmap-hours');
     hourHeader.append(demandEl('strong', 'Hora'));
     hours.forEach(hour => hourHeader.append(demandEl('span', `${String(hour).padStart(2, '0')}:00`, 'demand-heat-hour')));
+    hourHeader.append(demandEl('span', isAverage ? 'Promedio del día' : 'Total del día', 'demand-heat-hour demand-heat-day-total'));
     heat.append(hourHeader);
     for (let day = 0; day < 7; day++) {
+      const hasSample = !isAverage || averages.dayCounts[day] > 0;
       const row = demandEl('div', null, 'demand-heatmap-row'); row.append(demandEl('strong', report.time.weekdays[day]));
       for (const hour of hours) {
-        const item = report.time.heatmap.find(cell => cell.day === day && cell.hour === hour);
-        const button = demandEl('button', String(item?.orders || 0), 'demand-detail demand-heat-cell'); button.type = 'button';
-        button.dataset.kind = 'heatmap'; button.dataset.key = `${day}-${hour}`; button.dataset.title = `${report.time.weekdays[day]} ${hour}:00 · pedidos`;
-        button.title = `${report.time.weekdays[day]} ${hour}:00 · ${item?.orders || 0} pedidos · ${demandMoney(item?.netSales || 0)} netos`;
-        button.style.setProperty('--heat', String((item?.orders || 0) / maximum)); row.append(button);
+        const item = cells.find(cell => cell.day === day && cell.hour === hour);
+        const button = demandEl('button', hasSample ? format(valueOf(item)) : '—', 'demand-detail demand-heat-cell'); button.type = 'button';
+        button.dataset.kind = 'heatmap'; button.dataset.key = `${day}-${hour}`; button.dataset.title = `${report.time.weekdays[day]} ${hour}:00 · ${measure} y pedidos asociados`;
+        button.title = `${report.time.weekdays[day]} ${hour}:00 · ${hasSample ? format(valueOf(item)) : 'Sin muestra'} ${measure}${isAverage ? `/día · ${averages.dayCounts[day]} día(s) con venta` : metric === 'units' ? ` en ${item?.orders || 0} pedidos` : ''}`;
+        button.style.setProperty('--heat', String(Math.max(0, valueOf(item)) / maximum)); row.append(button);
       }
+      const dayTotal = cells.filter(item => item.day === day)
+        .reduce((total, item) => total + valueOf(item), 0);
+      const totalCell = demandEl('span', hasSample ? format(dayTotal) : '—', 'demand-heat-summary-cell demand-heat-day-total');
+      totalCell.title = `${report.time.weekdays[day]} · ${hasSample ? format(dayTotal) : 'Sin muestra'} ${measure}${isAverage ? `/día · ${averages.dayCounts[day]} día(s) con venta` : ' en el período seleccionado'}`;
+      row.append(totalCell);
       heat.append(row);
     }
-    const totals = hours.map(hour => report.time.heatmap.filter(item => item.hour === hour)
-      .reduce((total, item) => total + (Number(item.orders) || 0), 0));
+    const totals = hours.map(hour => isAverage ? valueOf(averages.hourlyTotals.find(item => item.hour === hour))
+      : cells.filter(item => item.hour === hour).reduce((total, item) => total + valueOf(item), 0));
     const grandTotal = totals.reduce((total, value) => total + value, 0);
     const totalRow = demandEl('div', null, 'demand-heatmap-row demand-heatmap-summary demand-heatmap-total');
-    totalRow.append(demandEl('strong', 'Total'));
+    totalRow.append(demandEl('strong', isAverage ? 'Prom. diario' : 'Total'));
     totals.forEach((total, index) => {
-      const cell = demandEl('span', demandNumber(total), 'demand-heat-summary-cell');
-      cell.title = `${String(hours[index]).padStart(2, '0')}:00 · ${total} pedidos`;
+      const cell = demandEl('span', format(total), 'demand-heat-summary-cell');
+      cell.title = `${String(hours[index]).padStart(2, '0')}:00 · ${format(total)} ${measure}`;
       totalRow.append(cell);
     });
+    const grandTotalCell = demandEl('span', format(grandTotal), 'demand-heat-summary-cell demand-heat-day-total');
+    grandTotalCell.title = `${isAverage ? 'Promedio diario general' : 'Total general'} · ${format(grandTotal)} ${measure}${isAverage ? '/día' : ''}`;
+    totalRow.append(grandTotalCell);
     const percentageRow = demandEl('div', null, 'demand-heatmap-row demand-heatmap-summary demand-heatmap-percentage');
     percentageRow.append(demandEl('strong', '% total'));
     totals.forEach((total, index) => {
       const percent = grandTotal ? total / grandTotal * 100 : 0;
-      const cell = demandEl('span', demandPercent(percent), 'demand-heat-summary-cell');
-      cell.title = `${String(hours[index]).padStart(2, '0')}:00 · ${demandPercent(percent)} de ${grandTotal} pedidos`;
+      const cell = demandEl('span', formatPercent(percent), 'demand-heat-summary-cell');
+      cell.title = `${String(hours[index]).padStart(2, '0')}:00 · ${formatPercent(percent)} de ${format(grandTotal)} ${measure}`;
       percentageRow.append(cell);
     });
+    percentageRow.append(demandEl('span', formatPercent(grandTotal ? 100 : 0), 'demand-heat-summary-cell demand-heat-day-total'));
     heat.append(totalRow, percentageRow);
-    root.append(demandScopeAndLimits(`Pedidos por día y hora · ${report.summary.orders} observaciones.`, 'Las horas sin registros no prueban que el local estuviera abierto. Sin calendario histórico completo no se atribuye el patrón a preferencia, disponibilidad o estacionalidad.'), heat);
+    const averageNote = isAverage
+      ? ` Cada fila promedia las fechas de ese día de la semana con venta total distinta de cero. Las horas y productos sin venta aportan cero dentro de esas fechas. Muestra: ${averages.totalDays} día(s) (${report.time.weekdays.map((day, i) => `${day}: ${averages.dayCounts[i]}`).join(' · ')}). La fila inferior promedia toda la muestra. — indica que no hay fechas válidas.` : '';
+    root.append(demandScopeAndLimits(metric === 'units'
+      ? `${isAverage ? 'Promedio diario de unidades por día y hora' : 'Unidades vendidas por día y hora'} · ${format(grandTotal)} ${isAverage ? 'unidades/día' : `unidades en ${report.summary.orders} pedidos`}. Solo productos que cumplen los filtros de categoría, producto y formato; no incluye extras.`
+      : `${isAverage ? 'Promedio diario de pedidos por día y hora' : 'Pedidos por día y hora'} · ${isAverage ? `${format(grandTotal)} pedidos/día` : `${report.summary.orders} pedidos`}. Un pedido puede contener varias unidades del producto o categoría seleccionados.`,
+      'Las horas sin registros no prueban que el local estuviera abierto. Sin calendario histórico completo no se atribuye el patrón a preferencia, disponibilidad o estacionalidad.' + averageNote), heat);
     for (const [label, rows] of [['Evolución diaria', report.time.daily], ['Semanal', report.time.weekly], ['Mensual', report.time.monthly]]) {
       const block = demandEl('div', null, 'demand-chart-block'); block.append(demandEl('h4', label));
       const maximumSales = Math.max(1, ...rows.map(item => item.netSales));
@@ -541,7 +635,7 @@ function renderDemandRecurrenceDetail(root, report) {
     demandKpi('Instrumentos observables', demandNumber(recurrence.identifiableInstruments), 'Pseudonimizados'),
     demandKpi('Instrumentos recurrentes', demandNumber(recurrence.returningInstruments), demandPercent(recurrence.returningInstrumentPercent)),
     demandKpi('Mediana entre compras', recurrence.medianGapDays == null ? '—' : `${demandNumber(recurrence.medianGapDays)} días`, 'Solo instrumentos con más de una fecha'));
-  root.append(demandEl('h4', 'Cobertura y comportamiento observable'), kpis,
+  root.append(demandRecurrenceDefinitions(), demandEl('h4', 'Cobertura y comportamiento observable'), kpis,
     demandTable([
       { label: 'Segmento', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
       { label: 'Venta neta', value: item => demandMoney(item.netSales) },

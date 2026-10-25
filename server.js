@@ -19,7 +19,7 @@ const { businessClock, buildNetworkSalesDashboard, percentageChange } = require(
 const { salesCalendar, equivalentDayComparison } = require('./equivalent-sales');
 const { buildSalesProjection } = require('./sales-projection');
 const { averageTicketWithVat } = require('./metric-policy');
-const { buildDemandAnalysis, resolveDemandPeriod, orderMatches } = require('./demand-analysis');
+const { buildDemandAnalysis, resolveDemandPeriod, orderMatches, resolveSaleSize } = require('./demand-analysis');
 const { linkOrdersToSettlements } = require('./transaction-linkage');
 const { classifyRecordedName, NAME_CLASSIFIER_VERSION } = require('./name-segmentation');
 const { createClusterJobs } = require('./sales-clusters-jobs');
@@ -6138,7 +6138,8 @@ function createApp(options = {}) {
     const filters = demandFilters(query, today);
     const source = buildProductAnalyticsSource('all');
     const selectedIds = new Set(stores.map(store => store.id));
-    const sourceOrders = source.orders.filter(order => selectedIds.has(order.locationId) && order.date <= today);
+    const sourceOrders = source.orders.filter(order => selectedIds.has(order.locationId) && order.date <= today)
+      .map(order => ({ ...order, lines: order.lines.map(line => ({ ...line, size: resolveSaleSize(line) })) }));
     const selectedStores = stores.map(store => ({ ...store, salesRanges: demandSalesRanges(store, today) }));
     const availableDates = sourceOrders.map(order => order.date).sort();
     return { today, stores: selectedStores, filters, source, sourceOrders,
@@ -6153,8 +6154,8 @@ function createApp(options = {}) {
     for (const order of payload.sourceOrders) {
       if (order.channel) channels.add(order.channel);
       for (const line of order.lines) {
-        if (line.size) sizes.add(line.size);
         if (line.extraHierarchyId) continue;
+        if (line.size) sizes.add(line.size);
         if (line.code) products.set(line.code, { code: line.code, name: line.name || line.code });
         if (line.hierarchyId) categories.set(line.hierarchyId,
           { id: line.hierarchyId, name: line.hierarchyName || line.hierarchyId });
@@ -6237,12 +6238,25 @@ function createApp(options = {}) {
     catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las opciones de venta.' }); }
   });
 
-  app.get('/api/demand-analysis', (req, res) => {
+  app.get('/api/demand-analysis', async (req, res) => {
+    const stream = req.query.progress === '1';
+    if (stream) {
+      res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      res.flushHeaders();
+    }
+    const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
+    const step = async (completed, message) => {
+      if (stream) { send({ type: 'progress', completed, total: 5, message }); await new Promise(resolve => setImmediate(resolve)); }
+      return !res.destroyed;
+    };
     try {
+      if (!await step(1, 'Paso 2 de 5 · Leyendo ventas y detalle de pagos…')) return;
       const payload = buildDemandSource(req.query);
+      if (!await step(2, 'Paso 3 de 5 · Vinculando pedidos, costos y medios de pago…')) return;
       const identity = demandOrdersWithIdentity(payload);
       const orders = identity.orders;
       const options = demandOptions(payload);
+      if (!await step(3, 'Paso 4 de 5 · Calculando composición, segmentos y oportunidades…')) return;
       const report = buildDemandAnalysis({ orders, stores: payload.stores, filters: payload.filters,
         today: payload.today, cutoff: businessClock().cutoff, capabilities: options.capabilities,
         linkageCoverage: identity.linkageCoverage });
@@ -6250,10 +6264,12 @@ function createApp(options = {}) {
       report.coverage.sourceFiles = payload.source.salesFilesRead;
       report.coverage.paymentFiles = payload.source.paymentFilesRead;
       report.coverage.warnings = payload.source.warnings;
+      if (stream) { send({ type: 'result', data: report }); return; }
       return res.json(report);
     } catch (error) {
+      if (stream) { send({ type: 'error', error: error.message || 'No se pudo construir la caracterización de la venta.' }); return; }
       return res.status(error.status || 500).json({ error: error.message || 'No se pudo construir el análisis de la venta.' });
-    }
+    } finally { if (stream) res.end(); }
   });
 
   app.get('/api/demand-analysis/orders', (req, res) => {
@@ -10238,7 +10254,15 @@ function createApp(options = {}) {
         }
       }
     }
-    const openDates = [...new Set(facts.map(fact => fact.date))].sort().reverse();
+    // Choose the daily sample before applying hour/product filters. A zero
+    // interval still belongs to a trading day, but a zero-total day must not
+    // dilute any of the averages (including the statistical analysis).
+    const dailySales = new Map();
+    for (const fact of facts) dailySales.set(fact.date, (dailySales.get(fact.date) || 0) + fact.netSales);
+    // Compare at monetary precision so offsetting refunds do not leave a
+    // floating-point residue that incorrectly qualifies a zero-total day.
+    const openDates = [...dailySales].filter(([, total]) => mode === 'date' || Math.round(total * 100) !== 0)
+      .map(([date]) => date).sort().reverse();
     const weekdayFor = date => new Date(`${date}T12:00:00.000Z`).getUTCDay();
     const currentWeekStart = mondayContaining(todayKey);
     const currentMonthStart = `${todayKey.slice(0, 7)}-01`;
@@ -10774,7 +10798,7 @@ function createApp(options = {}) {
         weekdays: weekdayRows,
         totals: { units: unitStats, netSales: salesStats, unitTrend, salesTrend },
         methodology: [
-          'Los promedios consideran únicamente los días con ventas incluidos por el período seleccionado.',
+          'Los promedios excluyen los días cuya venta total es cero; las franjas o productos sin venta dentro de un día con venta sí se incluyen con valor cero.',
           'La varianza y desviación estándar son muestrales; el CV corresponde a desviación estándar dividida por promedio.',
           'Las anomalías se señalan a dos desviaciones estándar sobre la diferencia respecto del promedio de su mismo día de semana; si no hay dos fechas comparables, se usa el promedio general.',
           'Las tendencias utilizan una regresión lineal sobre la secuencia de días observados; R² indica cuánto explica esa recta.',

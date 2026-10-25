@@ -21,8 +21,8 @@ test('Análisis de la Venta abre sus cuatro capas y conserva el detalle aun sin 
   });
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('link', { name: 'Demanda y oportunidades' }).click();
-  assert.equal(await page.locator('#demand-location-options input').count(), 2);
+  await page.getByRole('link', { name: 'Caracterización de la Venta' }).click();
+  assert.equal(await page.locator('#demand-location option').count(), 3);
   await page.waitForFunction(() => document.getElementById('demand-status')?.textContent.includes('Análisis actualizado.'));
   assert.equal(await page.locator('#demand-category option').first().innerText(), 'Sin categorías con ventas');
   assert.equal(await page.locator('#demand-product option').first().innerText(), 'Sin productos con ventas');
@@ -221,7 +221,7 @@ test('Análisis de la Venta muestra un error visible si el servidor aún no sirv
   const page = await browser.newPage();
   await page.route('**/demand-view.js', route => route.fulfill({ status: 404, body: 'Not Found' }));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('link', { name: 'Demanda y oportunidades' }).click();
+  await page.getByRole('link', { name: 'Caracterización de la Venta' }).click();
   assert.match(await page.locator('#demand-status').innerText(), /Reinicia el servidor de Brewit/);
 });
 

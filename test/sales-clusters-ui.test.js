@@ -16,7 +16,7 @@ test('clusters: controles, persistencia, cálculo, comparación y pedidos comple
   t.after(async () => { await browser.close(); app.locals.salesClusterJobs.dispose(); await new Promise(r => server.close(r)); fs.rmSync(uploadsRoot, { recursive: true, force: true }); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }), errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(base); await page.getByRole('link', { name: 'Demanda y oportunidades' }).click();
+  await page.goto(base); await page.getByRole('link', { name: 'Caracterización de la Venta' }).click();
   await page.waitForFunction(() => document.getElementById('demand-status').textContent.includes('Análisis actualizado.'));
   const advancedBounds = await page.locator('#demand-analysis-workspace-tab-advanced').boundingBox();
   const clustersBounds = await page.locator('#sales-clusters-open').boundingBox();

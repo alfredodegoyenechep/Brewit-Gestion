@@ -20,8 +20,7 @@
     hourFrom: 'hour-from', hourTo: 'hour-to', minSpend: 'min-spend', maxSpend: 'max-spend', minDiscount: 'min-discount', maxDiscount: 'max-discount' };
   function filters() {
     const result = { locations: byId('location').value, mode: 'custom', dateFrom: byId('from').value, dateTo: byId('to').value,
-      nameGender: 'all', morningEnd: document.getElementById('demand-morning-end').value,
-      middayEnd: document.getElementById('demand-midday-end').value, afternoonEnd: document.getElementById('demand-afternoon-end').value };
+      nameGender: 'all' };
     for (const [key, suffix] of Object.entries(fields)) if (byId(suffix).value !== '') result[key] = byId(suffix).value;
     if (!result.dateFrom || !result.dateTo || result.dateFrom > result.dateTo) throw new Error('Selecciona un período válido y en orden.');
     if (state.options && result.dateTo > state.options.today) throw new Error('El período no puede incluir fechas futuras.');
@@ -196,10 +195,10 @@
     if (state.job || state.starting) return;
     try {
       if (!state.parent && !state.referenceJobId) {
-        const selected = [...document.querySelectorAll('#demand-location-options input:checked')].map(i => i.value);
+        const selected = document.getElementById('demand-location').value || 'all';
         const options = demandView.options;
         byId('location').replaceChildren(new Option('Todas las cafeterías', 'all'), ...(options?.locations || []).map(l => new Option(l.name, l.id)));
-        byId('location').value = selected.length === 1 ? selected[0] : 'all';
+        byId('location').value = selected;
         const period = demandView.report?.period;
         byId('from').value = period?.from || document.getElementById('demand-from').value;
         byId('to').value = period?.to || document.getElementById('demand-to').value;
@@ -210,7 +209,7 @@
         byId('category').value = document.getElementById('demand-category').value;
         byId('product').value = document.getElementById('demand-product').value;
         byId('mode').value = document.getElementById('demand-mode').value;
-        byId('recurrence').value = document.getElementById('demand-recurrence').value;
+        byId('recurrence').value = 'all';
       }
       status('Preparando cobertura y parámetros…');
       const options = await loadCoverage();

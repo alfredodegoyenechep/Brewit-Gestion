@@ -117,10 +117,21 @@ function summarizeOrders(orders) {
   };
 }
 
+function resolveSaleSize(line) {
+  const explicit = String(line.size || '').trim();
+  if (explicit) return explicit;
+  // Use only named format codes; do not classify sandwiches, extras, espresso
+  // portions or beverage volumes from guessed product-name matches.
+  if (line.isExtra || line.extraHierarchyId) return '';
+  return String(line.name || '').match(/\((CL|GR|XTR)\)\s*$/i)?.[1].toUpperCase() || '';
+}
+
 function orderMatches(order, filters) {
   if (filters.modeOfService && filters.modeOfService !== 'all' && order.mode !== filters.modeOfService) return false;
   if (filters.channel && order.channel !== filters.channel) return false;
-  if (filters.size && !order.lines.some(line => line.size === filters.size)) return false;
+  if (filters.size && !order.lines.some(line => !line.isExtra && line.size === filters.size
+    && (!filters.product || line.code === filters.product)
+    && (!filters.category || String(line.categoryId || line.hierarchyId || '').startsWith(filters.category)))) return false;
   if (filters.product && !order.lines.some(line => !line.isExtra && line.code === filters.product)) return false;
   if (filters.category && !order.lines.some(line => !line.isExtra && String(line.categoryId || line.hierarchyId || '').startsWith(filters.category))) return false;
   if (filters.nameGender && filters.nameGender !== 'all' && order.nameGenderSegment !== filters.nameGender) return false;
@@ -198,27 +209,55 @@ function aggregateBaskets(orders) {
       definition: 'Pedidos con producto en «Barra Cafe» que también contienen producto en «Bolleria»; categorías del maestro vigente.' } };
 }
 
-function aggregateTime(orders) {
-  const cells = Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (_, hour) => ({ day, hour, orders: 0, netSales: 0 })));
+function aggregateTime(orders, filters = {}, periodOrders = orders) {
+  const cells = Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (_, hour) => ({ day, hour, orders: 0, units: 0, netSales: 0 })));
+  // Sample the full daily sales of the selected cafeterias, before filtering
+  // products: an open day without the chosen product must contribute zero.
+  const dailySales = new Map();
+  for (const order of periodOrders) dailySales.set(order.date, (dailySales.get(order.date) || 0) + (Number(order.netSales) || 0));
+  const dates = [...dailySales].filter(([, sales]) => Math.round(sales * 100) !== 0).map(([date]) => date).sort();
+  const eligible = new Set(dates), dayCounts = Array(7).fill(0);
+  dates.forEach(date => dayCounts[weekday(date)]++);
+  const averageCells = cells.map(row => row.map(cell => ({ ...cell })));
   const daily = new Map();
   const weekly = new Map();
   const monthly = new Map();
   for (const order of orders) {
+    const units = sum(order.lines.filter(line => !line.isExtra
+      && (!filters.product || line.code === filters.product)
+      && (!filters.category || String(line.categoryId || line.hierarchyId || '').startsWith(filters.category))
+      && (!filters.size || line.size === filters.size)).map(line => line.quantity));
     const day = weekday(order.date);
     const hour = Math.max(0, Math.min(23, Number(String(order.time || '').slice(0, 2)) || 0));
     cells[day][hour].orders++;
+    cells[day][hour].units += units;
     cells[day][hour].netSales += Number(order.netSales) || 0;
+    if (eligible.has(order.date)) {
+      averageCells[day][hour].orders++;
+      averageCells[day][hour].units += units;
+      averageCells[day][hour].netSales += Number(order.netSales) || 0;
+    }
     const monday = addDays(order.date, -((day + 6) % 7));
     for (const [map, key] of [[daily, order.date], [weekly, monday], [monthly, order.date.slice(0, 7)]]) {
-      const item = map.get(key) || { key, orders: 0, netSales: 0 };
+      const item = map.get(key) || { key, orders: 0, units: 0, netSales: 0 };
       item.orders++;
+      item.units += units;
       item.netSales += Number(order.netSales) || 0;
       map.set(key, item);
     }
   }
   const series = map => [...map.values()].sort((left, right) => left.key.localeCompare(right.key))
     .map(item => ({ ...item, netSales: round(item.netSales, 2) }));
+  const hourlyTotals = Array.from({ length: 24 }, (_, hour) => ({ hour,
+    orders: dates.length ? sum(averageCells.map(row => row[hour].orders)) / dates.length : 0,
+    units: dates.length ? sum(averageCells.map(row => row[hour].units)) / dates.length : 0 }));
   return { weekdays: WEEKDAYS, heatmap: cells.flat().map(item => ({ ...item, netSales: round(item.netSales, 2) })),
+    averages: { dates, totalDays: dates.length, dayCounts, hourlyTotals,
+      totals: { orders: sum(hourlyTotals.map(item => item.orders)), units: sum(hourlyTotals.map(item => item.units)) },
+      heatmap: averageCells.flat().map(item => ({ ...item,
+        orders: dayCounts[item.day] ? item.orders / dayCounts[item.day] : 0,
+        units: dayCounts[item.day] ? item.units / dayCounts[item.day] : 0,
+        netSales: dayCounts[item.day] ? item.netSales / dayCounts[item.day] : 0 })) },
     daily: series(daily), weekly: series(weekly), monthly: series(monthly) };
 }
 
@@ -384,8 +423,9 @@ function buildDemandAnalysis(input) {
   };
   const currentAnnotated = annotateRecurrenceAt(period.to);
   const previousAnnotated = annotateRecurrenceAt(previous.to);
-  const selected = currentAnnotated.filter(order => selectedIds.has(order.locationId) && order.date >= period.from
-    && order.date <= period.to && orderMatches(order, filters) && !order.reversalSignals?.length);
+  const periodOrders = currentAnnotated.filter(order => selectedIds.has(order.locationId) && order.date >= period.from
+    && order.date <= period.to && !order.reversalSignals?.length);
+  const selected = periodOrders.filter(order => orderMatches(order, filters));
   const priorRaw = previousAnnotated.filter(order => selectedIds.has(order.locationId) && order.date >= previous.from
     && order.date <= previous.to && orderMatches(order, filters) && !order.reversalSignals?.length);
   const comparable = stores.map(store => ({ id: store.id, name: store.name,
@@ -409,7 +449,7 @@ function buildDemandAnalysis(input) {
   const portfolio = aggregatePortfolio(selected, comparisonsAvailable ? previousComparable : []);
   if (!comparisonsAvailable) for (const row of [...portfolio.products, ...portfolio.categories]) row.salesChangePercent = null;
   const baskets = aggregateBaskets(selected);
-  const time = aggregateTime(selected);
+  const time = aggregateTime(selected, filters, periodOrders);
   const intelligence = buildDemandIntelligence({ selected, allOrders, period, filters,
     linkageCoverage: input.linkageCoverage || {} });
   const spending = intelligence.priceSignals;
@@ -471,11 +511,11 @@ function buildDemandAnalysis(input) {
       limitations: 'No se infiere canal desde el medio de pago, comentario o modalidad.',
       requirements: 'Completar y mantener un campo de canal explícito y estable en la fuente de ventas.' },
     { key: 'size', title: 'Tamaño o formato', status: input.capabilities?.size ? 'exploratory' : 'insufficient',
-      detail: input.capabilities?.size ? 'Campo Tamaño informado en algunas ventas; compara solo líneas con clasificación explícita.' : 'Los nombres sugieren formatos, pero falta un mapeo explícito y validado por producto.',
+      detail: input.capabilities?.size ? 'Formatos identificados por el campo Tamaño o por los sufijos explícitos CL, GR y XTR del producto.' : 'No se encontraron tamaños ni sufijos de formato CL, GR o XTR en las ventas.',
       scope: input.capabilities?.size ? 'Líneas con tamaño explícito bajo los filtros activos.' : 'No hay líneas con tamaño validado.',
       availableData: 'Código, nombre, categoría, precio y cantidad de cada línea vendida.',
-      limitations: 'No se deduce tamaño desde el nombre porque puede confundir formato, receta o descripción comercial.',
-      requirements: 'Campo Tamaño poblado o maestro versionado código–formato validado.' },
+      limitations: 'Los sufijos identifican un formato comercial; no se asigna una capacidad en mililitros. El filtro selecciona pedidos que contienen el formato, conservando su canasta completa.',
+      requirements: 'Campo Tamaño o sufijo de formato CL, GR o XTR explícito en el producto.' },
     { key: 'lost-demand', title: 'Venta perdida', status: 'insufficient', detail: 'Kardex diario no demuestra quiebres de vitrina ni clientes que desistieron; se necesita registro de disponibilidad.',
       scope: 'Solo ventas realizadas y registradas.',
       availableData: 'Ventas y Kardex diario, útiles para inventario pero no para observar intentos de compra fallidos.',
@@ -506,4 +546,4 @@ function buildDemandAnalysis(input) {
   };
 }
 
-module.exports = { resolveDemandPeriod, previousPeriod, comparableDatePairs, summarizeOrders, aggregateBaskets, orderMatches, buildDemandAnalysis };
+module.exports = { resolveDemandPeriod, previousPeriod, comparableDatePairs, summarizeOrders, aggregateBaskets, orderMatches, resolveSaleSize, buildDemandAnalysis };

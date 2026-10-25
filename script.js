@@ -1424,9 +1424,14 @@ function syncFinancialResultsPeriod() {
   document.getElementById('financial-results-to-field').classList.toggle('is-disabled', !custom);
   if (custom) return;
   const today = browserIsoToday();
+  const currentWeekStart = offsetIsoDate(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
   const currentMonthStart = `${today.slice(0, 7)}-01`;
   const previousMonthEnd = offsetIsoDate(currentMonthStart, -1);
   const ranges = {
+    'today': { from: today, to: today },
+    'yesterday': { from: offsetIsoDate(today, -1), to: offsetIsoDate(today, -1) },
+    'current-week': { from: currentWeekStart, to: today },
+    'previous-week': { from: offsetIsoDate(currentWeekStart, -7), to: offsetIsoDate(currentWeekStart, -1) },
     'current-month': { from: currentMonthStart, to: today },
     'previous-month': { from: `${previousMonthEnd.slice(0, 7)}-01`, to: previousMonthEnd },
     'last-30-days': { from: offsetIsoDate(today, -29), to: today },
@@ -4447,10 +4452,10 @@ async function loadHourlySalesDemand() {
     if (!report.sampleSize) {
       setStatus(status, report.filters.mode === 'date'
         ? 'La fecha seleccionada no registra ventas; puede corresponder a un día cerrado.'
-        : 'No hay días abiertos que cumplan los filtros seleccionados.', 'error');
+        : 'No hay días con venta total distinta de cero que cumplan los filtros seleccionados.', 'error');
     } else {
       setStatus(status, report.isAverage
-        ? `Promedio calculado con ${report.sampleSize} día(s) abierto(s): ${dateList}.`
+        ? `Promedio calculado con ${report.sampleSize} día(s) con venta: ${dateList}. Se excluyen los días con venta total cero.`
         : `Ventas del ${dateList}.`, 'success');
     }
   } catch (error) {

@@ -24,6 +24,12 @@ After changing server code, stop and restart `npm start`; refreshing the browser
 
 Uploaded data is stored under `uploads/` and is intentionally excluded from Git. Back up that directory if the local upload history needs to be preserved.
 
+En **Caracterización de la Venta → Horarios y evolución**, el mapa permite elegir **Pedidos** o **Unidades vendidas**. Con filtros de categoría, producto o formato, muestra unidades por defecto y suma únicamente las líneas que cumplen esos filtros, excluyendo extras. Los pedidos siguen contando una sola observación por cuenta: por ejemplo, 24 unidades de bollería pueden corresponder a 18 pedidos. La columna Total del día, la fila Total y los porcentajes usan la medida seleccionada.
+
+El selector **Total / Promedio diario** aplica a ambas medidas. El promedio se presenta con un decimal: cada fila divide por las fechas de ese día de semana con venta total distinta de cero en las cafeterías seleccionadas. La muestra se define antes de filtrar categoría/producto/formato, por lo que una fecha con ventas de otros productos aporta cero al producto elegido. La fila inferior usa todos los días de la muestra para calcular el promedio global, sin sumar los promedios de los días de semana. Un guion indica ausencia de fechas válidas.
+
+**Caracterización de la Venta** permite elegir todas las cafeterías o una cafetería, período, categoría, producto, modalidad, tamaño/formato, segmento de nombre e intervalo de precios. Los períodos predefinidos usan la fecha de Chile del servidor; **Personalizado** permite indicar desde/hasta. Tamaño/formato usa el campo explícito de venta o los sufijos finales `(CL)`, `(GR)` y `(XTR)` del producto, sin asignar capacidades en mililitros. El filtro selecciona pedidos que contienen ese formato y conserva su canasta completa; al combinar producto y formato, ambos deben coincidir en la misma línea. El análisis muestra cinco etapas y tiempo transcurrido. La API conserva su respuesta JSON habitual y ofrece eventos NDJSON con `progress=1`.
+
 ## Tests
 
 ```bash

@@ -3889,6 +3889,52 @@ test('builds hourly product demand for open days, weekdays and matching weekdays
   assert.equal((await fetch(`${baseUrl}/api/sales/hourly-demand?location=main-warehouse`)).status, 400);
 });
 
+test('hourly averages exclude zero-total days before choosing the sample and retain zero intervals', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-26' });
+  const rows = [
+    ['ID de orden', 'Fecha de creacion', 'Hora de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento'],
+    ['today', '2026-08-26', '09:00:00', 238, 0, 'P1', 'Café', 2, 238, 0],
+    ['zero', '2026-08-25', '08:00:00', 0, 0, 'P1', 'Café gratis', 10, 0, 0],
+    ['refund-sale', '2026-08-24', '08:00:00', 357, 0, 'P1', 'Café', 3, 357, 0],
+    ['refund', '2026-08-24', '10:00:00', -357, 0, 'P1', 'Café', -3, -357, 0],
+    ['previous', '2026-08-19', '08:00:00', 119, 0, 'P1', 'Café', 1, 119, 0],
+    ['early', '2026-08-18', '06:00:00', 119, 0, 'P2', 'Pan', 1, 119, 0],
+    ['previous-month', '2026-07-29', '08:00:00', 119, 0, 'P1', 'Café', 1, 119, 0],
+    ['previous-month-zero', '2026-07-28', '08:00:00', 0, 0, 'P1', 'Café', 1, 0, 0]
+  ];
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [{ field: 'sales',
+    contents: rows.map(row => row.join('\t')).join('\n'), filename: 'ventas-horarias-cero.csv' }]).then(r => r.json());
+  assert.equal((await confirmTransactions(baseUrl, inspection)).status, 200);
+  const read = async (path, mode, extra = '') => {
+    const r = await fetch(`${baseUrl}/api/sales/${path}?location=store-1&date=2026-08-26&days=2&mode=${mode}${extra}`);
+    assert.equal(r.status, 200); return r.json();
+  };
+  for (const mode of ['recent', 'same-weekday', 'weekdays']) {
+    const report = await read('hourly-demand', mode);
+    assert.deepEqual(report.selectedDates, ['2026-08-19', '2026-08-26']);
+    assert.equal(report.sampleSize, 2);
+    assert.equal(report.totals.netSales, 150);
+    assert.equal(report.buckets[0].netSales, 50);
+    assert.equal(report.buckets[0].minNetSales, 0, 'zero intervals on a nonzero day remain in the sample');
+  }
+  for (const mode of ['current-week', 'previous-week', 'current-month', 'previous-month',
+    'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days']) {
+    const report = await read('hourly-demand', mode);
+    assert.ok(report.sampleSize > 0);
+    for (const zero of ['2026-08-25', '2026-08-24', '2026-07-28']) assert.ok(!report.selectedDates.includes(zero), mode);
+    if (mode === 'previous-week') assert.ok(report.selectedDates.includes('2026-08-18'), 'eligibility uses the whole day, including sales before 07:00');
+  }
+  const analysis = await read('hourly-analysis', 'recent', '&analysisLevel=product');
+  assert.deepEqual(analysis.selectedDates, ['2026-08-19', '2026-08-26']);
+  assert.equal(analysis.metrics.averageNetSales, 150);
+  const zeroDay = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=date&date=2026-08-25`).then(r => r.json());
+  // A specific-date query can still inspect the actual zero-total records.
+  assert.equal(zeroDay.isAverage, false);
+  assert.deepEqual(zeroDay.selectedDates, ['2026-08-25']);
+  assert.equal(zeroDay.totals.quantity, 10);
+  assert.equal(zeroDay.totals.netSales, 0);
+});
+
 test('warns on duplicate master start dates and replaces only after confirmation', async t => {
   const baseUrl = await startTestServer(t);
   const oldCatalog = 'ID Producto **\tNombre Producto *\tCosto\nP1\tProducto anterior\t100';
