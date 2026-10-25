@@ -135,6 +135,15 @@ const pastPurchaseOrdersCache = new Map();
 let pastPurchaseOrdersRequestSequence = 0;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
+let salesServiceModeState = null;
+let salesProductFilters = { bar: 'all', groupFormats: false };
+const salesReportDefinitions = {
+  'sales-margin': { status: 'sales-margin-status', type: 'participation' },
+  'sales-hierarchy-margin': { status: 'sales-hierarchy-margin-status', type: 'hierarchies' },
+  'sales-service-mode': { status: 'sales-service-mode-status', type: 'service' },
+  'sales-insight': { status: 'sales-insight-range-status', type: 'products' },
+  'sales-customers': { status: 'sales-customers-status', type: 'customers' }
+};
 let transactionAuditState = null;
 let transactionAuditSort = { key: 'date', direction: 'desc' };
 const expandedAuditTransactions = new Set();
@@ -152,12 +161,12 @@ function invalidateCalculation(view, statusId) {
   const active = calculatedViewRequests.get(view);
   if (active) active.controller.abort();
   calculatedViewRequests.delete(view);
-  const buttonId = { salesMargins: 'sales-margin-filters', financial: 'financial-results-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
+  const buttonId = { financial: 'financial-results-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
   const control = document.getElementById(buttonId);
-  const button = ['financial', 'salesMargins'].includes(view) ? control?.querySelector('button[type="submit"]') : control;
+  const button = view === 'financial' ? control?.querySelector('button[type="submit"]') : control;
   if (button) button.disabled = false;
   const previous = calculatedViewKeys.get(view);
-  const action = view === 'salesMargins' ? 'Generar reportes' : 'Consultar';
+  const action = 'Consultar';
   setStatus(document.getElementById(statusId), previous
     ? `Los filtros cambiaron. El resultado visible corresponde a la última consulta; pulsa ${action} para aplicar la nueva selección.`
     : `Selecciona los filtros y pulsa ${action} para calcular con los datos guardados.`, 'muted');
@@ -315,7 +324,10 @@ window.addEventListener('brewit-sales-updated', () => {
   const report = document.getElementById('weekly-report');
   const sales = document.getElementById('sales-workspace');
   if (report && !report.hidden && report.style.display !== 'none') loadWeeklySalesReport();
-  if (sales && !sales.hidden && sales.style.display !== 'none') loadSalesDashboard();
+  if (sales && !sales.hidden && sales.style.display !== 'none') {
+    Object.keys(salesReportDefinitions).forEach(markSalesReportDirty);
+    markHourlyReportDirty();
+  }
 });
 window.addEventListener('brewit-purchases-updated', () => {
   const view = document.getElementById('purchases-workspace');
@@ -549,7 +561,6 @@ function setView(view, { confirmed = false } = {}) {
     const sales = document.getElementById('sales-workspace');
     sales.hidden = false;
     sales.style.display = '';
-    loadSalesDashboard();
     return;
   }
   if (view === 'transaction-audit') {
@@ -1992,37 +2003,88 @@ async function loadFinancialResults() {
   }
 }
 
-async function loadSalesMarginReports() {
-  const status = document.getElementById('sales-margin-status');
-  const button = document.querySelector('#sales-margin-filters button[type="submit"]');
-  const filterIds = ['sales-dashboard-location', 'sales-margin-period', 'sales-margin-from', 'sales-margin-to'];
-  const location = document.getElementById('sales-dashboard-location').value || 'all';
-  const dateFrom = document.getElementById('sales-margin-from').value;
-  const dateTo = document.getElementById('sales-margin-to').value;
-  if (!dateFrom || !dateTo || dateFrom > dateTo) {
-    setStatus(status, 'Selecciona un período válido.', 'error');
+function salesReportFilterIds(prefix) {
+  if (prefix === 'sales-customers') return ['sales-customers-location'];
+  const ids = ['location', 'period', 'from', 'to'].map(name => `${prefix}-${name}`);
+  if (prefix === 'sales-insight') ids.push('sales-insight-bar', 'sales-insight-formats');
+  return ids;
+}
+
+function salesReportKey(prefix) {
+  return JSON.stringify(salesReportFilterIds(prefix).map(id => {
+    const input = document.getElementById(id);
+    return input.type === 'checkbox' ? input.checked : input.value;
+  }));
+}
+
+function markSalesReportDirty(prefix) {
+  calculatedViewRequests.get(prefix)?.controller.abort();
+  calculatedViewRequests.delete(prefix);
+  const button = document.querySelector(`#${prefix}-filters button[type="submit"]`);
+  button.disabled = false;
+  const previous = calculatedViewKeys.has(prefix);
+  setStatus(document.getElementById(salesReportDefinitions[prefix].status), previous
+    ? `Los filtros cambiaron. El resultado visible conserva la última consulta; pulsa ${button.textContent} para aplicar la selección.`
+    : `Selecciona los filtros y pulsa ${button.textContent}.`, 'muted');
+}
+
+async function loadSalesReport(prefix) {
+  const definition = salesReportDefinitions[prefix];
+  const status = document.getElementById(definition.status);
+  const button = document.querySelector(`#${prefix}-filters button[type="submit"]`);
+  const location = document.getElementById(`${prefix}-location`).value || 'all';
+  const hasPeriod = definition.type !== 'customers';
+  const dateFrom = hasPeriod ? document.getElementById(`${prefix}-from`).value : null;
+  const dateTo = hasPeriod ? document.getElementById(`${prefix}-to`).value : null;
+  if (hasPeriod && (!dateFrom || !dateTo || dateFrom > dateTo || dateTo > browserIsoToday())) {
+    setStatus(status, 'Selecciona un período válido, sin superar el día actual.', 'error');
     return;
   }
-  const request = beginCalculation('salesMargins', selectedCalculationKey(filterIds));
+  const filters = { bar: document.getElementById('sales-insight-bar').value,
+    groupFormats: document.getElementById('sales-insight-formats').checked };
+  const request = beginCalculation(prefix, salesReportKey(prefix));
+  const current = () => calculatedViewRequests.get(prefix) === request && salesReportKey(prefix) === request.key;
   button.disabled = true;
-  setStatus(status, 'Calculando participación, jerarquías y margen…');
+  setStatus(status, 'Generando reporte con los datos guardados…');
   try {
-    const params = new URLSearchParams({ location, dateFrom, dateTo });
-    const data = await apiRequest(`/api/financial-results?${params}`, { signal: request.controller.signal });
-    if (!isCurrentCalculation('salesMargins', request, filterIds)) return;
-    renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
-    renderFinancialMetricRows('financial-ingredients-body', data.revenue.ingredients);
-    renderFinancialHierarchies(data.revenue.hierarchies);
-    calculatedViewKeys.set('salesMargins', request.key);
-    document.getElementById('sales-margin-context').textContent =
-      `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo al corte del reporte.`;
-    setStatus(status, `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`, 'success');
+    const params = new URLSearchParams({ location });
+    let endpoint = '/api/sales/dashboard';
+    if (['participation', 'hierarchies'].includes(definition.type)) {
+      endpoint = '/api/financial-results';
+      params.set('dateFrom', dateFrom); params.set('dateTo', dateTo);
+    } else if (hasPeriod) {
+      const queryPrefix = { service: 'service', products: 'insight' }[definition.type];
+      params.set(`${queryPrefix}DateFrom`, dateFrom); params.set(`${queryPrefix}DateTo`, dateTo);
+    }
+    const data = await apiRequest(`${endpoint}?${params}`, { signal: request.controller.signal });
+    if (!current()) return;
+    if (definition.type === 'participation') {
+      renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
+      renderFinancialMetricRows('financial-ingredients-body', data.revenue.ingredients);
+    } else if (definition.type === 'hierarchies') renderFinancialHierarchies(data.revenue.hierarchies);
+    else if (definition.type === 'service') {
+      salesServiceModeState = data;
+      renderSalesServiceModes();
+    } else if (definition.type === 'products') {
+      salesDashboardState = data;
+      salesProductFilters = filters;
+      salesHierarchyPath = [];
+      renderSalesInsights();
+    } else renderMercadoPago(data);
+    calculatedViewKeys.set(prefix, request.key);
+    document.getElementById(`${prefix}-context`).textContent = hasPeriod
+      ? `${data.scope.label} · ${formatReportDate(dateFrom)} – ${formatReportDate(dateTo)}${endpoint === '/api/financial-results' ? ' · Costo al corte del reporte.' : ''}`
+      : `${data.scope.label} · Últimos 6 meses y últimas 8 semanas · Corte al ${formatReportDate(data.date)}.`;
+    const message = endpoint === '/api/financial-results'
+      ? `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`
+      : definition.type === 'service' ? status.textContent : 'Reporte generado.';
+    const warnings = data.warnings || [];
+    setStatus(status, `${message}${warnings.length ? ` ${warnings.join(' ')}` : ''}`, warnings.length ? 'warning' : 'success');
   } catch (error) {
-    if (!isCurrentCalculation('salesMargins', request, filterIds)) return;
-    setStatus(status, error.message, 'error');
+    if (current()) setStatus(status, error.message, 'error');
   } finally {
-    if (calculatedViewRequests.get('salesMargins') === request) {
-      calculatedViewRequests.delete('salesMargins');
+    if (calculatedViewRequests.get(prefix) === request) {
+      calculatedViewRequests.delete(prefix);
       button.disabled = false;
     }
   }
@@ -2511,8 +2573,7 @@ function tableChartDateValue(label) {
 }
 
 function salesServiceModeChartConfiguration(rule) {
-  const periodKey = document.getElementById('sales-service-mode-period').value;
-  const period = salesDashboardState?.sales?.serviceModes?.periods?.[periodKey];
+  const period = salesServiceModeState?.sales?.serviceModes?.periods?.custom;
   if (!period?.hierarchies?.length) return null;
   const definitions = [
     ['Para llevar', 'takeaway'],
@@ -3359,14 +3420,15 @@ function changeReportView() {
 }
 
 function refreshSalesDashboardLocationFilter() {
-  const select = document.getElementById('sales-dashboard-location');
-  const previous = select.value || 'all';
-  const options = [new Option('Todas las cafeterías', 'all')];
-  for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
-    options.push(new Option(location.name, location.id));
-  }
-  select.replaceChildren(...options);
-  select.value = options.some(option => option.value === previous) ? previous : 'all';
+  document.querySelectorAll('.sales-report-location').forEach(select => {
+    const previous = select.value || 'all';
+    const options = [new Option('Todas las cafeterías', 'all')];
+    for (const location of Object.values(locationRegistry).filter(item => item.type === 'store')) {
+      options.push(new Option(location.name, location.id));
+    }
+    select.replaceChildren(...options);
+    select.value = options.some(option => option.value === previous) ? previous : 'all';
+  });
 }
 
 function refreshFindingsLocationFilter() {
@@ -3701,12 +3763,6 @@ function dashboardChange(value, suffix = '') {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}${suffix || '%'} vs. período anterior`;
 }
 
-function syncSalesServiceModeControls() {
-  const custom = document.getElementById('sales-service-mode-period').value === 'custom';
-  document.getElementById('sales-service-mode-custom-range').hidden = !custom;
-  return custom;
-}
-
 function alignSalesServiceModeTableHeight() {
   const tableWrap = document.querySelector('.sales-service-mode-table-wrap');
   const packagingSection = document.querySelector('.avoided-cups-section');
@@ -3720,9 +3776,9 @@ function alignSalesServiceModeTableHeight() {
 }
 
 function renderSalesServiceModes() {
-  if (!salesDashboardState) return;
-  const serviceModes = salesDashboardState.sales.serviceModes;
-  const periodKey = document.getElementById('sales-service-mode-period').value;
+  if (!salesServiceModeState) return;
+  const serviceModes = salesServiceModeState.sales.serviceModes;
+  const periodKey = 'custom';
   const period = serviceModes?.periods?.[periodKey];
   const summary = document.getElementById('sales-service-mode-summary');
   const hierarchyBody = document.getElementById('sales-service-mode-hierarchies');
@@ -3867,13 +3923,11 @@ function renderSalesServiceModes() {
 
 function renderSalesInsights() {
   if (!salesDashboardState) return;
-  const key = document.getElementById('sales-insight-period').value;
-  document.getElementById('sales-insight-custom').hidden = key !== 'custom';
+  const key = 'custom';
   const rankBy = document.getElementById('sales-ranking-order').value;
   const originalInsight = salesDashboardState.sales.productInsights[key];
   if (!originalInsight) return;
-  setStatus(document.getElementById('sales-insight-range-status'), `${formatReportDate(originalInsight.period.from)} – ${formatReportDate(originalInsight.period.to)} · Se consideran las ventas disponibles para el período seleccionado.`, 'muted');
-  const insight = originalInsight.analysisProducts ? {...originalInsight,...window.buildFilteredSalesInsights(originalInsight.analysisProducts,{bar:document.getElementById('sales-insight-bar').value,groupFormats:document.getElementById('sales-insight-formats').checked,rankBy})} : originalInsight;
+  const insight = originalInsight.analysisProducts ? {...originalInsight,...window.buildFilteredSalesInsights(originalInsight.analysisProducts,{bar:salesProductFilters.bar,groupFormats:salesProductFilters.groupFormats,rankBy})} : originalInsight;
   const productContainer = document.getElementById('sales-top-products');
   if (!insight.topProducts.length) {
     productContainer.textContent = 'No hay productos vendidos en este período.';
@@ -4364,7 +4418,7 @@ function renderHourlySalesDemand() {
     return row;
   }));
   const totalRow = document.createElement('tr');
-  ['Total 07:00–21:00', formatHourlyTableQuantity(totals.quantity), hourlyMinMaxLabel(totals.minQuantity, totals.maxQuantity),
+  [`${report.isAverage ? 'Promedio diario' : 'Total'} 07:00–21:00`, formatHourlyTableQuantity(totals.quantity), hourlyMinMaxLabel(totals.minQuantity, totals.maxQuantity),
     formatClp(totals.netSales), hourlySalesMinMaxLabel(totals.minNetSales, totals.maxNetSales), '100,0%', '100,0%']
     .forEach((value, index) => {
       const cell = document.createElement(index ? 'td' : 'th');
@@ -4379,49 +4433,97 @@ function renderHourlySalesDemand() {
     });
   document.getElementById('hourly-demand-foot').replaceChildren(totalRow);
   const summary = document.getElementById('hourly-demand-summary');
-  const basis = report.isAverage ? `Promedio de ${report.sampleSize} día(s) con venta` : 'Valores del día';
+  const basis = `${report.isAverage ? 'Promedio de' : 'Total de'} ${report.sampleSize} día(s) con venta`;
+  document.getElementById('hourly-demand-title').textContent = `Venta por franja horaria · ${report.isAverage ? 'Promedios' : 'Totales'}`;
+  document.getElementById('hourly-demand-units-heading').textContent = report.isAverage ? 'Unidades promedio' : 'Unidades totales';
+  document.getElementById('hourly-demand-sales-heading').textContent = report.isAverage ? 'Facturación promedio' : 'Facturación total';
   summary.replaceChildren(
     salesAnalysisChip(basis),
-    salesAnalysisChip(`${formatDemandQuantity(totals.quantity)} unidades`),
-    salesAnalysisChip(`${formatClp(totals.netSales)} facturación neta`)
+    salesAnalysisChip(`${formatDemandQuantity(totals.quantity)} unidades ${report.isAverage ? 'promedio' : 'totales'}`),
+    salesAnalysisChip(`${formatClp(totals.netSales)} facturación ${report.isAverage ? 'promedio' : 'total'} neta`)
   );
 }
 
 function syncHourlyDemandControls() {
   const mode = document.getElementById('hourly-demand-mode').value;
-  const isSpecificDate = mode === 'date';
-  const isAutomaticPeriod = [
-    'current-week', 'previous-week', 'current-month', 'previous-month',
-    'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days'
-  ].includes(mode);
-  const date = document.getElementById('hourly-demand-date');
-  const days = document.getElementById('hourly-demand-days');
-  date.disabled = isAutomaticPeriod;
-  days.disabled = isSpecificDate || isAutomaticPeriod;
-  document.getElementById('hourly-demand-date-label').classList.toggle('disabled-control', isAutomaticPeriod);
-  document.getElementById('hourly-demand-days-label').classList.toggle('disabled-control', isSpecificDate || isAutomaticPeriod);
+  const today = browserIsoToday();
+  const weekStart = offsetIsoDate(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const previousMonthEnd = offsetIsoDate(monthStart, -1);
+  const ranges = {
+    recent: [offsetIsoDate(today, -6), today],
+    'same-weekday': [offsetIsoDate(today, -48), today], weekdays: [offsetIsoDate(today, -6), today],
+    'current-week': [weekStart, today],
+    'previous-week': [offsetIsoDate(weekStart, -7), offsetIsoDate(weekStart, -1)],
+    'current-month': [monthStart, today],
+    'previous-month': [`${previousMonthEnd.slice(0, 7)}-01`, previousMonthEnd]
+  };
+  for (const days of [30, 60, 90, 180, 360]) ranges[`last-${days}-days`] = [offsetIsoDate(today, 1 - days), today];
+  const from = document.getElementById('hourly-demand-from');
+  const to = document.getElementById('hourly-demand-to');
+  from.max = to.max = today;
+  const specificDay = mode === 'date';
+  document.getElementById('hourly-demand-sampling-note').hidden = !specificDay;
+  document.getElementById('hourly-demand-from-label').hidden = specificDay;
+  from.disabled = specificDay;
+  document.getElementById('hourly-demand-occurrences-label').hidden = !specificDay;
+  document.getElementById('hourly-demand-occurrences').disabled = !specificDay;
+  if (specificDay) {
+    if (!to.value) to.value = today;
+    from.value = offsetIsoDate(to.value, -7 * (Number(document.getElementById('hourly-demand-occurrences').value) - 1));
+  } else if (ranges[mode]) [from.value, to.value] = ranges[mode];
+}
+
+const hourlyReportFilterIds = ['hourly-demand-location', 'hourly-demand-mode', 'hourly-demand-from', 'hourly-demand-to', 'hourly-demand-occurrences', 'hourly-demand-aggregation', 'hourly-demand-interval'];
+function markHourlyReportDirty() {
+  for (const key of ['hourly', 'hourly-analysis']) {
+    calculatedViewRequests.get(key)?.controller.abort();
+    calculatedViewRequests.delete(key);
+  }
+  document.getElementById('refresh-hourly-demand').disabled = false;
+  document.getElementById('generate-hourly-analysis').disabled = false;
+  setStatus(document.getElementById('hourly-demand-status'), calculatedViewKeys.has('hourly')
+    ? 'Los filtros cambiaron. El resultado visible conserva la última consulta; pulsa Generar reportes para aplicar la selección.'
+    : 'Selecciona los filtros y pulsa Generar reportes.', 'muted');
+}
+
+function hourlyReportParams() {
+  const dateFrom = document.getElementById('hourly-demand-from').value;
+  const dateTo = document.getElementById('hourly-demand-to').value;
+  const mode = document.getElementById('hourly-demand-mode').value;
+  if (!dateTo || dateTo > browserIsoToday() || (mode !== 'date' && (!dateFrom || dateFrom > dateTo))) {
+    setStatus(document.getElementById('hourly-demand-status'), 'Selecciona un período válido, sin superar el día actual.', 'error');
+    return null;
+  }
+  const params = new URLSearchParams({ location: document.getElementById('hourly-demand-location').value || 'all',
+    mode, dateTo, aggregation: document.getElementById('hourly-demand-aggregation').value,
+    interval: document.getElementById('hourly-demand-interval').value });
+  if (mode === 'date') params.set('occurrences', document.getElementById('hourly-demand-occurrences').value);
+  else params.set('dateFrom', dateFrom);
+  return params;
 }
 
 async function loadHourlySalesDemand() {
   const status = document.getElementById('hourly-demand-status');
   const button = document.getElementById('refresh-hourly-demand');
-  const location = document.getElementById('sales-dashboard-location').value || 'all';
-  const params = new URLSearchParams({
-    location,
-    mode: document.getElementById('hourly-demand-mode').value,
-    date: document.getElementById('hourly-demand-date').value,
-    days: document.getElementById('hourly-demand-days').value,
-    interval: document.getElementById('hourly-demand-interval').value
-  });
+  const params = hourlyReportParams();
+  if (!params) return;
+  const request = beginCalculation('hourly', selectedCalculationKey(hourlyReportFilterIds));
+  const current = () => isCurrentCalculation('hourly', request, hourlyReportFilterIds);
   button.disabled = true;
   setStatus(status, 'Calculando venta por franja horaria…');
   try {
-    const report = await apiRequest(`/api/sales/hourly-demand?${params}`);
-    if (location !== document.getElementById('sales-dashboard-location').value) return;
+    const report = await apiRequest(`/api/sales/hourly-demand?${params}`, { signal: request.controller.signal });
+    if (!current()) return;
     hourlySalesDemandState = report;
     hourlySalesHierarchyPath = [];
     hourlySalesProductKey = null;
+    calculatedViewKeys.set('hourly', request.key);
     renderHourlySalesDemand();
+    const range = report.filters.range || { from: params.get('dateFrom'), to: params.get('dateTo') };
+    const requested = report.requestedDates ? ` · ${report.requestedDates.length} fecha(s) del mismo día de semana; ${report.sampleSize} con venta; ${report.excludedDateCount} sin venta registrada` : '';
+    document.getElementById('hourly-demand-report-context').textContent =
+      `${report.scope.label} · ${formatReportDate(range.from)} – ${formatReportDate(range.to)}${requested}`;
     const dateList = report.selectedDates.map(formatReportDate).join(', ');
     if (!report.sampleSize) {
       setStatus(status, report.filters.mode === 'date'
@@ -4430,13 +4532,15 @@ async function loadHourlySalesDemand() {
     } else {
       setStatus(status, report.isAverage
         ? `Promedio calculado con ${report.sampleSize} día(s) con venta: ${dateList}. Se excluyen los días con venta total cero.`
-        : `Ventas del ${dateList}.`, 'success');
+        : `Total calculado con ${report.sampleSize} día(s) con venta: ${dateList}.`, 'success');
     }
   } catch (error) {
-    hourlySalesDemandState = null;
-    setStatus(status, error.message, 'error');
+    if (current()) setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get('hourly') === request) {
+      calculatedViewRequests.delete('hourly');
+      button.disabled = false;
+    }
   }
 }
 
@@ -4494,11 +4598,23 @@ function hourlyAnalysisBreakdownFindingCard(finding, index) {
   return card;
 }
 
-function renderHourlyAnalysisBreakdown(breakdown) {
+function hourlyCvHelpButton(label = 'CV', description = 'Qué significa CV y cómo se calcula') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'cv-help-trigger';
+  button.textContent = label;
+  button.setAttribute('aria-label', description);
+  button.setAttribute('aria-haspopup', 'dialog');
+  button.setAttribute('aria-controls', 'hourly-cv-help');
+  return button;
+}
+
+function renderHourlyAnalysisBreakdown(breakdown, showTotals = false) {
   const isHierarchy = breakdown.level === 'hierarchy';
   const section = document.createElement('section');
   section.className = 'hourly-analysis-section hourly-analysis-breakdown';
   section.dataset.analysisLevel = breakdown.level;
+  section.id = `hourly-analysis-detail-${breakdown.level}`;
   const eyebrow = document.createElement('div');
   eyebrow.className = 'panel-eyebrow';
   eyebrow.textContent = isHierarchy ? 'Análisis por jerarquías de producto' : 'Análisis por producto';
@@ -4529,20 +4645,23 @@ function renderHourlyAnalysisBreakdown(breakdown) {
   table.dataset.breakdownLevel = breakdown.level;
   const head = document.createElement('thead');
   const headerRow = document.createElement('tr');
+  const quantityHeading = showTotals ? 'Unidades totales' : 'Unidades promedio';
+  const salesHeading = showTotals ? 'Facturación total' : 'Facturación promedio';
   const headers = isHierarchy
-    ? ['Jerarquía', 'Prom. unidades', 'Prom. facturación', '% unidades', '% facturación', 'CV unidades', 'Tendencia unidades', 'Días atípicos', 'Franja principal']
-    : ['Código', 'Producto', 'Jerarquía', 'Prom. unidades', 'Prom. facturación', '% unidades', '% facturación', 'CV unidades', 'Tendencia unidades', 'Días atípicos', 'Franja principal'];
+    ? ['Jerarquía', quantityHeading, salesHeading, '% unidades', '% facturación', 'CV unidades', 'Tendencia unidades', 'Días atípicos', 'Franja principal']
+    : ['Código', 'Producto', 'Jerarquía', quantityHeading, salesHeading, '% unidades', '% facturación', 'CV unidades', 'Tendencia unidades', 'Días atípicos', 'Franja principal'];
   headers.forEach(textValue => {
     const cell = document.createElement('th');
-    cell.textContent = textValue;
+    if (textValue.startsWith('CV ')) cell.append(hourlyCvHelpButton(textValue));
+    else cell.textContent = textValue;
     headerRow.appendChild(cell);
   });
   head.appendChild(headerRow);
   const body = document.createElement('tbody');
   body.replaceChildren(...breakdown.rows.map(row => hourlyAnalysisTableRow(isHierarchy ? [
     row.label,
-    formatHourlyTableQuantity(row.averageUnits),
-    formatClp(row.averageNetSales),
+    formatHourlyTableQuantity(showTotals ? row.totalUnits : row.averageUnits),
+    formatClp(showTotals ? row.totalNetSales : row.averageNetSales),
     `${formatHourlyTableQuantity(row.unitShare)}%`,
     `${formatHourlyTableQuantity(row.salesShare)}%`,
     row.unitCoefficientOfVariation === null ? '—' : `${formatHourlyTableQuantity(row.unitCoefficientOfVariation)}%`,
@@ -4551,8 +4670,8 @@ function renderHourlyAnalysisBreakdown(breakdown) {
     row.strongestInterval || '—'
   ] : [
     row.code || '—', row.label, row.hierarchy || 'Sin jerarquía',
-    formatHourlyTableQuantity(row.averageUnits),
-    formatClp(row.averageNetSales),
+    formatHourlyTableQuantity(showTotals ? row.totalUnits : row.averageUnits),
+    formatClp(showTotals ? row.totalNetSales : row.averageNetSales),
     `${formatHourlyTableQuantity(row.unitShare)}%`,
     `${formatHourlyTableQuantity(row.salesShare)}%`,
     row.unitCoefficientOfVariation === null ? '—' : `${formatHourlyTableQuantity(row.unitCoefficientOfVariation)}%`,
@@ -4570,32 +4689,72 @@ function renderHourlyAnalysisBreakdowns(report) {
   const container = document.getElementById('hourly-analysis-breakdowns');
   container.replaceChildren(...[report.breakdowns?.hierarchies, report.breakdowns?.products]
     .filter(Boolean)
-    .map(renderHourlyAnalysisBreakdown));
+    .map(breakdown => renderHourlyAnalysisBreakdown(breakdown, report.filters.aggregation === 'total')));
+}
+
+const hourlyAnalysisLevels = {
+  general: { label: 'Nivel general', title: 'Análisis general por franja horaria' },
+  hierarchy: { label: 'General + jerarquías', title: 'Análisis por jerarquías de producto' },
+  product: { label: 'General + jerarquías + productos', title: 'Análisis por jerarquías y productos' }
+};
+
+function renderHourlyAnalysisNavigation(report) {
+  const hierarchy = report.breakdowns?.hierarchies;
+  const products = report.breakdowns?.products;
+  const parts = ['Análisis general'];
+  const entries = [['Resumen general', 'hourly-analysis-general']];
+  if (hierarchy) {
+    parts.push(`${hierarchy.groupCount} jerarquía(s)`);
+    entries.push([`Jerarquías (${hierarchy.groupCount})`, 'hourly-analysis-detail-hierarchy']);
+  }
+  if (products) {
+    parts.push(`${products.groupCount} producto(s)`);
+    entries.push([`Productos (${products.groupCount})`, 'hourly-analysis-detail-product']);
+  }
+  entries.push(['Anexo estadístico', 'hourly-analysis-appendix']);
+  document.getElementById('hourly-analysis-level-summary').textContent = `Contenido de este reporte: ${parts.join(' · ')} · Anexo estadístico.`;
+  document.getElementById('hourly-analysis-navigation').replaceChildren(...entries.map(([label, id]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'icon-button small';
+    button.textContent = label;
+    button.setAttribute('aria-controls', id);
+    button.addEventListener('click', () => {
+      const target = document.getElementById(id);
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'start' });
+    });
+    return button;
+  }));
 }
 
 function renderHourlyAnalysis(report) {
   hourlyAnalysisState = report;
   const dates = report.selectedDates || [];
-  const levelLabel = report.analysisLevel === 'product'
-    ? 'General + jerarquías + productos'
-    : report.analysisLevel === 'hierarchy' ? 'General + jerarquías' : 'Nivel general';
+  const levelLabel = hourlyAnalysisLevels[report.analysisLevel].label;
+  const showTotals = report.filters.aggregation === 'total';
+  const viewLabel = showTotals ? 'Totales' : 'Promedios diarios';
+  document.getElementById('hourly-analysis-title').textContent = `${hourlyAnalysisLevels[report.analysisLevel].title} · ${viewLabel}`;
+  document.getElementById('hourly-analysis-report').dataset.analysisLevel = report.analysisLevel;
   document.getElementById('hourly-analysis-context').textContent = dates.length
-    ? `${report.scope.label} · ${report.selection.label} · ${levelLabel} · ${formatReportDate(dates[0])} – ${formatReportDate(dates.at(-1))} · ${report.sampleSize} día(s) con ventas`
+    ? `${report.scope.label} · ${report.selection.label} · ${levelLabel} · ${viewLabel} · ${formatReportDate(dates[0])} – ${formatReportDate(dates.at(-1))} · ${report.filters.occurrences ? `${report.filters.occurrences} fecha(s) solicitadas · ` : ''}${report.sampleSize} día(s) con ventas`
     : `${report.scope.label} · ${report.selection.label} · ${levelLabel} · Sin días con ventas para los filtros seleccionados`;
   const metricDefinitions = [
-    ['Promedio diario', `${formatHourlyTableQuantity(report.metrics.averageUnits)} unidades`],
-    ['Facturación promedio', formatClp(report.metrics.averageNetSales)],
-    ['Variación unidades', report.metrics.unitCoefficientOfVariation === null ? 'Sin base' : `${formatHourlyTableQuantity(report.metrics.unitCoefficientOfVariation)}% CV`],
-    ['Variación facturación', report.metrics.salesCoefficientOfVariation === null ? 'Sin base' : `${formatHourlyTableQuantity(report.metrics.salesCoefficientOfVariation)}% CV`],
+    [showTotals ? 'Unidades totales' : 'Unidades promedio', `${formatHourlyTableQuantity(showTotals ? report.metrics.totalUnits : report.metrics.averageUnits)} unidades`],
+    [showTotals ? 'Facturación total' : 'Facturación promedio', formatClp(showTotals ? report.metrics.totalNetSales : report.metrics.averageNetSales)],
+    ['Variación unidades', report.metrics.unitCoefficientOfVariation === null ? 'Sin base' : `${formatHourlyTableQuantity(report.metrics.unitCoefficientOfVariation)}% CV`, true],
+    ['Variación facturación', report.metrics.salesCoefficientOfVariation === null ? 'Sin base' : `${formatHourlyTableQuantity(report.metrics.salesCoefficientOfVariation)}% CV`, true],
     ['Días atípicos', new Intl.NumberFormat('es-CL').format(report.metrics.anomalyCount)],
     ['Franja más intensa', report.metrics.strongestInterval || 'Sin datos']
   ];
-  document.getElementById('hourly-analysis-metrics').replaceChildren(...metricDefinitions.map(([label, value]) => {
+  document.getElementById('hourly-analysis-metrics').replaceChildren(...metricDefinitions.map(([label, value, explainsCv]) => {
     const item = document.createElement('article');
     const caption = document.createElement('span');
     const strong = document.createElement('strong');
     caption.textContent = label;
-    strong.textContent = value;
+    strong.textContent = explainsCv ? `${value.replace(/ CV$/, '')} ` : value;
+    if (explainsCv) strong.append(hourlyCvHelpButton('CV', `Qué significa CV en ${label.toLowerCase()} y cómo se calcula`));
     item.append(caption, strong);
     return item;
   }));
@@ -4657,6 +4816,7 @@ function renderHourlyAnalysis(report) {
     return card;
   }));
   renderHourlyAnalysisBreakdowns(report);
+  renderHourlyAnalysisNavigation(report);
   document.getElementById('hourly-analysis-daily-body').replaceChildren(...report.appendix.daily.map(item => hourlyAnalysisTableRow([
     formatReportDate(item.date),
     item.weekday,
@@ -4695,6 +4855,9 @@ function renderHourlyAnalysis(report) {
     methodologyList.appendChild(item);
   });
   methodology.replaceChildren(methodologyTitle, methodologyList);
+  document.getElementById('hourly-analysis-content').hidden = false;
+  document.getElementById('print-hourly-analysis').disabled = false;
+  document.getElementById('hourly-analysis-dialog').scrollTop = 0;
 }
 
 function openHourlyAnalysisOptions() {
@@ -4703,26 +4866,35 @@ function openHourlyAnalysisOptions() {
 }
 
 async function loadHourlyAnalysis(analysisLevel = 'general') {
+  if (!hourlyAnalysisLevels[analysisLevel]) return;
   const dialog = document.getElementById('hourly-analysis-dialog');
   const optionsDialog = document.getElementById('hourly-analysis-options-dialog');
   const status = document.getElementById('hourly-analysis-status');
   const button = document.getElementById('generate-hourly-analysis');
-  const params = new URLSearchParams({
-    location: document.getElementById('sales-dashboard-location').value || 'all',
-    mode: document.getElementById('hourly-demand-mode').value,
-    date: document.getElementById('hourly-demand-date').value,
-    days: document.getElementById('hourly-demand-days').value,
-    interval: document.getElementById('hourly-demand-interval').value,
-    hierarchyPath: JSON.stringify(hourlySalesHierarchyPath),
-    productKey: hourlySalesProductKey || '',
-    analysisLevel
-  });
+  const params = hourlyReportParams();
+  if (!params) { if (optionsDialog.open) optionsDialog.close(); return; }
+  const sameScope = calculatedViewKeys.get('hourly') === selectedCalculationKey(hourlyReportFilterIds);
+  params.set('hierarchyPath', JSON.stringify(sameScope ? hourlySalesHierarchyPath : []));
+  params.set('productKey', sameScope ? hourlySalesProductKey || '' : '');
+  params.set('analysisLevel', analysisLevel);
+  const request = beginCalculation('hourly-analysis', selectedCalculationKey(hourlyReportFilterIds));
+  const current = () => isCurrentCalculation('hourly-analysis', request, hourlyReportFilterIds);
   if (optionsDialog.open) optionsDialog.close();
+  hourlyAnalysisState = null;
+  document.getElementById('hourly-analysis-content').hidden = true;
+  document.getElementById('print-hourly-analysis').disabled = true;
+  delete document.getElementById('hourly-analysis-report').dataset.analysisLevel;
+  document.getElementById('hourly-analysis-title').textContent = hourlyAnalysisLevels[analysisLevel].title;
+  document.getElementById('hourly-analysis-context').textContent =
+    `${hourlyAnalysisLevels[analysisLevel].label} · ${formatReportDate(params.get('dateFrom') || offsetIsoDate(params.get('dateTo'), -7 * (Number(params.get('occurrences')) - 1)))} – ${formatReportDate(params.get('dateTo'))} · ${params.get('aggregation') === 'total' ? 'Totales' : 'Promedios diarios'}`;
   if (!dialog.open) dialog.showModal();
+  dialog.scrollTop = 0;
   button.disabled = true;
-  setStatus(status, 'Analizando tendencias, dispersión, anomalías y participación horaria…');
+  setStatus(status, `Generando ${hourlyAnalysisLevels[analysisLevel].label.toLowerCase()}: analizando tendencias, dispersión, anomalías y participación horaria…`);
   try {
-    const report = await apiRequest(`/api/sales/hourly-analysis?${params}`);
+    const report = await apiRequest(`/api/sales/hourly-analysis?${params}`, { signal: request.controller.signal });
+    if (!current()) return;
+    if (report.analysisLevel !== analysisLevel) throw new Error('No se recibió el nivel de análisis seleccionado. Vuelve a generar el reporte.');
     renderHourlyAnalysis(report);
     const additionalFindings = (report.breakdowns?.hierarchies?.findings.length || 0)
       + (report.breakdowns?.products?.findings.length || 0);
@@ -4730,10 +4902,12 @@ async function loadHourlyAnalysis(analysisLevel = 'general') {
       ? `Análisis completo: ${report.sampleSize} día(s), ${report.findings.length + additionalFindings} resultado(s) priorizado(s).`
       : 'No hay ventas suficientes para elaborar el reporte con estos filtros.', report.sampleSize ? 'success' : 'error');
   } catch (error) {
-    hourlyAnalysisState = null;
-    setStatus(status, error.message, 'error');
+    if (current()) setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get('hourly-analysis') === request) {
+      calculatedViewRequests.delete('hourly-analysis');
+      button.disabled = false;
+    }
   }
 }
 
@@ -4762,7 +4936,7 @@ function renderMercadoPago(report) {
     const row = document.createElement('tr');
     const prior = `${formatClp(metric.previous.sales)} · ${metric.previous.transactions} trans. · ${metric.previous.recurringTransactionPercent.toFixed(1)}% recurrentes`;
     const cells = [
-      labels[key],
+      key === 'custom' ? 'Período seleccionado' : labels[key],
       `${formatClp(metric.sales)} (${dashboardChange(metric.salesChangePercent).replace(' vs. período anterior', '')})`,
       `${metric.transactions} (${dashboardChange(metric.transactionChangePercent).replace(' vs. período anterior', '')})`,
       `${metric.recurringTransactionPercent.toFixed(1)}% (${metric.recurringTransactionPercentChange >= 0 ? '+' : ''}${metric.recurringTransactionPercentChange.toFixed(1)} pp)`,
@@ -4835,68 +5009,6 @@ function renderMercadoPago(report) {
     historyRow(period, monthLabel(period))));
   document.getElementById('mercadopago-week-history').replaceChildren(...report.mercadoPago.history.weeks.map(period =>
     historyRow(period, `${shortDate(period.from)} – ${shortDate(period.to)}`)));
-}
-
-async function loadSalesDashboard() {
-  const status = document.getElementById('sales-dashboard-status');
-  const button = document.getElementById('refresh-sales-dashboard');
-  const select = document.getElementById('sales-dashboard-location');
-  const location = select.value || 'all';
-  const periodKey = document.getElementById('sales-service-mode-period').value;
-  const dateFrom = document.getElementById('sales-service-mode-from').value;
-  const dateTo = document.getElementById('sales-service-mode-to').value;
-  if (periodKey === 'custom' && (!dateFrom || !dateTo || dateFrom > dateTo)) {
-    setStatus(document.getElementById('sales-service-mode-status'), 'Selecciona un rango de fechas válido.', 'error');
-    return;
-  }
-  button.disabled = true;
-  setStatus(status, 'Calculando indicadores de ventas y recurrencia…');
-  try {
-    const params = new URLSearchParams({ location });
-    if (periodKey === 'custom') {
-      params.set('serviceDateFrom', dateFrom);
-      params.set('serviceDateTo', dateTo);
-    }
-    const insightFrom = document.getElementById('sales-insight-from').value;
-    const insightTo = document.getElementById('sales-insight-to').value;
-    if (document.getElementById('sales-insight-period').value === 'custom') {
-      if (!insightFrom || !insightTo || insightFrom > insightTo || !document.getElementById('sales-insight-to').checkValidity()) {
-        setStatus(document.getElementById('sales-insight-range-status'), 'Selecciona fechas válidas de inicio y término, sin superar el día actual.', 'error');
-        return;
-      }
-      params.set('insightDateFrom', insightFrom);
-      params.set('insightDateTo', insightTo);
-    }
-    const report = await apiRequest(`/api/sales/dashboard?${params}`);
-    if (location !== select.value) return;
-    salesDashboardState = report;
-    salesHierarchyPath = [];
-    const customFrom = document.getElementById('sales-service-mode-from');
-    const customTo = document.getElementById('sales-service-mode-to');
-    customFrom.max = report.date;
-    customTo.max = report.date;
-    if (!customTo.value) customTo.value = report.date;
-    if (!customFrom.value) customFrom.value = offsetIsoDate(report.date, -29);
-    for (const [id, value] of [['sales-insight-from', offsetIsoDate(report.date, -29)], ['sales-insight-to', report.date]]) {
-      const input = document.getElementById(id);
-      input.max = report.date;
-      if (!input.value) input.value = value;
-    }
-    syncSalesServiceModeControls();
-    document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA y ticket promedio con IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
-    renderSalesServiceModes();
-    renderSalesInsights();
-    renderMercadoPago(report);
-    document.getElementById('hourly-demand-date').value = report.date;
-    loadHourlySalesDemand();
-    const sourceText = `${report.sales.filesRead} archivo(s) de ventas, ${report.sales.serviceModes.paymentDetailsFilesRead} archivo(s) de Detalle Pagos y ${report.mercadoPago.filesRead} archivo(s) MercadoPago procesado(s).`;
-    setStatus(status, report.warnings.length ? `${sourceText} ${report.warnings.join(' ')}` : sourceText, report.warnings.length ? 'error' : 'success');
-  } catch (error) {
-    salesDashboardState = null;
-    setStatus(status, error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
 }
 
 function salesAnalysisChip(text) {
@@ -12070,7 +12182,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('financial-results-to').value = financialToday;
   document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
   syncFinancialResultsPeriod();
-  syncFinancialResultsPeriod('sales-margin');
+  Object.keys(salesReportDefinitions).filter(prefix => prefix !== 'sales-customers').forEach(prefix => syncFinancialResultsPeriod(prefix));
   document.getElementById('financial-general-expenses-year').value = financialToday.slice(0, 4);
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
@@ -12170,18 +12282,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-view-filter').addEventListener('change', changeReportView);
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
-  document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
-  document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
-  document.getElementById('sales-margin-filters').addEventListener('submit', event => {
-    event.preventDefault();
-    loadSalesMarginReports();
-  });
-  document.getElementById('sales-margin-period').addEventListener('change', () => {
-    syncFinancialResultsPeriod('sales-margin');
-    invalidateCalculation('salesMargins', 'sales-margin-status');
-  });
-  for (const id of ['sales-dashboard-location', 'sales-margin-from', 'sales-margin-to']) {
-    document.getElementById(id).addEventListener('change', () => invalidateCalculation('salesMargins', 'sales-margin-status'));
+  for (const prefix of Object.keys(salesReportDefinitions)) {
+    document.getElementById(`${prefix}-filters`).addEventListener('submit', event => {
+      event.preventDefault();
+      loadSalesReport(prefix);
+    });
+    if (prefix !== 'sales-customers') document.getElementById(`${prefix}-period`).addEventListener('change', () => syncFinancialResultsPeriod(prefix));
+    for (const id of salesReportFilterIds(prefix)) {
+      document.getElementById(id).addEventListener('change', () => markSalesReportDirty(prefix));
+    }
   }
   document.getElementById('financial-results-filters').addEventListener('submit', event => {
     event.preventDefault();
@@ -12239,22 +12348,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     else collapsedSalesAnalysisGroups.add(key);
     renderSalesIngredientsReport();
   });
-  document.getElementById('sales-insight-period').addEventListener('change', () => {
-    salesHierarchyPath = [];
-    renderSalesInsights();
-  });
-  document.getElementById('sales-service-mode-period').addEventListener('change', () => {
-    syncSalesServiceModeControls();
-    renderSalesServiceModes();
-  });
-  document.getElementById('apply-sales-insight-range').addEventListener('click', loadSalesDashboard);
-  document.getElementById('apply-sales-service-mode-range').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-hierarchy-back').addEventListener('click', () => {
     salesHierarchyPath = salesHierarchyPath.slice(0, -1);
     renderSalesInsights();
   });
   document.getElementById('refresh-hourly-demand').addEventListener('click', loadHourlySalesDemand);
   document.getElementById('generate-hourly-analysis').addEventListener('click', openHourlyAnalysisOptions);
+  document.getElementById('hourly-analysis-dialog').addEventListener('click', event => {
+    if (event.target.closest('.cv-help-trigger')) document.getElementById('hourly-cv-help').showModal();
+  });
   document.getElementById('hourly-analysis-options-dialog').addEventListener('click', event => {
     const option = event.target.closest('[data-hourly-analysis-level]');
     if (option) loadHourlyAnalysis(option.dataset.hourlyAnalysisLevel);
@@ -12263,6 +12365,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('hourly-analysis-options-dialog').close();
   });
   document.getElementById('hourly-demand-mode').addEventListener('change', syncHourlyDemandControls);
+  for (const id of hourlyReportFilterIds) {
+    document.getElementById(id).addEventListener('change', () => {
+      if (['hourly-demand-from', 'hourly-demand-to'].includes(id)) {
+        const mode = document.getElementById('hourly-demand-mode');
+        if (mode.value === 'date') syncHourlyDemandControls();
+        else if (!['same-weekday', 'weekdays'].includes(mode.value)) mode.value = 'custom';
+      }
+      if (id === 'hourly-demand-occurrences') syncHourlyDemandControls();
+      markHourlyReportDirty();
+    });
+  }
+
   document.getElementById('hourly-demand-back').addEventListener('click', () => {
     if (hourlySalesProductKey) hourlySalesProductKey = null;
     else hourlySalesHierarchyPath = hourlySalesHierarchyPath.slice(0, -1);
@@ -13228,8 +13342,6 @@ document.getElementById('upload-native-schedule').addEventListener('submit',asyn
 })();
 
 document.getElementById('sales-ranking-order').addEventListener('change', renderSalesInsights);
-document.getElementById('sales-insight-bar').addEventListener('change',()=>{salesHierarchyPath=[];renderSalesInsights();});
-document.getElementById('sales-insight-formats').addEventListener('change',renderSalesInsights);
 
 // Keep existing controls and report nodes alive while changing the visible block.
 function installWorkspaceTabs(workspaceId, headingSelector, definitions, onActivate) {
@@ -13285,15 +13397,13 @@ function installWorkspaceTabs(workspaceId, headingSelector, definitions, onActiv
 }
 
 installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
-  ['breakdowns', 'Participación', ['.financial-breakdowns-grid']],
+  ['breakdowns', 'Participación', ['#sales-margin-controls', '.financial-breakdowns-grid']],
   ['service', 'Modalidad de consumo', ['.sales-service-mode-panel']],
-  ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
-  ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-custom', '#sales-insight-range-status', '.sales-insight-controls', '.sales-insights-grid']],
+  ['hierarchies', 'Jerarquías y margen', ['#sales-hierarchy-margin-controls', '.financial-hierarchy-panel']],
+  ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-filters', '#sales-insight-range-status', '#sales-insight-context', '#sales-insight-filter-note', '.sales-insights-grid']],
   ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
   ['customers', 'Clientes recurrentes', ['.mercadopago-panel']]
-], key => {
-  document.getElementById('sales-margin-controls').hidden = !['breakdowns', 'hierarchies'].includes(key);
-});
+]);
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
   ['statement', 'Estado de resultados', ['#financial-results-summary', '.financial-statement-panel']],
   ['expenses', 'Gastos generales', ['.financial-general-expenses-panel']],

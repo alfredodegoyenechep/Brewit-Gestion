@@ -9114,6 +9114,15 @@ function createApp(options = {}) {
       throw error;
     }
     const stores = selectedStore ? [selectedStore] : activeStores;
+    const customerFrom = String(query.customerDateFrom || '');
+    const customerTo = String(query.customerDateTo || '');
+    if ((customerFrom || customerTo) && (!isValidDate(customerFrom) || !isValidDate(customerTo)
+      || customerFrom > customerTo || customerTo > todayKey)) {
+      const error = new Error('Selecciona un período válido para clientes recurrentes, sin superar el día actual.');
+      error.status = 400; throw error;
+    }
+    const customerRange = customerFrom && customerTo ? { from: customerFrom, to: customerTo } : null;
+    const customerCutoff = customerRange?.to || todayKey;
     const weekStart = mondayContaining(todayKey);
     const monthStart = `${todayKey.slice(0, 7)}-01`;
     const customFrom = String(query.serviceDateFrom || '');
@@ -9442,21 +9451,25 @@ function createApp(options = {}) {
         frequency: periodFrequency
       };
     };
+    const selectedCustomers = customerRange ? historySummary(customerRange) : null;
+    const customerDays = customerRange ? Math.round((new Date(`${customerTo}T00:00:00Z`) - new Date(`${customerFrom}T00:00:00Z`)) / 86400000) + 1 : 0;
+    const selectedCustomerMetric = customerRange ? recurringPeriodMetric(mercadoPagoFacts, customerRange,
+      { from: addDays(customerFrom, -customerDays), to: addDays(customerFrom, -1), label: 'Período anterior equivalente' }) : null;
     const monthHistory = [];
-    const [todayYear, todayMonth] = todayKey.split('-').map(Number);
+    const [todayYear, todayMonth] = customerCutoff.split('-').map(Number);
     for (let offset = -5; offset <= 0; offset += 1) {
       const start = new Date(Date.UTC(todayYear, todayMonth - 1 + offset, 1));
       const next = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
       const from = start.toISOString().slice(0, 10);
       const naturalTo = addDays(next.toISOString().slice(0, 10), -1);
-      monthHistory.push(historySummary({ from, to: offset === 0 ? todayKey : naturalTo }));
+      monthHistory.push(historySummary({ from, to: offset === 0 ? customerCutoff : naturalTo }));
     }
     const weekHistory = [];
-    const currentWeekStart = mondayContaining(todayKey);
+    const currentWeekStart = mondayContaining(customerCutoff);
     for (let offset = -7; offset <= 0; offset += 1) {
       const from = addDays(currentWeekStart, offset * 7);
       const naturalTo = addDays(from, 6);
-      weekHistory.push(historySummary({ from, to: offset === 0 ? todayKey : naturalTo }));
+      weekHistory.push(historySummary({ from, to: offset === 0 ? customerCutoff : naturalTo }));
     }
     return {
       date: todayKey,
@@ -9465,10 +9478,11 @@ function createApp(options = {}) {
         : { type: 'all', location: null, label: 'Todas las cafeterías' },
       sales: { metrics: salesMetrics, locations, productInsights, serviceModes, filesRead: salesFilesRead },
       mercadoPago: {
-        metrics: Object.fromEntries(['day', 'week', 'month'].map(key => [key,
+        metrics: selectedCustomerMetric ? { custom: selectedCustomerMetric } : Object.fromEntries(['day', 'week', 'month'].map(key => [key,
           recurringPeriodMetric(mercadoPagoFacts, periods[key].current, periods[key].previous)
         ])),
-        customers: {
+        period: customerRange,
+        customers: selectedCustomers ? { identified: selectedCustomers.identifiedCards, recurrent: selectedCustomers.recurrentCustomers, frequency: selectedCustomers.frequency } : {
           identified: customerDates.size,
           recurrent: [...customerDates.values()].filter(visits => visits.length > 1).length,
           frequency
@@ -10187,11 +10201,34 @@ function createApp(options = {}) {
       'current-week', 'previous-week', 'current-month', 'previous-month',
       'last-30-days', 'last-60-days', 'last-90-days', 'last-180-days', 'last-360-days'
     ]);
-    const mode = ['date', 'recent', 'same-weekday', 'weekdays', ...automaticModes].includes(String(query.mode))
+    const mode = ['date', 'recent', 'same-weekday', 'weekdays', 'custom', ...automaticModes].includes(String(query.mode))
       ? String(query.mode)
       : 'recent';
     const automaticPeriod = automaticModes.has(mode);
-    const referenceDate = automaticPeriod
+    const countedWeekdays = query.occurrences !== undefined;
+    const occurrences = countedWeekdays ? Number(query.occurrences) : null;
+    if (countedWeekdays && (mode !== 'date' || ![1, 2, 4, 8, 26, 52].includes(occurrences))) {
+      const error = new Error('Selecciona 1, 2, 4, 8, 26 o 52 fechas del mismo día de semana.');
+      error.status = 400; throw error;
+    }
+    if (query.aggregation !== undefined && !['total', 'average'].includes(String(query.aggregation))) {
+      const error = new Error('Selecciona Total o Promedio.'); error.status = 400; throw error;
+    }
+    const aggregation = query.aggregation || (mode === 'date' && !countedWeekdays ? 'total' : 'average');
+    const isAverage = aggregation === 'average';
+    const dateFrom = String(query.dateFrom || '');
+    const dateTo = String(query.dateTo || '');
+    if (!countedWeekdays && (dateFrom || dateTo || mode === 'custom') && (!isValidDate(dateFrom) || !isValidDate(dateTo)
+      || dateFrom > dateTo || dateTo > todayKey || (mode === 'date' && dateFrom !== dateTo))) {
+      const error = new Error('Selecciona un inicio y fin de período válidos, sin superar el día actual.');
+      error.status = 400; throw error;
+    }
+    const explicitRange = dateFrom && dateTo ? { from: dateFrom, to: dateTo } : null;
+    if (countedWeekdays && (!isValidDate(dateTo) || dateTo > todayKey)) {
+      const error = new Error('Selecciona una fecha de fin de período válida, sin superar el día actual.');
+      error.status = 400; throw error;
+    }
+    const referenceDate = countedWeekdays ? dateTo : explicitRange ? explicitRange.to : automaticPeriod
       ? todayKey
       : /^\d{4}-\d{2}-\d{2}$/.test(String(query.date || '')) ? String(query.date) : todayKey;
     const intervalHours = Number(query.interval) === 1 ? 1 : 2;
@@ -10261,7 +10298,8 @@ function createApp(options = {}) {
     for (const fact of facts) dailySales.set(fact.date, (dailySales.get(fact.date) || 0) + fact.netSales);
     // Compare at monetary precision so offsetting refunds do not leave a
     // floating-point residue that incorrectly qualifies a zero-total day.
-    const openDates = [...dailySales].filter(([, total]) => mode === 'date' || Math.round(total * 100) !== 0)
+    const legacySingleDate = mode === 'date' && !countedWeekdays && query.aggregation === undefined;
+    const openDates = [...dailySales].filter(([, total]) => legacySingleDate || Math.round(total * 100) !== 0)
       .map(([date]) => date).sort().reverse();
     const weekdayFor = date => new Date(`${date}T12:00:00.000Z`).getUTCDay();
     const currentWeekStart = mondayContaining(todayKey);
@@ -10278,9 +10316,19 @@ function createApp(options = {}) {
       'last-180-days': { from: addDays(todayKey, -179), to: todayKey },
       'last-360-days': { from: addDays(todayKey, -359), to: todayKey }
     };
-    const selectedRange = automaticRanges[mode] || null;
+    // Count fixed calendar occurrences first; closed dates never pull older
+    // weeks into the sample. Only dates with sales contribute to the divisor.
+    const requestedDates = countedWeekdays
+      ? Array.from({ length: occurrences }, (_, index) => addDays(referenceDate, -7 * index)).sort()
+      : null;
+    const selectedRange = requestedDates ? { from: requestedDates[0], to: referenceDate } : explicitRange || automaticRanges[mode] || null;
     let eligibleDates;
-    if (selectedRange) eligibleDates = openDates.filter(date => date >= selectedRange.from && date <= selectedRange.to);
+    if (requestedDates) {
+      const openDateSet = new Set(openDates);
+      eligibleDates = requestedDates.filter(date => openDateSet.has(date));
+    } else if (selectedRange) eligibleDates = openDates.filter(date => date >= selectedRange.from && date <= selectedRange.to)
+      .filter(date => mode === 'same-weekday' ? weekdayFor(date) === weekdayFor(referenceDate)
+        : mode === 'weekdays' ? weekdayFor(date) >= 1 && weekdayFor(date) <= 5 : true);
     else if (mode === 'date') eligibleDates = openDates.filter(date => date === referenceDate).slice(0, 1);
     else if (mode === 'same-weekday') {
       const weekday = weekdayFor(referenceDate);
@@ -10292,7 +10340,7 @@ function createApp(options = {}) {
       }).slice(0, requestedDays);
     } else eligibleDates = openDates.slice(0, requestedDays);
     const selectedDateSet = new Set(eligibleDates);
-    const divisor = mode === 'date' ? 1 : Math.max(1, eligibleDates.length);
+    const divisor = isAverage ? Math.max(1, eligibleDates.length) : 1;
     const buckets = [];
     for (let fromHour = 7; fromHour < 21; fromHour += intervalHours) {
       const toHour = Math.min(21, fromHour + intervalHours);
@@ -10352,14 +10400,18 @@ function createApp(options = {}) {
         : { type: 'all', location: null, label: 'Todas las cafeterías' },
       filters: {
         mode,
+        aggregation,
+        occurrences,
         date: automaticPeriod ? null : referenceDate,
-        days: automaticPeriod || mode === 'date' ? null : requestedDays,
+        days: selectedRange || mode === 'date' ? null : requestedDays,
         intervalHours,
         range: selectedRange
       },
       selectedDates,
+      requestedDates,
+      excludedDateCount: requestedDates ? requestedDates.length - selectedDates.length : null,
       sampleSize: eligibleDates.length,
-      isAverage: mode !== 'date',
+      isAverage,
       openDateCount: openDates.length,
       buckets,
       totals: {
@@ -10610,7 +10662,7 @@ function createApp(options = {}) {
         .find(product => productIdentity(product) === productKey)?.name || 'Producto seleccionado'
       : hierarchyPath.length ? hierarchyPath.join(' › ') : 'Todas las jerarquías';
     const executiveSummary = dates.length ? [
-      `Se analizaron ${dates.length} día(s) con ventas entre ${dates[0]} y ${dates.at(-1)} para ${selectionLabel}. El promedio diario fue ${formatNumber(unitStats.mean)} unidades y ${formatMoney(salesStats.mean)} de facturación neta sin IVA.`,
+      `Se analizaron ${dates.length} día(s) con ventas entre ${dates[0]} y ${dates.at(-1)} para ${selectionLabel}.${report.isAverage ? '' : ` El total fue ${formatNumber(unitStats.sum)} unidades y ${formatMoney(salesStats.sum)} de facturación neta sin IVA.`} El promedio diario fue ${formatNumber(unitStats.mean)} unidades y ${formatMoney(salesStats.mean)} de facturación neta sin IVA.`,
       `La variabilidad diaria alcanzó un CV de ${formatNumber(unitStats.coefficientOfVariation)}% en unidades y ${formatNumber(salesStats.coefficientOfVariation)}% en facturación. ${anomalies.length ? `Se detectaron ${anomalies.length} fecha(s) estadísticamente atípica(s).` : 'No se detectaron fechas a dos desviaciones estándar del comportamiento promedio.'}`,
       highestDay && lowestDay
         ? `El mayor volumen ocurrió el ${highestDay.date} con ${formatNumber(highestDay.units)} unidades; el menor, el ${lowestDay.date} con ${formatNumber(lowestDay.units)} unidades.`
@@ -10780,6 +10832,8 @@ function createApp(options = {}) {
       selection: { hierarchyPath, productKey: productKey || null, label: selectionLabel },
       executiveSummary,
       metrics: {
+        totalUnits: unitStats.sum,
+        totalNetSales: salesStats.sum,
         averageUnits: unitStats.mean,
         averageNetSales: salesStats.mean,
         unitCoefficientOfVariation: unitStats.coefficientOfVariation,

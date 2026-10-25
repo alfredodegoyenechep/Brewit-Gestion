@@ -293,7 +293,7 @@
   });
   document.querySelectorAll('[data-toteat-sales-sync]').forEach(button => button.addEventListener('click', async () => {
     const scope = button.dataset.toteatSalesSync;
-    const location = ['selected', 'history'].includes(scope) ? settings.context.syncLocation : scope === 'report' ? document.getElementById('report-location-filter').value : document.getElementById('sales-dashboard-location').value;
+    const location = ['selected', 'history'].includes(scope) ? settings.context.syncLocation : scope === 'report' ? document.getElementById('report-location-filter').value : 'all';
     button.disabled = true;
     try {
       if (['selected', 'history'].includes(scope) && !location) throw Error('Selecciona una cafetería.');

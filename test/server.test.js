@@ -3699,6 +3699,20 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   assert.equal(currentWeek.totalSales, 700);
   assert.equal(currentWeek.recurringSales, 300);
   assert.equal(Math.round(currentWeek.recurringSalesPercent * 10) / 10, 42.9);
+  const customCustomers = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1&customerDateFrom=2026-08-08&customerDateTo=2026-08-08`).then(r => r.json());
+  assert.deepEqual(customCustomers.mercadoPago.period, { from: '2026-08-08', to: '2026-08-08' });
+  assert.equal(customCustomers.mercadoPago.metrics.custom.sales, 200);
+  assert.equal(customCustomers.mercadoPago.metrics.custom.recurringTransactions, 1);
+  assert.equal(customCustomers.mercadoPago.customers.identified, 1);
+  assert.equal(customCustomers.mercadoPago.customers.recurrent, 1);
+  assert.equal(customCustomers.mercadoPago.history.months.at(-1).to, '2026-08-08');
+  assert.equal(customCustomers.mercadoPago.history.months.at(-1).totalSales, 300);
+  const firstVisit = await fetch(`${baseUrl}/api/sales/dashboard?location=store-1&customerDateFrom=2026-08-01&customerDateTo=2026-08-01`).then(r => r.json());
+  assert.equal(firstVisit.mercadoPago.customers.recurrent, 0);
+  assert.equal(firstVisit.mercadoPago.metrics.custom.recurringSales, 0);
+  for (const query of ['customerDateFrom=2026-08-01', 'customerDateFrom=2026-08-08&customerDateTo=2026-08-01', 'customerDateFrom=2026-08-01&customerDateTo=2026-08-16']) {
+    assert.equal((await fetch(`${baseUrl}/api/sales/dashboard?${query}`)).status, 400);
+  }
 });
 
 test('does not subtract product discounts twice when distributing sales by hierarchy', async t => {
@@ -3754,6 +3768,21 @@ test('builds hourly product demand for open days, weekdays and matching weekdays
   const recent = await fetch(`${baseUrl}/api/sales/hourly-demand?location=store-1&mode=recent&date=2026-08-26&days=2&interval=2`)
     .then(response => response.json());
   assert.deepEqual(recent.selectedDates, ['2026-08-24', '2026-08-26']);
+  const rangeQuery = 'location=store-1&mode=custom&dateFrom=2026-08-19&dateTo=2026-08-24&interval=2';
+  const ranged = await fetch(`${baseUrl}/api/sales/hourly-demand?${rangeQuery}`).then(r => r.json());
+  assert.deepEqual(ranged.selectedDates, ['2026-08-19', '2026-08-22', '2026-08-24']);
+  assert.deepEqual(ranged.filters.range, { from: '2026-08-19', to: '2026-08-24' });
+  assert.equal(ranged.filters.days, null);
+  assert.equal(ranged.totals.quantity, 6);
+  const rangedAnalysis = await fetch(`${baseUrl}/api/sales/hourly-analysis?${rangeQuery}`).then(r => r.json());
+  assert.equal(rangedAnalysis.sampleSize, 3);
+  const rangeWeekdays = await fetch(`${baseUrl}/api/sales/hourly-demand?${rangeQuery.replace('mode=custom', 'mode=weekdays')}`).then(r => r.json());
+  assert.deepEqual(rangeWeekdays.selectedDates, ['2026-08-19', '2026-08-24']);
+  const rangeMatching = await fetch(`${baseUrl}/api/sales/hourly-demand?${rangeQuery.replace('mode=custom', 'mode=same-weekday')}`).then(r => r.json());
+  assert.deepEqual(rangeMatching.selectedDates, ['2026-08-24']);
+  for (const query of ['mode=custom', 'dateFrom=2026-08-19', 'dateFrom=2026-08-24&dateTo=2026-08-19', 'dateFrom=2026-08-19&dateTo=2026-08-27']) {
+    assert.equal((await fetch(`${baseUrl}/api/sales/hourly-demand?${query}`)).status, 400);
+  }
   assert.equal(recent.sampleSize, 2);
   assert.equal(recent.buckets.length, 7);
   assert.equal(recent.buckets[0].label, '07:00–09:00');
@@ -3887,6 +3916,58 @@ test('builds hourly product demand for open days, weekdays and matching weekdays
   assert.equal(closed.sampleSize, 0);
   assert.equal(closed.totals.quantity, 0);
   assert.equal((await fetch(`${baseUrl}/api/sales/hourly-demand?location=main-warehouse`)).status, 400);
+});
+
+test('hourly calendar weekdays honor the requested occurrences and total or average excludes zero-sale dates', async t => {
+  const base = await startTestServer(t, { reportToday: '2026-10-25' });
+  const dateAt = index => {
+    const date = new Date('2026-10-25T12:00:00Z'); date.setUTCDate(date.getUTCDate() - 7 * index);
+    return date.toISOString().slice(0, 10);
+  };
+  const rows = [['ID de orden', 'Fecha de creacion', 'Hora de creacion', 'Pago total', 'Descuentos', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'Descuento', 'Categorías de Productos/Platos']];
+  for (let index = 0; index <= 52; index++) {
+    const quantity = [1, 3].includes(index) ? 0 : index + 1;
+    rows.push([`week-${index}`, dateAt(index), '08:00:00', 119 * quantity, 0, 'P1', 'Café', quantity, 119 * quantity, 0, 'Bebidas']);
+  }
+  rows.push(['saturday', '2026-10-24', '08:00:00', 1190000, 0, 'P1', 'Café', 10000, 1190000, 0, 'Bebidas']);
+  const manifest = await inspectTransactions(base, 'store-1', [{ field: 'sales', contents: rows.map(row => row.join('\t')).join('\n'), filename: 'ventas-52-domingos.csv' }]).then(r => r.json());
+  assert.equal((await confirmTransactions(base, manifest)).status, 200);
+  for (const occurrences of [1, 2, 4, 8, 26, 52]) {
+    const indices = Array.from({ length: occurrences }, (_, index) => index).filter(index => ![1, 3].includes(index));
+    const units = indices.reduce((sum, index) => sum + index + 1, 0);
+    const query = `location=store-1&mode=date&dateTo=2026-10-25&occurrences=${occurrences}&interval=2`;
+    for (const aggregation of ['total', 'average']) {
+      const response = await fetch(`${base}/api/sales/hourly-demand?${query}&aggregation=${aggregation}`);
+      assert.equal(response.status, 200);
+      const report = await response.json();
+      assert.equal(report.requestedDates.length, occurrences);
+      assert.deepEqual(report.selectedDates, indices.map(dateAt).sort());
+      assert.equal(report.sampleSize, indices.length);
+      assert.equal(report.excludedDateCount, occurrences - indices.length);
+      assert.equal(report.isAverage, aggregation === 'average');
+      assert.deepEqual(report.filters.range, { from: dateAt(occurrences - 1), to: dateAt(0) });
+      assert.ok(Math.abs(report.totals.quantity - units / (aggregation === 'average' ? indices.length : 1)) < 1e-8);
+      assert.ok(Math.abs(report.totals.netSales - units * 100 / (aggregation === 'average' ? indices.length : 1)) < 1e-8);
+      assert.equal(report.buckets[1].quantity, 0); // An empty interval remains in each trading day.
+    }
+  }
+  const baseQuery = 'location=store-1&mode=date&dateTo=2026-10-25&occurrences=8';
+  const totalAnalysis = await fetch(`${base}/api/sales/hourly-analysis?${baseQuery}&aggregation=total&analysisLevel=product`).then(r => r.json());
+  assert.equal(totalAnalysis.sampleSize, 6);
+  assert.equal(totalAnalysis.metrics.totalUnits, 30);
+  assert.equal(totalAnalysis.metrics.averageUnits, 5);
+  assert.equal(totalAnalysis.metrics.totalNetSales, 3000);
+  assert.equal(totalAnalysis.breakdowns.products.rows[0].totalUnits, 30);
+  const averageAnalysis = await fetch(`${base}/api/sales/hourly-analysis?${baseQuery}&aggregation=average`).then(r => r.json());
+  assert.equal(averageAnalysis.metrics.averageUnits, 5);
+  assert.equal(averageAnalysis.filters.aggregation, 'average');
+  const closed = await fetch(`${base}/api/sales/hourly-demand?location=store-1&mode=date&dateTo=${dateAt(1)}&occurrences=1&aggregation=average`).then(r => r.json());
+  assert.equal(closed.sampleSize, 0); assert.equal(closed.totals.quantity, 0);
+  for (const extra of ['occurrences=3', 'occurrences=0', 'occurrences=53', 'occurrences=8&aggregation=other', 'occurrences=8&dateTo=2026-10-26']) {
+    const query = new URLSearchParams({ location: 'store-1', mode: 'date', dateTo: '2026-10-25' });
+    new URLSearchParams(extra).forEach((value, key) => query.set(key, value));
+    assert.equal((await fetch(`${base}/api/sales/hourly-demand?${query}`)).status, 400);
+  }
 });
 
 test('hourly averages exclude zero-total days before choosing the sample and retain zero intervals', async t => {

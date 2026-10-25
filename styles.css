@@ -306,7 +306,14 @@
 .financial-results-filters label.is-disabled { opacity: .62; }
 .financial-results-filters input:disabled { cursor: not-allowed; }
 
-#sales-margin-filters { justify-content: flex-start; }
+.sales-report-filters { justify-content: flex-start; margin: 16px 0; }
+.sales-report-filters label { min-width: 0; }
+.sales-report-filters .sales-report-checkbox { display: flex; align-items: center; gap: 8px; max-width: 340px; text-transform: none; letter-spacing: normal; }
+.sales-report-checkbox input { flex: 0 0 auto; }
+@media (max-width: 700px) {
+  .sales-report-filters { grid-template-columns: minmax(0, 1fr); }
+  .sales-report-filters input[type="date"] { min-width: 0; max-width: 100%; width: 100%; }
+}
 #sales-workspace > .workspace-tab-panel,
 .sales-margin-report,
 .sales-margin-report > .panel { min-width: 0; }
@@ -7485,6 +7492,8 @@ button:disabled {
   font-size: calc(16px * var(--font-scale));
 }
 
+.sales-service-mode-details > section { min-width: 0; }
+
 .sales-service-mode-table-wrap {
   max-height: 360px;
   overflow: auto;
@@ -7604,6 +7613,7 @@ button:disabled {
 }
 
 .hourly-demand-head {
+  display: block;
   align-items: flex-end;
   gap: 20px;
 }
@@ -7616,18 +7626,24 @@ button:disabled {
 
 .hourly-demand-controls {
   display: grid;
-  grid-template-columns: minmax(190px, 1.5fr) minmax(135px, 1fr) 105px 100px auto;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  margin-top: 18px;
   align-items: end;
   gap: 9px;
 }
 
+.hourly-demand-controls label[hidden] { display: none; }
+
 .hourly-demand-controls label {
+  min-width: 0;
   display: grid;
   gap: 6px;
   color: var(--text-muted);
   font-size: calc(10px * var(--font-scale));
   font-weight: 800;
 }
+
+.hourly-demand-controls input, .hourly-demand-controls select { width: 100%; min-width: 0; }
 
 .hourly-demand-controls label.disabled-control {
   opacity: .55;
@@ -7957,6 +7973,13 @@ button:disabled {
   padding: 24px;
 }
 
+#hourly-analysis-content { display: grid; gap: 18px; min-width: 0; }
+#hourly-analysis-content[hidden] { display: none; }
+#hourly-analysis-level-summary { margin: 0; font-weight: 700; }
+.hourly-analysis-navigation { display: flex; flex-wrap: wrap; gap: 8px; }
+#hourly-analysis-general, #hourly-analysis-appendix, .hourly-analysis-breakdown { scroll-margin-top: 18px; }
+@media print { .hourly-analysis-navigation { display: none; } }
+
 .hourly-analysis-head {
   align-items: flex-start;
   gap: 18px;
@@ -8013,6 +8036,18 @@ button:disabled {
   letter-spacing: .06em;
 }
 
+.cv-help-trigger { padding: 0; border: 0; border-bottom: 1px dashed currentColor; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: help; }
+.cv-help-trigger:hover { color: var(--clay); }
+.cv-help-trigger:focus-visible { outline: 2px solid var(--clay); outline-offset: 3px; }
+.hourly-cv-help { width: min(580px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--text); }
+.hourly-cv-help::backdrop { background: rgba(46, 32, 21, .6); }
+.hourly-cv-help h3 { margin: 0 0 14px; }
+.hourly-cv-help p { margin: 12px 0; font-size: calc(13px * var(--font-scale)); line-height: 1.55; }
+.hourly-cv-formula { padding: 12px; border-radius: 10px; background: var(--coffee-soft-2); }
+.hourly-cv-help summary { cursor: pointer; font-weight: 700; }
+.hourly-cv-help form { margin-top: 18px; }
+@media print { .hourly-cv-help { display: none !important; } .cv-help-trigger { border: 0; } }
+
 .hourly-analysis-metrics strong {
   font-size: calc(16px * var(--font-scale));
 }
@@ -8042,6 +8077,8 @@ button:disabled {
   display: grid;
   gap: 18px;
 }
+
+.hourly-analysis-breakdowns:empty { display: none; }
 
 .hourly-analysis-breakdown > h4 {
   margin: 18px 0 8px;
@@ -8908,14 +8945,15 @@ button:disabled {
   }
 
   body.printing-hourly-analysis .sidebar,
-  body.printing-hourly-analysis .main-content > section:not(#sales-dashboard),
-  body.printing-hourly-analysis #sales-dashboard > *:not(#hourly-analysis-dialog) {
+  body.printing-hourly-analysis .main-content > section:not(#sales-workspace),
+  body.printing-hourly-analysis #sales-workspace > *:not(#hourly-analysis-dialog) {
     display: none !important;
   }
 
   body.printing-hourly-analysis .main-content,
-  body.printing-hourly-analysis #sales-dashboard,
+  body.printing-hourly-analysis #sales-workspace,
   body.printing-hourly-analysis #hourly-analysis-dialog,
+  body.printing-hourly-analysis #hourly-analysis-content:not([hidden]),
   body.printing-hourly-analysis .hourly-analysis-report {
     display: block !important;
     position: static !important;

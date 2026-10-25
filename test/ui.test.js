@@ -121,9 +121,10 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
 
   await page.getByRole('link', { name: 'Estadísticas por producto y horario' }).click();
   await page.getByRole('heading', { name: 'Panel de indicadores comerciales' }).waitFor();
-  await page.waitForFunction(() => !document.getElementById('refresh-sales-dashboard')?.disabled);
+
   await page.evaluate(() => {
-    salesDashboardState.sales.serviceModes.periods.month = {
+    salesServiceModeState = { sales: { serviceModes: { periods: {} } } };
+    salesServiceModeState.sales.serviceModes.periods.custom = {
       period: { from: '2026-09-01', to: '2026-09-17' },
       hierarchies: [{
         name: 'Barra Cafe / Café Caliente',
@@ -131,7 +132,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
         totalNetSales: 380000
       }]
     };
-    document.getElementById('sales-service-mode-period').value = 'month';
+    document.getElementById('sales-service-mode-period').value = 'current-month';
     document.getElementById('sales-service-mode-hierarchies').innerHTML = '<tr><th>Barra Cafe / Café Caliente</th><td><div><strong>$125.000</strong><small>20 pedidos</small></div></td><td>$250.000</td><td>$5.000</td><td>$380.000</td></tr>';
   });
   await page.locator('#sales-workspace-tab-service').click();
@@ -144,7 +145,8 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
       { code: 'CAF1', name: 'Americano', quantity: 26, netSales: 76471, totalCost: 22000, contributionMarginPercent: 71.2, children: [], products: [] },
       { code: 'SAN1', name: 'Sándwich', quantity: 18, netSales: 74118, totalCost: 36000, contributionMarginPercent: 51.4, children: [], products: [] }
     ];
-    salesDashboardState.sales.productInsights.week = {
+    salesDashboardState = { sales: { productInsights: {} } };
+    salesDashboardState.sales.productInsights.custom = {
       period: { from: '2026-09-14', to: '2026-09-17' }, topProducts: products,
       hierarchyTree: {
         name: 'Todas las jerarquías', path: [], netSales: 150589, totalCost: 58000,
@@ -155,7 +157,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
         ]
       }
     };
-    document.getElementById('sales-insight-period').value = 'week';
+    document.getElementById('sales-insight-period').value = 'current-week';
     salesHierarchyPath = [];
     renderSalesInsights();
   });
