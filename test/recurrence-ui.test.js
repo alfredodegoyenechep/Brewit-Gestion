@@ -17,8 +17,8 @@ test('recurrence UI: manual generation, independent cohorts, lazy purchases, exp
   await page.goto(s.base); await page.waitForFunction(() => document.getElementById('financial-general-expenses-grid').childElementCount > 0);
   await page.getByRole('link', { name: 'Estadísticas por producto y horario', exact: true }).click();
   await page.getByRole('tab', { name: 'Clientes recurrentes', exact: true }).click();
-  assert.deepEqual(await page.locator('[data-recurrence-tab]').allTextContents(), ['Resumen', 'Retorno', 'Compras', 'Calidad de datos']);
-  for (const tab of ['Retorno', 'Compras', 'Calidad de datos', 'Resumen']) await page.getByRole('tab', { name: tab, exact: true }).click();
+  assert.deepEqual(await page.locator('[data-recurrence-tab]').allTextContents(), ['Resumen', 'Retorno', 'Compras', 'Calidad de datos', 'Evolución 12 meses', 'Cruces entre cafeterías']);
+  for (const tab of ['Retorno', 'Compras', 'Calidad de datos', 'Evolución 12 meses', 'Cruces entre cafeterías', 'Resumen']) await page.getByRole('tab', { name: tab, exact: true }).click();
   assert.equal(requests.length, 0); assert.equal(s.reads(), 0);
   await page.locator('#sales-customers-location').selectOption('store-1');
   await page.locator('#sales-customers-period').selectOption('custom'); await page.locator('#sales-customers-from').fill('2026-10-01'); await page.locator('#sales-customers-to').fill('2026-10-07');
@@ -43,16 +43,24 @@ test('recurrence UI: manual generation, independent cohorts, lazy purchases, exp
   await page.getByRole('tab', { name: 'Calidad de datos', exact: true }).click(); await page.locator('#recurrence-quality-run').click();
   await page.locator('#recurrence-quality-status').filter({ hasText: 'Sección preparada' }).waitFor(); assert.equal(s.reads(), 1);
   assert.match(await page.locator('#recurrence-quality-content').innerText(), /Clasificables.*1/s);
+  for (const [name, kind] of [['Evolución 12 meses', 'monthly'], ['Cruces entre cafeterías', 'network']]) {
+    const countBefore = requests.length; await page.getByRole('tab', { name, exact: true }).click(); assert.equal(requests.length, countBefore);
+    await page.locator(`#recurrence-${kind}-run`).click(); await page.locator(`#recurrence-${kind}-status`).filter({ hasText: 'Sección preparada' }).waitFor();
+    assert.equal(requests.length, countBefore + 1); assert.equal(await page.locator(`#recurrence-${kind}-content svg`).count(), 1);
+    assert.equal(await page.locator(`#recurrence-${kind}-content > .recurrence-scroll`).first().locator('tbody tr').count(), 12);
+    await page.locator(`#recurrence-${kind}-content select`).first().selectOption('60'); assert.equal(requests.length, countBefore + 1);
+    assert.match(await page.locator(`#recurrence-${kind}-content`).innerText(), /incluidos los pagos no identificables/);
+  }
   await page.getByRole('tab', { name: 'Resumen', exact: true }).click(); await page.locator('.recurrence-kpi').first().getByRole('button', { name: 'Ver detalle' }).click();
   await page.locator('#recurrence-detail-dialog').waitFor({ state: 'visible' }); await page.waitForFunction(() => document.getElementById('recurrence-detail-status').textContent.includes('6 registros'));
   assert.match(await page.locator('#recurrence-detail-content').innerText(), /MP-/); assert.ok(!(await page.locator('#recurrence-detail-content').innerText()).includes('123456'));
   await page.keyboard.press('Escape');
   const pending = page.waitForEvent('download'); await page.locator('#recurrence-export').click(); const download = await pending;
   const file = path.join(os.tmpdir(), `brewit-recurrence-${Date.now()}.xlsx`); await download.saveAs(file); t.after(() => fs.rmSync(file, { force: true }));
-  const workbook = XLSX.readFile(file); assert.ok(workbook.SheetNames.includes('Metadatos')); assert.ok(workbook.SheetNames.includes('Cohortes')); assert.ok(workbook.SheetNames.includes('Pedidos'));
+  const workbook = XLSX.readFile(file); assert.ok(workbook.SheetNames.includes('Metadatos')); assert.ok(workbook.SheetNames.includes('Cohortes')); assert.ok(workbook.SheetNames.includes('Pedidos')); assert.ok(workbook.SheetNames.includes('Evolucion12Meses')); assert.ok(workbook.SheetNames.includes('CrucesRed12Meses')); assert.ok(workbook.SheetNames.includes('CrucesPorOrigen'));
   const exported = JSON.stringify(workbook.SheetNames.map(name => XLSX.utils.sheet_to_json(workbook.Sheets[name]))); assert.ok(exported.includes('recurrence-dates-v2')); assert.ok(!exported.includes('123456'));
   const before = requests.length; await page.locator('#recurrence-tab-summary').focus(); await page.keyboard.press('ArrowRight'); assert.equal(await page.locator('#recurrence-tab-return').getAttribute('aria-selected'), 'true'); assert.equal(requests.length, before);
-  for (const width of [390, 768, 1500]) { await page.setViewportSize({ width, height: 1100 }); for (const tab of ['Resumen', 'Retorno', 'Compras', 'Calidad de datos']) { await page.getByRole('tab', { name: tab, exact: true }).click(); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${tab} at ${width}`); } }
+  for (const width of [390, 768, 1500]) { await page.setViewportSize({ width, height: 1100 }); for (const tab of ['Resumen', 'Retorno', 'Compras', 'Calidad de datos', 'Evolución 12 meses', 'Cruces entre cafeterías']) { await page.getByRole('tab', { name: tab, exact: true }).click(); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${tab} at ${width}`); } }
   assert.deepEqual(errors, []);
 });
 test('recurrence UI: slow responses cannot replace a changed cafeteria and failed sections can be retried', { skip: !fs.existsSync(chrome) }, async t => {

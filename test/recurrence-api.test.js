@@ -26,4 +26,11 @@ test('API worker uses actual stored MP rows without a Toteat dependency and clos
   const data = await fetch(`${s.base}/api/sales/recurrence?location=store-1&period=custom&dateFrom=2026-10-01&dateTo=2026-10-07`).then(r => r.json());
   assert.equal(data.summary.active.value, 3); assert.equal(data.summary.status, 'partial'); assert.equal(data.lastCompleteDay, null);
   assert.equal(data.summary.returnAmountRate.value, 57.1); assert.equal(data.quality.coverage.length, 0);
+  const monthly = await fetch(`${s.base}/api/sales/recurrence/${data.id}/monthly`).then(r => r.json());
+  assert.equal(monthly.rows.length, 12); assert.equal(monthly.rows.at(-1).windows[30].denominator, 130);
+  const network = await fetch(`${s.base}/api/sales/recurrence/${data.id}/network`).then(r => r.json());
+  assert.equal(network.rows.length, 12); assert.equal(network.destinations[0].id, 'store-1');
+  assert.ok(!JSON.stringify(network).includes('123456')); assert.equal(network.denominator, 'total-mp');
+  const exported = await fetch(`${s.base}/api/sales/recurrence/${data.id}/export`).then(r => r.json());
+  assert.equal(exported.monthly.rows.length, 12); assert.equal(exported.network.rows.length, 12);
 });

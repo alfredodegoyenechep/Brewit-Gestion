@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const engine = require('./recurrence');
+const purchaseHistory = require('./recurrence-history');
 const error = (status, message) => Object.assign(new Error(message), { status });
 function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCutoff, clock = Date.now, ttl = 3600000, limit = 8 }) {
   const reports = new Map();
@@ -15,16 +16,16 @@ function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCut
   };
   async function request(action, input = {}, owner = 'local') {
     if (action === 'generate') {
-      const versions = fingerprint(input), cacheInput = { ...input };
+      const versions = fingerprint(input), networkVersion = fingerprint({ ...input, location: 'all' }).mp, cacheInput = { ...input };
       // The request clock does not change closed historical windows. Current periods retain their exact cutoff.
       if (cacheCutoff || !input.period || input.period === 'last-28-days' || (input.period === 'custom' && input.dateTo < (input.serverToday || new Date(clock()).toISOString().slice(0, 10)))) delete cacheInput.serverCutoff;
-      const key = JSON.stringify([owner, cacheInput, versions, engine.VERSION, cacheCutoff?.(input)]);
+      const key = JSON.stringify([owner, cacheInput, versions, engine.VERSION, purchaseHistory.VERSION, networkVersion, cacheCutoff?.(input)]);
       for (const [id, entry] of reports) { if (entry.expires <= clock()) reports.delete(id); else if (entry.cacheable && entry.key === key) return { ...entry.public, returns: entry.initialReturns }; }
       const source = readSource(input), state = engine.buildReport(source, input);
       const after = fingerprint(input);
       if (after.mp !== versions.mp) throw error(409, 'Las fuentes cambiaron durante el cálculo. Vuelve a generar el reporte.');
-      const id = crypto.randomUUID(), data = { ...state.report, id, dataVersion: versions.mp, sourceVersions: { ...versions } };
-      const entry = { owner, key, cacheable: !(source.warnings || []).length, query: { ...input, location: input.location || 'all' }, versions, state, public: data, sections: {}, expires: clock() + ttl };
+      const id = crypto.randomUUID(), data = { ...state.report, id, dataVersion: versions.mp, sourceVersions: { ...versions, networkMp: networkVersion } };
+      const entry = { owner, key, cacheable: !(source.warnings || []).length, networkVersion, query: { ...input, location: input.location || 'all' }, versions, state, public: data, sections: {}, expires: clock() + ttl };
       // MP-only sections are prepared in the same snapshot. No Toteat join on entry.
       entry.sections.return = engine.validationForCohorts(engine.buildCohorts(state.histories, source.coverage, source.locationIds, data.cohortDefaults), data.eligibilityPartial);
       entry.sections.return.selectionKey = JSON.stringify([entry.sections.return.from, entry.sections.return.to, entry.sections.return.granularity, entry.sections.return.commonBase]);
@@ -46,6 +47,22 @@ function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCut
       entry.preparedReturns.set(result.selectionKey, result);
       while (entry.preparedReturns.size > 24) entry.preparedReturns.delete([...entry.preparedReturns.keys()].find(key => key !== entry.initialReturns.selectionKey));
       return result;
+    }
+    if (action === 'monthly') {
+      if (!entry.sections.monthly) { unchanged(entry); entry.sections.monthly = purchaseHistory.monthlyHistory(entry.state, entry.sourceCoverage); }
+      return entry.sections.monthly;
+    }
+    if (action === 'network') {
+      if (!entry.sections.network) {
+        const query = { ...entry.query, location: 'all' };
+        const verify = () => { if (fingerprint(query).mp !== entry.networkVersion) throw error(409, 'Las fuentes MP de la red cambiaron. Pulsa Generar reportes antes de preparar los cruces entre cafeterías.'); };
+        unchanged(entry); verify();
+        const source = readSource(query);
+        const data = purchaseHistory.networkHistory(source, entry.public);
+        verify(); unchanged(entry);
+        entry.sections.network = { ...data, dataVersion: entry.networkVersion };
+      }
+      return entry.sections.network;
     }
     if (action === 'purchases' || action === 'quality') {
       if (!entry.sections.purchases) {
@@ -74,7 +91,7 @@ function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCut
       // Export the displayed, already-prepared cohort selection; never trigger new calculations.
       const returns = input.cohortKey ? entry.preparedReturns.get(input.cohortKey) : entry.initialReturns;
       if (!returns) throw error(409, 'La selección de Retorno ya no está preparada. Genera el retorno de nuevo antes de exportar.');
-      return { summary: entry.public, returns,
+      return { summary: entry.public, returns, monthly: entry.sections.monthly || null, network: entry.sections.network || null,
         purchases: entry.sections.purchases ? { ...entry.sections.purchases, details: undefined } : null,
         quality: entry.sections.quality, paymentDetails: engine.paymentDetails(entry.state),
         purchaseDetails: entry.sections.purchases?.details || null };

@@ -1,0 +1,185 @@
+{
+  "scope": "Portal Lyon",
+  "periodRequest": {
+    "from": "2026-10-01",
+    "to": "2026-10-25"
+  },
+  "results": [
+    {
+      "kind": "monthly",
+      "cutoff": "2026-10-24T19:45:50",
+      "rows": 12,
+      "last": {
+        "month": "2026-10",
+        "total": 3387847,
+        "windows": {
+          "30": {
+            "days": 30,
+            "numerator": 443140,
+            "denominator": 3387847,
+            "value": 13.1,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-09-01",
+            "historyTo": "2026-10-24",
+            "coveredDays": 12,
+            "expectedDays": 54,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          },
+          "60": {
+            "days": 60,
+            "numerator": 443140,
+            "denominator": 3387847,
+            "value": 13.1,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-08-02",
+            "historyTo": "2026-10-24",
+            "coveredDays": 12,
+            "expectedDays": 84,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          },
+          "90": {
+            "days": 90,
+            "numerator": 443140,
+            "denominator": 3387847,
+            "value": 13.1,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-07-03",
+            "historyTo": "2026-10-24",
+            "coveredDays": 12,
+            "expectedDays": 114,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          },
+          "180": {
+            "days": 180,
+            "numerator": 443140,
+            "denominator": 3387847,
+            "value": 13.1,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-04-04",
+            "historyTo": "2026-10-24",
+            "coveredDays": 12,
+            "expectedDays": 204,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          }
+        }
+      },
+      "origins": []
+    },
+    {
+      "kind": "network",
+      "cutoff": "2026-10-24T19:45:50",
+      "rows": 12,
+      "last": {
+        "month": "2026-10",
+        "total": 3387847,
+        "windows": {
+          "30": {
+            "days": 30,
+            "numerator": 51580,
+            "denominator": 3387847,
+            "value": 1.5,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-09-01",
+            "historyTo": "2026-10-24",
+            "coveredDays": 0,
+            "expectedDays": 54,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          },
+          "60": {
+            "days": 60,
+            "numerator": 73460,
+            "denominator": 3387847,
+            "value": 2.2,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-08-02",
+            "historyTo": "2026-10-24",
+            "coveredDays": 0,
+            "expectedDays": 84,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          },
+          "90": {
+            "days": 90,
+            "numerator": 104605,
+            "denominator": 3387847,
+            "value": 3.1,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-07-03",
+            "historyTo": "2026-10-24",
+            "coveredDays": 0,
+            "expectedDays": 114,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          },
+          "180": {
+            "days": 180,
+            "numerator": 110205,
+            "denominator": 3387847,
+            "value": 3.3,
+            "status": "partial",
+            "population": "Importe total MP observado en el destino, incluidos pagos no identificables",
+            "historyFrom": "2026-04-04",
+            "historyTo": "2026-10-24",
+            "coveredDays": 0,
+            "expectedDays": 204,
+            "reason": "Historial incompleto: porcentaje observado provisional"
+          }
+        }
+      },
+      "origins": [
+        {
+          "destination": "Portal Lyon",
+          "origin": "La Concepcion",
+          "percent30": 1.5
+        }
+      ]
+    }
+  ],
+  "interface": {
+    "initialCalls": 0,
+    "totalCalls": 3,
+    "errors": [],
+    "overflow": false
+  },
+  "tests": {
+    "relatedPassed": 52,
+    "relatedFailed": 0,
+    "engineAndApiRecheckPassed": 10,
+    "finalBrowserTestsPassed": 2
+  },
+  "networkUnionCheck": {
+    "scope": "all",
+    "months": 12,
+    "destinations": [
+      "La Concepcion",
+      "Portal Lyon"
+    ],
+    "totalMP": 15270198,
+    "network": {
+      "30": {
+        "numerator": 106140,
+        "percent": 0.7
+      },
+      "60": {
+        "numerator": 128020,
+        "percent": 0.8
+      },
+      "90": {
+        "numerator": 159165,
+        "percent": 1.0
+      },
+      "180": {
+        "numerator": 164765,
+        "percent": 1.1
+      }
+    },
+    "directedOriginPairs": 2,
+    "versionMatches": true,
+    "unionMatchesDestinations": true
+  }
+}

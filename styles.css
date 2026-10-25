@@ -9629,3 +9629,11 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 #recurrence-detail-dialog .recurrence-scroll { max-height: 60vh; }
 @media (max-width: 1100px) { .recurrence-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .recurrence-distributions { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .recurrence-kpis { grid-template-columns: 1fr; } .recurrence-trend-row { grid-template-columns: minmax(0, 1fr); gap: 5px; padding-bottom: 12px; border-bottom: 1px solid var(--border); } .recurrence-distribution-row { grid-template-columns: minmax(65px,1fr) minmax(30px,1fr) minmax(60px,1fr); gap: 6px; } .recurrence-workspace .panel-head { flex-direction: column; align-items: stretch; } }
+
+.recurrence-history-value { min-width: 125px; }
+.recurrence-history-value strong, .recurrence-history-value small { display: block; margin: 4px 0; }
+.recurrence-history-value strong { font-size: 16px; }
+.recurrence-history-legend { display: flex; flex-wrap: wrap; gap: 18px; font-weight: 700; margin: 16px 0 8px; }
+.recurrence-history-chart { color: var(--text); max-width: 100%; overflow-x: auto; }
+.recurrence-history-chart svg { display: block; width: 100%; min-width: 540px; }
+#recurrence-network-content > details, #recurrence-monthly-content > details { margin: 18px 0; }

@@ -735,3 +735,37 @@ Estas decisiones complementan las secciones anteriores:
 9. **Transición.** Los endpoints anteriores se mantienen compatibles para conciliación y otros reportes. La interfaz nueva usa exclusivamente la metodología de fechas distintas, sin presentar métricas anteriores y nuevas como equivalentes.
 
 Evidencia reproducible, rendimiento, muestras, capturas y pruebas: [RECURRENCIA_VALIDACION.md](RECURRENCIA_VALIDACION.md). Conciliación agregada: [RECURRENCIA_CONCILIACION.json](RECURRENCIA_CONCILIACION.json).
+
+## 17. Ampliación: evolución mensual y cruces entre cafeterías
+
+Se agregan una quinta pestaña **Evolución 12 meses** y una sexta **Cruces entre cafeterías**. Base confirmada: **importe MP total de cada mes**, incluidos los pagos no identificables. No equivale al porcentaje de toda la venta Brewit, que incluye otros medios de pago.
+
+### Fórmula y calendario
+
+Para cada pago válido identificado p en fecha local d e importe A, buscar al menos una compra del mismo instrumento en una fecha desde d−h hasta d−1 inclusive, para h = 30, 60, 90 y 180 días. Si existe, A entra una sola vez al numerador de esa ventana. Denominador: todo el importe MP observado en el mes y alcance de destino. Se suman los importes y se divide nuevamente; no se promedian porcentajes por instrumento o cafetería.
+
+- La búsqueda se realiza antes de cada pago, no desde el inicio del mes ni según la condición del instrumento al cerrar el mes.
+- Varias operaciones de la primera fecha no acreditan una visita previa. Una compra futura nunca recalifica la primera fecha.
+- Se incluyen los límites exactos de 30/60/90/180 días. Las ventanas se superponen: 30 ⊆ 60 ⊆ 90 ⊆ 180; no se suman.
+- Se muestran 12 meses calendario hasta el corte del snapshot, incluido el mes del corte, que se marca parcial si todavía no termina. El inicio del filtro principal no recorta esa ventana; su corte sí limita el seguimiento histórico.
+- La cobertura debe abarcar el mes y los días previos necesarios para cada ventana. Huecos y estados no acreditados generan resultados provisionales; un mes sin base conserva porcentaje null.
+
+### Quinta pestaña: historial en el alcance seleccionado
+
+Si se selecciona una cafetería, los antecedentes se buscan en esa cafetería. Con Todas, se buscan en la unión de la red. El importe actual se cuenta una vez; el mismo día en varios locales no prueba regreso en otra fecha. Se presenta gráfico porcentual de cuatro series, selector de ventanas sin nuevas consultas y tabla con numeradores, denominadores y estados.
+
+### Sexta pestaña: antecedentes en otras cafeterías
+
+El destino es donde se cobra el importe analizado. Se buscan compras previas en locales diferentes del destino, aunque el instrumento también tenga antecedentes en el propio destino. Se presenta evolución de 12 meses, detalle por destino al elegir Todas y desglose origen→destino, acumulado o por mes. Por ejemplo: cobrado en Lyon con compra previa en La Concepción es una dirección distinta de lo cobrado en La Concepción con compra previa en Lyon.
+
+Si un instrumento compró en varios orígenes, el pago del destino entra una sola vez en el total de cruces. Puede aparecer en varias filas del desglose de orígenes; esas filas no son segmentos excluyentes ni se suman. Un pago no identificable permanece en el denominador y no se atribuye a un origen inventado. La coincidencia de claves entre cuentas es aproximada y se indica explícitamente.
+
+### Generación, API y exportación
+
+Se mantienen los patrones manuales. Primero **Generar reportes**; luego **Generar evolución mensual** o **Generar cruces de la red**. Abrir pestañas y cambiar selectores del gráfico/desglose solo presenta datos disponibles.
+
+- `GET /api/sales/recurrence/:id/monthly`: calcula y retiene la evolución sobre el historial MP del snapshot.
+- `GET /api/sales/recurrence/:id/network`: lee explícitamente las fuentes MP locales de la red y valida la versión capturada al generar el reporte, antes y después de calcular. No sincroniza proveedores. Si cambió otro local, devuelve 409 y solicita regenerar.
+- La exportación incluye únicamente secciones preparadas. Añade evolución mensual, cruces totales, destinos, orígenes, acumulados, cobertura y notas. Las series conservan cortes y versiones propios explícitos.
+
+Motor: `recurrence-history.js`, metodología `mp-rolling-purchase-history-v1`, identificación compartida con `recurrence.js`. Pruebas: `test/recurrence-history.test.js`, API con worker real, y pruebas de interfaz/exportación en `test/recurrence-ui.test.js`. Se verifican límites, mismo día, ausencia de futuro, denominador con no identificables, dirección de cruces, superposición de orígenes, cadena, cobertura, devoluciones y coherencia de versiones.

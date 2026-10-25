@@ -7,7 +7,7 @@
   const money = n => n === null || n === undefined ? '—' : new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n);
   const date = d => d ? formatReportDate(d) : 'Sin fecha acreditada';
   const stateName = { complete: 'Completo', partial: 'Provisional', no_data: 'Sin datos', no_activity: 'Sin operaciones', immature: 'Pendiente', error: 'Error' };
-  const state = { generation: 0, controller: null, report: null, returns: null, purchases: null, quality: null, dirty: false, detail: { page: 1, kind: 'active' }, sections: new Map(), returnTouched: false };
+  const state = { generation: 0, controller: null, report: null, returns: null, purchases: null, quality: null, monthly: null, network: null, dirty: false, detail: { page: 1, kind: 'active' }, sections: new Map(), returnTouched: false };
   const filterKey = () => JSON.stringify(['sales-customers-location', 'sales-customers-period', 'sales-customers-from', 'sales-customers-to', 'recurrence-evolution'].map(id => byId(id).value));
   const hint = (text, className = 'panel-description') => el('p', text, className);
   function table(headers, rows, className = '') {
@@ -33,7 +33,7 @@
     state.generation++; state.controller?.abort(); state.sections.forEach(c => c.abort()); state.sections.clear();
     state.dirty = true; byId('recurrence-progress').hidden = true; byId('sales-customers-filters').setAttribute('aria-busy', 'false');
     byId('sales-customers-filters').querySelector('button[type=submit]').disabled = false;
-    ['recurrence-purchases-run', 'recurrence-quality-run', 'recurrence-return-run'].forEach(id => { byId(id).disabled = !state.report || state.dirty; });
+    ['recurrence-purchases-run', 'recurrence-quality-run', 'recurrence-return-run', 'recurrence-monthly-run', 'recurrence-network-run'].forEach(id => { byId(id).disabled = !state.report || state.dirty; });
     status('sales-customers-status', state.report ? 'Los filtros cambiaron. El resultado visible conserva su consulta anterior; pulsa Generar reportes para aplicar la selección.' : 'Selecciona los filtros y pulsa Generar reportes.');
   }
   function button(text, callback, className = 'icon-button small') { const node = el('button', text, className); node.type = 'button'; node.addEventListener('click', callback); return node; }
@@ -153,6 +153,70 @@
     }
     root.append(button('Ver pedidos y motivos de clasificación', () => showDetails('purchases')));
   }
+  const historyColors = ['#3d8264', '#906337', '#3a74a0', '#865694'];
+  function historyMetric(cell) {
+    const node = el('div', null, 'recurrence-history-value');
+    node.append(el('strong', percent(cell.value)), el('small', `${money(cell.numerator)} / ${money(cell.denominator)}`), el('small', stateName[cell.status]));
+    node.title = `${cell.population}. Historial ${date(cell.historyFrom)} – ${date(cell.historyTo)}: ${cell.coveredDays}/${cell.expectedDays} días acreditados. ${cell.reason || ''}`;
+    return node;
+  }
+  function historyTable(rows) {
+    return table([['Mes / período', row => row.month ? `${row.month}${row.partialMonth ? ' · hasta el corte' : ''}` : `${date(row.from)} – ${date(row.to)}`],
+      ...[30, 60, 90, 180].map(h => [`Compra previa ≤ ${h} días`, row => historyMetric(row.windows[h])])], rows);
+  }
+  function historyChart(data) {
+    const root = el('section', null, 'recurrence-subpanel'), label = el('label', 'Mostrar ventanas '), select = el('select');
+    select.append(new Option('30, 60, 90 y 180 días', 'all'), ...data.windows.map(h => new Option(`${h} días`, String(h)))); label.append(select);
+    root.append(el('h4', 'Participación mensual del importe MP total'), label);
+    const legend = el('div', null, 'recurrence-history-legend'); data.windows.forEach((h, i) => { const item = el('span', `${h} días`); item.style.color = historyColors[i]; legend.append(item); }); root.append(legend);
+    const host = el('div', null, 'recurrence-history-chart'); root.append(host);
+    const svgNode = (tag, attributes = {}, text) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); Object.entries(attributes).forEach(([k, v]) => n.setAttribute(k, v)); if (text !== undefined) n.textContent = text; return n; };
+    function paint() {
+      const svg = svgNode('svg', { viewBox: '0 0 820 300', role: 'img', 'aria-label': 'Evolución mensual de porcentajes por ventana de compra previa. Cifras y estados en la tabla siguiente.' });
+      svg.append(svgNode('title', {}, 'Porcentaje del importe MP con compras en fechas anteriores'));
+      const maximum = Math.max(0, ...data.rows.flatMap(row => data.windows.map(h => row.windows[h].value || 0)));
+      const ceiling = [10, 20, 40, 60, 80, 100].find(limit => limit >= maximum) || 100;
+      const x = i => 48 + i * 67, y = value => 235 - value / ceiling * 200;
+      for (const tick of [0, ceiling / 4, ceiling / 2, ceiling * .75, ceiling]) svg.append(svgNode('line', { x1: 48, y1: y(tick), x2: 790, y2: y(tick), stroke: 'currentColor', opacity: '.15' }), svgNode('text', { x: 40, y: y(tick) + 4, 'text-anchor': 'end', fill: 'currentColor', 'font-size': 11 }, percent(tick)));
+      data.rows.forEach((row, i) => svg.append(svgNode('text', { x: x(i), y: 260, transform: `rotate(-30 ${x(i)} 260)`, 'text-anchor': 'end', fill: 'currentColor', 'font-size': 11 }, row.month)));
+      data.windows.forEach((h, colorIndex) => {
+        if (select.value !== 'all' && select.value !== String(h)) return;
+        let previous = null;
+        data.rows.forEach((row, i) => {
+          const cell = row.windows[h]; if (cell.value === null) { previous = null; return; }
+          const point = { x: x(i), y: y(cell.value) };
+          if (previous) svg.append(svgNode('line', { x1: previous.x, y1: previous.y, x2: point.x, y2: point.y, stroke: historyColors[colorIndex], 'stroke-width': 2, 'stroke-dasharray': cell.status === 'partial' || previous.partial ? '5 4' : colorIndex === 1 ? '8 2' : colorIndex === 2 ? '2 2' : colorIndex === 3 ? '8 2 2 2' : 'none' }));
+          const dot = svgNode('circle', { cx: point.x, cy: point.y, r: 3 + colorIndex * .6, stroke: historyColors[colorIndex], fill: cell.status === 'partial' ? 'var(--panel)' : historyColors[colorIndex], 'stroke-width': 2 });
+          dot.append(svgNode('title', {}, `${row.month} · ${h} días: ${percent(cell.value)} · ${money(cell.numerator)} / ${money(cell.denominator)} · ${stateName[cell.status]}`)); svg.append(dot);
+          previous = { ...point, partial: cell.status === 'partial' };
+        });
+      });
+      host.replaceChildren(svg);
+    }
+    select.addEventListener('change', paint); paint();
+    root.append(hint('Líneas discontinuas y puntos huecos: datos provisionales. Los meses sin base aparecen como huecos. Las ventanas se superponen y no se suman.'));
+    return root;
+  }
+  function renderHistory(kind, data) {
+    const root = byId(`recurrence-${kind}-content`); root.replaceChildren(hint(`${date(data.period.from)} – ${date(data.period.to)} · Corte ${data.asOf.replace('T', ' ')}. Ventana propia de 12 meses, independiente del inicio del período principal.`),
+      hint(`${data.definition} Base: importe MP total del destino, incluidos los pagos no identificables. ${data.monetaryBasis}`));
+    if (data.warnings.length) { const notes = el('details'); notes.append(el('summary', 'Cobertura e identificación de este reporte'), ...data.warnings.map(w => hint(w))); root.append(notes); }
+    root.append(historyChart(data), historyTable(data.rows));
+    if (kind === 'network') {
+      root.append(hint('El total de red cuenta cada importe de destino una sola vez si existe antecedente en otra cafetería. Un mismo pago puede aparecer en varios orígenes del desglose; esos porcentajes no se suman. La coincidencia entre cuentas es aproximada.'));
+      if (data.locations.length < 2) root.append(hint('Se necesitan al menos dos cafeterías para observar cruces.'));
+      if (data.destinations.length > 1) for (const destination of data.destinations) { const panel = el('details'); panel.append(el('summary', `Cobrado en ${destination.name}`), historyTable(destination.rows)); root.append(panel); }
+      const block = el('section', null, 'recurrence-subpanel'), label = el('label', 'Desglosar origen por '), select = el('select');
+      select.append(new Option('Los 12 meses acumulados', 'all'), ...data.rows.map(row => new Option(row.month, row.month))); label.append(select);
+      const result = el('div'); block.append(el('h4', 'Dónde compró antes el instrumento'), label, result); root.append(block);
+      function paint() { const rows = select.value === 'all' ? data.originTotals : data.origins.filter(row => row.month === select.value);
+        result.replaceChildren(table([['Cobrado en', row => row.destination], ['Compra previa en', row => row.origin], ...data.windows.map(h => [`≤ ${h} días`, row => historyMetric(row.windows[h])])], rows)); }
+      select.addEventListener('change', paint); paint();
+    }
+    const details = el('details'); details.append(el('summary', 'Cobertura y bases de las ventanas'), table([
+      ['Mes', row => row.month], ['Ventana', row => `${row.cell.days} días`], ['Desde historial', row => date(row.cell.historyFrom)], ['Hasta', row => date(row.cell.historyTo)], ['Días acreditados', row => `${row.cell.coveredDays}/${row.cell.expectedDays}`], ['Motivo / estado', row => row.cell.reason || stateName[row.cell.status]]
+    ], data.rows.flatMap(row => data.windows.map(h => ({ month: row.month, cell: row.windows[h] }))))); root.append(details);
+  }
   async function generate(event) {
     event?.preventDefault(); state.controller?.abort(); state.sections.forEach(c => c.abort()); state.sections.clear();
     const controller = new AbortController(), generation = ++state.generation, key = filterKey(); state.controller = controller;
@@ -164,7 +228,7 @@
     try {
       const data = await apiRequest(`/api/sales/recurrence?${params}`, { signal: controller.signal });
       if (generation !== state.generation || key !== filterKey()) return;
-      state.report = data; state.returns = data.returns; state.purchases = null; state.quality = data.quality; state.evolution = evolution; state.dirty = false;
+      state.report = data; state.returns = data.returns; state.purchases = null; state.monthly = null; state.network = null; state.quality = data.quality; state.evolution = evolution; state.dirty = false;
       if (byId('sales-customers-period').value !== 'custom') { byId('sales-customers-from').value = data.period.from; byId('sales-customers-to').value = data.period.to; }
       if (!state.returnTouched) { byId('recurrence-cohort-from').value = data.cohortDefaults.from; byId('recurrence-cohort-to').value = data.cohortDefaults.to; }
       byId('recurrence-cohort-to').max = data.observationDay; byId('recurrence-cohort-from').max = data.observationDay;
@@ -173,8 +237,9 @@
       byId('recurrence-notices-body').replaceChildren(...data.warnings.map(w => hint(w)));
       renderSummary(data); renderReturns(data.returns); renderQuality(data.quality);
       if (state.returnTouched) status('recurrence-return-status', 'El resultado de Retorno indica sus fechas de entrada. Pulsa Generar retorno para aplicar tu selección independiente.');
+      for (const kind of ['monthly', 'network']) { byId(`recurrence-${kind}-content`).replaceChildren(); status(`recurrence-${kind}-status`, 'Pulsa Generar para preparar esta sección con el reporte actual.'); }
       byId('recurrence-purchases-content').replaceChildren(); status('recurrence-purchases-status', 'Pulsa Preparar Compras para vincular pedidos con este reporte.');
-      ['recurrence-export', 'recurrence-purchases-run', 'recurrence-quality-run', 'recurrence-return-run'].forEach(id => { byId(id).disabled = false; });
+      ['recurrence-export', 'recurrence-purchases-run', 'recurrence-quality-run', 'recurrence-return-run', 'recurrence-monthly-run', 'recurrence-network-run'].forEach(id => { byId(id).disabled = false; });
       status('sales-customers-status', `Reporte generado. ${stateName[data.summary.status]}. Se conservan poblaciones y denominadores separados.`, data.summary.status === 'complete' ? 'success' : 'warning');
     } catch (error) { if (generation === state.generation && error.name !== 'AbortError') status('sales-customers-status', error.message, 'error'); }
     finally { if (generation === state.generation) { submit.disabled = false; byId('recurrence-progress').hidden = true; form.setAttribute('aria-busy', 'false'); } }
@@ -182,12 +247,13 @@
   async function section(kind, params = {}) {
     if (!state.report || state.dirty) return status('sales-customers-status', 'Genera el reporte con los filtros actuales antes de preparar otra sección.', 'warning');
     state.sections.get(kind)?.abort(); const controller = new AbortController(), id = state.report.id, generation = state.generation; state.sections.set(kind, controller);
-    const statusId = `recurrence-${kind}-status`, buttonId = `recurrence-${kind}-run`; byId(buttonId).disabled = true; status(statusId, `Preparando ${kind === 'return' ? 'cohortes y seguimiento' : 'pedidos y calidad de vínculos'}…`);
+    const statusId = `recurrence-${kind}-status`, buttonId = `recurrence-${kind}-run`; byId(buttonId).disabled = true; status(statusId, `Preparando ${({ return: 'cohortes y seguimiento', monthly: 'evolución mensual de 12 meses', network: 'historial de la red y cruces entre cafeterías' })[kind] || 'pedidos y calidad de vínculos'}…`);
     try {
       const data = await apiRequest(`/api/sales/recurrence/${id}/${kind}?${new URLSearchParams(params)}`, { signal: controller.signal });
       if (id !== state.report?.id || generation !== state.generation || state.sections.get(kind) !== controller) return;
       if (kind === 'return') { state.returns = data; renderReturns(data); }
       else if (kind === 'purchases') { state.purchases = data; renderPurchases(data); }
+      else if (kind === 'monthly' || kind === 'network') { state[kind] = data; renderHistory(kind, data); }
       else { state.quality = data; renderQuality(data); }
       status(statusId, 'Sección preparada con la misma versión del reporte.', 'success');
     } catch (error) { if (generation === state.generation && error.name !== 'AbortError') status(statusId, error.message, 'error'); }
@@ -229,6 +295,15 @@
         sheet('CategoriasCompras', data.purchases.rows.flatMap(row => row.mix.categories.map(c => ({ Segmento: row.label, DenominadorPedidos: row.orders, ...c }))));
         sheet('ProductosCompras', data.purchases.rows.flatMap(row => row.mix.products.map(p => ({ Segmento: row.label, DenominadorPedidos: row.orders, ...p }))));
       }
+      const historyRows = (report, rows) => rows.flatMap(row => report.windows.map(h => ({ Mes: row.month || 'Acumulado', Desde: row.from, Hasta: row.to, Destino: row.destination || report.scopeLabel || data.summary.scope.label, Origen: row.origin || null, VentanaDias: h, Porcentaje: row.windows[h].value, NumeradorMP: row.windows[h].numerator, DenominadorMP: row.windows[h].denominator, ImporteIdentificable: row.identifiedAmount, Estado: row.windows[h].status, HistorialDesde: row.windows[h].historyFrom, HistorialHasta: row.windows[h].historyTo, DiasAcreditados: row.windows[h].coveredDays, DiasEsperados: row.windows[h].expectedDays, Motivo: row.windows[h].reason, Corte: report.asOf, Metodologia: report.definitionVersion, Base: report.denominator })));
+      if (data.monthly) sheet('Evolucion12Meses', historyRows(data.monthly, data.monthly.rows));
+      if (data.network) {
+        sheet('CrucesRed12Meses', historyRows(data.network, data.network.rows));
+        sheet('CrucesPorDestino', historyRows(data.network, data.network.destinations.flatMap(d => d.rows)));
+        sheet('CrucesPorOrigen', historyRows(data.network, data.network.origins));
+        sheet('OrigenesAcumulados', historyRows(data.network, data.network.originTotals));
+        sheet('CoberturaRed', data.network.coverage); sheet('NotasCrucesRed', data.network.warnings.map(Nota => ({ Nota })));
+      }
       sheet('Limitaciones', data.quality.warnings.map(Nota => ({ Nota })));
       XLSX.writeFile(book, `Brewit_Recurrencia_${report.scope.location}_${report.period.to}.xlsx`);
       status('sales-customers-status', 'Exportación preparada con las secciones calculadas y la versión del reporte.', 'success');
@@ -244,6 +319,7 @@
     byId('recurrence-return-filters').addEventListener('submit', event => { event.preventDefault(); section('return', { from: byId('recurrence-cohort-from').value, to: byId('recurrence-cohort-to').value, granularity: byId('recurrence-cohort-granularity').value, commonBase: byId('recurrence-common-base').checked }); });
     byId('recurrence-purchases-run').addEventListener('click', () => section('purchases'));
     byId('recurrence-quality-run').addEventListener('click', () => section('quality'));
+    for (const kind of ['monthly', 'network']) byId(`recurrence-${kind}-run`).addEventListener('click', () => section(kind));
     byId('recurrence-export').addEventListener('click', exportReport);
     byId('recurrence-detail-close').addEventListener('click', () => byId('recurrence-detail-dialog').close());
     byId('recurrence-detail-prev').addEventListener('click', () => showDetails(state.detail.kind, state.detail.page - 1));

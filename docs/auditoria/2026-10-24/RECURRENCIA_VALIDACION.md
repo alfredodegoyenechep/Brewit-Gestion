@@ -128,3 +128,29 @@ El worker separa el cálculo del hilo HTTP, limita memoria a 512 MB y admite has
 - [Conciliación y tiempos por alcance](RECURRENCIA_CONCILIACION.json).
 
 Quedan como límites de los datos: identidad aproximada entre cuentas, estados/devoluciones/propinas de MP no acreditados, cobertura histórica incompleta y enlaces estimados sin referencia explícita verificada. Los importes y fechas observados se muestran con esos límites; no se inventan aprobaciones, adquisiciones de clientes nuevos ni tasas maduras donde falta seguimiento.
+
+
+## Ampliación validada: evolución 12 meses y cruces entre cafeterías
+
+Se añadieron las pestañas quinta y sexta. La base confirmada es **todo el importe MP del mes**, incluidos pagos no identificables. Las compras previas se buscan por pago, desde fecha−h hasta fecha−1 en Santiago. La quinta usa el alcance seleccionado; la sexta busca en otras cafeterías y conserva el sentido origen→destino. Los totales de cruces cuentan el pago una sola vez aunque haya varios orígenes; las filas de origen se superponen.
+
+**52 pruebas relacionadas aprobadas** (motor, API, worker, interfaz y reportes de estadísticas), sin fallos. Ocho pruebas nuevas verifican límites 30/60/90/180, mismo día, no usar compras futuras, total MP con no identificables, dirección y superposición de cruces, unión de red, meses parciales/huecos, duplicados, devoluciones y versiones. Se revalidaron diez pruebas de motor/API después del control final de versiones. Las pruebas de navegador incluyen seis pestañas, cero consultas al navegar, preparación explícita, selección gráfica sin consultas, exportación XLSX abierta de nuevo y anchuras de 390/768/1500 px.
+
+Con datos locales de **Portal Lyon**, corte **24 octubre 2026, 19:45:50**, el mes de octubre tiene **$3.387.847 MP**. La quinta pestaña observa $443.140 (13,1%) con antecedente local en cada una de las cuatro ventanas; coinciden porque todos esos antecedentes observados están dentro de 30 días. No implica que exista cobertura completa de 180 días.
+
+En el cruce hacia Lyon desde La Concepción se observaron:
+
+| Ventana | Importe en Lyon con compra previa en otra cafetería | Base MP de Lyon | Porcentaje |
+|---|---:|---:|---:|
+| 30 días | $51.580 | $3.387.847 | 1,5% |
+| 60 días | $73.460 | $3.387.847 | 2,2% |
+| 90 días | $104.605 | $3.387.847 | 3,1% |
+| 180 días | $110.205 | $3.387.847 | 3,3% |
+
+Son porcentajes **observados y provisionales**, por cobertura histórica e identidad aproximada entre cuentas. No se imputa cero a meses sin base. Los 12 meses se presentan completos en calendario; el último llega al corte y se marca parcial. El historial anterior a esos 12 meses se conserva para buscar antecedentes, hasta 180 días antes del primer mes.
+
+La verificación adicional de Todas concilió $15.270.198 de importe MP y los numeradores de los destinos sin duplicación: $106.140, $128.020, $159.165 y $164.765 para 30/60/90/180 días (0,7%, 0,8%, 1,0% y 1,1%). La versión de red coincidió con la capturada al generar el snapshot. Se revalidaron las dos pruebas de navegador tras ajustar la escala porcentual.
+
+La comprobación real en Chrome registró tres consultas explícitas (principal, evolución y red), cero al abrir/navegar, ningún error JS y ningún desbordamiento de página a 390 px. La exportación añade `Evolucion12Meses`, `CrucesRed12Meses`, `CrucesPorDestino`, `CrucesPorOrigen` y `OrigenesAcumulados`, además de cobertura y notas de red; conserva cortes, versiones y denominadores.
+
+Evidencia: [datos agregados y comprobaciones](RECURRENCIA_HISTORIAL_VALIDACION.json), [evolución escritorio](capturas/recurrencia-monthly-escritorio.png), [cruces escritorio](capturas/recurrencia-network-escritorio.png), [evolución móvil](capturas/recurrencia-monthly-movil.png) y [cruces móvil](capturas/recurrencia-network-movil.png). Esta ampliación sustituye la enumeración original de cuatro pestañas por seis; la conciliación original permanece como registro de aquella entrega.

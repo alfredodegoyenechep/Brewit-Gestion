@@ -734,6 +734,8 @@
           <button id="recurrence-tab-return" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-return" tabindex="-1" data-recurrence-tab="return">Retorno</button>
           <button id="recurrence-tab-purchases" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-purchases" tabindex="-1" data-recurrence-tab="purchases">Compras</button>
           <button id="recurrence-tab-quality" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-quality" tabindex="-1" data-recurrence-tab="quality">Calidad de datos</button>
+          <button id="recurrence-tab-monthly" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-monthly" tabindex="-1" data-recurrence-tab="monthly">Evolución 12 meses</button>
+          <button id="recurrence-tab-network" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-network" tabindex="-1" data-recurrence-tab="network">Cruces entre cafeterías</button>
         </div>
         <section id="recurrence-panel-summary" role="tabpanel" aria-labelledby="recurrence-tab-summary" tabindex="0"><div id="recurrence-summary"><p class="empty-state">Genera el reporte para consultar instrumentos, días con compra y retorno.</p></div></section>
         <section id="recurrence-panel-return" role="tabpanel" aria-labelledby="recurrence-tab-return" tabindex="0" hidden>
@@ -751,6 +753,16 @@
         </section>
         <section id="recurrence-panel-quality" role="tabpanel" aria-labelledby="recurrence-tab-quality" tabindex="0" hidden>
           <h4>Cobertura, identificación y reglas</h4><button id="recurrence-quality-run" class="icon-button" type="button" disabled>Preparar calidad de vínculos</button><p id="recurrence-quality-status" class="form-status" role="status" aria-live="polite"></p><div id="recurrence-quality-content"></div>
+        </section>
+        <section id="recurrence-panel-monthly" role="tabpanel" aria-labelledby="recurrence-tab-monthly" tabindex="0" hidden>
+          <h4>Importe de compras con antecedentes recientes — últimos 12 meses</h4>
+          <p class="panel-description">Porcentaje del importe total de MercadoPago de cada mes con una compra en una fecha anterior dentro de los últimos 30, 60, 90 o 180 días. La cafetería seleccionada define dónde buscar esos antecedentes; Todas considera la unión de la red.</p>
+          <button id="recurrence-monthly-run" class="primary" type="button" disabled>Generar evolución mensual</button><p id="recurrence-monthly-status" class="form-status" role="status" aria-live="polite">Genera el reporte principal y luego prepara esta evolución.</p><div id="recurrence-monthly-content"></div>
+        </section>
+        <section id="recurrence-panel-network" role="tabpanel" aria-labelledby="recurrence-tab-network" tabindex="0" hidden>
+          <h4>Importe de compras con antecedentes en otras cafeterías</h4>
+          <p class="panel-description">De lo cobrado en la cafetería seleccionada, qué porcentaje proviene de instrumentos que compraron antes en otra cafetería de la red, dentro de 30, 60, 90 o 180 días. Se muestran los últimos 12 meses hasta el corte del reporte.</p>
+          <button id="recurrence-network-run" class="primary" type="button" disabled>Generar cruces de la red</button><p id="recurrence-network-status" class="form-status" role="status" aria-live="polite">La lectura de otras cafeterías se realiza únicamente al pulsar este botón.</p><div id="recurrence-network-content"></div>
         </section>
         <dialog id="recurrence-detail-dialog" class="demand-dialog" aria-labelledby="recurrence-detail-title"><div class="demand-dialog-head"><h3 id="recurrence-detail-title">Detalle del reporte</h3><button id="recurrence-detail-close" class="icon-button" type="button">Cerrar</button></div><p id="recurrence-detail-status" role="status" aria-live="polite"></p><div id="recurrence-detail-content"></div><div class="demand-dialog-pages"><button id="recurrence-detail-prev" class="icon-button" type="button">Anterior</button><span id="recurrence-detail-page"></span><button id="recurrence-detail-next" class="icon-button" type="button">Siguiente</button></div></dialog>
       </section>
