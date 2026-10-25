@@ -22,6 +22,8 @@ npm start
 Visit <http://localhost:3000>. The same server delivers the dashboard, API, and uploaded-file downloads, so a second static server is not required.
 After changing server code, stop and restart `npm start`; refreshing the browser updates the UI but does not reload code already held by the Node process.
 
+En **Estadísticas por producto y horario**, **Participación** está antes de **Modalidad de consumo** y **Jerarquías y margen**, antes de **Productos y jerarquías**. Ambos reportes usan la cafetería seleccionada en esa vista y comparten su propio período: pulsa **Generar reportes** para aplicar los filtros. El alcance consultado aparece junto al resultado. **Resultados Financieros** conserva Estado de resultados, Gastos generales y Revisión de costos.
+
 Uploaded data is stored under `uploads/` and is intentionally excluded from Git. Back up that directory if the local upload history needs to be preserved.
 
 En **Caracterización de la Venta → Horarios y evolución**, el mapa permite elegir **Pedidos** o **Unidades vendidas**. Con filtros de categoría, producto o formato, muestra unidades por defecto y suma únicamente las líneas que cumplen esos filtros, excluyendo extras. Los pedidos siguen contando una sola observación por cuenta: por ejemplo, 24 unidades de bollería pueden corresponder a 18 pedidos. La columna Total del día, la fila Total y los porcentajes usan la medida seleccionada.

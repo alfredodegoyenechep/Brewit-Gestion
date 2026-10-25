@@ -295,7 +295,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   await page.locator('[data-view="financial-results"]').click();
   assert.equal(await page.getByRole('tab', { name: 'Resultados Semanales', exact: true }).count(), 0);
   assert.equal(await page.locator('#financial-weekly-form').count(), 0);
-  assert.deepEqual(await page.locator('#financial-results-workspace [role="tab"]').allTextContents(), ['Estado de resultados', 'Gastos generales', 'Participación', 'Jerarquías y margen', 'Revisión de costos']);
+  assert.deepEqual(await page.locator('#financial-results-workspace [role="tab"]').allTextContents(), ['Estado de resultados', 'Gastos generales', 'Revisión de costos']);
   await page.getByRole('tab', { name: 'Gastos generales', exact: true }).click();
   assert.equal(await page.locator('#financial-results-workspace-panel-expenses').isVisible(), true);
   await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();

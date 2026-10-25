@@ -152,14 +152,15 @@ function invalidateCalculation(view, statusId) {
   const active = calculatedViewRequests.get(view);
   if (active) active.controller.abort();
   calculatedViewRequests.delete(view);
-  const buttonId = { financial: 'financial-results-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
+  const buttonId = { salesMargins: 'sales-margin-filters', financial: 'financial-results-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
   const control = document.getElementById(buttonId);
-  const button = view === 'financial' ? control?.querySelector('button[type="submit"]') : control;
+  const button = ['financial', 'salesMargins'].includes(view) ? control?.querySelector('button[type="submit"]') : control;
   if (button) button.disabled = false;
   const previous = calculatedViewKeys.get(view);
+  const action = view === 'salesMargins' ? 'Generar reportes' : 'Consultar';
   setStatus(document.getElementById(statusId), previous
-    ? 'Los filtros cambiaron. El resultado visible corresponde a la última consulta; pulsa Consultar para aplicar la nueva selección.'
-    : 'Selecciona los filtros y pulsa Consultar para calcular con los datos guardados.', 'muted');
+    ? `Los filtros cambiaron. El resultado visible corresponde a la última consulta; pulsa ${action} para aplicar la nueva selección.`
+    : `Selecciona los filtros y pulsa ${action} para calcular con los datos guardados.`, 'muted');
 }
 function beginCalculation(view, key) {
   calculatedViewRequests.get(view)?.controller.abort();
@@ -1413,15 +1414,15 @@ function refreshFinancialResultsLocationFilter() {
   select.value = options.some(option => option.value === previous) ? previous : 'all';
 }
 
-function syncFinancialResultsPeriod() {
-  const period = document.getElementById('financial-results-period').value;
-  const fromInput = document.getElementById('financial-results-from');
-  const toInput = document.getElementById('financial-results-to');
+function syncFinancialResultsPeriod(prefix = 'financial-results') {
+  const period = document.getElementById(`${prefix}-period`).value;
+  const fromInput = document.getElementById(`${prefix}-from`);
+  const toInput = document.getElementById(`${prefix}-to`);
   const custom = period === 'custom';
   fromInput.disabled = !custom;
   toInput.disabled = !custom;
-  document.getElementById('financial-results-from-field').classList.toggle('is-disabled', !custom);
-  document.getElementById('financial-results-to-field').classList.toggle('is-disabled', !custom);
+  document.getElementById(`${prefix}-from-field`).classList.toggle('is-disabled', !custom);
+  document.getElementById(`${prefix}-to-field`).classList.toggle('is-disabled', !custom);
   if (custom) return;
   const today = browserIsoToday();
   const currentWeekStart = offsetIsoDate(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
@@ -1869,9 +1870,6 @@ function renderFinancialResults(data) {
   badge.textContent = statement.dataCoverageComplete ? 'EBITDA 4 Wall · cobertura completa' : 'EBITDA 4 Wall · revisar cobertura';
   badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
   renderFinancialStatement(data);
-  renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
-  renderFinancialMetricRows('financial-ingredients-body', data.revenue.ingredients);
-  renderFinancialHierarchies(data.revenue.hierarchies);
   const missingCosts = data.revenue.missingCostProducts || [];
   const missingPanel = document.getElementById('financial-missing-costs');
   missingPanel.hidden = !missingCosts.length;
@@ -1989,6 +1987,42 @@ async function loadFinancialResults() {
   } finally {
     if (calculatedViewRequests.get('financial') === request) {
       calculatedViewRequests.delete('financial');
+      button.disabled = false;
+    }
+  }
+}
+
+async function loadSalesMarginReports() {
+  const status = document.getElementById('sales-margin-status');
+  const button = document.querySelector('#sales-margin-filters button[type="submit"]');
+  const filterIds = ['sales-dashboard-location', 'sales-margin-period', 'sales-margin-from', 'sales-margin-to'];
+  const location = document.getElementById('sales-dashboard-location').value || 'all';
+  const dateFrom = document.getElementById('sales-margin-from').value;
+  const dateTo = document.getElementById('sales-margin-to').value;
+  if (!dateFrom || !dateTo || dateFrom > dateTo) {
+    setStatus(status, 'Selecciona un período válido.', 'error');
+    return;
+  }
+  const request = beginCalculation('salesMargins', selectedCalculationKey(filterIds));
+  button.disabled = true;
+  setStatus(status, 'Calculando participación, jerarquías y margen…');
+  try {
+    const params = new URLSearchParams({ location, dateFrom, dateTo });
+    const data = await apiRequest(`/api/financial-results?${params}`, { signal: request.controller.signal });
+    if (!isCurrentCalculation('salesMargins', request, filterIds)) return;
+    renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
+    renderFinancialMetricRows('financial-ingredients-body', data.revenue.ingredients);
+    renderFinancialHierarchies(data.revenue.hierarchies);
+    calculatedViewKeys.set('salesMargins', request.key);
+    document.getElementById('sales-margin-context').textContent =
+      `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo al corte del reporte.`;
+    setStatus(status, `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`, 'success');
+  } catch (error) {
+    if (!isCurrentCalculation('salesMargins', request, filterIds)) return;
+    setStatus(status, error.message, 'error');
+  } finally {
+    if (calculatedViewRequests.get('salesMargins') === request) {
+      calculatedViewRequests.delete('salesMargins');
       button.disabled = false;
     }
   }
@@ -2395,7 +2429,6 @@ function installReportChartButtons() {
 const ANALYTICAL_TABLE_CHART_RULES = [
   { selector: '#transaction-audit-workspace .transaction-audit-sources-table', types: ['line', 'bar'], chronological: true, categoryIndex: 1, title: 'Evolución de la cobertura de fuentes' },
   { selector: '#transaction-audit-workspace .transaction-audit-table', types: ['line', 'bar'], chronological: true, categoryIndex: 1, title: 'Análisis de descuentos' },
-  { selector: '#sales-workspace #sales-location-body', types: ['bar', 'pie'], pieHeaders: /./, title: 'Comparación de ventas por cafetería' },
   { selector: '#sales-workspace #sales-service-mode-hierarchies', types: ['bar', 'pie'], pieHeaders: /./, title: 'Composición de ventas por modalidad' },
   { selector: '#sales-workspace #hourly-analysis-daily-body', types: ['line', 'bar'], chronological: true, title: 'Evolución diaria del análisis horario' },
   { selector: '#sales-workspace #hourly-analysis-bucket-body', types: ['bar'], title: 'Comparación por tramo horario' },
@@ -2411,8 +2444,8 @@ const ANALYTICAL_TABLE_CHART_RULES = [
   { selector: '#purchase-cost-variation-groups .purchase-cost-variation-table', types: ['bar'], title: 'Variaciones de costos de compra' },
   { selector: '#purchase-projection-workspace .purchase-projection-table', types: ['bar'], title: 'Proyección de compra por insumo' },
   { selector: '#financial-results-workspace .financial-statement-table', types: ['bar'], title: 'Composición de resultados financieros' },
-  { selector: '#financial-results-workspace #financial-bars-body', types: ['bar', 'pie'], pieHeaders: /Venta|Participación|Margen contribución/i, title: 'Ventas y margen por línea' },
-  { selector: '#financial-results-workspace #financial-ingredients-body', types: ['bar', 'pie'], pieHeaders: /Venta|Participación|Margen contribución/i, title: 'Ventas y margen por ingrediente principal' },
+  { selector: '#sales-workspace #financial-bars-body', types: ['bar', 'pie'], pieHeaders: /Venta|Participación|Margen contribución/i, title: 'Ventas y margen por línea' },
+  { selector: '#sales-workspace #financial-ingredients-body', types: ['bar', 'pie'], pieHeaders: /Venta|Participación|Margen contribución/i, title: 'Ventas y margen por ingrediente principal' },
   { selector: '#inventory-executive-summary-table', types: ['bar', 'pie'], pieHeaders: /cantidad|unidades|costo|valor|monto/i, title: 'Resumen ejecutivo de inventario' },
   { selector: '#inventory-waste-table', types: ['bar', 'pie'], pieHeaders: /cantidad|unidades|costo|valor|monto/i, title: 'Merma por producto' },
   { selector: '#inventory-results-table', types: ['line', 'bar'], chronological: true, title: 'Movimientos y valorización de inventario' },
@@ -3668,65 +3701,6 @@ function dashboardChange(value, suffix = '') {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}${suffix || '%'} vs. período anterior`;
 }
 
-function renderSalesDashboardMetrics(metrics) {
-  const container = document.getElementById('sales-dashboard-metrics');
-  const definitions = [
-    ['day', 'Venta de hoy'],
-    ['yesterday', 'Venta del día anterior'],
-    ['week', 'Venta de la semana'],
-    ['month', 'Venta del mes']
-  ];
-  container.replaceChildren(...definitions.map(([key, label], index) => {
-    const metric = metrics[key];
-    const card = document.createElement('article');
-    card.className = `sales-kpi-card${index === 0 ? ' primary' : ''}`;
-    const heading = document.createElement('div');
-    heading.className = 'sales-kpi-label';
-    heading.textContent = label;
-    const value = document.createElement('div');
-    value.className = 'sales-kpi-value';
-    value.textContent = formatClp(metric.netSales);
-    const range = document.createElement('div');
-    range.className = 'sales-kpi-range';
-    range.textContent = metric.from === metric.to
-      ? formatReportDate(metric.from)
-      : `${formatReportDate(metric.from)} – ${formatReportDate(metric.to)}`;
-    const comparison = document.createElement('div');
-    comparison.className = metric.changePercent === null ? 'sales-kpi-comparison neutral' : metric.changePercent >= 0 ? 'sales-kpi-comparison positive' : 'sales-kpi-comparison negative';
-    comparison.textContent = dashboardChange(metric.changePercent);
-    const prior = document.createElement('div');
-    prior.className = 'sales-kpi-prior';
-    prior.textContent = `${metric.previous.label}: ${formatClp(metric.previous.netSales)}`;
-    card.append(heading, value, range, comparison, prior);
-    return card;
-  }));
-}
-
-function renderSalesLocations(report) {
-  const body = document.getElementById('sales-location-body');
-  body.replaceChildren(...report.sales.locations.map(location => {
-    const row = document.createElement('tr');
-    [location.name, formatClp(location.day), formatClp(location.yesterday), formatClp(location.week), formatClp(location.month)]
-      .forEach((text, index) => {
-        const cell = document.createElement(index ? 'td' : 'th');
-        cell.textContent = text;
-        if (index) cell.className = 'numeric-cell';
-        row.appendChild(cell);
-      });
-    return row;
-  }));
-  const totals = report.sales.metrics;
-  const row = document.createElement('tr');
-  ['Total', formatClp(totals.day.netSales), formatClp(totals.yesterday.netSales), formatClp(totals.week.netSales), formatClp(totals.month.netSales)]
-    .forEach((text, index) => {
-      const cell = document.createElement(index ? 'td' : 'th');
-      cell.textContent = text;
-      if (index) cell.className = 'numeric-cell';
-      row.appendChild(cell);
-    });
-  document.getElementById('sales-location-foot').replaceChildren(row);
-}
-
 function syncSalesServiceModeControls() {
   const custom = document.getElementById('sales-service-mode-period').value === 'custom';
   document.getElementById('sales-service-mode-custom-range').hidden = !custom;
@@ -4910,8 +4884,6 @@ async function loadSalesDashboard() {
     }
     syncSalesServiceModeControls();
     document.getElementById('sales-dashboard-description').textContent = `Venta neta sin IVA y ticket promedio con IVA para ${report.scope.label}. Indicadores al ${formatReportDate(report.date)}.`;
-    renderSalesDashboardMetrics(report.sales.metrics);
-    renderSalesLocations(report);
     renderSalesServiceModes();
     renderSalesInsights();
     renderMercadoPago(report);
@@ -12098,6 +12070,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('financial-results-to').value = financialToday;
   document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
   syncFinancialResultsPeriod();
+  syncFinancialResultsPeriod('sales-margin');
   document.getElementById('financial-general-expenses-year').value = financialToday.slice(0, 4);
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
@@ -12199,6 +12172,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('refresh-sales-dashboard').addEventListener('click', loadSalesDashboard);
   document.getElementById('sales-dashboard-location').addEventListener('change', loadSalesDashboard);
+  document.getElementById('sales-margin-filters').addEventListener('submit', event => {
+    event.preventDefault();
+    loadSalesMarginReports();
+  });
+  document.getElementById('sales-margin-period').addEventListener('change', () => {
+    syncFinancialResultsPeriod('sales-margin');
+    invalidateCalculation('salesMargins', 'sales-margin-status');
+  });
+  for (const id of ['sales-dashboard-location', 'sales-margin-from', 'sales-margin-to']) {
+    document.getElementById(id).addEventListener('change', () => invalidateCalculation('salesMargins', 'sales-margin-status'));
+  }
   document.getElementById('financial-results-filters').addEventListener('submit', event => {
     event.preventDefault();
     loadFinancialResults();
@@ -13248,7 +13232,7 @@ document.getElementById('sales-insight-bar').addEventListener('change',()=>{sale
 document.getElementById('sales-insight-formats').addEventListener('change',renderSalesInsights);
 
 // Keep existing controls and report nodes alive while changing the visible block.
-function installWorkspaceTabs(workspaceId, headingSelector, definitions) {
+function installWorkspaceTabs(workspaceId, headingSelector, definitions, onActivate) {
   const workspace = document.getElementById(workspaceId);
   const navigation = document.createElement('div');
   navigation.className = 'workspace-tabs';
@@ -13281,6 +13265,7 @@ function installWorkspaceTabs(workspaceId, headingSelector, definitions) {
       panel.hidden = !selected;
     });
     if (focus) entries[index].button.focus();
+    onActivate?.(definitions[index][0]);
     window.dispatchEvent(new Event('resize'));
   }
   entries.forEach(({ button }, index) => {
@@ -13300,17 +13285,18 @@ function installWorkspaceTabs(workspaceId, headingSelector, definitions) {
 }
 
 installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
-  ['overview', 'Resumen y cafeterías', ['#sales-dashboard-metrics', '.sales-location-panel']],
+  ['breakdowns', 'Participación', ['.financial-breakdowns-grid']],
   ['service', 'Modalidad de consumo', ['.sales-service-mode-panel']],
+  ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
   ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-custom', '#sales-insight-range-status', '.sales-insight-controls', '.sales-insights-grid']],
   ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
   ['customers', 'Clientes recurrentes', ['.mercadopago-panel']]
-]);
+], key => {
+  document.getElementById('sales-margin-controls').hidden = !['breakdowns', 'hierarchies'].includes(key);
+});
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
   ['statement', 'Estado de resultados', ['#financial-results-summary', '.financial-statement-panel']],
   ['expenses', 'Gastos generales', ['.financial-general-expenses-panel']],
-  ['breakdowns', 'Participación', ['.financial-breakdowns-grid']],
-  ['hierarchies', 'Jerarquías y margen', ['.financial-hierarchy-panel']],
   ['costs', 'Revisión de costos', ['#financial-costs-empty', '#financial-missing-costs']]
 ]);
 const demandNavigation = installWorkspaceTabs('demand-analysis-workspace', '.demand-heading', [

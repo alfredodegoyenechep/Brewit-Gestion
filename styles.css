@@ -306,6 +306,12 @@
 .financial-results-filters label.is-disabled { opacity: .62; }
 .financial-results-filters input:disabled { cursor: not-allowed; }
 
+#sales-margin-filters { justify-content: flex-start; }
+#sales-workspace > .workspace-tab-panel,
+.sales-margin-report,
+.sales-margin-report > .panel { min-width: 0; }
+.sales-margin-report .financial-hierarchy-detail { overflow-x: auto; }
+
 .financial-results-summary {
   display: grid;
   grid-template-columns: repeat(5, minmax(145px, 1fr));
@@ -7326,65 +7332,6 @@ button:disabled {
   min-width: 220px;
 }
 
-.sales-dashboard-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
-  gap: 14px;
-}
-
-.sales-kpi-card {
-  min-width: 0;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-}
-
-.sales-kpi-card.primary {
-  border-color: var(--coffee-dark);
-  background: var(--coffee-dark);
-  color: #fff;
-}
-
-.sales-kpi-label {
-  color: var(--text-muted);
-  font-size: calc(11px * var(--font-scale));
-  font-weight: 900;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.sales-kpi-card.primary .sales-kpi-label,
-.sales-kpi-card.primary .sales-kpi-range,
-.sales-kpi-card.primary .sales-kpi-prior {
-  color: #d8c9b2;
-}
-
-.sales-kpi-value {
-  margin-top: 18px;
-  font-size: calc(30px * var(--font-scale));
-  font-weight: 900;
-}
-
-.sales-kpi-range,
-.sales-kpi-prior {
-  margin-top: 8px;
-  color: var(--text-muted);
-  font-size: calc(11px * var(--font-scale));
-}
-
-.sales-kpi-comparison {
-  margin-top: 14px;
-  font-size: calc(12px * var(--font-scale));
-  font-weight: 900;
-}
-
-.sales-kpi-comparison.positive { color: var(--green); }
-.sales-kpi-comparison.negative { color: var(--red); }
-.sales-kpi-comparison.neutral { color: var(--text-muted); }
-
-.sales-location-panel h3,
 .sales-insight-heading h3,
 .sales-insights-grid h3,
 .mercadopago-panel h3 {
@@ -8931,7 +8878,6 @@ button:disabled {
   .summary-grid,
   .content-layout,
   .lower-grid,
-  .sales-dashboard-metrics,
   .sales-insights-grid,
   .sales-service-mode-summary,
   .sales-service-mode-details,
@@ -9378,11 +9324,11 @@ button:disabled {
 .upload-record-actions { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
 .upload-source-refresh { display:inline-flex; align-items:center; justify-content:center; padding:10px; flex-shrink:0; }
 
-/* Increase financial workspace text by 3px without changing other views. */
+/* Preserve the financial reports' text sizes, including those moved to sales. */
 #financial-results-workspace { font-size: calc(16px * var(--font-scale) + 3px); }
-#financial-results-workspace h3 { font-size: calc(18.72px * var(--font-scale) + 3px); }
-#financial-results-workspace .panel-eyebrow { font-size: calc(11px * var(--font-scale) + 3px); }
-#financial-results-workspace .panel-description,
+:is(#financial-results-workspace, .sales-margin-report) h3 { font-size: calc(18.72px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .panel-eyebrow { font-size: calc(11px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .panel-description,
 #financial-results-workspace .form-status { font-size: calc(13px * var(--font-scale) + 3px); }
 #financial-results-workspace .chip { font-size: calc(10px * var(--font-scale) + 3px); }
 #financial-results-workspace input,
@@ -9397,17 +9343,17 @@ button:disabled {
 #financial-results-workspace .financial-general-expenses-selector label,
 #financial-results-workspace .financial-general-expense-field { font-size: calc(10px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-general-expenses-table { font-size: calc(11px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-table { font-size: calc(12px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-table th { font-size: calc(9px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-table { font-size: calc(12px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-table th { font-size: calc(9px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-line-context { font-size: calc(9px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-result-row td { font-size: calc(13px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-statement-table .financial-highlight-row td { font-size: calc(14px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-future-note { font-size: calc(12px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-hierarchy-item summary > strong { font-size: calc(13px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-hierarchy-metrics small { font-size: calc(8px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-hierarchy-metrics b { font-size: calc(11px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-hierarchy-detail h4 { font-size: calc(12px * var(--font-scale) + 3px); }
-#financial-results-workspace .financial-table.compact { font-size: calc(10px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-hierarchy-item summary > strong { font-size: calc(13px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-hierarchy-metrics small { font-size: calc(8px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-hierarchy-metrics b { font-size: calc(11px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-hierarchy-detail h4 { font-size: calc(12px * var(--font-scale) + 3px); }
+:is(#financial-results-workspace, .sales-margin-report) .financial-table.compact { font-size: calc(10px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-warnings h3 { font-size: calc(14px * var(--font-scale) + 3px); }
 #financial-results-workspace .financial-warnings li { font-size: calc(12px * var(--font-scale) + 3px); }
 body:has(#financial-results-workspace:not([style*="display: none"]):not([style*="display:none"])) .source-policy-notice { font-size: calc(16px * var(--font-scale) + 3px); }

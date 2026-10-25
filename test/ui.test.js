@@ -122,20 +122,6 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   await page.getByRole('link', { name: 'Estadísticas por producto y horario' }).click();
   await page.getByRole('heading', { name: 'Panel de indicadores comerciales' }).waitFor();
   await page.waitForFunction(() => !document.getElementById('refresh-sales-dashboard')?.disabled);
-  await page.locator('#sales-location-body').evaluate(body => {
-    body.innerHTML = '<tr><td>Local Norte</td><td>$120.000</td><td>$100.000</td><td>$600.000</td><td>$2.400.000</td></tr>'
-      + '<tr><td>Local Sur</td><td>$80.000</td><td>$90.000</td><td>$450.000</td><td>$1.900.000</td></tr>';
-  });
-  await page.getByRole('button', { name: 'Ver gráfico: Comparación de ventas por cafetería' }).click();
-  assert.equal(await page.locator('#report-chart-metric option').count(), 4);
-  assert.deepEqual(await page.evaluate(() => ({
-    dialogOpen: document.getElementById('report-chart-dialog').open,
-    pieHidden: document.querySelector('[data-chart-type="pie"]').hidden,
-    types: activeReportChart?.allowedTypes
-  })), { dialogOpen: true, pieHidden: false, types: ['bar', 'pie'] });
-  await page.getByRole('button', { name: 'Gráfico circular' }).click();
-  assert.ok(await page.locator('#report-chart-svg path').count() >= 2);
-  await page.locator('#report-chart-close').click();
   await page.evaluate(() => {
     salesDashboardState.sales.serviceModes.periods.month = {
       period: { from: '2026-09-01', to: '2026-09-17' },
@@ -288,7 +274,7 @@ test('Nueva carga permite archivos manuales por local y guarda las frecuencias n
     }
   }
   await page.getByRole('tab',{name:'Estado y actualización'}).click();
-  await page.locator('#upload-global-options > summary').click();
+  assert.equal(await page.locator('#refresh-upload-api').isVisible(), true);
   await page.locator('#upload-masters-frequency').selectOption('60');await page.locator('#upload-inventory-frequency').selectOption('15');await page.getByRole('button',{name:'Guardar frecuencias'}).click();
   await page.locator('#upload-schedule-status').filter({hasText:'Frecuencias guardadas'}).waitFor();
   await page.reload();await page.getByRole('link',{name:'Datos y sincronización',exact:true}).click();await page.getByRole('tab',{name:'Cargar archivos',exact:true}).click();

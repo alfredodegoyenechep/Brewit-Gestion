@@ -310,25 +310,6 @@
       <div id="sales-dashboard-status" class="form-status" aria-live="polite"></div>
       <div data-toteat-sales-status class="form-status" aria-live="polite"></div>
 
-      <div id="sales-dashboard-metrics" class="sales-dashboard-metrics"></div>
-
-      <section class="panel sales-location-panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-eyebrow">Por ubicación</div>
-            <h3>Ventas por cafetería</h3>
-          </div>
-          <span class="sales-basis-note">Venta neta sin IVA</span>
-        </div>
-        <div class="sales-table-wrap">
-          <table class="sales-dashboard-table">
-            <thead><tr><th>Cafetería</th><th>Hoy</th><th>Día anterior</th><th>Semana</th><th>Mes</th></tr></thead>
-            <tbody id="sales-location-body"></tbody>
-            <tfoot id="sales-location-foot"></tfoot>
-          </table>
-        </div>
-      </section>
-
       <section class="panel sales-service-mode-panel">
         <div class="panel-head sales-service-mode-head">
           <div>
@@ -380,6 +361,58 @@
         </div>
       </section>
 
+      <section id="sales-margin-controls" hidden aria-label="Consulta de participación y margen">
+        <form id="sales-margin-filters" class="financial-results-filters">
+          <label for="sales-margin-period">Período
+            <select id="sales-margin-period">
+              <option value="today">Hoy</option>
+              <option value="yesterday">Ayer</option>
+              <option value="current-week">Semana actual</option>
+              <option value="previous-week">Semana anterior</option>
+              <option value="current-month">Mes actual</option>
+              <option value="previous-month">Mes anterior</option>
+              <option value="last-30-days" selected>Últimos 30 días</option>
+              <option value="current-year">Año en curso</option>
+              <option value="custom">Rango de fechas</option>
+            </select>
+          </label>
+          <label id="sales-margin-from-field" for="sales-margin-from">Desde
+            <input id="sales-margin-from" type="date" required />
+          </label>
+          <label id="sales-margin-to-field" for="sales-margin-to">Hasta
+            <input id="sales-margin-to" type="date" required />
+          </label>
+          <button class="primary" type="submit">Generar reportes</button>
+        </form>
+        <p id="sales-margin-status" class="form-status" role="status" aria-live="polite">Selecciona el período y pulsa Generar reportes.</p>
+        <p id="sales-margin-context" class="panel-description"></p>
+      </section>
+
+      <div class="financial-breakdowns-grid sales-margin-report">
+        <section class="panel">
+          <div class="panel-head"><div><div class="panel-eyebrow">Origen operativo</div><h3>Participación por barra</h3></div></div>
+          <div class="financial-table-wrap">
+            <table class="financial-table"><thead><tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr></thead><tbody id="financial-bars-body"></tbody></table>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><div><div class="panel-eyebrow">Ingrediente principal</div><h3>Café, Matcha y Otros</h3></div></div>
+          <div class="financial-table-wrap">
+            <table class="financial-table"><thead><tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr></thead><tbody id="financial-ingredients-body"></tbody></table>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel financial-hierarchy-panel sales-margin-report">
+        <div class="panel-head financial-panel-head">
+          <div>
+            <div class="panel-eyebrow">Jerarquía de productos</div>
+            <h3>Ingresos y aporte al margen</h3>
+            <p class="panel-description">Abre una jerarquía para ver su composición por barra y por ingrediente principal.</p>
+          </div>
+        </div>
+        <div id="financial-hierarchy-list" class="financial-hierarchy-list"></div>
+      </section>
       <div class="sales-insight-heading">
         <div>
           <div class="panel-eyebrow">Composición de ventas</div>
@@ -1892,31 +1925,6 @@
         <p class="financial-future-note">El EBITDA (4 Wall) incorpora los gastos generales mensuales configurados para cada cafetería y los prorratea al período seleccionado.</p>
       </section>
 
-      <div class="financial-breakdowns-grid">
-        <section class="panel">
-          <div class="panel-head"><div><div class="panel-eyebrow">Origen operativo</div><h3>Participación por barra</h3></div></div>
-          <div class="financial-table-wrap">
-            <table class="financial-table"><thead><tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr></thead><tbody id="financial-bars-body"></tbody></table>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-head"><div><div class="panel-eyebrow">Ingrediente principal</div><h3>Café, Matcha y Otros</h3></div></div>
-          <div class="financial-table-wrap">
-            <table class="financial-table"><thead><tr><th>Línea</th><th>Venta</th><th>Participación</th><th>Margen %</th><th>Margen contribución</th></tr></thead><tbody id="financial-ingredients-body"></tbody></table>
-          </div>
-        </section>
-      </div>
-
-      <section class="panel financial-hierarchy-panel">
-        <div class="panel-head financial-panel-head">
-          <div>
-            <div class="panel-eyebrow">Jerarquía de productos</div>
-            <h3>Ingresos y aporte al margen</h3>
-            <p class="panel-description">Abre una jerarquía para ver su composición por barra y por ingrediente principal.</p>
-          </div>
-        </div>
-        <div id="financial-hierarchy-list" class="financial-hierarchy-list"></div>
-      </section>
       <p id="financial-costs-empty" class="panel-description">Genera resultados para revisar la cobertura de costos del período.</p>
       <section id="financial-missing-costs" class="panel financial-missing-costs" hidden>
         <div class="panel-head">
@@ -2338,6 +2346,13 @@
 
     <section id="upload-overview" class="panel" style="display:none;" aria-labelledby="upload-title">
       <div class="panel-head"><div><div class="panel-eyebrow">Datos de Brewit</div><h2 id="upload-title">Datos y sincronización</h2><p class="panel-description">Revisa las fuentes disponibles y elige qué información actualizar.</p></div></div>
+        <details class="upload-secondary" id="upload-global-options" open><summary>Actualización global y programación</summary><p>Esta acción incluye todas las cafeterías y los maestros compartidos, independientemente del filtro y de la selección. MercadoPago y los archivos manuales se administran por separado.</p><button id="refresh-upload-api" class="icon-button" type="button">Actualizar fuentes Toteat de todas las cafeterías</button><div id="upload-refresh-schedule" class="panel-description"></div>      <form id="upload-native-schedule" class="upload-overview-actions">
+        <label>Maestros compartidos <select id="upload-masters-frequency"><option value="">Manual</option><option value="15">Cada 15 min</option><option value="60">Cada 1 hora</option><option value="1440">Cada 24 horas</option></select></label>
+        <label>Fuentes de inventario <select id="upload-inventory-frequency"><option value="">Manual</option><option value="15">Cada 15 min</option><option value="60">Cada 1 hora</option><option value="1440">Cada 24 horas</option></select></label>
+        <button class="icon-button" type="submit">Guardar frecuencias</button>
+        <span id="upload-schedule-status" class="form-status" aria-live="polite"></span>
+      </form>
+</details>
       <div class="settings-tabs upload-tabs" role="tablist" aria-label="Datos y sincronización">
         <button id="upload-tab-status" role="tab" aria-selected="true" aria-controls="upload-panel-status" data-upload-tab="status">Estado y actualización</button>
         <button id="upload-tab-files" role="tab" aria-selected="false" aria-controls="upload-panel-files" tabindex="-1" data-upload-tab="files">Cargar archivos</button>
@@ -2375,13 +2390,6 @@
       </div>
 </article>
         <details class="upload-secondary"><summary>Comparar todas las ubicaciones</summary><div class="inventory-results-table-wrap"><table id="upload-transaction-matrix" class="inventory-results-table"></table></div></details>
-        <details class="upload-secondary" id="upload-global-options"><summary>Actualización global y programación</summary><p>Esta acción incluye todas las cafeterías y los maestros compartidos, independientemente del filtro y de la selección. MercadoPago y los archivos manuales se administran por separado.</p><button id="refresh-upload-api" class="icon-button" type="button">Actualizar fuentes Toteat de todas las cafeterías</button><div id="upload-refresh-schedule" class="panel-description"></div>      <form id="upload-native-schedule" class="upload-overview-actions">
-        <label>Maestros compartidos <select id="upload-masters-frequency"><option value="">Manual</option><option value="15">Cada 15 min</option><option value="60">Cada 1 hora</option><option value="1440">Cada 24 horas</option></select></label>
-        <label>Fuentes de inventario <select id="upload-inventory-frequency"><option value="">Manual</option><option value="15">Cada 15 min</option><option value="60">Cada 1 hora</option><option value="1440">Cada 24 horas</option></select></label>
-        <button class="icon-button" type="submit">Guardar frecuencias</button>
-        <span id="upload-schedule-status" class="form-status" aria-live="polite"></span>
-      </form>
-</details>
       </section>
       <section id="upload-panel-files" role="tabpanel" aria-labelledby="upload-tab-files" hidden>
         <h3>Cargar archivos</h3><p class="panel-description">Carga los consumos de cada cafetería o un archivo de MercadoPago. Antes de guardar podrás revisar la asignación y los registros repetidos.</p>
