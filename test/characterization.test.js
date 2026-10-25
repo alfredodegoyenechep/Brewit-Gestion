@@ -60,6 +60,7 @@ test('caracterización: filtros simplificados, avance visible y errores recupera
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(base);
   await page.getByRole('link', { name: 'Caracterización de la Venta', exact: true }).click();
+  await page.locator('#demand-filters [type=submit]').click();
   await page.waitForFunction(() => document.getElementById('demand-status').textContent === 'Análisis actualizado.');
   assert.equal(await page.getByRole('heading', { name: 'Caracterización de la Venta', exact: true }).count(), 1);
   assert.deepEqual(await page.locator('#demand-location option').allTextContents(), ['Todas las cafeterías', 'Tienda 1', 'Tienda 2']);

@@ -19,6 +19,7 @@ const demandOptionsSelect = (id, options, firstLabel) => {
 };
 
 async function initializeDemandView(initialLocations = []) {
+  document.body.appendChild(document.getElementById('demand-detail-dialog'));
   const today = browserIsoToday();
   document.getElementById('demand-to').value = today;
   document.getElementById('demand-from').value = `${today.slice(0, 7)}-01`;
@@ -39,6 +40,12 @@ async function initializeDemandView(initialLocations = []) {
     if (detail) openDemandDetail(detail.dataset.kind || 'all', detail.dataset.key || '', detail.dataset.title || 'Pedidos que sustentan el resultado');
     const jump = event.target.closest('[data-demand-jump]');
     if (jump) {
+      if (jump.dataset.demandJump === 'recurrence') {
+        setView('sales');
+        document.getElementById('sales-workspace-tab-customers').click();
+        document.getElementById('sales-observable-recurrence').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
       demandView.tab = jump.dataset.demandJump;
       document.querySelector(`[data-demand-tab="${demandView.tab}"]`)?.click();
       document.getElementById('demand-exploration').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -218,7 +225,7 @@ function renderDemandReport(report) {
   renderDemandHypotheses(report);
   renderDemandActions(report);
   const advanced = document.getElementById('demand-advanced'); advanced.replaceChildren();
-  for (const module of report.advanced) {
+  for (const module of report.advanced.filter(item => item.key !== 'customers')) {
     const card = demandEl('article', null, 'demand-insight demand-advanced-card');
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
@@ -283,6 +290,25 @@ function demandRecurrenceDefinitions(note = demandEl('div', null, 'demand-note')
   }
   note.append(list);
   return note;
+}
+
+function renderObservableRecurrence(root, recurrence) {
+  root.replaceChildren();
+  root.append(demandRecurrenceDefinitions(demandScopeAndLimits(recurrence.scope, recurrence.limitations)),
+    demandEl('p', `${recurrence.identifiableInstruments} instrumentos identificables; ${recurrence.returningInstruments} con dos o más fechas (${demandPercent(recurrence.returningInstrumentPercent)}). Mediana entre compras: ${recurrence.medianGapDays == null ? '—' : `${demandNumber(recurrence.medianGapDays)} días`} (P25 ${demandNumber(recurrence.p25GapDays)} · P75 ${demandNumber(recurrence.p75GapDays)}).`, 'demand-meta'));
+  root.append(demandTable([
+    { label: 'Segmento observable', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
+    { label: 'Venta neta', value: item => demandMoney(item.netSales) }, { label: 'Part. venta', value: item => demandPercent(item.salesSharePercent) },
+    { label: 'Ticket mediano', value: item => demandMoney(item.medianTicketGross) }, { label: 'Productos / pedido', value: item => demandNumber(item.productsPerOrder) },
+    { label: 'Para llevar', value: item => demandPercent(item.takeawayPercent) }, { label: 'Categorías: penetración y un./100', value: demandCategoryMixText },
+    { label: 'Productos predominantes', value: demandMixText }
+  ], recurrence.groups, 'recurrence'));
+  root.append(demandEl('h4', 'Retorno por mes de primera compra observada'));
+  root.append(demandTable([
+    { label: 'Mes observado', value: item => item.month }, { label: 'Instrumentos', value: item => item.instruments },
+    { label: 'Elegibles a 30 días', value: item => item.eligible30 }, { label: 'Retornaron ≤30 días', value: item => item.returned30 },
+    { label: 'Tasa observada', value: item => demandPercent(item.return30Percent) }
+  ], recurrence.cohorts, null, 'month'));
 }
 
 function demandMixText(item) {
@@ -354,23 +380,6 @@ function renderDemandExploration() {
       { label: '% gasto del segmento', value: item => demandPercent(item.spendingSharePercent) }
     ], focusRows, 'name-segment'));
     else root.append(demandEl('p', 'No se encontraron categorías explícitamente clasificadas como sándwiches o bollería bajo los filtros activos.', 'demand-meta'));
-  } else if (demandView.tab === 'recurrence') {
-    const recurrence = report.recurrence;
-    root.append(demandRecurrenceDefinitions(demandScopeAndLimits(recurrence.scope, recurrence.limitations)),
-      demandEl('p', `${recurrence.identifiableInstruments} instrumentos identificables; ${recurrence.returningInstruments} con dos o más fechas (${demandPercent(recurrence.returningInstrumentPercent)}). Mediana entre compras: ${recurrence.medianGapDays == null ? '—' : `${demandNumber(recurrence.medianGapDays)} días`} (P25 ${demandNumber(recurrence.p25GapDays)} · P75 ${demandNumber(recurrence.p75GapDays)}).`, 'demand-meta'));
-    root.append(demandTable([
-      { label: 'Segmento observable', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
-      { label: 'Venta neta', value: item => demandMoney(item.netSales) }, { label: 'Part. venta', value: item => demandPercent(item.salesSharePercent) },
-      { label: 'Ticket mediano', value: item => demandMoney(item.medianTicketGross) }, { label: 'Productos / pedido', value: item => demandNumber(item.productsPerOrder) },
-      { label: 'Para llevar', value: item => demandPercent(item.takeawayPercent) }, { label: 'Categorías: penetración y un./100', value: demandCategoryMixText },
-      { label: 'Productos predominantes', value: demandMixText }
-    ], recurrence.groups, 'recurrence'));
-    root.append(demandEl('h4', 'Retorno por mes de primera compra observada'));
-    root.append(demandTable([
-      { label: 'Mes observado', value: item => item.month }, { label: 'Instrumentos', value: item => item.instruments },
-      { label: 'Elegibles a 30 días', value: item => item.eligible30 }, { label: 'Retornaron ≤30 días', value: item => item.returned30 },
-      { label: 'Tasa observada', value: item => demandPercent(item.return30Percent) }
-    ], recurrence.cohorts, null, 'month'));
   } else if (demandView.tab === 'spending') {
     root.append(demandScopeAndLimits(report.priceSignals.scope, report.priceSignals.limitations),
       demandEl('p', `Precio base explícito en ${report.priceSignals.explicitBasePriceObservations}/${report.priceSignals.paidPriceObservations} líneas; ${report.priceSignals.discountedObservations} muestran precio pagado inferior al base.`, 'demand-meta'));
@@ -557,7 +566,7 @@ function openDemandAdvanced(moduleKey) {
   else if (moduleKey === 'lost-demand') {
     root.append(demandEl('h4', 'Qué sí podemos observar hoy'),
       demandEl('p', 'Ventas atendidas, mezcla de productos, horarios de compra y movimientos diarios de inventario. Estos datos sirven para formular una investigación, pero no para cuantificar clientes que desistieron.', 'demand-meta'));
-  } else if (moduleKey === 'customers') renderDemandRecurrenceDetail(root, report);
+  }
   document.getElementById('demand-advanced-dialog').showModal();
 }
 
@@ -627,41 +636,18 @@ function renderDemandCapabilityDetail(root, title, values, selected) {
   }
 }
 
-function renderDemandRecurrenceDetail(root, report) {
-  const recurrence = report.recurrence;
-  const link = recurrence.linkageCoverage || {};
-  const kpis = demandEl('div', null, 'demand-kpis');
-  kpis.append(demandKpi('Vínculo de alta confianza', demandPercent(link.linkedPercent), `${link.linkedHigh || 0}/${link.orders || 0} pedidos`),
-    demandKpi('Instrumentos observables', demandNumber(recurrence.identifiableInstruments), 'Pseudonimizados'),
-    demandKpi('Instrumentos recurrentes', demandNumber(recurrence.returningInstruments), demandPercent(recurrence.returningInstrumentPercent)),
-    demandKpi('Mediana entre compras', recurrence.medianGapDays == null ? '—' : `${demandNumber(recurrence.medianGapDays)} días`, 'Solo instrumentos con más de una fecha'));
-  root.append(demandRecurrenceDefinitions(), demandEl('h4', 'Cobertura y comportamiento observable'), kpis,
-    demandTable([
-      { label: 'Segmento', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
-      { label: 'Venta neta', value: item => demandMoney(item.netSales) },
-      { label: 'Participación venta', value: item => demandPercent(item.salesSharePercent) },
-      { label: 'Ticket mediano', value: item => demandMoney(item.medianTicketGross) },
-      { label: 'Productos / pedido', value: item => demandNumber(item.productsPerOrder) }
-    ], recurrence.groups, null));
-  if (recurrence.cohorts.length) root.append(demandEl('h4', 'Cohortes por primera compra observada'), demandTable([
-    { label: 'Mes', value: item => item.month }, { label: 'Instrumentos', value: item => item.instruments },
-    { label: 'Elegibles 30 días', value: item => item.eligible30 }, { label: 'Retornaron ≤30 días', value: item => item.returned30 },
-    { label: 'Retorno observado', value: item => demandPercent(item.return30Percent) }
-  ], recurrence.cohorts, null));
-}
-
-function openDemandDetail(kind, key, title) {
-  demandView.detail = { kind, key, title, page: 1 };
+function openDemandDetail(kind, key, title, query = demandView.query) {
+  demandView.detail = { kind, key, title, query, page: 1 };
   document.getElementById('demand-detail-title').textContent = title;
   document.getElementById('demand-detail-dialog').showModal();
   loadDemandDetail();
 }
 
 async function loadDemandDetail() {
-  const { kind, key, page } = demandView.detail;
+  const { kind, key, page, query } = demandView.detail;
   const status = document.getElementById('demand-detail-status'); status.textContent = 'Cargando pedidos…';
   try {
-    const response = await apiRequest(`/api/demand-analysis/orders?${demandView.query}&kind=${encodeURIComponent(kind)}&key=${encodeURIComponent(key)}&page=${page}&limit=50`);
+    const response = await apiRequest(`/api/demand-analysis/orders?${query}&kind=${encodeURIComponent(kind)}&key=${encodeURIComponent(key)}&page=${page}&limit=50`);
     status.textContent = `${response.total} pedidos · período ${response.period.from} – ${response.period.to}`;
     const root = document.getElementById('demand-detail-content'); root.replaceChildren();
     const table = demandEl('table', null, 'demand-table'); const head = demandEl('thead'); const header = demandEl('tr');

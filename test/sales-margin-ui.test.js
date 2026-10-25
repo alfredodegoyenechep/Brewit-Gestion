@@ -242,11 +242,17 @@ test('cada reporte conserva sus filtros y consulta solo al generar, con fechas e
     } });
   }
   await page.getByRole('tab', { name: 'Clientes recurrentes', exact: true }).click();
+  const observableRequests = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/sales/observable-recurrence') observableRequests.push(Object.fromEntries(url.searchParams));
+  });
   assert.equal(await page.locator('#sales-customers-period, #sales-customers-from, #sales-customers-to').count(), 0);
   assert.equal(await page.locator('#sales-customers-filters label').count(), 1);
   const beforeCustomers = queries.length;
   await page.locator('#sales-customers-location').selectOption('store-1');
   assert.equal(queries.length, beforeCustomers);
+  assert.equal(observableRequests.length, 0);
   await page.locator('#sales-customers-filters button[type="submit"]').click();
   await page.locator('#sales-customers-status').filter({ hasText: 'Reporte generado.' }).waitFor();
   assert.deepEqual(queries.at(-1), { path: '/api/sales/dashboard', params: { location: 'store-1' } });
@@ -254,6 +260,40 @@ test('cada reporte conserva sus filtros y consulta solo al generar, con fechas e
   assert.deepEqual(await page.locator('#mercadopago-period-body th').allTextContents(), ['Hoy', 'Semana', 'Mes']);
   assert.equal(await page.locator('#mercadopago-month-history tr').count(), 6);
   assert.equal(await page.locator('#mercadopago-week-history tr').count(), 8);
+  assert.deepEqual(observableRequests, [{ location: 'store-1' }]);
+  assert.equal(await page.locator('.mercadopago-panel > section:last-child').getAttribute('id'), 'sales-observable-recurrence');
+  assert.equal(await page.locator('#sales-observable-recurrence-content table').count(), 2);
+  assert.match(await page.locator('#sales-observable-recurrence-content').innerText(), /Tienda 1.*01 may 2026.*25 oct 2026/s);
+  assert.match(await page.locator('#sales-observable-recurrence-content').innerText(), /Instrumento recurrente.*Una fecha observada.*Sin vínculo confiable.*Retorno por mes/s);
+  const detailRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/api/demand-analysis/orders');
+  await page.locator('#sales-observable-recurrence-content .demand-detail').first().click();
+  const detailQuery = new URL((await detailRequest).url()).searchParams;
+  assert.equal(detailQuery.get('locations'), 'store-1');
+  assert.equal(detailQuery.get('dateFrom'), '2026-05-01');
+  assert.equal(detailQuery.get('dateTo'), '2026-10-25');
+  assert.equal(detailQuery.get('kind'), 'recurrence');
+  await page.locator('#demand-detail-dialog').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => document.getElementById('demand-detail-status').textContent.startsWith('0 pedidos'));
+  await page.locator('#demand-detail-close').click();
+  await page.getByRole('tab', { name: 'Franjas horarias', exact: true }).click();
+  await page.getByRole('tab', { name: 'Clientes recurrentes', exact: true }).click();
+  assert.equal(observableRequests.length, 1, 'Returning to the report does not regenerate recurrence');
+  await page.route('**/api/sales/observable-recurrence?*', route => route.fulfill({
+    status: 503, json: { error: 'Fuente temporalmente no disponible' }
+  }));
+  await page.locator('#sales-customers-location').selectOption('store-2');
+  assert.equal(observableRequests.length, 1, 'Editing the cafeteria waits for Generate');
+  await page.locator('#sales-customers-filters button[type="submit"]').click();
+  await page.locator('#sales-customers-status').filter({ hasText: 'el complemento de recurrencia observable no está disponible' }).waitFor();
+  assert.match(await page.locator('#sales-customers-context').innerText(), /Tienda 2/);
+  assert.match(await page.locator('#sales-observable-recurrence-content').innerText(), /Fuente temporalmente no disponible.*reintentar/s);
+  assert.equal(await page.locator('#sales-observable-recurrence-content table').count(), 0, 'An unavailable complement cannot show results for the previous cafeteria');
+  assert.equal(await page.locator('#mercadopago-month-history tr').count(), 6, 'The MercadoPago report remains available');
+  await page.unroute('**/api/sales/observable-recurrence?*');
+  await page.locator('#sales-customers-filters button[type="submit"]').click();
+  await page.locator('#sales-observable-recurrence-content').filter({ hasText: 'Tienda 2' }).waitFor();
+  assert.deepEqual(observableRequests.at(-1), { location: 'store-2' });
+  assert.equal(await page.locator('#sales-observable-recurrence-content table').count(), 2);
   await page.getByRole('tab', { name: 'Modalidad de consumo', exact: true }).click();
   assert.equal(await page.locator('#sales-service-mode-location').inputValue(), 'store-1');
   assert.match(await page.locator('#sales-service-mode-context').innerText(), /Tienda 1/);

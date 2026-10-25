@@ -8484,6 +8484,11 @@ button:disabled {
   font-weight: 800;
 }
 
+.mercadopago-observable-recurrence { min-width: 0; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.mercadopago-observable-recurrence h4 { margin: 6px 0 12px; }
+#sales-observable-recurrence-title { font-size: calc(19px * var(--font-scale)); }
+.mercadopago-observable-recurrence .demand-scroll { min-width: 0; }
+
 .mercadopago-history-heading {
   margin-top: 30px;
   padding-top: 24px;

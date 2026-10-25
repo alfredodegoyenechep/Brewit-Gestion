@@ -65,7 +65,8 @@ test('Análisis de la Venta espera Analizar y conserva sus cuatro capas y detall
   assert.equal(await page.locator('#demand-hypotheses').isVisible(), true);
   await page.locator('#demand-analysis-workspace-tab-actions').click();
   assert.equal(await page.locator('#demand-actions').isVisible(), true);
-  assert.equal(await page.locator('#demand-advanced .demand-insight').count(), 7);
+  assert.equal(await page.locator('#demand-advanced .demand-insight').count(), 6);
+  assert.equal(await page.locator('[data-demand-tab="recurrence"]').count(), 0);
   await page.locator('#demand-analysis-workspace-tab-advanced').click();
   await page.getByRole('button', { name: 'Abrir análisis: Estacionalidad anual' }).click();
   await page.locator('#demand-advanced-dialog').waitFor({ state: 'visible' });

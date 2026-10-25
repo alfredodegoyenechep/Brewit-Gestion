@@ -20,6 +20,7 @@ const { salesCalendar, equivalentDayComparison } = require('./equivalent-sales')
 const { buildSalesProjection } = require('./sales-projection');
 const { averageTicketWithVat } = require('./metric-policy');
 const { buildDemandAnalysis, resolveDemandPeriod, orderMatches, resolveSaleSize } = require('./demand-analysis');
+const { aggregateRecurrence } = require('./demand-intelligence');
 const { linkOrdersToSettlements } = require('./transaction-linkage');
 const { classifyRecordedName, NAME_CLASSIFIER_VERSION } = require('./name-segmentation');
 const { createClusterJobs } = require('./sales-clusters-jobs');
@@ -6234,6 +6235,24 @@ function createApp(options = {}) {
       return { ...order, lines, cost, costAvailable };
     });
   }
+
+  app.get('/api/sales/observable-recurrence', (req, res) => {
+    try {
+      const today = projectionToday();
+      const [year, month] = today.split('-').map(Number);
+      const period = { from: new Date(Date.UTC(year, month - 6, 1)).toISOString().slice(0, 10), to: today };
+      const payload = buildDemandSource({ locations: String(req.query.location || 'all'), mode: 'custom',
+        dateFrom: period.from, dateTo: period.to });
+      const identity = demandOrdersWithIdentity(payload);
+      const selected = identity.orders.filter(order => order.date >= period.from && order.date <= period.to && !order.reversalSignals?.length);
+      return res.json({ date: today, period, scope: { location: String(req.query.location || 'all'),
+        label: req.query.location && req.query.location !== 'all' ? payload.stores[0].name : 'Todas las cafeterías' },
+        recurrence: aggregateRecurrence(selected, identity.orders, period, identity.linkageCoverage),
+        warnings: payload.source.warnings });
+    } catch (error) {
+      return res.status(error.status || 500).json({ error: error.message || 'No se pudo generar la recurrencia observable.' });
+    }
+  });
 
   app.get('/api/demand-analysis/options', (req, res) => {
     try { return res.json(demandOptions(buildDemandSource(req.query))); }

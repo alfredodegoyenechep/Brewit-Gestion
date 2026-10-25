@@ -136,6 +136,7 @@ let pastPurchaseOrdersRequestSequence = 0;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
 let salesServiceModeState = null;
+let salesObservableRecurrenceState = null;
 let salesProductFilters = { bar: 'all', groupFormats: false };
 const salesReportDefinitions = {
   'sales-margin': { status: 'sales-margin-status', type: 'participation' },
@@ -2070,7 +2071,13 @@ async function loadSalesReport(prefix) {
       const queryPrefix = { service: 'service', products: 'insight' }[definition.type];
       params.set(`${queryPrefix}DateFrom`, dateFrom); params.set(`${queryPrefix}DateTo`, dateTo);
     }
-    const data = await apiRequest(`${endpoint}?${params}`, { signal: request.controller.signal });
+    const [data, observable] = await Promise.all([
+      apiRequest(`${endpoint}?${params}`, { signal: request.controller.signal }),
+      definition.type === 'customers'
+        ? apiRequest(`/api/sales/observable-recurrence?${params}`, { signal: request.controller.signal })
+          .then(data => ({ data }), error => ({ error }))
+        : null
+    ]);
     if (!current()) return;
     if (definition.type === 'participation') {
       renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
@@ -2084,7 +2091,18 @@ async function loadSalesReport(prefix) {
       salesProductFilters = filters;
       salesHierarchyPath = [];
       renderSalesInsights();
-    } else renderMercadoPago(data);
+    } else {
+      renderMercadoPago(data);
+      const root = document.getElementById('sales-observable-recurrence-content');
+      if (observable.error) {
+        salesObservableRecurrenceState = null;
+        root.replaceChildren(demandEl('p', `No se pudo generar el complemento de recurrencia observable: ${observable.error.message}. Pulsa Generar reportes para reintentar.`, 'form-status error'));
+      } else {
+        salesObservableRecurrenceState = observable.data;
+        renderObservableRecurrence(root, observable.data.recurrence);
+        root.prepend(demandEl('p', `${observable.data.scope.label} · ${formatReportDate(observable.data.period.from)} – ${formatReportDate(observable.data.period.to)} · Últimos 6 meses.`, 'panel-description'));
+      }
+    }
     calculatedViewKeys.set(prefix, request.key);
     document.getElementById(`${prefix}-context`).textContent = hasPeriod
       ? `${data.scope.label} · ${formatReportDate(dateFrom)} – ${formatReportDate(dateTo)}${endpoint === '/api/financial-results' ? ' · Costo al corte del reporte.' : ''}`
@@ -2092,7 +2110,8 @@ async function loadSalesReport(prefix) {
     const message = endpoint === '/api/financial-results'
       ? `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`
       : definition.type === 'service' ? status.textContent : 'Reporte generado.';
-    const warnings = data.warnings || [];
+    const warnings = [...(data.warnings || []), ...(observable?.data?.warnings || [])];
+    if (observable?.error) warnings.push('El reporte de MercadoPago se generó; el complemento de recurrencia observable no está disponible.');
     setStatus(status, `${message}${warnings.length ? ` ${warnings.join(' ')}` : ''}`, warnings.length ? 'warning' : 'success');
   } catch (error) {
     if (current()) setStatus(status, error.message, 'error');
@@ -12311,6 +12330,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-view-filter').addEventListener('change', changeReportView);
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
+  document.getElementById('sales-observable-recurrence-content').addEventListener('click', event => {
+    const detail = event.target.closest('.demand-detail');
+    if (!detail || !salesObservableRecurrenceState) return;
+    const { scope, period } = salesObservableRecurrenceState;
+    const query = new URLSearchParams({ locations: scope.location, mode: 'custom', dateFrom: period.from, dateTo: period.to });
+    openDemandDetail(detail.dataset.kind, detail.dataset.key, 'Pedidos de recurrencia observable', query.toString());
+  });
   for (const prefix of Object.keys(salesReportDefinitions)) {
     document.getElementById(`${prefix}-filters`).addEventListener('submit', event => {
       event.preventDefault();
