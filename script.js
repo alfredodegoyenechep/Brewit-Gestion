@@ -136,7 +136,6 @@ let pastPurchaseOrdersRequestSequence = 0;
 let tentativePurchaseOrdersState = null;
 let salesDashboardState = null;
 let salesServiceModeState = null;
-let salesObservableRecurrenceState = null;
 let salesProductFilters = { bar: 'all', groupFormats: false };
 const salesReportDefinitions = {
   'sales-margin': { status: 'sales-margin-status', type: 'participation' },
@@ -144,7 +143,6 @@ const salesReportDefinitions = {
   'sales-service-mode': { status: 'sales-service-mode-status', type: 'service' },
   'sales-insight': { status: 'sales-insight-range-status', type: 'products' },
   'sales-ingredients': { status: 'sales-ingredients-status', type: 'ingredients' },
-  'sales-customers': { status: 'sales-customers-status', type: 'customers' }
 };
 let transactionAuditState = null;
 let transactionAuditSort = { key: 'date', direction: 'desc' };
@@ -2015,7 +2013,6 @@ async function loadFinancialResults(kind = 'statement') {
 }
 
 function salesReportFilterIds(prefix) {
-  if (prefix === 'sales-customers') return ['sales-customers-location'];
   const ids = ['location', 'period', 'from', 'to'].map(name => `${prefix}-${name}`);
   if (prefix === 'sales-insight') ids.push('sales-insight-bar', 'sales-insight-formats');
   return ids;
@@ -2071,13 +2068,7 @@ async function loadSalesReport(prefix) {
       const queryPrefix = { service: 'service', products: 'insight' }[definition.type];
       params.set(`${queryPrefix}DateFrom`, dateFrom); params.set(`${queryPrefix}DateTo`, dateTo);
     }
-    const [data, observable] = await Promise.all([
-      apiRequest(`${endpoint}?${params}`, { signal: request.controller.signal }),
-      definition.type === 'customers'
-        ? apiRequest(`/api/sales/observable-recurrence?${params}`, { signal: request.controller.signal })
-          .then(data => ({ data }), error => ({ error }))
-        : null
-    ]);
+    const data = await apiRequest(`${endpoint}?${params}`, { signal: request.controller.signal });
     if (!current()) return;
     if (definition.type === 'participation') {
       renderFinancialMetricRows('financial-bars-body', data.revenue.bars);
@@ -2091,17 +2082,6 @@ async function loadSalesReport(prefix) {
       salesProductFilters = filters;
       salesHierarchyPath = [];
       renderSalesInsights();
-    } else {
-      renderMercadoPago(data);
-      const root = document.getElementById('sales-observable-recurrence-content');
-      if (observable.error) {
-        salesObservableRecurrenceState = null;
-        root.replaceChildren(demandEl('p', `No se pudo generar el complemento de recurrencia observable: ${observable.error.message}. Pulsa Generar reportes para reintentar.`, 'form-status error'));
-      } else {
-        salesObservableRecurrenceState = observable.data;
-        renderObservableRecurrence(root, observable.data.recurrence);
-        root.prepend(demandEl('p', `${observable.data.scope.label} · ${formatReportDate(observable.data.period.from)} – ${formatReportDate(observable.data.period.to)} · Últimos 6 meses.`, 'panel-description'));
-      }
     }
     calculatedViewKeys.set(prefix, request.key);
     document.getElementById(`${prefix}-context`).textContent = hasPeriod
@@ -2110,8 +2090,7 @@ async function loadSalesReport(prefix) {
     const message = endpoint === '/api/financial-results'
       ? `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`
       : definition.type === 'service' ? status.textContent : 'Reporte generado.';
-    const warnings = [...(data.warnings || []), ...(observable?.data?.warnings || [])];
-    if (observable?.error) warnings.push('El reporte de MercadoPago se generó; el complemento de recurrencia observable no está disponible.');
+    const warnings = data.warnings || [];
     setStatus(status, `${message}${warnings.length ? ` ${warnings.join(' ')}` : ''}`, warnings.length ? 'warning' : 'success');
   } catch (error) {
     if (current()) setStatus(status, error.message, 'error');
@@ -4951,97 +4930,6 @@ function printHourlyAnalysis() {
     window.print();
     document.body.classList.remove('printing-hourly-analysis');
   }, 50);
-}
-
-function renderMercadoPago(report) {
-  const customer = report.mercadoPago.customers;
-  const summary = document.getElementById('mercadopago-customer-summary');
-  summary.replaceChildren();
-  for (const [label, value] of [['Tarjetas identificadas', customer.identified], ['Clientes recurrentes', customer.recurrent]]) {
-    const item = document.createElement('div');
-    item.innerHTML = `<strong></strong><span></span>`;
-    item.querySelector('strong').textContent = new Intl.NumberFormat('es-CL').format(value);
-    item.querySelector('span').textContent = label;
-    summary.appendChild(item);
-  }
-  const labels = { day: 'Hoy', week: 'Semana', month: 'Mes' };
-  document.getElementById('mercadopago-period-body').replaceChildren(...Object.entries(report.mercadoPago.metrics).map(([key, metric]) => {
-    const row = document.createElement('tr');
-    const prior = `${formatClp(metric.previous.sales)} · ${metric.previous.transactions} trans. · ${metric.previous.recurringTransactionPercent.toFixed(1)}% recurrentes`;
-    const cells = [
-      key === 'custom' ? 'Período seleccionado' : labels[key],
-      `${formatClp(metric.sales)} (${dashboardChange(metric.salesChangePercent).replace(' vs. período anterior', '')})`,
-      `${metric.transactions} (${dashboardChange(metric.transactionChangePercent).replace(' vs. período anterior', '')})`,
-      `${metric.recurringTransactionPercent.toFixed(1)}% (${metric.recurringTransactionPercentChange >= 0 ? '+' : ''}${metric.recurringTransactionPercentChange.toFixed(1)} pp)`,
-      `${metric.recurringSalesPercent.toFixed(1)}% (${metric.recurringSalesPercentChange >= 0 ? '+' : ''}${metric.recurringSalesPercentChange.toFixed(1)} pp)`,
-      prior
-    ];
-    cells.forEach((text, index) => {
-      const cell = document.createElement(index ? 'td' : 'th');
-      cell.textContent = text;
-      row.appendChild(cell);
-    });
-    return row;
-  }));
-  const definitions = [
-    ['moreThanThreeWeekly', 'Más de 3 veces por semana'],
-    ['moreThanWeekly', 'Más de 1 vez por semana'],
-    ['moreThanEvery15Days', 'Más de 1 vez cada 15 días'],
-    ['moreThanMonthly', 'Más de 1 vez al mes'],
-    ['occasional', 'Recurrentes menos frecuentes']
-  ];
-  document.getElementById('mercadopago-frequency').replaceChildren(...definitions.map(([key, label]) => {
-    const card = document.createElement('div');
-    card.className = 'frequency-card';
-    const value = document.createElement('strong');
-    value.textContent = new Intl.NumberFormat('es-CL').format(customer.frequency[key]);
-    const caption = document.createElement('span');
-    caption.textContent = label;
-    card.append(value, caption);
-    return card;
-  }));
-  const monthLabel = period => new Intl.DateTimeFormat('es-CL', { month: 'short', year: 'numeric' })
-    .format(dateFromKey(period.from));
-  const shortDate = value => new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short' })
-    .format(dateFromKey(value));
-  const historyRow = (period, label) => {
-    const row = document.createElement('tr');
-    const heading = document.createElement('th');
-    heading.scope = 'row';
-    heading.textContent = label;
-    row.appendChild(heading);
-    const percentCell = document.createElement('td');
-    percentCell.className = 'recurring-percent-cell';
-    const percent = document.createElement('strong');
-    percent.textContent = `${period.recurringSalesPercent.toFixed(1)}%`;
-    const track = document.createElement('span');
-    track.className = 'recurring-percent-track';
-    const fill = document.createElement('span');
-    fill.style.width = `${Math.min(100, Math.max(0, period.recurringSalesPercent))}%`;
-    track.appendChild(fill);
-    percentCell.append(percent, track);
-    row.appendChild(percentCell);
-    const values = [
-      `${formatClp(period.recurringSales)} / ${formatClp(period.totalSales)}`,
-      period.identifiedCards,
-      period.recurrentCustomers,
-      period.frequency.moreThanThreeWeekly,
-      period.frequency.moreThanWeekly,
-      period.frequency.moreThanEvery15Days,
-      period.frequency.moreThanMonthly,
-      period.frequency.occasional
-    ];
-    values.forEach(value => {
-      const cell = document.createElement('td');
-      cell.textContent = typeof value === 'number' ? new Intl.NumberFormat('es-CL').format(value) : value;
-      row.appendChild(cell);
-    });
-    return row;
-  };
-  document.getElementById('mercadopago-month-history').replaceChildren(...report.mercadoPago.history.months.map(period =>
-    historyRow(period, monthLabel(period))));
-  document.getElementById('mercadopago-week-history').replaceChildren(...report.mercadoPago.history.weeks.map(period =>
-    historyRow(period, `${shortDate(period.from)} – ${shortDate(period.to)}`)));
 }
 
 function salesAnalysisChip(text) {
@@ -12230,7 +12118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
   syncFinancialResultsPeriod();
   syncFinancialResultsPeriod('financial-costs');
-  Object.keys(salesReportDefinitions).filter(prefix => prefix !== 'sales-customers').forEach(prefix => syncFinancialResultsPeriod(prefix));
+  Object.keys(salesReportDefinitions).forEach(prefix => syncFinancialResultsPeriod(prefix));
   document.getElementById('financial-general-expenses-year').value = financialToday.slice(0, 4);
   document.body.appendChild(document.getElementById('date-confirmation'));
   document.querySelectorAll('.nav-link').forEach(link => {
@@ -12330,19 +12218,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('report-location-filter').addEventListener('change', loadWeeklySalesReport);
   document.getElementById('report-view-filter').addEventListener('change', changeReportView);
   document.getElementById('report-include-today').addEventListener('change', loadWeeklySalesReport);
-  document.getElementById('sales-observable-recurrence-content').addEventListener('click', event => {
-    const detail = event.target.closest('.demand-detail');
-    if (!detail || !salesObservableRecurrenceState) return;
-    const { scope, period } = salesObservableRecurrenceState;
-    const query = new URLSearchParams({ locations: scope.location, mode: 'custom', dateFrom: period.from, dateTo: period.to });
-    openDemandDetail(detail.dataset.kind, detail.dataset.key, 'Pedidos de recurrencia observable', query.toString());
-  });
   for (const prefix of Object.keys(salesReportDefinitions)) {
     document.getElementById(`${prefix}-filters`).addEventListener('submit', event => {
       event.preventDefault();
       loadSalesReport(prefix);
     });
-    if (prefix !== 'sales-customers') document.getElementById(`${prefix}-period`).addEventListener('change', () => syncFinancialResultsPeriod(prefix));
+    document.getElementById(`${prefix}-period`).addEventListener('change', () => syncFinancialResultsPeriod(prefix));
     for (const id of salesReportFilterIds(prefix)) {
       document.getElementById(id).addEventListener('change', () => markSalesReportDirty(prefix));
     }

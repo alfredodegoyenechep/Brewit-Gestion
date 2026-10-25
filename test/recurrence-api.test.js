@@ -1,0 +1,29 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { setup } = require('./helpers/recurrence-fixture');
+test('API: explicit generation, snapshot coherence, independent cohort dates and sections on demand', async t => {
+  const s = await setup(t);
+  const response = await fetch(`${s.base}/api/sales/recurrence?location=store-1&period=custom&dateFrom=2026-10-01&dateTo=2026-10-07`); assert.equal(response.status, 200);
+  const data = await response.json(); assert.ok(data.id); assert.equal(data.definitionVersion, 'recurrence-dates-v2'); assert.equal(data.summary.active.value, 3); assert.equal(s.reads(), 0);
+  const cohort = await fetch(`${s.base}/api/sales/recurrence/${data.id}/return?from=2026-09-01&to=2026-10-01&granularity=month&commonBase=true`).then(r => r.json());
+  assert.equal(cohort.from, '2026-09-01'); assert.equal(cohort.D, '2026-10-07'); assert.equal(cohort.commonBase, true);
+  const details = await fetch(`${s.base}/api/sales/recurrence/${data.id}/details?kind=return`).then(r => r.json());
+  assert.equal(details.total, 2); assert.ok(details.rows.every(r => r.alias.startsWith('MP-'))); assert.ok(!JSON.stringify(details).includes('123456'));
+  const firstExport = await fetch(`${s.base}/api/sales/recurrence/${data.id}/export`).then(r => r.json()); assert.equal(firstExport.purchases, null);
+  const selectedExport = await fetch(`${s.base}/api/sales/recurrence/${data.id}/export?${new URLSearchParams({ cohortKey: cohort.selectionKey })}`).then(r => r.json());
+  assert.equal(selectedExport.returns.from, '2026-09-01'); assert.equal(selectedExport.returns.to, '2026-10-01');
+  assert.equal(firstExport.returns.from, data.cohortDefaults.from); assert.equal(s.reads(), 0);
+  const quality = await fetch(`${s.base}/api/sales/recurrence/${data.id}/quality`).then(r => r.json()); assert.equal(quality.purchases.orders, 0); assert.equal(s.reads(), 1);
+  await fetch(`${s.base}/api/sales/recurrence/${data.id}/purchases`); assert.equal(s.reads(), 1);
+  const cached = await fetch(`${s.base}/api/sales/recurrence?location=store-1&period=custom&dateFrom=2026-10-01&dateTo=2026-10-07`).then(r => r.json()); assert.equal(cached.id, data.id); assert.ok(cached.returns);
+  s.bump(); assert.equal((await fetch(`${s.base}/api/sales/recurrence/${data.id}/return`)).status, 409);
+  assert.equal((await fetch(`${s.base}/api/sales/recurrence/missing/details`)).status, 404);
+  assert.equal((await fetch(`${s.base}/api/sales/recurrence?location=bad`)).status, 400);
+  assert.equal((await fetch(`${s.base}/api/sales/recurrence?period=custom&dateFrom=2026-11-12&dateTo=2026-11-13`)).status, 400);
+});
+test('API worker uses actual stored MP rows without a Toteat dependency and closes cleanly', async t => {
+  const s = await setup(t, true);
+  const data = await fetch(`${s.base}/api/sales/recurrence?location=store-1&period=custom&dateFrom=2026-10-01&dateTo=2026-10-07`).then(r => r.json());
+  assert.equal(data.summary.active.value, 3); assert.equal(data.summary.status, 'partial'); assert.equal(data.lastCompleteDay, null);
+  assert.equal(data.summary.returnAmountRate.value, 57.1); assert.equal(data.quality.coverage.length, 0);
+});

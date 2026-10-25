@@ -1,0 +1,1263 @@
+{
+  "measuredAt": "2026-10-25T19:46:32.024Z",
+  "period": {
+    "from": "2026-10-01",
+    "to": "2026-10-25"
+  },
+  "scopes": {
+    "store-2": {
+      "label": "Portal Lyon",
+      "legacy": {
+        "from": "2026-10-01",
+        "to": "2026-10-25",
+        "transactions": 586,
+        "sales": 3387847,
+        "recurringTransactions": 88,
+        "recurringSales": 458546,
+        "recurringTransactionPercent": 15.017064846416384,
+        "recurringSalesPercent": 13.535026817917101,
+        "salesChangePercent": null,
+        "transactionChangePercent": null,
+        "recurringTransactionPercentChange": 15.017064846416384,
+        "recurringSalesPercentChange": 13.535026817917101
+      },
+      "current": {
+        "payments": 586,
+        "identifiedPayments": 585,
+        "active": 497,
+        "returningInstruments": {
+          "value": 11.5,
+          "unit": "percent",
+          "population": "Instrumentos activos con compras en dos fechas distintas hasta el corte",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-24T19:45:50",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 57,
+          "denominator": 497,
+          "reason": null
+        },
+        "purchaseDays": 576,
+        "returnDays": {
+          "value": 13.7,
+          "unit": "percent",
+          "population": "Días con compra identificados",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-24T19:45:50",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 79,
+          "denominator": 576,
+          "reason": null
+        },
+        "returnAmount": {
+          "value": 13.1,
+          "unit": "percent",
+          "population": "Importe de pagos identificados",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-24T19:45:50",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 443140,
+          "denominator": 3382647,
+          "reason": null
+        },
+        "totalAmount": 3387847,
+        "identifiedAmount": 3382647,
+        "unidentifiedAmount": 5200,
+        "firstAmount": 2939507,
+        "firstObserved": 497,
+        "knownBefore": 0,
+        "sameDateRepeatPayments": 9,
+        "repeatedPaymentsOnFirstDate": 5,
+        "repeatedAmountOnFirstDate": 15406,
+        "returnPayments": 83,
+        "return30": {
+          "value": null,
+          "unit": "percent",
+          "population": "Primeras observaciones entre D−119 y D−30 con seguimiento completo",
+          "periodStart": "2026-06-26",
+          "periodEnd": "2026-09-23",
+          "asOf": "2026-10-24T19:45:50",
+          "source": "mercadopago",
+          "status": "no_data",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 0,
+          "denominator": 0,
+          "reason": "Sin primeras observaciones acreditadas en la ventana de entrada",
+          "excluded": 0
+        },
+        "lastCompleteDay": "2026-10-23",
+        "asOf": "2026-10-24T19:45:50",
+        "status": "partial",
+        "coverage": {
+          "expectedDays": 25,
+          "allLocationsCoveredDays": 12,
+          "locals": [
+            {
+              "location": "store-2",
+              "coveredDays": 12,
+              "missing": [
+                "2026-10-01",
+                "2026-10-02",
+                "2026-10-03",
+                "2026-10-04",
+                "2026-10-05",
+                "2026-10-06",
+                "2026-10-07",
+                "2026-10-08",
+                "2026-10-09",
+                "2026-10-10",
+                "2026-10-11",
+                "2026-10-24",
+                "2026-10-25"
+              ]
+            }
+          ]
+        },
+        "diagnostics": {
+          "rows": 586,
+          "duplicates": 0,
+          "revised": 0,
+          "excluded": {},
+          "unknownRefunds": 0,
+          "missingAccount": 586,
+          "missingStatus": 586
+        },
+        "refunds": "unavailable",
+        "warnings": [
+          "Identidad aproximada: un medio de pago no equivale a una persona.",
+          "Los reportes SETTLEMENT acreditan operaciones observadas, no todos los estados de aprobación y devolución."
+        ]
+      },
+      "purchases": {
+        "rows": [
+          {
+            "key": "first",
+            "label": "Pedidos de primera fecha observada",
+            "orders": 481,
+            "netSales": 2291757,
+            "medianTicketGross": 4800,
+            "unitsPerOrder": 1.4,
+            "mix": {
+              "products": [
+                {
+                  "key": "B1040",
+                  "name": "Cappuccino (CL)",
+                  "units": 41,
+                  "orders": 38,
+                  "netSales": 134358.790488524,
+                  "penetrationPercent": 7.9,
+                  "unitsPer100Orders": 8.5,
+                  "spendingSharePercent": 5.9
+                },
+                {
+                  "key": "B2200",
+                  "name": "Strawberry Matcha (Iced) (GR)",
+                  "units": 30,
+                  "orders": 29,
+                  "netSales": 119270.7404835212,
+                  "penetrationPercent": 6,
+                  "unitsPer100Orders": 6.2,
+                  "spendingSharePercent": 5.2
+                },
+                {
+                  "key": "B1020",
+                  "name": "Americano (CL)",
+                  "units": 32,
+                  "orders": 28,
+                  "netSales": 94113.49541146844,
+                  "penetrationPercent": 5.8,
+                  "unitsPer100Orders": 6.7,
+                  "spendingSharePercent": 4.1
+                }
+              ],
+              "categories": [
+                {
+                  "key": "AB.010020",
+                  "name": "Café Caliente",
+                  "units": 285,
+                  "orders": 240,
+                  "netSales": 952237.2137403945,
+                  "penetrationPercent": 49.9,
+                  "unitsPer100Orders": 59.3,
+                  "spendingSharePercent": 41.6
+                },
+                {
+                  "key": "AB.010090",
+                  "name": "Matcha & Chai",
+                  "units": 141,
+                  "orders": 129,
+                  "netSales": 521865.96862922696,
+                  "penetrationPercent": 26.8,
+                  "unitsPer100Orders": 29.3,
+                  "spendingSharePercent": 22.8
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 89,
+                  "orders": 68,
+                  "netSales": 154028.1813823859,
+                  "penetrationPercent": 14.1,
+                  "unitsPer100Orders": 18.5,
+                  "spendingSharePercent": 6.7
+                }
+              ],
+              "focusCategories": [
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 89,
+                  "orders": 68,
+                  "netSales": 154028.1813823859,
+                  "penetrationPercent": 14.1,
+                  "unitsPer100Orders": 18.5,
+                  "spendingSharePercent": 6.7
+                }
+              ]
+            },
+            "takeaway": 8,
+            "unknownMode": 472
+          },
+          {
+            "key": "return",
+            "label": "Pedidos de regreso",
+            "orders": 79,
+            "netSales": 347656,
+            "medianTicketGross": 4800,
+            "unitsPerOrder": 1.29,
+            "mix": {
+              "products": [
+                {
+                  "key": "B1040",
+                  "name": "Cappuccino (CL)",
+                  "units": 12,
+                  "orders": 12,
+                  "netSales": 39323.238668464306,
+                  "penetrationPercent": 15.2,
+                  "unitsPer100Orders": 15.2,
+                  "spendingSharePercent": 11.3
+                },
+                {
+                  "key": "B1190",
+                  "name": "Caramel Macchiato (CL)",
+                  "units": 6,
+                  "orders": 6,
+                  "netSales": 22182.240807902108,
+                  "penetrationPercent": 7.6,
+                  "unitsPer100Orders": 7.6,
+                  "spendingSharePercent": 6.4
+                },
+                {
+                  "key": "B1060",
+                  "name": "Flat White (CL)",
+                  "units": 6,
+                  "orders": 6,
+                  "netSales": 20670.120437742906,
+                  "penetrationPercent": 7.6,
+                  "unitsPer100Orders": 7.6,
+                  "spendingSharePercent": 5.9
+                }
+              ],
+              "categories": [
+                {
+                  "key": "AB.010020",
+                  "name": "Café Caliente",
+                  "units": 52,
+                  "orders": 43,
+                  "netSales": 176461.26861945115,
+                  "penetrationPercent": 54.4,
+                  "unitsPer100Orders": 65.8,
+                  "spendingSharePercent": 50.8
+                },
+                {
+                  "key": "AB.010090",
+                  "name": "Matcha & Chai",
+                  "units": 18,
+                  "orders": 16,
+                  "netSales": 67131.20200413621,
+                  "penetrationPercent": 20.3,
+                  "unitsPer100Orders": 22.8,
+                  "spendingSharePercent": 19.3
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 16,
+                  "orders": 16,
+                  "netSales": 29957.428303546225,
+                  "penetrationPercent": 20.3,
+                  "unitsPer100Orders": 20.3,
+                  "spendingSharePercent": 8.6
+                }
+              ],
+              "focusCategories": [
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 16,
+                  "orders": 16,
+                  "netSales": 29957.428303546225,
+                  "penetrationPercent": 20.3,
+                  "unitsPer100Orders": 20.3,
+                  "spendingSharePercent": 8.6
+                }
+              ]
+            },
+            "takeaway": 0,
+            "unknownMode": 79
+          }
+        ],
+        "quality": {
+          "orders": 608,
+          "linked": 560,
+          "classifiable": 560,
+          "monetaryVerifiedOrders": 608,
+          "netSales": 2841008,
+          "classifiedSales": 2639413,
+          "orderCoveragePercent": 92.1,
+          "salesCoveragePercent": 92.9
+        },
+        "linkage": {
+          "orders": 608,
+          "linkedHigh": 560,
+          "ambiguous": 20,
+          "unlinked": 28,
+          "linkedPercent": 92.1,
+          "method": "Coincidencia estimada uno-a-uno por local, fecha, monto pagado y cercanía máxima de 2 minuto(s). No es un identificador explícito de TotEat.",
+          "explicit": 0
+        },
+        "reasons": [
+          {
+            "reason": "Vínculo ambiguo",
+            "orders": 20,
+            "netSales": 75964
+          },
+          {
+            "reason": "Sin vínculo confiable",
+            "orders": 28,
+            "netSales": 125631
+          }
+        ],
+        "status": "partial",
+        "sample": [
+          {
+            "classification": "first",
+            "date": "2026-10-02",
+            "netSales": 2269,
+            "ticketGross": 2700,
+            "units": 1,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          },
+          {
+            "classification": "first",
+            "date": "2026-10-05",
+            "netSales": 5714,
+            "ticketGross": 6800,
+            "units": 2,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          },
+          {
+            "classification": "first",
+            "date": "2026-10-08",
+            "netSales": 8908,
+            "ticketGross": 10600,
+            "units": 2,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          }
+        ]
+      },
+      "performance": {
+        "legacyMs": 2772,
+        "summaryMs": 1050,
+        "warmMs": 11,
+        "sameSnapshot": true,
+        "purchasesMs": 11525,
+        "exportPayloadMs": 15
+      }
+    },
+    "store-1": {
+      "label": "La Concepcion",
+      "legacy": {
+        "from": "2026-10-01",
+        "to": "2026-10-25",
+        "transactions": 1603,
+        "sales": 11882351,
+        "recurringTransactions": 787,
+        "recurringSales": 5472160,
+        "recurringTransactionPercent": 49.09544603867748,
+        "recurringSalesPercent": 46.05283920665195,
+        "salesChangePercent": -8.580190431024516,
+        "transactionChangePercent": -6.421482778750731,
+        "recurringTransactionPercentChange": -2.3347933074988205,
+        "recurringSalesPercentChange": -4.156726937534884
+      },
+      "current": {
+        "payments": 1603,
+        "identifiedPayments": 1598,
+        "active": 1194,
+        "returningInstruments": {
+          "value": 37.6,
+          "unit": "percent",
+          "population": "Instrumentos activos con compras en dos fechas distintas hasta el corte",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-25T16:46:59",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 449,
+          "denominator": 1194,
+          "reason": null
+        },
+        "purchaseDays": 1506,
+        "returnDays": {
+          "value": 46.1,
+          "unit": "percent",
+          "population": "Días con compra identificados",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-25T16:46:59",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 695,
+          "denominator": 1506,
+          "reason": null
+        },
+        "returnAmount": {
+          "value": 44.5,
+          "unit": "percent",
+          "population": "Importe de pagos identificados",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-25T16:46:59",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 5270775,
+          "denominator": 11841451,
+          "reason": null
+        },
+        "totalAmount": 11882351,
+        "identifiedAmount": 11841451,
+        "unidentifiedAmount": 40900,
+        "firstAmount": 6570676,
+        "firstObserved": 811,
+        "knownBefore": 383,
+        "sameDateRepeatPayments": 92,
+        "repeatedPaymentsOnFirstDate": 40,
+        "repeatedAmountOnFirstDate": 201385,
+        "returnPayments": 747,
+        "return30": {
+          "value": null,
+          "unit": "percent",
+          "population": "Primeras observaciones entre D−119 y D−30 con seguimiento completo",
+          "periodStart": "2026-06-27",
+          "periodEnd": "2026-09-24",
+          "asOf": "2026-10-25T16:46:59",
+          "source": "mercadopago",
+          "status": "no_data",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 0,
+          "denominator": 0,
+          "reason": "Sin cobertura para verificar el seguimiento",
+          "excluded": 3617
+        },
+        "lastCompleteDay": null,
+        "asOf": "2026-10-25T16:46:59",
+        "status": "partial",
+        "coverage": {
+          "expectedDays": 25,
+          "allLocationsCoveredDays": 0,
+          "locals": [
+            {
+              "location": "store-1",
+              "coveredDays": 0,
+              "missing": [
+                "2026-10-01",
+                "2026-10-02",
+                "2026-10-03",
+                "2026-10-04",
+                "2026-10-05",
+                "2026-10-06",
+                "2026-10-07",
+                "2026-10-08",
+                "2026-10-09",
+                "2026-10-10",
+                "2026-10-11",
+                "2026-10-12",
+                "2026-10-13",
+                "2026-10-14",
+                "2026-10-15",
+                "2026-10-16",
+                "2026-10-17",
+                "2026-10-18",
+                "2026-10-19",
+                "2026-10-20",
+                "2026-10-21",
+                "2026-10-22",
+                "2026-10-23",
+                "2026-10-24",
+                "2026-10-25"
+              ]
+            }
+          ]
+        },
+        "diagnostics": {
+          "rows": 11667,
+          "duplicates": 0,
+          "revised": 0,
+          "excluded": {
+            "nonpositive": 1
+          },
+          "unknownRefunds": 0,
+          "missingAccount": 11666,
+          "missingStatus": 11666
+        },
+        "refunds": "unavailable",
+        "warnings": [
+          "Se omitió una hoja sin encabezados MercadoPago (La Concepcion).",
+          "No se puede acreditar continuidad con archivos MP ausentes o ilegibles (La Concepcion).",
+          "Identidad aproximada: un medio de pago no equivale a una persona.",
+          "Los reportes SETTLEMENT acreditan operaciones observadas, no todos los estados de aprobación y devolución.",
+          "No existe evidencia suficiente de un último día completamente cubierto. Los datos observados son provisionales."
+        ]
+      },
+      "purchases": {
+        "rows": [
+          {
+            "key": "first",
+            "label": "Pedidos de primera fecha observada",
+            "orders": 823,
+            "netSales": 5140071,
+            "medianTicketGross": 5850,
+            "unitsPerOrder": 1.89,
+            "mix": {
+              "products": [
+                {
+                  "key": "B1040",
+                  "name": "Cappuccino (CL)",
+                  "units": 82,
+                  "orders": 74,
+                  "netSales": 268728.52760166535,
+                  "penetrationPercent": 9,
+                  "unitsPer100Orders": 10,
+                  "spendingSharePercent": 5.2
+                },
+                {
+                  "key": "B1020",
+                  "name": "Americano (CL)",
+                  "units": 54,
+                  "orders": 52,
+                  "netSales": 158816.37863406414,
+                  "penetrationPercent": 6.3,
+                  "unitsPer100Orders": 6.6,
+                  "spendingSharePercent": 3.1
+                },
+                {
+                  "key": "B2930",
+                  "name": "Croissant Crema Chocolate Avellanas",
+                  "units": 47,
+                  "orders": 43,
+                  "netSales": 77021.26165723891,
+                  "penetrationPercent": 5.2,
+                  "unitsPer100Orders": 5.7,
+                  "spendingSharePercent": 1.5
+                }
+              ],
+              "categories": [
+                {
+                  "key": "AB.010020",
+                  "name": "Café Caliente",
+                  "units": 537,
+                  "orders": 422,
+                  "netSales": 1785012.5453197872,
+                  "penetrationPercent": 51.3,
+                  "unitsPer100Orders": 65.2,
+                  "spendingSharePercent": 34.7
+                },
+                {
+                  "key": "AB.010090",
+                  "name": "Matcha & Chai",
+                  "units": 235,
+                  "orders": 211,
+                  "netSales": 853563.1246119621,
+                  "penetrationPercent": 25.6,
+                  "unitsPer100Orders": 28.6,
+                  "spendingSharePercent": 16.6
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 264,
+                  "orders": 198,
+                  "netSales": 481900.1668120541,
+                  "penetrationPercent": 24.1,
+                  "unitsPer100Orders": 32.1,
+                  "spendingSharePercent": 9.4
+                }
+              ],
+              "focusCategories": [
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 264,
+                  "orders": 198,
+                  "netSales": 481900.1668120541,
+                  "penetrationPercent": 24.1,
+                  "unitsPer100Orders": 32.1,
+                  "spendingSharePercent": 9.4
+                },
+                {
+                  "key": "AB.140160",
+                  "name": "Sandwich",
+                  "units": 185,
+                  "orders": 160,
+                  "netSales": 764629.0709165802,
+                  "penetrationPercent": 19.4,
+                  "unitsPer100Orders": 22.5,
+                  "spendingSharePercent": 14.9
+                }
+              ]
+            },
+            "takeaway": 372,
+            "unknownMode": 23
+          },
+          {
+            "key": "return",
+            "label": "Pedidos de regreso",
+            "orders": 721,
+            "netSales": 4176358,
+            "medianTicketGross": 5600,
+            "unitsPerOrder": 1.71,
+            "mix": {
+              "products": [
+                {
+                  "key": "B1070",
+                  "name": "Cortado (Cor)",
+                  "units": 74,
+                  "orders": 69,
+                  "netSales": 174122.28440650282,
+                  "penetrationPercent": 9.6,
+                  "unitsPer100Orders": 10.3,
+                  "spendingSharePercent": 4.2
+                },
+                {
+                  "key": "B1020",
+                  "name": "Americano (CL)",
+                  "units": 68,
+                  "orders": 64,
+                  "netSales": 196271.95270941764,
+                  "penetrationPercent": 8.9,
+                  "unitsPer100Orders": 9.4,
+                  "spendingSharePercent": 4.7
+                },
+                {
+                  "key": "B2820",
+                  "name": "Sandwich Baguette Serrano / Gruyere / Rucula",
+                  "units": 53,
+                  "orders": 51,
+                  "netSales": 218244.5860894316,
+                  "penetrationPercent": 7.1,
+                  "unitsPer100Orders": 7.4,
+                  "spendingSharePercent": 5.2
+                }
+              ],
+              "categories": [
+                {
+                  "key": "AB.010020",
+                  "name": "Café Caliente",
+                  "units": 558,
+                  "orders": 456,
+                  "netSales": 1830912.0908257891,
+                  "penetrationPercent": 63.2,
+                  "unitsPer100Orders": 77.4,
+                  "spendingSharePercent": 43.8
+                },
+                {
+                  "key": "AB.140160",
+                  "name": "Sandwich",
+                  "units": 193,
+                  "orders": 174,
+                  "netSales": 797697.9441152196,
+                  "penetrationPercent": 24.1,
+                  "unitsPer100Orders": 26.8,
+                  "spendingSharePercent": 19.1
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 169,
+                  "orders": 132,
+                  "netSales": 305890.05501245864,
+                  "penetrationPercent": 18.3,
+                  "unitsPer100Orders": 23.4,
+                  "spendingSharePercent": 7.3
+                }
+              ],
+              "focusCategories": [
+                {
+                  "key": "AB.140160",
+                  "name": "Sandwich",
+                  "units": 193,
+                  "orders": 174,
+                  "netSales": 797697.9441152196,
+                  "penetrationPercent": 24.1,
+                  "unitsPer100Orders": 26.8,
+                  "spendingSharePercent": 19.1
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 169,
+                  "orders": 132,
+                  "netSales": 305890.05501245864,
+                  "penetrationPercent": 18.3,
+                  "unitsPer100Orders": 23.4,
+                  "spendingSharePercent": 7.3
+                }
+              ]
+            },
+            "takeaway": 411,
+            "unknownMode": 29
+          }
+        ],
+        "quality": {
+          "orders": 1660,
+          "linked": 1549,
+          "classifiable": 1544,
+          "monetaryVerifiedOrders": 1660,
+          "netSales": 9985893,
+          "classifiedSales": 9316429,
+          "orderCoveragePercent": 93,
+          "salesCoveragePercent": 93.3
+        },
+        "linkage": {
+          "orders": 1660,
+          "linkedHigh": 1549,
+          "ambiguous": 46,
+          "unlinked": 65,
+          "linkedPercent": 93.3,
+          "method": "Coincidencia estimada uno-a-uno por local, fecha, monto pagado y cercanía máxima de 2 minuto(s). No es un identificador explícito de TotEat.",
+          "explicit": 0
+        },
+        "reasons": [
+          {
+            "reason": "Vínculo ambiguo",
+            "orders": 46,
+            "netSales": 225078
+          },
+          {
+            "reason": "Sin vínculo confiable",
+            "orders": 65,
+            "netSales": 410015
+          },
+          {
+            "reason": "Pago no identificable",
+            "orders": 5,
+            "netSales": 34371
+          }
+        ],
+        "status": "partial",
+        "sample": [
+          {
+            "classification": "return",
+            "date": "2026-10-01",
+            "netSales": 6722,
+            "ticketGross": 8000,
+            "units": 2,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          },
+          {
+            "classification": "return",
+            "date": "2026-10-01",
+            "netSales": 3782,
+            "ticketGross": 4500,
+            "units": 1,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          },
+          {
+            "classification": "return",
+            "date": "2026-10-01",
+            "netSales": 8152,
+            "ticketGross": 9700,
+            "units": 2,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          }
+        ]
+      },
+      "performance": {
+        "legacyMs": 12410,
+        "summaryMs": 2977,
+        "warmMs": 2346,
+        "sameSnapshot": false,
+        "purchasesMs": 6979,
+        "exportPayloadMs": 23
+      }
+    },
+    "all": {
+      "label": "Todas las cafeterías",
+      "legacy": {
+        "from": "2026-10-01",
+        "to": "2026-10-25",
+        "transactions": 2189,
+        "sales": 15270198,
+        "recurringTransactions": 894,
+        "recurringSales": 6034841,
+        "recurringTransactionPercent": 40.84056646870717,
+        "recurringSalesPercent": 39.52038473895361,
+        "salesChangePercent": 17.485049317306856,
+        "transactionChangePercent": 27.787507297139523,
+        "recurringTransactionPercentChange": -10.589672877469127,
+        "recurringSalesPercentChange": -10.689181405233228
+      },
+      "current": {
+        "payments": 2189,
+        "identifiedPayments": 2183,
+        "active": 1682,
+        "returningInstruments": {
+          "value": 30.7,
+          "unit": "percent",
+          "population": "Instrumentos activos con compras en dos fechas distintas hasta el corte",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-25T16:47:24",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 517,
+          "denominator": 1682,
+          "reason": null
+        },
+        "purchaseDays": 2081,
+        "returnDays": {
+          "value": 38.1,
+          "unit": "percent",
+          "population": "Días con compra identificados",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-25T16:47:24",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 792,
+          "denominator": 2081,
+          "reason": null
+        },
+        "returnAmount": {
+          "value": 38.2,
+          "unit": "percent",
+          "population": "Importe de pagos identificados",
+          "periodStart": "2026-10-01",
+          "periodEnd": "2026-10-25",
+          "asOf": "2026-10-25T16:47:24",
+          "source": "mercadopago",
+          "status": "partial",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 5818050,
+          "denominator": 15224098,
+          "reason": null
+        },
+        "totalAmount": 15270198,
+        "identifiedAmount": 15224098,
+        "unidentifiedAmount": 46100,
+        "firstAmount": 9406048,
+        "firstObserved": 1289,
+        "knownBefore": 393,
+        "sameDateRepeatPayments": 102,
+        "repeatedPaymentsOnFirstDate": 45,
+        "repeatedAmountOnFirstDate": 216791,
+        "returnPayments": 849,
+        "return30": {
+          "value": null,
+          "unit": "percent",
+          "population": "Primeras observaciones entre D−119 y D−30 con seguimiento completo",
+          "periodStart": "2026-06-27",
+          "periodEnd": "2026-09-24",
+          "asOf": "2026-10-25T16:47:24",
+          "source": "mercadopago",
+          "status": "no_data",
+          "definitionVersion": "recurrence-dates-v2",
+          "numerator": 0,
+          "denominator": 0,
+          "reason": "Sin cobertura para verificar el seguimiento",
+          "excluded": 3617
+        },
+        "lastCompleteDay": null,
+        "asOf": "2026-10-25T16:47:24",
+        "status": "partial",
+        "coverage": {
+          "expectedDays": 25,
+          "allLocationsCoveredDays": 0,
+          "locals": [
+            {
+              "location": "store-1",
+              "coveredDays": 0,
+              "missing": [
+                "2026-10-01",
+                "2026-10-02",
+                "2026-10-03",
+                "2026-10-04",
+                "2026-10-05",
+                "2026-10-06",
+                "2026-10-07",
+                "2026-10-08",
+                "2026-10-09",
+                "2026-10-10",
+                "2026-10-11",
+                "2026-10-12",
+                "2026-10-13",
+                "2026-10-14",
+                "2026-10-15",
+                "2026-10-16",
+                "2026-10-17",
+                "2026-10-18",
+                "2026-10-19",
+                "2026-10-20",
+                "2026-10-21",
+                "2026-10-22",
+                "2026-10-23",
+                "2026-10-24",
+                "2026-10-25"
+              ]
+            },
+            {
+              "location": "store-2",
+              "coveredDays": 12,
+              "missing": [
+                "2026-10-01",
+                "2026-10-02",
+                "2026-10-03",
+                "2026-10-04",
+                "2026-10-05",
+                "2026-10-06",
+                "2026-10-07",
+                "2026-10-08",
+                "2026-10-09",
+                "2026-10-10",
+                "2026-10-11",
+                "2026-10-24",
+                "2026-10-25"
+              ]
+            }
+          ]
+        },
+        "diagnostics": {
+          "rows": 12253,
+          "duplicates": 0,
+          "revised": 0,
+          "excluded": {
+            "nonpositive": 1
+          },
+          "unknownRefunds": 0,
+          "missingAccount": 12252,
+          "missingStatus": 12252
+        },
+        "refunds": "unavailable",
+        "warnings": [
+          "Se omitió una hoja sin encabezados MercadoPago (La Concepcion).",
+          "No se puede acreditar continuidad con archivos MP ausentes o ilegibles (La Concepcion).",
+          "Identidad aproximada: un medio de pago no equivale a una persona.",
+          "Consolidado aproximado: no está acreditada una identidad global entre cuentas de pago.",
+          "Los reportes SETTLEMENT acreditan operaciones observadas, no todos los estados de aprobación y devolución.",
+          "No existe evidencia suficiente de un último día completamente cubierto. Los datos observados son provisionales."
+        ]
+      },
+      "purchases": {
+        "rows": [
+          {
+            "key": "first",
+            "label": "Pedidos de primera fecha observada",
+            "orders": 1286,
+            "netSales": 7357245,
+            "medianTicketGross": 5200,
+            "unitsPerOrder": 1.71,
+            "mix": {
+              "products": [
+                {
+                  "key": "B1040",
+                  "name": "Cappuccino (CL)",
+                  "units": 122,
+                  "orders": 111,
+                  "netSales": 399810.3180901893,
+                  "penetrationPercent": 8.6,
+                  "unitsPer100Orders": 9.5,
+                  "spendingSharePercent": 5.4
+                },
+                {
+                  "key": "B1020",
+                  "name": "Americano (CL)",
+                  "units": 85,
+                  "orders": 79,
+                  "netSales": 249988.84463376782,
+                  "penetrationPercent": 6.1,
+                  "unitsPer100Orders": 6.6,
+                  "spendingSharePercent": 3.4
+                },
+                {
+                  "key": "B2200",
+                  "name": "Strawberry Matcha (Iced) (GR)",
+                  "units": 67,
+                  "orders": 65,
+                  "netSales": 268526.3769527623,
+                  "penetrationPercent": 5.1,
+                  "unitsPer100Orders": 5.2,
+                  "spendingSharePercent": 3.6
+                }
+              ],
+              "categories": [
+                {
+                  "key": "AB.010020",
+                  "name": "Café Caliente",
+                  "units": 811,
+                  "orders": 652,
+                  "netSales": 2705904.558219846,
+                  "penetrationPercent": 50.7,
+                  "unitsPer100Orders": 63.1,
+                  "spendingSharePercent": 36.8
+                },
+                {
+                  "key": "AB.010090",
+                  "name": "Matcha & Chai",
+                  "units": 375,
+                  "orders": 339,
+                  "netSales": 1371395.093241188,
+                  "penetrationPercent": 26.4,
+                  "unitsPer100Orders": 29.2,
+                  "spendingSharePercent": 18.6
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 346,
+                  "orders": 260,
+                  "netSales": 622440.3434495119,
+                  "penetrationPercent": 20.2,
+                  "unitsPer100Orders": 26.9,
+                  "spendingSharePercent": 8.5
+                }
+              ],
+              "focusCategories": [
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 346,
+                  "orders": 260,
+                  "netSales": 622440.3434495119,
+                  "penetrationPercent": 20.2,
+                  "unitsPer100Orders": 26.9,
+                  "spendingSharePercent": 8.5
+                },
+                {
+                  "key": "AB.140160",
+                  "name": "Sandwich",
+                  "units": 185,
+                  "orders": 160,
+                  "netSales": 764629.0709165802,
+                  "penetrationPercent": 12.4,
+                  "unitsPer100Orders": 14.4,
+                  "spendingSharePercent": 10.4
+                }
+              ]
+            },
+            "takeaway": 379,
+            "unknownMode": 479
+          },
+          {
+            "key": "return",
+            "label": "Pedidos de regreso",
+            "orders": 818,
+            "netSales": 4598597,
+            "medianTicketGross": 5200,
+            "unitsPerOrder": 1.66,
+            "mix": {
+              "products": [
+                {
+                  "key": "B1070",
+                  "name": "Cortado (Cor)",
+                  "units": 76,
+                  "orders": 71,
+                  "netSales": 178828.50179780714,
+                  "penetrationPercent": 8.7,
+                  "unitsPer100Orders": 9.3,
+                  "spendingSharePercent": 3.9
+                },
+                {
+                  "key": "B1020",
+                  "name": "Americano (CL)",
+                  "units": 75,
+                  "orders": 70,
+                  "netSales": 216859.24882184525,
+                  "penetrationPercent": 8.6,
+                  "unitsPer100Orders": 9.2,
+                  "spendingSharePercent": 4.7
+                },
+                {
+                  "key": "B1040",
+                  "name": "Cappuccino (CL)",
+                  "units": 54,
+                  "orders": 52,
+                  "netSales": 176961.77795115334,
+                  "penetrationPercent": 6.4,
+                  "unitsPer100Orders": 6.6,
+                  "spendingSharePercent": 3.8
+                }
+              ],
+              "categories": [
+                {
+                  "key": "AB.010020",
+                  "name": "Café Caliente",
+                  "units": 621,
+                  "orders": 509,
+                  "netSales": 2038718.5602855769,
+                  "penetrationPercent": 62.2,
+                  "unitsPer100Orders": 75.9,
+                  "spendingSharePercent": 44.3
+                },
+                {
+                  "key": "AB.140160",
+                  "name": "Sandwich",
+                  "units": 193,
+                  "orders": 174,
+                  "netSales": 797697.9441152196,
+                  "penetrationPercent": 21.3,
+                  "unitsPer100Orders": 23.6,
+                  "spendingSharePercent": 17.3
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 192,
+                  "orders": 154,
+                  "netSales": 349335.4880609332,
+                  "penetrationPercent": 18.8,
+                  "unitsPer100Orders": 23.5,
+                  "spendingSharePercent": 7.6
+                }
+              ],
+              "focusCategories": [
+                {
+                  "key": "AB.140160",
+                  "name": "Sandwich",
+                  "units": 193,
+                  "orders": 174,
+                  "netSales": 797697.9441152196,
+                  "penetrationPercent": 21.3,
+                  "unitsPer100Orders": 23.6,
+                  "spendingSharePercent": 17.3
+                },
+                {
+                  "key": "AB.140150",
+                  "name": "Bolleria",
+                  "units": 192,
+                  "orders": 154,
+                  "netSales": 349335.4880609332,
+                  "penetrationPercent": 18.8,
+                  "unitsPer100Orders": 23.5,
+                  "spendingSharePercent": 7.6
+                }
+              ]
+            },
+            "takeaway": 412,
+            "unknownMode": 124
+          }
+        ],
+        "quality": {
+          "orders": 2268,
+          "linked": 2109,
+          "classifiable": 2104,
+          "monetaryVerifiedOrders": 2268,
+          "netSales": 12826901,
+          "classifiedSales": 11955842,
+          "orderCoveragePercent": 92.8,
+          "salesCoveragePercent": 93.2
+        },
+        "linkage": {
+          "orders": 2268,
+          "linkedHigh": 2109,
+          "ambiguous": 66,
+          "unlinked": 93,
+          "linkedPercent": 93,
+          "method": "Coincidencia estimada uno-a-uno por local, fecha, monto pagado y cercanía máxima de 2 minuto(s). No es un identificador explícito de TotEat.",
+          "explicit": 0
+        },
+        "reasons": [
+          {
+            "reason": "Vínculo ambiguo",
+            "orders": 66,
+            "netSales": 301042
+          },
+          {
+            "reason": "Sin vínculo confiable",
+            "orders": 93,
+            "netSales": 535646
+          },
+          {
+            "reason": "Pago no identificable",
+            "orders": 5,
+            "netSales": 34371
+          }
+        ],
+        "status": "partial",
+        "sample": [
+          {
+            "classification": "return",
+            "date": "2026-10-01",
+            "netSales": 6722,
+            "ticketGross": 8000,
+            "units": 2,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          },
+          {
+            "classification": "return",
+            "date": "2026-10-01",
+            "netSales": 3782,
+            "ticketGross": 4500,
+            "units": 1,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          },
+          {
+            "classification": "return",
+            "date": "2026-10-01",
+            "netSales": 8152,
+            "ticketGross": 9700,
+            "units": 2,
+            "linkMethod": "inferred-local-date-amount-2min",
+            "monetaryVerified": true
+          }
+        ]
+      },
+      "performance": {
+        "legacyMs": 12189,
+        "summaryMs": 2639,
+        "warmMs": 2552,
+        "sameSnapshot": false,
+        "purchasesMs": 7253,
+        "exportPayloadMs": 30
+      }
+    }
+  },
+  "consolidation": {
+    "localActiveSum": 1691,
+    "chainActive": 1682,
+    "overlapApproximateKeys": 9,
+    "localAmountsSum": 15270198,
+    "chainAmount": 15270198
+  }
+}

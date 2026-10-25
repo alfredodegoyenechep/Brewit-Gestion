@@ -43,7 +43,7 @@ async function initializeDemandView(initialLocations = []) {
       if (jump.dataset.demandJump === 'recurrence') {
         setView('sales');
         document.getElementById('sales-workspace-tab-customers').click();
-        document.getElementById('sales-observable-recurrence').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('recurrence-workspace').scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
       }
       demandView.tab = jump.dataset.demandJump;

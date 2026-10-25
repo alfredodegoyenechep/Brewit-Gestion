@@ -3556,6 +3556,7 @@ function createApp(options = {}) {
   app.get('/upload-records-view.js', (req, res) => res.sendFile(path.join(__dirname, 'upload-records-view.js')));
   app.get('/toteat-stock-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-stock-view.js')));
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
+  app.get('/recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'recurrence-view.js')));
   app.get('/sales-clusters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-clusters-view.js')));
   app.get('/weekly-results-view.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-view.js')));
   app.get('/weekly-results-export.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-export.js')));
@@ -6235,6 +6236,50 @@ function createApp(options = {}) {
       return { ...order, lines, cost, costAvailable };
     });
   }
+
+  // Recurrence v2 reads local evidence only; MP summary does not load Toteat orders.
+  const recurrenceReader = require('./recurrence-source').createRecurrenceSource({
+    uploadsRoot,
+    storesFor: location => demandStores({ locations: location }),
+    filesFor: (location, field) => field === 'sales' ? storedSalesFiles(location) : storedTransactionFiles(location, field),
+    manifests: () => historicalControl.manifests(), today: projectionToday, cutoff: () => salesReportClock().cutoff,
+    ordersFor(query, period) {
+      const payload = buildDemandSource({ locations: query.location || 'all', mode: 'custom', dateFrom: period.from, dateTo: period.to });
+      const rawByOrder = new Map();
+      for (const store of payload.stores) {
+        const state = toteatSalesSync?.get(store.id);
+        for (const payment of state?.payments || []) {
+          const key = `${store.id}:${String(payment.orderId)}`;
+          const group = rawByOrder.get(key) || []; group.push(payment); rawByOrder.set(key, group);
+        }
+      }
+      const orders = enrichedDemandOrders(payload, { includeCosts: false }).map(order => {
+        const raw = rawByOrder.get(`${order.locationId}:${order.orderReference}`) || [];
+        const fieldsAvailable = raw.length && raw.every(p => Number.isFinite(p.total) && Number.isFinite(p.discounts) && Number.isFinite(p.taxes));
+        const rawGross = fieldsAvailable ? raw.reduce((n, p) => n + p.total - p.discounts, 0) : null;
+        // Imported sales already apply cancellations/credits. A raw snapshot must reconcile before supplying its taxes.
+        const accounted = fieldsAvailable && Number.isFinite(order.grossSales) && Math.abs(rawGross - order.grossSales) <= 2;
+        const gross = order.grossSales;
+        const tax = accounted ? raw.reduce((n, p) => n + p.taxes, 0) : null;
+        const net = accounted && tax >= 0 && tax <= gross ? gross - tax : null;
+        const eligibleLines = require('./recurrence').eligibleOrderLines(order.lines, raw.flatMap(p => p.products || []));
+        const { paymentComment, ...clean } = order;
+        return { ...clean, netSales: net, ticketGross: Number.isFinite(gross) ? gross : null,
+          monetaryVerified: net !== null, paymentDuePartial: order.paymentDuePartial || raw.length > 1,
+          lines: eligibleLines.map(line => ({ ...line,
+            netSales: net !== null && gross > 0 && line.paidGross !== null ? line.paidGross / gross * net : 0 })) };
+      });
+      return { orders, warnings: payload.source.warnings };
+    }
+  });
+  const recurrenceLocal = require('./recurrence-service').createRecurrenceService({
+    ...recurrenceReader, ...(options.recurrenceSource || {}),
+    readSource: options.recurrenceSource?.readSource || (query => ({ ...recurrenceReader.readSource(query), cutoff: query.serverCutoff || salesReportClock().cutoff }))
+  });
+  const recurrenceService = options.recurrenceWorker === false || options.recurrenceSource ? recurrenceLocal
+    : require('./recurrence-loader').createRecurrenceLoader({ uploadsRoot, sourceMode: options.sourceMode, today: projectionToday, cutoff: () => salesReportClock().cutoff });
+  app.locals.recurrenceService = recurrenceService;
+  require('./recurrence-service').registerRecurrenceRoutes(app, recurrenceService);
 
   app.get('/api/sales/observable-recurrence', (req, res) => {
     try {
@@ -12557,7 +12602,7 @@ function createApp(options = {}) {
     let closing;
     server.close = callback => {
       if (!closing) {
-        toteatSalesSync?.stop(); toteatSalesSync?.purchases.stop(); app.locals.uploadRefresh?.stop();
+        toteatSalesSync?.stop(); toteatSalesSync?.purchases.stop(); app.locals.uploadRefresh?.stop(); recurrenceService.dispose();
         closing = new Promise(resolve=>close(error=>resolve(error))).then(async error=>{
           await mercadoPagoSync.close(); await historicalControl.idle(); return error;
         });

@@ -715,71 +715,44 @@
         </dialog>
       </dialog>
 
-      <section class="panel mercadopago-panel">
-        <div class="panel-head mercadopago-head">
-          <div>
-            <div class="panel-eyebrow">MercadoPago</div>
-            <h3>Clientes recurrentes</h3>
-            <p>Cliente identificado mediante CARD_INITIAL_NUMBER + LAST_FOUR_DIGITS. Una transacción es recurrente cuando la tarjeta ya registra una compra anterior.</p>
-          </div>
-          <div id="mercadopago-customer-summary" class="mercadopago-customer-summary"></div>
-        </div>
+      <section id="recurrence-workspace" class="panel mercadopago-panel recurrence-workspace" aria-labelledby="recurrence-title">
+        <div class="panel-head"><div><div class="panel-eyebrow">Comportamiento de compra</div><h3 id="recurrence-title">Recurrencia y retorno</h3><p class="panel-description">Estimación basada en medios de pago. Un instrumento no equivale necesariamente a una persona.</p></div><button id="recurrence-export" class="icon-button" type="button" disabled>Exportar XLSX</button></div>
         <form id="sales-customers-filters" class="financial-results-filters sales-report-filters">
-          <label for="sales-customers-location">Cafetería
-            <select id="sales-customers-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select>
-          </label>
+          <label>Cafetería<select id="sales-customers-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select></label>
+          <label>Período<select id="sales-customers-period"><option value="last-28-days">Últimos 28 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Personalizado</option></select></label>
+          <label>Desde<input id="sales-customers-from" type="date" required disabled></label>
+          <label>Hasta<input id="sales-customers-to" type="date" required disabled></label>
+          <label>Evolución<select id="recurrence-evolution"><option value="weeks8">8 semanas</option><option value="weeks12">12 semanas</option><option value="months6">6 meses</option></select></label>
           <button class="primary" type="submit">Generar reportes</button>
         </form>
-        <p id="sales-customers-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reportes.</p>
-        <p id="sales-customers-context" class="panel-description">Alcance fijo: últimos 6 meses y últimas 8 semanas.</p>
-        <div class="sales-table-wrap">
-          <table class="sales-dashboard-table mercadopago-table">
-            <thead>
-              <tr><th>Período</th><th>Venta MP</th><th>Transacciones</th><th>% trans. recurrentes</th><th>% venta recurrente</th><th>Período anterior</th></tr>
-            </thead>
-            <tbody id="mercadopago-period-body"></tbody>
-          </table>
+        <p id="sales-customers-status" class="form-status" role="status" aria-live="polite">Selecciona la cafetería y pulsa Generar reportes. Abrir esta vista no procesa datos.</p>
+        <progress id="recurrence-progress" hidden aria-label="Preparando reporte de recurrencia"></progress>
+        <p id="sales-customers-context" class="panel-description"></p>
+        <details id="recurrence-notices" class="recurrence-notices" hidden><summary id="recurrence-notices-title">Alcance y calidad de la consulta</summary><div id="recurrence-notices-body"></div></details>
+        <div class="recurrence-tabs" role="tablist" aria-label="Secciones de recurrencia">
+          <button id="recurrence-tab-summary" type="button" role="tab" aria-selected="true" aria-controls="recurrence-panel-summary" data-recurrence-tab="summary">Resumen</button>
+          <button id="recurrence-tab-return" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-return" tabindex="-1" data-recurrence-tab="return">Retorno</button>
+          <button id="recurrence-tab-purchases" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-purchases" tabindex="-1" data-recurrence-tab="purchases">Compras</button>
+          <button id="recurrence-tab-quality" type="button" role="tab" aria-selected="false" aria-controls="recurrence-panel-quality" tabindex="-1" data-recurrence-tab="quality">Calidad de datos</button>
         </div>
-        <div class="frequency-heading"><div><div class="panel-eyebrow">Frecuencia promedio</div><h4>Clientes recurrentes por frecuencia de visita</h4></div></div>
-        <div id="mercadopago-frequency" class="frequency-grid"></div>
-
-        <div class="mercadopago-history-heading">
-          <div class="panel-eyebrow">Evolución histórica</div>
-          <h4>Participación de clientes recurrentes</h4>
-          <p>La frecuencia clasifica a los clientes recurrentes activos en cada período según su comportamiento acumulado hasta ese cierre. Los valores aquí expresados incluyen IVA y corresponden a datos directos de MercadoPago.</p>
-        </div>
-        <div class="mercadopago-history-grid">
-          <section class="mercadopago-history-card">
-            <div class="panel-eyebrow">Últimos 6 meses</div>
-            <h4>Venta recurrente por mes</h4>
-            <div class="sales-table-wrap">
-              <table class="sales-dashboard-table recurring-history-table">
-                <thead>
-                  <tr><th>Mes</th><th>% venta recurrente</th><th>Venta rec. / total</th><th>Tarjetas</th><th>Recurrentes</th><th>&gt;3/sem.</th><th>&gt;1/sem.</th><th>&gt;1/15 días</th><th>&gt;1/mes</th><th>Menor frec.</th></tr>
-                </thead>
-                <tbody id="mercadopago-month-history"></tbody>
-              </table>
-            </div>
-          </section>
-          <section class="mercadopago-history-card">
-            <div class="panel-eyebrow">Últimas 8 semanas</div>
-            <h4>Venta recurrente por semana</h4>
-            <div class="sales-table-wrap">
-              <table class="sales-dashboard-table recurring-history-table">
-                <thead>
-                  <tr><th>Semana</th><th>% venta recurrente</th><th>Venta rec. / total</th><th>Tarjetas</th><th>Recurrentes</th><th>&gt;3/sem.</th><th>&gt;1/sem.</th><th>&gt;1/15 días</th><th>&gt;1/mes</th><th>Menor frec.</th></tr>
-                </thead>
-                <tbody id="mercadopago-week-history"></tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-        <section id="sales-observable-recurrence" class="mercadopago-observable-recurrence" aria-labelledby="sales-observable-recurrence-title">
-          <div class="panel-eyebrow">Comportamiento de compra</div>
-          <h4 id="sales-observable-recurrence-title">Recurrencia observable</h4>
-          <p class="panel-description">Complemento de los últimos 6 meses: pedidos vinculados a instrumentos de pago, composición de las compras y retorno observado. Venta neta sin IVA; tickets con IVA.</p>
-          <div id="sales-observable-recurrence-content"><p class="form-status">Pulsa Generar reportes para consultar este complemento junto con el reporte de clientes recurrentes.</p></div>
+        <section id="recurrence-panel-summary" role="tabpanel" aria-labelledby="recurrence-tab-summary" tabindex="0"><div id="recurrence-summary"><p class="empty-state">Genera el reporte para consultar instrumentos, días con compra y retorno.</p></div></section>
+        <section id="recurrence-panel-return" role="tabpanel" aria-labelledby="recurrence-tab-return" tabindex="0" hidden>
+          <h4>Retorno después de la primera observación</h4><p class="panel-description">El período de entrada es independiente del Resumen. Incluye instrumentos que no volvieron a comprar. Cada horizonte exige seguimiento completo y cobertura acreditada.</p>
+          <form id="recurrence-return-filters" class="financial-results-filters sales-report-filters">
+            <label>Primera observación desde<input id="recurrence-cohort-from" type="date" required></label><label>Hasta<input id="recurrence-cohort-to" type="date" required></label>
+            <label>Agrupar por<select id="recurrence-cohort-granularity"><option value="week">Semana</option><option value="month">Mes</option></select></label>
+            <label class="sales-report-checkbox"><input id="recurrence-common-base" type="checkbox"> Misma base con 30 días completos</label>
+            <button id="recurrence-return-run" class="primary" type="submit" disabled>Generar retorno</button>
+          </form><p id="recurrence-return-status" class="form-status" role="status" aria-live="polite"></p><div id="recurrence-return-content"></div>
         </section>
+        <section id="recurrence-panel-purchases" role="tabpanel" aria-labelledby="recurrence-tab-purchases" tabindex="0" hidden>
+          <h4>Qué compran en sus regresos — pedidos vinculados</h4><p class="panel-description">Pedidos de primera fecha frente a pedidos posteriores, según el historial de MercadoPago. Los pedidos sin atribución comprobada permanecen en Calidad de datos.</p>
+          <button id="recurrence-purchases-run" class="primary" type="button" disabled>Preparar Compras</button><p id="recurrence-purchases-status" class="form-status" role="status" aria-live="polite">Este cruce se prepara únicamente al pulsar Preparar Compras.</p><div id="recurrence-purchases-content"></div>
+        </section>
+        <section id="recurrence-panel-quality" role="tabpanel" aria-labelledby="recurrence-tab-quality" tabindex="0" hidden>
+          <h4>Cobertura, identificación y reglas</h4><button id="recurrence-quality-run" class="icon-button" type="button" disabled>Preparar calidad de vínculos</button><p id="recurrence-quality-status" class="form-status" role="status" aria-live="polite"></p><div id="recurrence-quality-content"></div>
+        </section>
+        <dialog id="recurrence-detail-dialog" class="demand-dialog" aria-labelledby="recurrence-detail-title"><div class="demand-dialog-head"><h3 id="recurrence-detail-title">Detalle del reporte</h3><button id="recurrence-detail-close" class="icon-button" type="button">Cerrar</button></div><p id="recurrence-detail-status" role="status" aria-live="polite"></p><div id="recurrence-detail-content"></div><div class="demand-dialog-pages"><button id="recurrence-detail-prev" class="icon-button" type="button">Anterior</button><span id="recurrence-detail-page"></span><button id="recurrence-detail-next" class="icon-button" type="button">Siguiente</button></div></dialog>
       </section>
     </section>
 
@@ -2783,6 +2756,7 @@
   <script src="sales-insight-filters.js"></script>
   <script src="historical-control-view.js"></script>
   <script src="script.js"></script>
+  <script src="recurrence-view.js"></script>
   <script src="sales-projection.js"></script>
   <script src="sales-projection-view.js"></script>
   <script src="/vendor/jspdf.umd.min.js"></script>

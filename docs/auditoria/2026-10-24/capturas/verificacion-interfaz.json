@@ -1,0 +1,15 @@
+{
+  "initialQueries": 0,
+  "preparedQueries": 3,
+  "queriesAfterNavigation": 3,
+  "pageErrors": [],
+  "horizontalOverflow": false,
+  "captures": [
+    "recurrencia-calidad-escritorio.png",
+    "recurrencia-compras-escritorio.png",
+    "recurrencia-resumen-escritorio.png",
+    "recurrencia-resumen-movil.png",
+    "recurrencia-retorno-escritorio.png",
+    "recurrencia-retorno-movil.png"
+  ]
+}
