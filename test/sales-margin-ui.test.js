@@ -5,6 +5,102 @@ const { chromium } = require('playwright-core');
 const { createApp } = require('../server');
 const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+test('ventas por ingredientes comparte las pestañas y filtros de estadísticas y conserva la selección múltiple', { skip: !fs.existsSync(chrome) }, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-sales-ingredients-ui-'));
+  const app = createApp({ uploadsRoot: root, enableToteatSync: false, enableMercadoPagoSync: false });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(async () => {
+    await browser.close(); await app.locals.mercadoPagoSync.close(); server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve)); fs.rmSync(root, { recursive: true, force: true });
+  });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [], queries = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const ingredient = { key: 'ingredient:SUB005', code: 'SUB005', name: 'Café', unit: 'kg', hierarchyId: 'coffee', hierarchyPath: ['Café'] };
+  const extra = { key: 'extra:hot', id: 'hot', name: 'Barra Caliente', hierarchyPath: ['Preparación', 'Barra Caliente'] };
+  await page.route('**/api/sales-by-ingredients?*', route => {
+    const query = Object.fromEntries(new URL(route.request().url()).searchParams);
+    queries.push(query);
+    const selections = query.selections?.split(',') || [];
+    const totals = { selectedGroups: selections.length, uniqueProducts: selections.length ? 1 : 0,
+      productUnits: selections.length ? 4 : 0, netSales: selections.length ? 10000 : 0,
+      totalCost: selections.length ? 3000 : 0, contributionMarginPercent: selections.length ? 70 : null,
+      shareOfPeriodSales: selections.length ? 100 : 0 };
+    return route.fulfill({ json: {
+      period: { from: query.dateFrom, to: query.dateTo },
+      scope: { label: query.location === 'store-2' ? 'Portal Lyon' : 'Todas las cafeterías' },
+      options: { ingredients: [ingredient], extras: [extra], extrasHierarchiesAvailable: true },
+      groups: [ingredient, extra].filter(option => selections.includes(option.key)).map(option => ({
+        ...option, type: option === ingredient ? 'ingredient' : 'extra',
+        totals: { ...totals, ingredientQuantity: .08, ingredientUnit: 'kg' }, shareOfPeriodSales: 100,
+        products: [{ code: 'P1', name: 'Cappuccino', quantity: 4, ingredientQuantity: .08, netSales: 10000, totalCost: 3000 }]
+      })), totals, filesRead: 1, warnings: []
+    } });
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.waitForFunction(() => document.getElementById('financial-general-expenses-grid').childElementCount > 0);
+  assert.equal(await page.locator('.navigation [data-view="sales-ingredients"]').count(), 0);
+  await page.getByRole('link', { name: 'Estadísticas por producto y horario', exact: true }).click();
+  await page.getByRole('tab', { name: 'Ventas por ingredientes', exact: true }).click();
+  const form = page.locator('#sales-ingredients-filters');
+  assert.equal(await form.isVisible(), true);
+  assert.equal(await page.locator('#sales-margin-filters').isVisible(), false);
+  assert.deepEqual(await form.locator('label').allTextContents().then(labels => labels.map(label => label.trim().split('\n')[0])),
+    ['Cafetería', 'Período', 'Desde', 'Hasta']);
+  assert.equal(await page.locator('#sales-ingredients-from').isDisabled(), true);
+  await page.locator('#sales-ingredients-period').selectOption('previous-month');
+  const previousMonth = await page.locator('#sales-ingredients-from').inputValue();
+  assert.match(previousMonth, /-01$/);
+  await page.locator('#sales-ingredients-period').selectOption('custom');
+  assert.equal(await page.locator('#sales-ingredients-from').isEnabled(), true);
+  await page.locator('#sales-ingredients-location').selectOption('store-2');
+  await page.locator('#sales-ingredients-from').fill('2026-10-01');
+  await page.locator('#sales-ingredients-to').fill('2026-10-24');
+  assert.equal(queries.length, 0);
+  await form.getByRole('button', { name: 'Generar reportes', exact: true }).click();
+  await page.locator('#sales-ingredients-status').filter({ hasText: '1 archivo(s)' }).waitFor();
+  assert.deepEqual(queries, [{ location: 'store-2', dateFrom: '2026-10-01', dateTo: '2026-10-24' }]);
+  assert.match(await page.locator('#sales-ingredients-context').innerText(), /Portal Lyon.*01 oct 2026.*24 oct 2026/);
+  await page.locator('#sales-ingredient-options input').check();
+  assert.equal(queries.length, 1);
+  await page.getByRole('button', { name: 'Aplicar selección', exact: true }).click();
+  await page.locator('#sales-ingredients-report .sales-ingredient-result-card').waitFor();
+  assert.equal(queries.at(-1).selections, 'ingredient:SUB005');
+  assert.match(await page.locator('#sales-ingredients-report').innerText(), /Café.*Cappuccino/s);
+  await page.getByRole('tab', { name: 'Productos y jerarquías', exact: true }).click();
+  assert.equal(await form.isVisible(), false);
+  await page.locator('#sales-insight-period').selectOption('today');
+  await page.getByRole('tab', { name: 'Ventas por ingredientes', exact: true }).click();
+  assert.equal(await page.locator('#sales-ingredients-location').inputValue(), 'store-2');
+  assert.equal(await page.locator('#sales-ingredients-period').inputValue(), 'custom');
+  assert.equal(await page.locator('#sales-ingredient-options input').isChecked(), true);
+  assert.equal(queries.length, 2);
+  await page.locator('#sales-extra-options input').check();
+  await form.getByRole('button', { name: 'Generar reportes', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('#sales-ingredients-report .sales-ingredient-result-card').length === 2);
+  assert.equal(queries.at(-1).selections, 'ingredient:SUB005,extra:hot');
+  assert.match(await page.locator('#sales-ingredients-summary').innerText(), /1 producto\(s\) sin duplicar/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.main-content')).marginLeft === '0px');
+  const overflowing = await page.locator('#sales-ingredients-workspace').evaluate(root => [...root.querySelectorAll('*')]
+    .filter(element => element.getBoundingClientRect().right > innerWidth && getComputedStyle(element).display !== 'none')
+    .slice(0, 12).map(element => `${element.tagName}.${element.className}#${element.id}: ${element.getBoundingClientRect().right}`));
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, overflowing.join('\n'));
+  await page.getByRole('button', { name: 'Limpiar', exact: true }).click();
+  assert.equal(queries.length, 3);
+  assert.equal(await page.getByRole('button', { name: 'Aplicar selección', exact: true }).isDisabled(), true);
+  await form.getByRole('button', { name: 'Generar reportes', exact: true }).click();
+  await page.locator('#sales-ingredients-report .empty-state').waitFor();
+  assert.equal(queries.at(-1).selections, undefined);
+  await page.locator('#sales-ingredients-from').fill('2026-10-25');
+  await form.getByRole('button', { name: 'Generar reportes', exact: true }).click();
+  await page.locator('#sales-ingredients-status').filter({ hasText: 'Selecciona un período válido' }).waitFor();
+  assert.equal(queries.length, 4);
+  assert.deepEqual(errors, []);
+});
+
 test('participación y margen se consultan desde estadísticas y conservan su alcance al generar resultados financieros', { skip: !fs.existsSync(chrome) }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-sales-margin-ui-'));
   const app = createApp({ uploadsRoot: root, enableToteatSync: false, enableMercadoPagoSync: false });
@@ -40,7 +136,7 @@ test('participación y margen se consultan desde estadísticas y conservan su al
   assert.equal(await page.locator('#refresh-sales-dashboard, #sales-dashboard-location, [data-toteat-sales-sync="dashboard"]').count(), 0);
   assert.deepEqual(await page.locator('#sales-workspace [role="tab"]').allTextContents(), [
     'Participación', 'Modalidad de consumo', 'Jerarquías y margen',
-    'Productos y jerarquías', 'Franjas horarias', 'Clientes recurrentes'
+    'Productos y jerarquías', 'Ventas por ingredientes', 'Franjas horarias', 'Clientes recurrentes'
   ]);
   assert.equal(await page.getByRole('tab', { name: 'Participación', exact: true }).getAttribute('aria-selected'), 'true');
   assert.equal(await page.locator('#sales-dashboard-metrics, .sales-location-panel').count(), 0);
@@ -72,8 +168,9 @@ test('participación y margen se consultan desde estadísticas y conservan su al
   assert.equal(await page.locator('#sales-margin-controls').isVisible(), false);
   await page.getByRole('link', { name: 'Resultados Financieros', exact: true }).click();
   assert.deepEqual(await page.locator('#financial-results-workspace [role="tab"]').allTextContents(), [
-    'Estado de resultados', 'Gastos generales', 'Revisión de costos'
+    'Resultados Semanales / Mensuales', 'Estado de resultados', 'Gastos generales', 'Revisión de costos'
   ]);
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();
   await page.locator('#financial-results-filters button[type="submit"]').click();
   await page.locator('#financial-results-status').filter({ hasText: '10 línea(s)' }).waitFor();
   assert.equal(queries.length, 3);

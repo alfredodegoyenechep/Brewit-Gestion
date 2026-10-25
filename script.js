@@ -142,6 +142,7 @@ const salesReportDefinitions = {
   'sales-hierarchy-margin': { status: 'sales-hierarchy-margin-status', type: 'hierarchies' },
   'sales-service-mode': { status: 'sales-service-mode-status', type: 'service' },
   'sales-insight': { status: 'sales-insight-range-status', type: 'products' },
+  'sales-ingredients': { status: 'sales-ingredients-status', type: 'ingredients' },
   'sales-customers': { status: 'sales-customers-status', type: 'customers' }
 };
 let transactionAuditState = null;
@@ -161,12 +162,12 @@ function invalidateCalculation(view, statusId) {
   const active = calculatedViewRequests.get(view);
   if (active) active.controller.abort();
   calculatedViewRequests.delete(view);
-  const buttonId = { financial: 'financial-results-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
+  const buttonId = { financial: 'financial-results-filters', financialCosts: 'financial-costs-filters', ingredients: 'refresh-ingredients', purchases: 'refresh-purchases', costs: 'refresh-cost-review' }[view];
   const control = document.getElementById(buttonId);
-  const button = view === 'financial' ? control?.querySelector('button[type="submit"]') : control;
+  const button = ['financial', 'financialCosts'].includes(view) ? control?.querySelector('button[type="submit"]') : control;
   if (button) button.disabled = false;
   const previous = calculatedViewKeys.get(view);
-  const action = 'Consultar';
+  const action = ['financial', 'financialCosts'].includes(view) ? 'Generar resultados' : 'Consultar';
   setStatus(document.getElementById(statusId), previous
     ? `Los filtros cambiaron. El resultado visible corresponde a la última consulta; pulsa ${action} para aplicar la nueva selección.`
     : `Selecciona los filtros y pulsa ${action} para calcular con los datos guardados.`, 'muted');
@@ -230,8 +231,8 @@ function organizeWorkspaceNavigation() {
   savedOrdersLink.innerHTML = '<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg><span class="nav-text">Órdenes guardadas</span>';
   links.set('past-orders', savedOrdersLink);
   const groups = [
-    { label: 'Ventas y resultados', views: ['report', 'financial-results', 'weekly-results'] },
-    { label: 'Análisis de ventas', views: ['sales', 'demand-analysis', 'sales-ingredients'] },
+    { label: 'Ventas y resultados', views: ['report', 'financial-results'] },
+    { label: 'Análisis de ventas', views: ['sales', 'demand-analysis'] },
     { label: 'Inventario y compras', views: ['inventory', 'purchases', 'purchase-projection', 'past-orders'] },
     { label: 'Productos y costos', views: ['products', 'ingredients', 'cost-review'] },
     { label: 'Control y configuración', views: ['findings', 'transaction-audit', 'uploads', 'historical-control', 'config'] }
@@ -512,12 +513,22 @@ function initializeSettingsWorkspace() {
 initializeSettingsWorkspace();
 
 function setView(view, { confirmed = false } = {}) {
+  if (view === 'weekly-results') {
+    setView('financial-results', { confirmed });
+    document.getElementById('financial-results-workspace-tab-weekly').click();
+    return;
+  }
+  if (view === 'sales-ingredients') {
+    setView('sales', { confirmed });
+    document.getElementById('sales-workspace-tab-ingredients').click();
+    return;
+  }
   if (!confirmed && view !== 'config' && !document.getElementById('location-settings').hidden && document.getElementById('location-settings').style.display !== 'none' && window.brewitSettings) {
     return window.brewitSettings.guard(() => setView(view, { confirmed: true }));
   }
   document.querySelectorAll('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.view === view));
   if (view !== 'purchase-projection') cancelPurchaseProjectionLoad();
-  if (view !== 'weekly-results') window.cancelCafeWeeklyResults?.();
+  if (view !== 'financial-results') window.cancelCafeWeeklyResults?.();
   document.querySelectorAll('.main-content > section').forEach(section => {
     section.hidden = true;
     section.style.display = 'none';
@@ -577,33 +588,19 @@ function setView(view, { confirmed = false } = {}) {
     loadFindingsView();
     return;
   }
-  if (view === 'sales-ingredients') {
-    const salesIngredients = document.getElementById('sales-ingredients-workspace');
-    salesIngredients.hidden = false;
-    salesIngredients.style.display = '';
-    loadSalesIngredientsView();
-    return;
-  }
-  if (view === 'weekly-results') {
-    const weekly = document.getElementById('weekly-results-workspace');
-    weekly.hidden = false;
-    weekly.style.display = '';
-    window.openCafeWeeklyResults();
-    return;
-  }
   if (view === 'financial-results') {
     const financialResults = document.getElementById('financial-results-workspace');
     financialResults.hidden = false;
     financialResults.style.display = '';
-    if (!financialResultsState) invalidateCalculation('financial', 'financial-results-status');
+    if (!financialResultsState && !calculatedViewRequests.has('financial')) invalidateCalculation('financial', 'financial-results-status');
+    if (document.getElementById('financial-results-workspace-tab-weekly').getAttribute('aria-selected') === 'true') window.openCafeWeeklyResults?.();
     return;
   }
   if (view === 'demand-analysis') {
     const demand = document.getElementById('demand-analysis-workspace');
     demand.hidden = false;
     demand.style.display = '';
-    if (typeof loadDemandAnalysis === 'function') loadDemandAnalysis();
-    else setStatus(document.getElementById('demand-status'),
+    if (typeof loadDemandAnalysis !== 'function') setStatus(document.getElementById('demand-status'),
       'No se cargó el módulo de venta. Reinicia el servidor de Brewit y recarga esta página.', 'error');
     return;
   }
@@ -1413,16 +1410,17 @@ function browserIsoToday(date = new Date()) {
 }
 
 function refreshFinancialResultsLocationFilter() {
-  const select = document.getElementById('financial-results-location');
-  if (!select) return;
-  const previous = select.value || 'all';
-  const options = [new Option('Todas las cafeterías', 'all')];
-  Object.values(locationRegistry)
-    .filter(location => location.type === 'store')
-    .sort((left, right) => left.name.localeCompare(right.name, 'es'))
-    .forEach(location => options.push(new Option(location.name, location.id)));
-  select.replaceChildren(...options);
-  select.value = options.some(option => option.value === previous) ? previous : 'all';
+  for (const prefix of ['financial-results', 'financial-costs']) {
+    const select = document.getElementById(`${prefix}-location`);
+    const previous = select.value || 'all';
+    const options = [new Option('Todas las cafeterías', 'all')];
+    Object.values(locationRegistry)
+      .filter(location => location.type === 'store')
+      .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+      .forEach(location => options.push(new Option(location.name, location.id)));
+    select.replaceChildren(...options);
+    select.value = options.some(option => option.value === previous) ? previous : 'all';
+  }
 }
 
 function syncFinancialResultsPeriod(prefix = 'financial-results') {
@@ -1881,6 +1879,12 @@ function renderFinancialResults(data) {
   badge.textContent = statement.dataCoverageComplete ? 'EBITDA 4 Wall · cobertura completa' : 'EBITDA 4 Wall · revisar cobertura';
   badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
   renderFinancialStatement(data);
+  renderFinancialWarnings(data);
+}
+
+function renderFinancialCosts(data) {
+  document.getElementById('financial-costs-context').textContent =
+    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo al corte del reporte.`;
   const missingCosts = data.revenue.missingCostProducts || [];
   const missingPanel = document.getElementById('financial-missing-costs');
   missingPanel.hidden = !missingCosts.length;
@@ -1911,8 +1915,12 @@ function renderFinancialResults(data) {
       return row;
     }));
   } else document.getElementById('financial-missing-costs-body').replaceChildren();
-  const warnings = document.getElementById('financial-warnings');
-  const warningList = document.getElementById('financial-warnings-list');
+  renderFinancialWarnings(data, 'financial-costs-warnings');
+}
+
+function renderFinancialWarnings(data, targetId = 'financial-warnings') {
+  const warnings = document.getElementById(targetId);
+  const warningList = document.getElementById(`${targetId}-list`);
   warningList.replaceChildren(...data.warnings.map((message, index) => {
     const item = document.createElement('li');
     const button = document.createElement('button'); button.type = 'button'; button.className = 'financial-warning-detail-button';
@@ -1969,35 +1977,37 @@ function openFinancialWarningDetail(detail, period) {
   document.body.append(dialog); dialog.showModal(); close.focus();
 }
 
-async function loadFinancialResults() {
-  const status = document.getElementById('financial-results-status');
-  const form = document.getElementById('financial-results-filters');
+async function loadFinancialResults(kind = 'statement') {
+  const prefix = kind === 'costs' ? 'financial-costs' : 'financial-results';
+  const calculation = kind === 'costs' ? 'financialCosts' : 'financial';
+  const status = document.getElementById(`${prefix}-status`);
+  const form = document.getElementById(`${prefix}-filters`);
   const button = form.querySelector('button[type="submit"]');
-  const location = document.getElementById('financial-results-location').value || 'all';
-  const dateFrom = document.getElementById('financial-results-from').value;
-  const dateTo = document.getElementById('financial-results-to').value;
+  const location = document.getElementById(`${prefix}-location`).value || 'all';
+  const dateFrom = document.getElementById(`${prefix}-from`).value;
+  const dateTo = document.getElementById(`${prefix}-to`).value;
   if (!dateFrom || !dateTo || dateFrom > dateTo) {
     setStatus(status, 'Selecciona un período válido.', 'error');
     return;
   }
-  const filterIds = ['financial-results-location', 'financial-results-from', 'financial-results-to'];
-  const request = beginCalculation('financial', selectedCalculationKey(filterIds));
+  const filterIds = ['location', 'period', 'from', 'to'].map(field => `${prefix}-${field}`);
+  const request = beginCalculation(calculation, selectedCalculationKey(filterIds));
   button.disabled = true;
   setStatus(status, 'Calculando ventas, márgenes, inventario y cobros de MercadoPago…');
   try {
     const params = new URLSearchParams({ location, dateFrom, dateTo });
     const data = await apiRequest(`/api/financial-results?${params}`, { signal: request.controller.signal });
-    if (!isCurrentCalculation('financial', request, filterIds)) return;
-    financialResultsState = data;
-    calculatedViewKeys.set('financial', request.key);
-    renderFinancialResults(data);
+    if (!isCurrentCalculation(calculation, request, filterIds)) return;
+    calculatedViewKeys.set(calculation, request.key);
+    if (kind === 'costs') renderFinancialCosts(data);
+    else { financialResultsState = data; renderFinancialResults(data); }
     setStatus(status, `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`, 'success');
   } catch (error) {
-    if (!isCurrentCalculation('financial', request, filterIds)) return;
+    if (!isCurrentCalculation(calculation, request, filterIds)) return;
     setStatus(status, error.message, 'error');
   } finally {
-    if (calculatedViewRequests.get('financial') === request) {
-      calculatedViewRequests.delete('financial');
+    if (calculatedViewRequests.get(calculation) === request) {
+      calculatedViewRequests.delete(calculation);
       button.disabled = false;
     }
   }
@@ -2011,15 +2021,18 @@ function salesReportFilterIds(prefix) {
 }
 
 function salesReportKey(prefix) {
-  return JSON.stringify(salesReportFilterIds(prefix).map(id => {
+  const values = salesReportFilterIds(prefix).map(id => {
     const input = document.getElementById(id);
     return input.type === 'checkbox' ? input.checked : input.value;
-  }));
+  });
+  if (prefix === 'sales-ingredients') values.push([...selectedSalesAnalysis].sort());
+  return JSON.stringify(values);
 }
 
 function markSalesReportDirty(prefix) {
   calculatedViewRequests.get(prefix)?.controller.abort();
   calculatedViewRequests.delete(prefix);
+  if (prefix === 'sales-ingredients') updateSalesAnalysisSelectionCount();
   const button = document.querySelector(`#${prefix}-filters button[type="submit"]`);
   button.disabled = false;
   const previous = calculatedViewKeys.has(prefix);
@@ -2030,6 +2043,7 @@ function markSalesReportDirty(prefix) {
 
 async function loadSalesReport(prefix) {
   const definition = salesReportDefinitions[prefix];
+  if (definition.type === 'ingredients') return loadSalesIngredientsView();
   const status = document.getElementById(definition.status);
   const button = document.querySelector(`#${prefix}-filters button[type="submit"]`);
   const location = document.getElementById(`${prefix}-location`).value || 'all';
@@ -5027,7 +5041,7 @@ function formatSalesAnalysisPercent(value) {
 function updateSalesAnalysisSelectionCount() {
   const count = selectedSalesAnalysis.size;
   document.getElementById('sales-ingredients-selected-count').textContent = `${count} seleccionado${count === 1 ? '' : 's'}`;
-  document.getElementById('run-sales-ingredients').disabled = !count;
+  document.getElementById('run-sales-ingredients').disabled = !count || calculatedViewRequests.has('sales-ingredients');
 }
 
 function renderSalesAnalysisPickers() {
@@ -5211,16 +5225,25 @@ async function loadSalesIngredientsView() {
   const params = new URLSearchParams({ location });
   const dateFrom = document.getElementById('sales-ingredients-from').value;
   const dateTo = document.getElementById('sales-ingredients-to').value;
-  if (dateFrom) params.set('dateFrom', dateFrom);
-  if (dateTo) params.set('dateTo', dateTo);
+  if (!dateFrom || !dateTo || dateFrom > dateTo || dateTo > browserIsoToday()) {
+    setStatus(status, 'Selecciona un período válido, sin superar el día actual.', 'error');
+    return;
+  }
+  params.set('dateFrom', dateFrom);
+  params.set('dateTo', dateTo);
   if (selectedSalesAnalysis.size) params.set('selections', [...selectedSalesAnalysis].join(','));
+  const prefix = 'sales-ingredients';
+  const request = beginCalculation(prefix, salesReportKey(prefix));
+  const current = () => calculatedViewRequests.get(prefix) === request && salesReportKey(prefix) === request.key;
   button.disabled = true;
+  updateSalesAnalysisSelectionCount();
   setStatus(status, 'Relacionando ventas, recetas, ingredientes y clasificaciones…');
   try {
-    const data = await apiRequest(`/api/sales-by-ingredients?${params}`);
+    const data = await apiRequest(`/api/sales-by-ingredients?${params}`, { signal: request.controller.signal });
+    if (!current()) return;
     salesIngredientsState = data;
-    document.getElementById('sales-ingredients-from').value = data.period.from;
-    document.getElementById('sales-ingredients-to').value = data.period.to;
+    calculatedViewKeys.set(prefix, request.key);
+    document.getElementById('sales-ingredients-context').textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)}`;
     const validKeys = new Set([...data.options.ingredients, ...data.options.extras].map(item => item.key));
     for (const key of selectedSalesAnalysis) if (!validKeys.has(key)) selectedSalesAnalysis.delete(key);
     renderSalesAnalysisPickers();
@@ -5229,11 +5252,16 @@ async function loadSalesIngredientsView() {
     setStatus(status, data.warnings.length ? `${sourceText} ${data.warnings.join(' ')}` : sourceText,
       data.warnings.length ? 'error' : 'success');
   } catch (error) {
+    if (!current()) return;
     salesIngredientsState = null;
     renderSalesIngredientsReport();
     setStatus(status, error.message, 'error');
   } finally {
-    button.disabled = false;
+    if (calculatedViewRequests.get(prefix) === request) {
+      calculatedViewRequests.delete(prefix);
+      button.disabled = false;
+      updateSalesAnalysisSelectionCount();
+    }
   }
 }
 
@@ -12182,6 +12210,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('financial-results-to').value = financialToday;
   document.getElementById('financial-results-from').value = offsetIsoDate(financialToday, -29);
   syncFinancialResultsPeriod();
+  syncFinancialResultsPeriod('financial-costs');
   Object.keys(salesReportDefinitions).filter(prefix => prefix !== 'sales-customers').forEach(prefix => syncFinancialResultsPeriod(prefix));
   document.getElementById('financial-general-expenses-year').value = financialToday.slice(0, 4);
   document.body.appendChild(document.getElementById('date-confirmation'));
@@ -12292,24 +12321,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById(id).addEventListener('change', () => markSalesReportDirty(prefix));
     }
   }
-  document.getElementById('financial-results-filters').addEventListener('submit', event => {
-    event.preventDefault();
-    loadFinancialResults();
-  });
-  document.getElementById('financial-results-period').addEventListener('change', () => {
-    syncFinancialResultsPeriod();
-    invalidateCalculation('financial', 'financial-results-status');
-  });
-  for (const id of ['financial-results-from', 'financial-results-to']) {
-    document.getElementById(id).addEventListener('change', () => invalidateCalculation('financial', 'financial-results-status'));
-  }
-  document.getElementById('financial-results-location').addEventListener('change', event => {
-    invalidateCalculation('financial', 'financial-results-status');
-    if (event.target.value !== 'all' && locationRegistry[event.target.value]?.type === 'store') {
-      document.getElementById('financial-general-expenses-location').value = event.target.value;
-      loadFinancialGeneralExpenses();
+  for (const [prefix, calculation, kind] of [['financial-results', 'financial', 'statement'], ['financial-costs', 'financialCosts', 'costs']]) {
+    document.getElementById(`${prefix}-filters`).addEventListener('submit', event => {
+      event.preventDefault(); loadFinancialResults(kind);
+    });
+    document.getElementById(`${prefix}-period`).addEventListener('change', () => syncFinancialResultsPeriod(prefix));
+    for (const field of ['location', 'period', 'from', 'to']) {
+      document.getElementById(`${prefix}-${field}`).addEventListener('change', () => invalidateCalculation(calculation, `${prefix}-status`));
     }
-  });
+  }
   document.getElementById('financial-general-expenses-location').addEventListener('change', loadFinancialGeneralExpenses);
   document.getElementById('financial-general-expenses-year').addEventListener('change', loadFinancialGeneralExpenses);
   document.getElementById('financial-general-expenses-form').addEventListener('submit', event => {
@@ -12319,14 +12339,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('run-findings').addEventListener('click', loadFindingsView);
   document.getElementById('findings-status-filter').addEventListener('change', renderFindingsView);
   document.getElementById('print-findings').addEventListener('click', printFindingsReport);
-  document.getElementById('refresh-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
-  document.getElementById('sales-ingredients-location').addEventListener('change', loadSalesIngredientsView);
   document.getElementById('run-sales-ingredients').addEventListener('click', loadSalesIngredientsView);
   document.getElementById('clear-sales-ingredients').addEventListener('click', () => {
     selectedSalesAnalysis.clear();
     collapsedSalesAnalysisGroups.clear();
     renderSalesAnalysisPickers();
-    loadSalesIngredientsView();
+    updateSalesAnalysisSelectionCount();
+    markSalesReportDirty('sales-ingredients');
   });
   document.getElementById('sales-ingredient-hierarchy').addEventListener('change', renderSalesAnalysisPickers);
   document.getElementById('sales-ingredient-search').addEventListener('input', renderSalesAnalysisPickers);
@@ -12338,6 +12357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (checkbox.checked) selectedSalesAnalysis.add(checkbox.dataset.selectionKey);
       else selectedSalesAnalysis.delete(checkbox.dataset.selectionKey);
       updateSalesAnalysisSelectionCount();
+      markSalesReportDirty('sales-ingredients');
     });
   }
   document.getElementById('sales-ingredients-report').addEventListener('click', event => {
@@ -13401,14 +13421,19 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
   ['service', 'Modalidad de consumo', ['.sales-service-mode-panel']],
   ['hierarchies', 'Jerarquías y margen', ['#sales-hierarchy-margin-controls', '.financial-hierarchy-panel']],
   ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-filters', '#sales-insight-range-status', '#sales-insight-context', '#sales-insight-filter-note', '.sales-insights-grid']],
+  ['ingredients', 'Ventas por ingredientes', ['#sales-ingredients-workspace']],
   ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
   ['customers', 'Clientes recurrentes', ['.mercadopago-panel']]
 ]);
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
-  ['statement', 'Estado de resultados', ['#financial-results-summary', '.financial-statement-panel']],
+  ['weekly', 'Resultados Semanales / Mensuales', ['#weekly-results-workspace']],
+  ['statement', 'Estado de resultados', ['#financial-results-filters', '#financial-results-status', '#financial-results-summary', '.financial-statement-panel', '#financial-warnings']],
   ['expenses', 'Gastos generales', ['.financial-general-expenses-panel']],
-  ['costs', 'Revisión de costos', ['#financial-costs-empty', '#financial-missing-costs']]
-]);
+  ['costs', 'Revisión de costos', ['#financial-costs-filters', '#financial-costs-status', '#financial-costs-context', '#financial-costs-empty', '#financial-missing-costs', '#financial-costs-warnings']]
+], key => {
+  if (key === 'weekly') window.openCafeWeeklyResults?.();
+  else window.cancelCafeWeeklyResults?.();
+});
 const demandNavigation = installWorkspaceTabs('demand-analysis-workspace', '.demand-heading', [
   ['overview', 'Resumen del período', ['#demand-report > .demand-section:nth-child(1)']],
   ['exploration', 'Composición de la venta', ['#demand-report > .demand-section:nth-child(2)']],

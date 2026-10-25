@@ -49,7 +49,7 @@ async function initializeDemandView(initialLocations = []) {
   document.getElementById('demand-detail-prev').addEventListener('click', () => { if (demandView.detail.page > 1) { demandView.detail.page--; loadDemandDetail(); } });
   document.getElementById('demand-detail-next').addEventListener('click', () => { demandView.detail.page++; loadDemandDetail(); });
   renderDemandFilterOptions({ locations: initialLocations, categories: [], products: [],
-    capabilities: { channel: false, size: false }, loading: true });
+    capabilities: { channel: false, size: false }, pending: true });
 }
 
 function renderDemandFilterOptions(options) {
@@ -58,13 +58,13 @@ function renderDemandFilterOptions(options) {
   location.value = [...location.options].some(item => item.value === previousLocation) ? previousLocation : 'all';
   const hasCategories = Boolean(options.categories?.length);
   const hasProducts = Boolean(options.products?.length);
-  demandOptionsSelect('demand-category', options.categories || [], options.loading ? 'Cargando categorías…' : hasCategories ? 'Todas' : 'Sin categorías con ventas');
-  demandOptionsSelect('demand-product', options.products || [], options.loading ? 'Cargando productos…' : hasProducts ? 'Todos' : 'Sin productos con ventas');
-  document.getElementById('demand-category').disabled = Boolean(options.loading) || !hasCategories;
-  document.getElementById('demand-product').disabled = Boolean(options.loading) || !hasProducts;
+  demandOptionsSelect('demand-category', options.categories || [], options.pending ? 'Analiza para cargar categorías' : hasCategories ? 'Todas' : 'Sin categorías con ventas');
+  demandOptionsSelect('demand-product', options.products || [], options.pending ? 'Analiza para cargar productos' : hasProducts ? 'Todos' : 'Sin productos con ventas');
+  document.getElementById('demand-category').disabled = Boolean(options.pending) || !hasCategories;
+  document.getElementById('demand-product').disabled = Boolean(options.pending) || !hasProducts;
   const size = document.getElementById('demand-size');
-  demandOptionsSelect('demand-size', options.sizes || [], options.loading ? 'Cargando formatos…' : options.capabilities?.size ? 'Todos' : 'Sin formatos identificados');
-  size.disabled = Boolean(options.loading) || !options.capabilities?.size;
+  demandOptionsSelect('demand-size', options.sizes || [], options.pending ? 'Analiza para cargar formatos' : options.capabilities?.size ? 'Todos' : 'Sin formatos identificados');
+  size.disabled = Boolean(options.pending) || !options.capabilities?.size;
 }
 
 function demandQuery() {
@@ -139,7 +139,7 @@ async function loadDemandAnalysis() {
     const selectedLocation = document.getElementById('demand-location').value || 'all';
     const options = await apiRequest(`/api/demand-analysis/options?locations=${encodeURIComponent(selectedLocation)}`, { signal: controller.signal });
     if (!current()) return;
-    if (!demandView.options && options.today) {
+    if (!demandView.options && options.today && document.getElementById('demand-period').value !== 'custom') {
       document.getElementById('demand-to').value = options.today;
       document.getElementById('demand-from').value = `${options.today.slice(0, 7)}-01`;
     }

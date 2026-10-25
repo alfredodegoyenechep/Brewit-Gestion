@@ -9,7 +9,7 @@ const { createApp } = require('../server');
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-test('Análisis de la Venta abre sus cuatro capas y conserva el detalle aun sin ventas', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
+test('Análisis de la Venta espera Analizar y conserva sus cuatro capas y detalle aun sin ventas', { skip: !fs.existsSync(CHROME_PATH) }, async t => {
   const uploadsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-demand-ui-'));
   const server = createApp({ enableLegacyTools: true, uploadsRoot, reportToday: '2026-09-17' }).listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
@@ -20,10 +20,43 @@ test('Análisis de la Venta abre sus cuatro capas y conserva el detalle aun sin 
     fs.rmSync(uploadsRoot, { recursive: true, force: true });
   });
   const page = await browser.newPage();
+  const demandRequests = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith('/api/demand-analysis')) demandRequests.push(url);
+  });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.waitForFunction(() => document.getElementById('financial-general-expenses-grid').childElementCount > 0);
   await page.getByRole('link', { name: 'Caracterización de la Venta' }).click();
   assert.equal(await page.locator('#demand-location option').count(), 3);
+  assert.match(await page.locator('#demand-status').innerText(), /pulsa Analizar/);
+  assert.equal(await page.locator('#demand-report').isVisible(), false);
+  assert.equal(await page.locator('#demand-progress').isVisible(), false);
+  assert.equal(await page.locator('#demand-category option').first().innerText(), 'Analiza para cargar categorías');
+  await page.locator('#demand-period').selectOption('custom');
+  await page.locator('#demand-from').fill('2026-09-02');
+  await page.locator('#demand-to').fill('2026-09-16');
+  await page.locator('#demand-mode').selectOption('takeaway');
+  await page.locator('#demand-price-band').fill('1000');
+  await page.locator('#demand-analysis-workspace-tab-exploration').click();
+  await page.getByRole('link', { name: 'Estadísticas por producto y horario' }).click();
+  await page.getByRole('link', { name: 'Caracterización de la Venta' }).click();
+  assert.equal(demandRequests.length, 0, 'Entrar, editar filtros y volver a la vista no debe procesar ventas');
+  assert.equal(await page.locator('#demand-report').isVisible(), false);
+  await page.locator('#demand-analysis-workspace-tab-overview').click();
+  await page.locator('#demand-filters button[type="submit"]').click();
   await page.waitForFunction(() => document.getElementById('demand-status')?.textContent.includes('Análisis actualizado.'));
+  assert.deepEqual(demandRequests.map(url => url.pathname), ['/api/demand-analysis/options', '/api/demand-analysis']);
+  const submitted = demandRequests[1].searchParams;
+  assert.equal(submitted.get('mode'), 'custom');
+  assert.equal(submitted.get('dateFrom'), '2026-09-02');
+  assert.equal(submitted.get('dateTo'), '2026-09-16');
+  assert.equal(submitted.get('modeOfService'), 'takeaway');
+  assert.equal(submitted.get('priceBand'), '1000');
+  await page.getByRole('link', { name: 'Estadísticas por producto y horario' }).click();
+  await page.getByRole('link', { name: 'Caracterización de la Venta' }).click();
+  assert.equal(demandRequests.length, 2, 'Volver al reporte generado no debe recalcularlo');
+  assert.equal(await page.locator('#demand-report').isVisible(), true);
   assert.equal(await page.locator('#demand-category option').first().innerText(), 'Sin categorías con ventas');
   assert.equal(await page.locator('#demand-product option').first().innerText(), 'Sin productos con ventas');
   assert.equal(await page.locator('#demand-summary .demand-kpi').count(), 5);
@@ -68,8 +101,8 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.deepEqual(await page.locator('.navigation .nav-group-label').allTextContents(),
     ['Ventas y resultados', 'Análisis de ventas', 'Inventario y compras', 'Productos y costos', 'Control y configuración']);
   assert.deepEqual(await page.locator('.navigation .nav-link').evaluateAll(links => links.map(link => link.dataset.view)), [
-    'report', 'financial-results', 'weekly-results',
-    'sales', 'demand-analysis', 'sales-ingredients',
+    'report', 'financial-results',
+    'sales', 'demand-analysis',
     'inventory', 'purchases', 'purchase-projection', 'past-orders',
     'products', 'ingredients', 'cost-review',
     'findings', 'transaction-audit', 'uploads', 'historical-control', 'config'

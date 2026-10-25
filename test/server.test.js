@@ -1568,6 +1568,74 @@ test('reports product sales by selected recipe ingredients and extras hierarchie
   assert.equal(Math.round(report.totals.contributionMarginPercent * 10) / 10, -912.5);
 });
 
+test('sales preparation filters classify AB products and sold BA extras before aggregating without duplicate totals', async t => {
+  const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
+  const catalog = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Producto *', 'Jerarquías de Extras *', 'Costo'],
+    ['P1', 'Cappuccino (CL)', 1, 'AB.HOT', '', 100],
+    ['P2', 'Iced Latte', 1, 'AB.COLD', '', 100],
+    ['P3', 'Pastelería', 1, 'AB.FOOD', '', 100],
+    ['P4', 'Café antiguo', 0, 'AB.HOT', '', 100]
+  ]), 'Prod');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Medida Base', 'Costo'],
+    ['I1', 'Café', 1, 'UN', 10]
+  ]), 'Ingr');
+  XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Extras *', 'Costo'],
+    ['E1', 'Shot Simple Café', 1, 'BA.SHOT', 10]
+  ]), 'Extr');
+  const masters = await fetch(`${baseUrl}/upload/master`, { method: 'POST', body: fileForm([
+    { field: 'master-catalog', contents: XLSX.write(catalog, { type: 'buffer', bookType: 'xlsx' }), filename: 'catalogo.xlsx' },
+    { field: 'master-recipes', filename: 'recetas.txt', contents: [
+      'Id Producto\tId Ingrediente\tCantidad Ingrediente\tUnidad Medida\tTasa Rendimiento',
+      'P1\tI1\t1\tUN\t100', 'P2\tI1\t1\tUN\t100'
+    ].join('\n') },
+    { field: 'product-hierarchy', filename: 'productos.txt', contents: [
+      'ID Jerarquia\tNombre Jerarquía Producto *\tID nodo padre\tID Nodo **\tOrden',
+      'AB.\tTodos\t\t0\t0', 'AB.CAFE\tBarra Cafe\tAB.\t1\t1', 'AB.HOT\tCafé Caliente\tAB.CAFE\t2\t2',
+      'AB.COLD\tIced Coffee\tAB.CAFE\t3\t3', 'AB.FOOD\tPastelería\tAB.\t4\t4'
+    ].join('\n') },
+    { field: 'extras-hierarchy', filename: 'extras.txt', contents: [
+      'ID Jerarquia\tNombre Jerarquía Producto *\tID nodo padre\tID Nodo **\tOrden',
+      'BA.\tTodas\t\t0\t0', 'BA.001\tBarra Caliente\tBA.\t1\t1', 'BA.002\tBarra Fría\tBA.\t2\t2',
+      'BA.080\tCafe/Matcha/Chai\tBA.\t3\t3', 'BA.SHOT\tShots\tBA.080\t4\t4', 'BA.020\tCrema\tBA.\t5\t5',
+      'BA.010\tTipo de Leche\tBA.\t6\t6'
+    ].join('\n') }
+  ], { 'master-catalog-from': '2026-08-01', 'master-recipes-from': '2026-08-01',
+    'product-hierarchy-from': '2026-08-01', 'extras-hierarchy-from': '2026-08-01' }) });
+  assert.equal(masters.status, 200, await masters.text());
+  const sales = [
+    ['ID de orden', 'Fecha de creacion', 'ID Producto', 'Nombre', 'Cantidad', 'Precio a Pagar', 'AB.', 'BA.', 'Pago total'],
+    ['o1', '2026-08-10', 'P1', 'Cappuccino (CL)', 4, 4760, 'AB.HOT', ''],
+    ['o2', '2026-08-10', 'P2', 'Iced Latte', 2, 2380, '', ''],
+    ['o3', '2026-08-10', 'P3', 'Pastelería', 1, 1190, 'AB.FOOD', ''],
+    ['o4', '2026-08-10', 'P4', 'Café antiguo', 1, 1190, 'AB.HOT', ''],
+    ['o5', '2026-08-10', 'E1', 'Shot Simple Café', 3, 714, '', ''],
+    ['o6', '2026-08-10', 'E1', 'Shot en otra clasificación', 5, 1190, '', 'BA.010'],
+    ['o7', '2026-08-10', 'UNKNOWN', 'Extra fuera del maestro', 2, 238, '', 'BA.010']
+  ].map(row => row.join('\t')).join('\n');
+  const inspection = await inspectTransactions(baseUrl, 'store-1', [{ field: 'sales', contents: sales, filename: 'ventas.csv' }]).then(r => r.json());
+  const confirmation = await confirmTransactions(baseUrl, inspection, 'keep', { from: '2026-08-10', to: '2026-08-10' });
+  assert.equal(confirmation.status, 200, await confirmation.text());
+  const report = await fetch(`${baseUrl}/api/sales-by-ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15&selections=extra:BA.001,extra:BA.002,extra:BA.080,extra:BA.020,ingredient:I1`).then(r => r.json());
+  const group = key => report.groups.find(item => item.key === key);
+  assert.deepEqual(group('extra:BA.001').products.map(item => item.code), ['P1', 'P4']);
+  assert.deepEqual(group('extra:BA.002').products.map(item => item.code), ['P2']);
+  assert.deepEqual(group('extra:BA.080').products.map(item => item.code), ['E1']);
+  assert.equal(group('extra:BA.080').totals.productUnits, 3, 'Only matching sale rows count, even for the same product code');
+  assert.equal(Math.round(group('extra:BA.080').totals.netSales), 600);
+  assert.equal(group('extra:BA.020').products.length, 0, 'An unrelated classification must stay empty');
+  assert.equal(report.totals.uniqueProducts, 4);
+  assert.equal(report.totals.productUnits, 10);
+  assert.equal(Math.round(report.totals.netSales), 7600, 'Overlapping ingredients and bars count each matching sale once');
+  const milk = await fetch(`${baseUrl}/api/sales-by-ingredients?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-15&selections=extra:BA.010`).then(r => r.json());
+  assert.deepEqual(milk.groups[0].products.map(item => item.code), ['E1', 'UNKNOWN']);
+  assert.equal(milk.totals.productUnits, 7);
+  assert.equal(Math.round(milk.totals.netSales), 1200);
+});
+
 test('builds financial results by hierarchy, bar and main ingredient with MercadoPago fees', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
   const catalog = XLSX.utils.book_new();

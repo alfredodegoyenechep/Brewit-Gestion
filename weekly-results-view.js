@@ -541,6 +541,7 @@
     data.warnings.forEach(message => paragraph(warnings, message));
   }
   window.cancelCafeWeeklyResults = () => {
+    if (dialog.open) dialog.close();
     metricCache.clear();
     if (exportDialog.open) exportDialog.close();
     closeExport();

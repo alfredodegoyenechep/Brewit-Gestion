@@ -1444,6 +1444,7 @@ function parseSalesAnalysisCatalog(filePath) {
     const priceColumn = findHeaderColumn(headers, ['Precio Base', 'Precio de venta']);
     const ingredientHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Ingredientes *', 'Jerarquía de Ingredientes']);
     const extrasHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Extras *', 'Jerarquía de Extras']);
+    const productHierarchyColumn = findHeaderColumn(headers, ['Jerarquías de Producto *', 'Jerarquía de Producto', 'Jerarquias de Producto *']);
     for (const row of rows.slice(headerIndex + 1)) {
       const code = String(row[codeColumn] ?? '').trim();
       if (!code || (activeColumn >= 0 && !Boolean(numericValue(row[activeColumn])))) continue;
@@ -1452,6 +1453,7 @@ function parseSalesAnalysisCatalog(filePath) {
         name: repairMojibake(row[nameColumn]) || code,
         unit: String(row[unitColumn] ?? '').trim(),
         listPrice: priceColumn >= 0 ? numericValue(row[priceColumn]) || 0 : 0,
+        productHierarchyIds: isProductSheet ? String(row[productHierarchyColumn] ?? '').split(',').map(value => value.trim()).filter(Boolean) : [],
         hierarchyIds: String(row[isIngredientSheet ? ingredientHierarchyColumn : extrasHierarchyColumn] ?? '')
           .split(',').map(value => value.trim()).filter(Boolean)
       };
@@ -6949,6 +6951,7 @@ function createApp(options = {}) {
     }
     const ingredientHierarchyMaster = latestMasterFile('ingredient-hierarchy', dateTo);
     const extrasHierarchyMaster = latestMasterFile('extras-hierarchy', dateTo);
+    const productHierarchyMaster = latestMasterFile('product-hierarchy', dateTo);
     const catalog = parseSalesAnalysisCatalog(catalogMaster.filePath);
     const costCatalog = parseIngredientCatalog(catalogMaster.filePath);
     const recipes = recipeResolution.recipes;
@@ -6959,6 +6962,9 @@ function createApp(options = {}) {
     const extrasHierarchies = extrasHierarchyMaster
       ? parseNamedHierarchies(extrasHierarchyMaster.filePath, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Nombre Jerarquía *'])
       : null;
+    const productHierarchies = productHierarchyMaster ? parseProductHierarchies(productHierarchyMaster.filePath) : null;
+    const hotIds = extrasHierarchies?.descendantIds('BA.001') || new Set(['BA.001']);
+    const coldIds = extrasHierarchies?.descendantIds('BA.002') || new Set(['BA.002']);
 
     const ingredientOptions = [...catalog.ingredients.values()].map(item => {
       const hierarchyId = item.hierarchyIds[0] || 'unassigned';
@@ -7021,10 +7027,30 @@ function createApp(options = {}) {
             const catalogItem = costCatalog.get(code.toUpperCase());
             const costReference = costResolver.resolve(code, catalogItem?.unit, catalogItem);
             const totalCost = quantity * costReference.unitCost;
+            const product = catalog.products.get(code.toUpperCase());
+            const extra = catalog.recipeExtras.get(code.toUpperCase());
+            const extraHierarchyId = String(rowValue(row, ['BA.']) ?? '').trim();
+            const preparationHierarchyIds = new Set(product?.hierarchyIds || []);
+            if (extraHierarchyId) preparationHierarchyIds.add(extraHierarchyId);
+            else for (const id of extra?.hierarchyIds || []) preparationHierarchyIds.add(id);
+            // Synchronized products carry AB product hierarchies, while BA
+            // hierarchies belong to extras. Use the same bar rules as sales insights.
+            if (!extra && !extraHierarchyId) {
+              const hierarchyId = String(rowValue(row, ['AB.']) ?? '').trim() || product?.productHierarchyIds[0];
+              const hierarchyPath = productHierarchies?.pathFor(hierarchyId) || [];
+              const fallbackHierarchy = repairMojibake(rowValue(row, ['Categorías de Productos/Platos', 'Categorias de Productos/Platos']));
+              const bar = require('./sales-insight-filters').classifySalesBar({
+                hierarchyIds: product?.hierarchyIds || [],
+                hierarchyPath: hierarchyPath.length ? hierarchyPath : [fallbackHierarchy], name: product?.name || name
+              }, hotIds, coldIds);
+              if (bar === 'hot') preparationHierarchyIds.add('BA.001');
+              if (bar === 'cold') preparationHierarchyIds.add('BA.002');
+            }
             if (code || name) facts.push({
               locationId: location.id,
               code,
               name,
+              preparationHierarchyIds: [...preparationHierarchyIds],
               quantity,
               netSales: grossLine / 1.19,
               totalCost,
@@ -7040,25 +7066,34 @@ function createApp(options = {}) {
         }
       }
     }
-    const productsSold = new Map();
-    for (const fact of facts) {
-      const key = fact.code.toUpperCase() || normalizeHeader(fact.name);
-      const current = productsSold.get(key) || {
-        code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0, costAvailable: true
-      };
-      current.quantity += fact.quantity;
-      current.netSales += fact.netSales;
-      current.totalCost += fact.totalCost;
-      current.costAvailable = current.costAvailable && fact.costAvailable;
-      productsSold.set(key, current);
-    }
-    const matchedProductKeys = new Set();
+    const productKeyFor = fact => fact.code.toUpperCase() || normalizeHeader(fact.name);
+    const aggregateProducts = selectedFacts => {
+      const products = new Map();
+      for (const fact of selectedFacts) {
+        const key = productKeyFor(fact);
+        const current = products.get(key) || {
+          code: fact.code, name: fact.name, quantity: 0, netSales: 0, totalCost: 0, costAvailable: true
+        };
+        current.quantity += fact.quantity;
+        current.netSales += fact.netSales;
+        current.totalCost += fact.totalCost;
+        current.costAvailable = current.costAvailable && fact.costAvailable;
+        products.set(key, current);
+      }
+      return products;
+    };
+    const matchedFacts = new Set();
     const groups = selectedOptions.map(option => {
       const isIngredient = option.key.startsWith('ingredient:');
+      const descendants = isIngredient ? null : extrasHierarchies.descendantIds(option.id);
+      const groupFacts = facts.filter(fact => isIngredient
+        ? (recipesByProduct.get(productKeyFor(fact)) || []).some(line => line.ingredientId.toUpperCase() === option.code.toUpperCase())
+        : fact.preparationHierarchyIds.some(id => descendants.has(id)));
+      groupFacts.forEach(fact => matchedFacts.add(fact));
       const products = [];
       let ingredientQuantity = 0;
       let ingredientUnit = isIngredient ? canonicalConsumptionUnit(option.unit).unit || option.unit : null;
-      for (const [productKey, sold] of productsSold) {
+      for (const [productKey, sold] of aggregateProducts(groupFacts)) {
         if (isIngredient) {
           const matchingLines = (recipesByProduct.get(productKey) || [])
             .filter(line => line.ingredientId.toUpperCase() === option.code.toUpperCase());
@@ -7077,12 +7112,8 @@ function createApp(options = {}) {
           ingredientQuantity += required;
           products.push({ ...sold, ingredientQuantity: compatible ? required : null, ingredientUnit });
         } else {
-          const descendants = extrasHierarchies.descendantIds(option.id);
-          const product = catalog.products.get(productKey);
-          if (!product?.hierarchyIds.some(id => descendants.has(id))) continue;
           products.push({ ...sold, ingredientQuantity: null, ingredientUnit: null });
         }
-        matchedProductKeys.add(productKey);
       }
       products.sort((left, right) => right.quantity - left.quantity || right.netSales - left.netSales);
       const productUnits = products.reduce((sum, item) => sum + item.quantity, 0);
@@ -7105,7 +7136,7 @@ function createApp(options = {}) {
         shareOfPeriodSales: facts.reduce((sum, fact) => sum + fact.netSales, 0) ? netSales / facts.reduce((sum, fact) => sum + fact.netSales, 0) * 100 : 0
       };
     });
-    const uniqueProducts = [...matchedProductKeys].map(key => productsSold.get(key)).filter(Boolean);
+    const uniqueProducts = [...aggregateProducts([...matchedFacts]).values()];
     const periodNetSales = facts.reduce((sum, fact) => sum + fact.netSales, 0);
     const uniqueNetSales = uniqueProducts.reduce((sum, item) => sum + item.netSales, 0);
     const uniqueTotalCost = uniqueProducts.reduce((sum, item) => sum + item.totalCost, 0);

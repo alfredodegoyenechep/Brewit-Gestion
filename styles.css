@@ -292,6 +292,12 @@
   box-shadow: var(--shadow);
 }
 
+.financial-report-filters { justify-content: flex-start; margin: 0 0 18px; }
+#financial-results-workspace > .workspace-tab-panel { min-width: 0; }
+#financial-results-workspace .weekly-results-workspace .financial-results-heading { display: block; }
+#financial-results-workspace #weekly-results-form { margin-top: 18px; justify-content: flex-start; }
+#financial-results-workspace .financial-general-expenses-panel { min-width: 0; }
+
 .financial-results-filters label {
   display: grid;
   gap: 6px;
@@ -4824,15 +4830,6 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
   gap: 24px;
 }
 
-.sales-ingredients-controls {
-  display: grid;
-  grid-template-columns: minmax(190px, 1.4fr) repeat(2, minmax(145px, 1fr)) auto;
-  align-items: end;
-  gap: 10px;
-  min-width: min(720px, 60vw);
-}
-
-.sales-ingredients-controls label,
 .sales-ingredient-selector-card > label {
   display: grid;
   gap: 6px;
@@ -4841,8 +4838,6 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
   font-weight: 800;
 }
 
-.sales-ingredients-controls select,
-.sales-ingredients-controls input,
 .sales-ingredient-selector-card select,
 .sales-ingredient-selector-card input[type='search'] {
   width: 100%;
@@ -4965,6 +4960,7 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
 }
 
 .sales-ingredient-result-card {
+  min-width: 0;
   padding: 18px;
   border: 1px solid var(--border-soft);
   border-radius: 16px;
@@ -8765,7 +8761,6 @@ button:disabled {
     grid-template-columns: 1fr 1fr;
   }
 
-  .sales-ingredients-controls,
   .sales-ingredients-picker-grid {
     grid-template-columns: 1fr;
     min-width: 0;

@@ -33,7 +33,8 @@ test('warehouse column precedes cafes with one amount, returns, dispatches and d
     await route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data }) + '\n' });
   });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   await page.locator('#weekly-results-refresh').click();
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   const table = page.locator('#weekly-results-table table');
@@ -98,7 +99,8 @@ test('daily popup loads on demand, keeps weekly inventory totals, switches branc
     await route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data: detail }) + '\n' }).catch(() => {});
   });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   await page.locator('#weekly-results-refresh').click();
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(dailyRequests, 0);
@@ -146,11 +148,11 @@ test('daily popup loads on demand, keeps weekly inventory totals, switches branc
   assert.ok(await popup.evaluate(dialog => dialog.getBoundingClientRect().width <= innerWidth));
   assert.equal(await popup.locator('.weekly-results-table-wrap').evaluate(wrap => wrap.scrollWidth > wrap.clientWidth), true);
   await page.screenshot({ path: '/private/tmp/brewit-daily-results.png' });
-  await page.locator('[data-view="financial-results"]').evaluate(link => link.click());
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).evaluate(tab => tab.click());
   assert.equal(await popup.isVisible(), false);
 });
 
-test('independent weekly screen waits for Actualizar, groups dynamic stores, exposes dates and keeps the remaining financial tabs', { skip: !fs.existsSync(chrome) }, async t => {
+test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes dates and keeps independent financial tabs', { skip: !fs.existsSync(chrome) }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-weekly-results-ui-'));
   const server = createApp({ enableLegacyTools: true, uploadsRoot: root, reportToday: '2026-10-13' }).listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -160,10 +162,12 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   const labels = await page.locator('.nav-group').first().locator('.nav-text').allTextContents();
-  assert.deepEqual(labels.slice(-2), ['Resultados Financieros', 'Resultados Semanales / Mensuales']);
+  assert.ok(labels.includes('Resultados Financieros'));
+  assert.equal(labels.includes('Resultados Semanales / Mensuales'), false);
   let requests = 0;
   page.on('request', request => { if (new URL(request.url()).pathname === '/api/weekly-results/stream') requests++; });
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   assert.equal(requests, 0);
   assert.equal(await page.locator('#weekly-results-table table').count(), 0);
   assert.equal(await page.locator('#weekly-results-weeks').inputValue(), '2');
@@ -295,7 +299,7 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   await page.locator('[data-view="financial-results"]').click();
   assert.equal(await page.getByRole('tab', { name: 'Resultados Semanales', exact: true }).count(), 0);
   assert.equal(await page.locator('#financial-weekly-form').count(), 0);
-  assert.deepEqual(await page.locator('#financial-results-workspace [role="tab"]').allTextContents(), ['Estado de resultados', 'Gastos generales', 'Revisión de costos']);
+  assert.deepEqual(await page.locator('#financial-results-workspace [role="tab"]').allTextContents(), ['Resultados Semanales / Mensuales', 'Estado de resultados', 'Gastos generales', 'Revisión de costos']);
   await page.getByRole('tab', { name: 'Gastos generales', exact: true }).click();
   assert.equal(await page.locator('#financial-results-workspace-panel-expenses').isVisible(), true);
   await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();
@@ -303,7 +307,8 @@ test('independent weekly screen waits for Actualizar, groups dynamic stores, exp
   await page.locator('#financial-results-filters button[type="submit"]').click();
   await financialRequest;
   const requestsBeforeReturn = requests;
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   assert.equal(requests, requestsBeforeReturn);
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   await page.setViewportSize({ width: 390, height: 844 });
@@ -366,7 +371,8 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   let requests = 0;
   page.on('request', request => { if (new URL(request.url()).pathname === '/api/weekly-results/stream') requests++; });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   assert.equal(requests, 0);
   assert.deepEqual(await page.locator('#weekly-results-weeks option').evaluateAll(options => options.map(option => option.value)), ['2', '3', '4']);
   await page.locator('#weekly-results-weeks').selectOption('2');

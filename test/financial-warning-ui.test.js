@@ -14,6 +14,7 @@ test('every warning opens an accessible evidence dialog and restores focus on Es
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   const financialRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/api/financial-results');
   await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();
   await page.locator('#financial-results-filters button[type="submit"]').click();
   assert.equal(new URL((await financialRequest).url()).searchParams.has('costValuation'), false);
   await page.waitForFunction(() => document.querySelectorAll('#financial-warnings-list button').length > 0);
@@ -51,6 +52,7 @@ test('late financial response cannot replace a newer period or its status', { sk
   const page = await browser.newPage();
   await page.goto(base);
   await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();
   await page.evaluate(() => {
     const originalRequest = apiRequest;
     window.financialRaceRequests = [];
@@ -74,4 +76,39 @@ test('late financial response cannot replace a newer period or its status', { sk
   assert.equal(await page.evaluate(() => financialResultsState.scope.label), 'NUEVO');
   assert.equal(await page.locator('#financial-results-filters button[type="submit"]').isDisabled(), false);
   assert.doesNotMatch(await page.locator('#financial-results-status').innerText(), /ANTIGUO/);
+  assert.equal(await page.locator('#financial-results-workspace > .financial-results-heading form').count(), 0);
+  const expenseLocation = await page.locator('#financial-general-expenses-location').inputValue();
+  const expenseYear = await page.locator('#financial-general-expenses-year').inputValue();
+  await page.getByRole('tab', { name: 'Revisión de costos', exact: true }).click();
+  assert.equal(await page.locator('#financial-results-filters').isVisible(), false);
+  await page.locator('#financial-costs-location').selectOption('store-2');
+  await page.locator('#financial-costs-period').selectOption('custom');
+  await page.locator('#financial-costs-from').fill('2026-10-03');
+  await page.locator('#financial-costs-to').fill('2026-10-04');
+  await page.locator('#financial-costs-filters button[type="submit"]').click();
+  await page.waitForFunction(() => window.financialRaceRequests.length === 3);
+  assert.deepEqual(await page.evaluate(() => Object.fromEntries(new URL(window.financialRaceRequests[2].url, location.origin).searchParams)),
+    { location: 'store-2', dateFrom: '2026-10-03', dateTo: '2026-10-04' });
+  await page.evaluate(data => window.financialRaceRequests[2].resolve({ ...data,
+    scope: { ...data.scope, label: 'COSTOS' }, period: { from: '2026-10-03', to: '2026-10-04' },
+    revenue: { ...data.revenue, missingCostProducts: [{ code: 'P1', name: 'Producto sin costo', reason: 'no-effective-catalog', lines: 2, netSales: 100, firstDate: '2026-10-03', lastDate: '2026-10-04' }] }
+  }), template);
+  await page.locator('#financial-costs-context').filter({ hasText: 'COSTOS' }).waitFor();
+  assert.match(await page.locator('#financial-missing-costs-body').innerText(), /Producto sin costo/);
+  assert.match(await page.locator('#financial-statement-context').innerText(), /NUEVO/);
+  await page.getByRole('tab', { name: 'Gastos generales', exact: true }).click();
+  assert.equal(await page.locator('#financial-general-expenses-location').inputValue(), expenseLocation);
+  assert.equal(await page.locator('#financial-general-expenses-year').inputValue(), expenseYear);
+  assert.equal(await page.locator('#financial-general-expenses-selector').isVisible(), true);
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
+  assert.equal(await page.locator('#weekly-results-form').isVisible(), true);
+  assert.equal(await page.locator('#financial-costs-filters').isVisible(), false);
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).click();
+  assert.equal(await page.locator('#financial-results-location').inputValue(), 'all');
+  assert.equal(await page.locator('#financial-results-from').inputValue(), '2026-10-02');
+  assert.match(await page.locator('#financial-statement-context').innerText(), /NUEVO/);
+  await page.getByRole('tab', { name: 'Revisión de costos', exact: true }).click();
+  assert.equal(await page.locator('#financial-costs-location').inputValue(), 'store-2');
+  assert.match(await page.locator('#financial-costs-context').innerText(), /COSTOS/);
+  assert.equal(await page.evaluate(() => window.financialRaceRequests.length), 3);
 });

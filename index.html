@@ -43,13 +43,6 @@
         </svg>
         <span class="nav-text">Auditoría Transacciones</span>
       </a>
-      <a href="#" class="nav-link" data-view="sales-ingredients">
-        <svg class="nav-icon" viewBox="0 0 24 24">
-          <path d="M12 3c4 3 6 6 6 10a6 6 0 0 1-12 0c0-4 2-7 6-10Z" />
-          <path d="M9 15c2-1 4-3 5-6M16 5l3-2M18 8h3" />
-        </svg>
-        <span class="nav-text">Ventas por Ingredientes</span>
-      </a>
       <a href="#" class="nav-link" data-view="products">
         <svg class="nav-icon" viewBox="0 0 24 24">
           <path d="M6 11h12M6 7h12M6 15h12M6 19h7" />
@@ -110,10 +103,6 @@
           <path d="m15 7 2-2 2 2M17 5v5" />
         </svg>
         <span class="nav-text">Resultados Financieros</span>
-      </a>
-      <a href="#" class="nav-link" data-view="weekly-results">
-        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v15H4zM8 3v4m8-4v4M4 10h16M8 14h2m4 0h2m-8 3h2" /></svg>
-        <span class="nav-text">Resultados Semanales / Mensuales</span>
       </a>
       <a href="#" class="nav-link" data-view="demand-analysis">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
@@ -455,6 +444,72 @@
           <div id="sales-hierarchy-share" class="sales-share-list"></div>
         </section>
       </div>
+
+      <section id="sales-ingredients-workspace" class="panel sales-ingredients-workspace">
+        <div class="sales-ingredients-head">
+          <div>
+            <div class="panel-eyebrow">Análisis de ventas</div>
+            <h3>Ventas por ingredientes</h3>
+            <p class="panel-description">Relaciona las ventas con las recetas y con las clasificaciones de extras para entender qué contienen y cómo se preparan los productos vendidos.</p>
+          </div>
+        </div>
+        <form id="sales-ingredients-filters" class="financial-results-filters sales-report-filters">
+          <label for="sales-ingredients-location">Cafetería
+            <select id="sales-ingredients-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="sales-ingredients-period">Período
+            <select id="sales-ingredients-period"><option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="current-week">Semana actual</option><option value="previous-week">Semana anterior</option><option value="current-month">Mes actual</option><option value="previous-month">Mes anterior</option><option value="last-30-days" selected>Últimos 30 días</option><option value="current-year">Año en curso</option><option value="custom">Rango de fechas</option></select>
+          </label>
+          <label id="sales-ingredients-from-field" for="sales-ingredients-from">Desde
+            <input id="sales-ingredients-from" type="date" required />
+          </label>
+          <label id="sales-ingredients-to-field" for="sales-ingredients-to">Hasta
+            <input id="sales-ingredients-to" type="date" required />
+          </label>
+          <button id="refresh-sales-ingredients" class="primary" type="submit">Generar reportes</button>
+        </form>
+        <div id="sales-ingredients-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reportes para cargar los ingredientes y clasificaciones disponibles.</div>
+        <p id="sales-ingredients-context" class="panel-description"></p>
+        <section class="sales-ingredients-picker">
+          <div class="sales-ingredients-picker-head">
+            <div>
+              <div class="panel-eyebrow">Selección múltiple</div>
+              <h3>¿Qué quieres analizar?</h3>
+              <p class="panel-description">Selecciona uno o varios ingredientes y/o clasificaciones de preparación. Puedes combinar ambos criterios.</p>
+            </div>
+            <div class="sales-ingredients-picker-actions">
+              <span id="sales-ingredients-selected-count">0 seleccionados</span>
+              <button id="clear-sales-ingredients" class="icon-button small" type="button">Limpiar</button>
+              <button id="run-sales-ingredients" class="primary" type="button" disabled>Aplicar selección</button>
+            </div>
+          </div>
+          <div class="sales-ingredients-picker-grid">
+            <fieldset class="sales-ingredient-selector-card">
+              <legend>Ingredientes de las recetas</legend>
+              <p>Útil para vasos, café, matcha, leches, cremas y extras con receta identificados con códigos SUB.</p>
+              <label for="sales-ingredient-hierarchy">Jerarquía
+                <select id="sales-ingredient-hierarchy"><option value="all">Todas las jerarquías</option></select>
+              </label>
+              <label for="sales-ingredient-search">Buscar ingrediente
+                <input id="sales-ingredient-search" type="search" placeholder="Código o nombre" autocomplete="off" />
+              </label>
+              <div id="sales-ingredient-options" class="sales-analysis-options"></div>
+            </fieldset>
+            <fieldset class="sales-ingredient-selector-card">
+              <legend>Clasificaciones de preparación</legend>
+              <p>Barra Caliente y Barra Fría agrupan productos según su preparación. Las demás clasificaciones muestran los extras vendidos de esa jerarquía.</p>
+              <label for="sales-extra-search">Buscar clasificación
+                <input id="sales-extra-search" type="search" placeholder="Nombre de jerarquía" autocomplete="off" />
+              </label>
+              <div id="sales-extra-options" class="sales-analysis-options"></div>
+            </fieldset>
+          </div>
+        </section>
+        <div id="sales-ingredients-summary" class="products-summary"></div>
+        <div id="sales-ingredients-report" class="sales-ingredients-report">
+          <div class="empty-state">Selecciona al menos un ingrediente o clasificación para generar el reporte.</div>
+        </div>
+      </section>
 
       <section class="panel hourly-demand-panel">
         <div class="panel-head hourly-demand-head">
@@ -1093,68 +1148,6 @@
 
     </section>
 
-    <section id="sales-ingredients-workspace" class="panel sales-ingredients-workspace" style="display:none;">
-      <div class="sales-ingredients-head">
-        <div>
-          <div class="panel-eyebrow">Análisis de ventas</div>
-          <h2>Ventas por ingredientes</h2>
-          <p class="panel-description">Relaciona las ventas con las recetas y con las clasificaciones de extras para entender qué contienen y cómo se preparan los productos vendidos.</p>
-        </div>
-        <div class="sales-ingredients-controls">
-          <label for="sales-ingredients-location">Cafetería
-            <select id="sales-ingredients-location"><option value="all">Todas las cafeterías</option></select>
-          </label>
-          <label for="sales-ingredients-from">Fecha inicial
-            <input id="sales-ingredients-from" type="date" />
-          </label>
-          <label for="sales-ingredients-to">Fecha final
-            <input id="sales-ingredients-to" type="date" />
-          </label>
-          <button id="refresh-sales-ingredients" class="icon-button" type="button">Actualizar datos</button>
-        </div>
-      </div>
-      <div id="sales-ingredients-status" class="form-status" aria-live="polite"></div>
-      <section class="sales-ingredients-picker">
-        <div class="sales-ingredients-picker-head">
-          <div>
-            <div class="panel-eyebrow">Selección múltiple</div>
-            <h3>¿Qué quieres analizar?</h3>
-            <p class="panel-description">Selecciona uno o varios ingredientes y/o clasificaciones de preparación. Puedes combinar ambos criterios.</p>
-          </div>
-          <div class="sales-ingredients-picker-actions">
-            <span id="sales-ingredients-selected-count">0 seleccionados</span>
-            <button id="clear-sales-ingredients" class="icon-button small" type="button">Limpiar</button>
-            <button id="run-sales-ingredients" class="primary" type="button" disabled>Generar reporte</button>
-          </div>
-        </div>
-        <div class="sales-ingredients-picker-grid">
-          <fieldset class="sales-ingredient-selector-card">
-            <legend>Ingredientes de las recetas</legend>
-            <p>Útil para vasos, café, matcha, leches, cremas y extras con receta identificados con códigos SUB.</p>
-            <label for="sales-ingredient-hierarchy">Jerarquía
-              <select id="sales-ingredient-hierarchy"><option value="all">Todas las jerarquías</option></select>
-            </label>
-            <label for="sales-ingredient-search">Buscar ingrediente
-              <input id="sales-ingredient-search" type="search" placeholder="Código o nombre" autocomplete="off" />
-            </label>
-            <div id="sales-ingredient-options" class="sales-analysis-options"></div>
-          </fieldset>
-          <fieldset class="sales-ingredient-selector-card">
-            <legend>Clasificaciones de preparación</legend>
-            <p>Usa la jerarquía de extras para comparar Barra Caliente, Barra Fría y otras formas de preparación.</p>
-            <label for="sales-extra-search">Buscar clasificación
-              <input id="sales-extra-search" type="search" placeholder="Nombre de jerarquía" autocomplete="off" />
-            </label>
-            <div id="sales-extra-options" class="sales-analysis-options"></div>
-          </fieldset>
-        </div>
-      </section>
-      <div id="sales-ingredients-summary" class="products-summary"></div>
-      <div id="sales-ingredients-report" class="sales-ingredients-report">
-        <div class="empty-state">Selecciona al menos un ingrediente o clasificación para generar el reporte.</div>
-      </div>
-    </section>
-
     <section id="products-workspace" class="panel products-workspace" style="display:none;">
       <div class="products-workspace-head">
         <div>
@@ -1764,11 +1757,19 @@
       <section id="purchase-order-document" class="purchase-order-document" hidden></section>
     </section>
 
-    <section id="weekly-results-workspace" class="weekly-results-workspace" style="display:none;">
+    <section id="financial-results-workspace" class="financial-results-workspace" style="display:none;">
+      <div class="financial-results-heading">
+        <div>
+          <div class="panel-eyebrow">Ventas y resultados</div>
+          <h2>Resultados Financieros</h2>
+          <p class="panel-description">Ingresos, costos, margen de contribución y gastos operacionales conocidos para el período seleccionado, expresados netos de IVA.</p>
+        </div>
+      </div>
+    <section id="weekly-results-workspace" class="weekly-results-workspace">
       <div class="financial-results-heading">
         <div>
           <div class="panel-eyebrow">Visión ejecutiva</div>
-          <h2 id="weekly-results-title">Resultados Semanales</h2>
+          <h3 id="weekly-results-title">Resultados Semanales</h3>
           <p class="panel-description">Selecciona 2, 3 o 4 semanas (lunes a domingo) o meses calendario, incluyendo o excluyendo el período actual. El período actual acumula hasta hoy. Cada porcentaje se calcula sobre la venta neta de la misma sucursal y período.</p>
         </div>
         <form id="weekly-results-form" class="financial-results-filters">
@@ -1876,14 +1877,7 @@
       </dialog>
     </section>
 
-    <section id="financial-results-workspace" class="financial-results-workspace" style="display:none;">
-      <div class="financial-results-heading">
-        <div>
-          <div class="panel-eyebrow">Estado de resultados</div>
-          <h2>Resultados Financieros</h2>
-          <p class="panel-description">Ingresos, costos, margen de contribución y gastos operacionales conocidos para el período seleccionado, expresados netos de IVA.</p>
-        </div>
-        <form id="financial-results-filters" class="financial-results-filters">
+        <form id="financial-results-filters" class="financial-results-filters financial-report-filters">
           <label for="financial-results-location">Ubicación
             <select id="financial-results-location"><option value="all">Todas las cafeterías</option></select>
           </label>
@@ -1908,7 +1902,6 @@
           </label>
           <button class="primary" type="submit">Generar resultados</button>
         </form>
-      </div>
       <div id="financial-results-status" class="form-status" aria-live="polite"></div>
       <div id="financial-results-summary" class="financial-results-summary"></div>
 
@@ -1965,6 +1958,33 @@
         <p class="financial-future-note">El EBITDA (4 Wall) incorpora los gastos generales mensuales configurados para cada cafetería y los prorratea al período seleccionado.</p>
       </section>
 
+        <form id="financial-costs-filters" class="financial-results-filters financial-report-filters">
+          <label for="financial-costs-location">Ubicación
+            <select id="financial-costs-location"><option value="all">Todas las cafeterías</option></select>
+          </label>
+          <label for="financial-costs-period">Período
+            <select id="financial-costs-period">
+              <option value="today">Hoy</option>
+              <option value="yesterday">Ayer</option>
+              <option value="current-week">Semana actual</option>
+              <option value="previous-week">Semana anterior</option>
+              <option value="current-month">Mes actual</option>
+              <option value="previous-month">Mes anterior</option>
+              <option value="last-30-days" selected>Últimos 30 días</option>
+              <option value="current-year">Año en curso</option>
+              <option value="custom">Rango de fechas</option>
+            </select>
+          </label>
+          <label id="financial-costs-from-field" for="financial-costs-from">Desde
+            <input id="financial-costs-from" type="date" required />
+          </label>
+          <label id="financial-costs-to-field" for="financial-costs-to">Hasta
+            <input id="financial-costs-to" type="date" required />
+          </label>
+          <button class="primary" type="submit">Generar resultados</button>
+        </form>
+      <div id="financial-costs-status" class="form-status" aria-live="polite">Selecciona los filtros y pulsa Generar resultados.</div>
+      <p id="financial-costs-context" class="panel-description"></p>
       <p id="financial-costs-empty" class="panel-description">Genera resultados para revisar la cobertura de costos del período.</p>
       <section id="financial-missing-costs" class="panel financial-missing-costs" hidden>
         <div class="panel-head">
@@ -1980,6 +2000,10 @@
             <tbody id="financial-missing-costs-body"></tbody>
           </table>
         </div>
+      </section>
+      <section id="financial-costs-warnings" class="financial-warnings" hidden>
+        <h3>Datos que requieren revisión</h3>
+        <ul id="financial-costs-warnings-list"></ul>
       </section>
       <section id="financial-warnings" class="financial-warnings" hidden>
         <h3>Datos que requieren revisión</h3>
@@ -2545,7 +2569,7 @@
 
     <section id="demand-analysis-workspace" class="demand-workspace" style="display:none;">
       <div class="demand-heading"><div><div class="panel-eyebrow">Inteligencia comercial</div><h2>Caracterización de la Venta</h2><p class="panel-description">Qué se compró, dónde y cuándo; hipótesis y decisiones separadas de los hechos.</p></div><div id="demand-updated" class="demand-meta"></div></div>
-      <div id="demand-status" class="form-status demand-status" role="status" aria-live="polite">Preparando filtros de venta…</div>
+      <div id="demand-status" class="form-status demand-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Analizar para generar el reporte.</div>
       <div id="demand-progress" class="demand-progress" hidden><label id="demand-progress-label" for="demand-progress-bar">Preparando análisis…</label><progress id="demand-progress-bar" max="5"></progress><span id="demand-progress-time"></span></div>
       <form id="demand-filters" class="demand-filters">
         <label>Cafetería<select id="demand-location"><option value="all">Todas las cafeterías</option></select></label>

@@ -77,7 +77,8 @@ test('PDF and XLSX preview and download the calculated report with matching styl
     return route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data }) + '\n' });
   });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   assert.equal(await page.locator('#weekly-results-pdf').isDisabled(), true);
   assert.equal(await page.locator('#weekly-results-xlsx').isDisabled(), true);
   await page.locator('#weekly-results-refresh').click();

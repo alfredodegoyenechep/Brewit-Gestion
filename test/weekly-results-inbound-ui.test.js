@@ -47,7 +47,8 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
     await route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', data }) + '\n' });
   });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   await page.locator('#weekly-results-weeks').selectOption('2');
   await page.locator('#weekly-results-current').selectOption('true');
   await page.locator('#weekly-results-refresh').click();
@@ -124,7 +125,7 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
   assert.ok(await popup.evaluate(dialog => dialog.getBoundingClientRect().width <= innerWidth));
   assert.ok(await popup.locator('.weekly-results-inbound-table-wrap').first().evaluate(wrap => wrap.scrollWidth > wrap.clientWidth));
   await popup.screenshot({ path: '/private/tmp/brewit-inbound-popup-mobile.png' });
-  await page.locator('[data-view="financial-results"]').evaluate(link => link.click());
+  await page.getByRole('tab', { name: 'Estado de resultados', exact: true }).evaluate(tab => tab.click());
   assert.equal(await popup.isVisible(), false);
   assert.deepEqual(errors, []);
 });

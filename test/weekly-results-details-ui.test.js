@@ -47,7 +47,8 @@ test('eight figures open accessible reports with reconciled totals, filtering, s
     return route.fulfill({ json: reports[key] });
   });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.locator('[data-view="weekly-results"]').click();
+  await page.locator('[data-view="financial-results"]').click();
+  await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   await page.locator('#weekly-results-refresh').click();
   await page.waitForFunction(() => document.querySelector('.weekly-results-metric-button'));
   assert.equal(detailRequests, 0);
