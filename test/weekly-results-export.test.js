@@ -34,6 +34,10 @@ test('export model preserves the calculated snapshot, amounts, percentages, cove
   source.weeks[0].locations[0].values.finalInventory = value(1700, 'partial', { basis: 'theoretical', date: '2026-10-14', showPercent: false });
   assert.equal(exporter.model(source).rows.find(row => row.key === 'finalInventory').cells[0].note, 'Inventario teórico · 14-10-2026 · Parcial');
   assert.equal(report.rows.find(row => row.key === 'grossSales').compact, true);
+  const beforeFee = report.rows.findIndex(row => row.key === 'mercadoPagoTheoreticalBeforeFee');
+  assert.equal(report.rows[beforeFee + 1].key, 'mercadoPagoTheoretical');
+  assert.equal(report.rows[beforeFee].cells[0].value, 1090);
+  assert.equal(report.rows[beforeFee].cells[1].value, '');
   assert.equal(report.rows.find(row => row.key === 'grossSales').separator, false);
   assert.equal(report.rows.find(row => row.key === 'discounts').cells[0].color, report.colors.muted);
   assert.equal(report.rows.find(row => row.key === 'centralWarehouseInbound').cells[0].text, 'Sin datos');
@@ -77,6 +81,10 @@ test('XLSX preserves numeric cells, merged headers, supplemental dates, print ti
   assert.match(book.Workbook.Names[0].Ref, /\$1:\$5/);
   assert.ok(Object.values(sheet).some(cell => cell?.v === '04-10-2026 → 11-10-2026'));
   assert.ok(Object.values(sheet).some(cell => cell?.v === 'Físico · 11-10-2026'));
+  const beforeFeeAddress = Object.keys(sheet).find(address => sheet[address]?.v === 'MP Teorico antes de Comision');
+  const beforeFeeRow = XLSX.utils.decode_cell(beforeFeeAddress).r;
+  assert.equal(sheet[XLSX.utils.encode_cell({ r: beforeFeeRow, c: 1 })].v, 1090);
+  assert.equal(sheet[XLSX.utils.encode_cell({ r: beforeFeeRow, c: 2 })]?.v || '', '');
   assert.ok(sheet['!merges'].some(merge => merge.s.r === 2 && merge.s.c === 1 && merge.e.c === 6));
   const compact = Object.entries(sheet).find(([, cell]) => cell?.v === 'Venta bruta')[0];
   assert.equal(sheet['!weeklyStyles'][compact].size, 9);

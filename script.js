@@ -9741,7 +9741,9 @@ async function openInventoryProcessDialog() {
     }
     syncInventoryBoundaries();
     document.getElementById('inventory-process-source').textContent=`Inventario API Toteat. Recuadro: fecha con toma física. Sin toma al inicio, se reconstruye desde una toma anterior; sin toma al final, solo se informa saldo teórico.`;
-    setStatus(document.getElementById('inventory-process-dialog-status'),'');
+    document.getElementById('confirm-inventory-process').textContent = calendar.requiresRebuild ? 'Recalcular y procesar' : 'Confirmar y procesar';
+    setStatus(document.getElementById('inventory-process-dialog-status'), calendar.requiresRebuild
+      ? 'El inventario calculado corresponde a una versión anterior de los datos o de las reglas de cálculo. Pulsa «Recalcular y procesar» para generar el informe con los datos ya guardados.' : '', 'muted');
     document.getElementById('inventory-process-dialog').showModal();
   }catch(error){setStatus(document.getElementById('inventory-source-status'),error.message,'error');}
 }
@@ -10272,6 +10274,14 @@ async function openInventoryItemDetail(item, trigger) {
   } catch(error){if(dialog.isConnected){content.textContent=error.message;content.className='form-status error';}}
 }
 
+function inventoryItemHasActivity(item) {
+  const nonzero = value => value != null && Number.isFinite(Number(value)) && Number(value) !== 0;
+  return item.hasPeriodMovements === true
+    || ['initialInventory', 'finalInventory', 'physicalFinal', 'theoreticalFinal', 'adjustedTheoreticalFinal',
+      'calibrationConsumption', 'employeeConsumption', 'marketingConsumption', 'compensationQuantity'].some(key => nonzero(item[key]))
+    || Object.values(item.movements || {}).some(nonzero);
+}
+
 function sortInventoryItems(items, column, sortDirection) {
   const direction = sortDirection === 'desc' ? -1 : 1;
   const value = column.sortValue || column.value;
@@ -10298,7 +10308,8 @@ function renderInventoryKardexTable() {
   const physicalCriterion = document.getElementById('inventory-kardex-physical-filter').value;
   const theoreticalCriterion = document.getElementById('inventory-kardex-theoretical-filter').value;
   const epsilon = 0.000001;
-  const items = report.items.filter(item => {
+  const activeItems = report.items.filter(inventoryItemHasActivity);
+  const items = activeItems.filter(item => {
     const matchesSearch = !search || normalizedInventorySearch(`${item.code} ${item.name}`).includes(search);
     if (!matchesSearch) return false;
     const cost = Number(item.totalCost) || 0;
@@ -10357,7 +10368,7 @@ function renderInventoryKardexTable() {
     const cell = document.createElement('td');
     cell.colSpan = columns.length;
     cell.className = 'inventory-empty-result';
-    cell.textContent = 'No hay filas que coincidan con los filtros seleccionados.';
+    cell.textContent = activeItems.length ? 'No hay filas que coincidan con los filtros seleccionados.' : 'No hay ítems con inventario o movimientos en el período.';
     row.appendChild(cell);
     body.appendChild(row);
   } else {
@@ -10398,7 +10409,8 @@ function renderInventoryKardexTable() {
   table.replaceChildren(head, body, foot);
   table.parentElement.scrollLeft = previousScrollLeft;
   renderKardexTotalsNote(document.getElementById('inventory-kardex-totals-note'), items, report);
-  document.getElementById('inventory-kardex-visible-count').textContent = `${items.length} de ${report.items.length} filas`;
+  const inactiveCount = report.items.length - activeItems.length;
+  document.getElementById('inventory-kardex-visible-count').textContent = `${items.length} de ${activeItems.length} filas${inactiveCount ? ` · ${inactiveCount} sin inventario ni movimientos ocultas` : ''}`;
 }
 
 function renderLac001SubstitutionReport(report) {
@@ -10945,7 +10957,9 @@ function renderOtherConsumables(report, columns, metric) {
     ? { report, columns, sortIndex: 1, direction: 'asc' } : null;
   section.hidden = !report?.items?.length;
   if (section.hidden) return;
-  document.getElementById('inventory-other-consumables-summary').textContent = `${report.itemCount} ítems separados del Consolidado del Kardex. ${metric?.partial ? 'Subtotal parcial; los registros sin costo o toma física permanecen pendientes.' : 'Importe incluido por separado en el resumen ejecutivo.'}`;
+  const activeCount = report.items.filter(inventoryItemHasActivity).length;
+  const inactiveCount = report.items.length - activeCount;
+  document.getElementById('inventory-other-consumables-summary').textContent = `${activeCount} ítems con inventario o movimientos, separados del Consolidado del Kardex.${inactiveCount ? ` ${inactiveCount} ítems sin inventario ni movimientos ocultos.` : ''} ${metric?.partial ? 'Subtotal parcial; los registros sin costo o toma física permanecen pendientes.' : 'Importe incluido por separado en el resumen ejecutivo.'}`;
   renderOtherConsumablesTable();
 }
 
@@ -10955,7 +10969,7 @@ function renderOtherConsumablesTable() {
   const { report, columns } = state;
   const table = document.getElementById('inventory-other-consumables-table');
   const { scrollLeft, scrollTop } = table.parentElement;
-  const items = sortInventoryItems([...report.items], columns[state.sortIndex], state.direction);
+  const items = sortInventoryItems(report.items.filter(inventoryItemHasActivity), columns[state.sortIndex], state.direction);
   const head = document.createElement('thead'), header = document.createElement('tr');
   columns.forEach((column, index) => {
     const th = document.createElement('th');
@@ -10977,6 +10991,13 @@ function renderOtherConsumablesTable() {
   });
   head.appendChild(header);
   const body=document.createElement('tbody');
+  if (!items.length) {
+    const row = document.createElement('tr'), cell = document.createElement('td');
+    cell.colSpan = columns.length;
+    cell.className = 'inventory-empty-result';
+    cell.textContent = 'No hay consumibles con inventario o movimientos en el período.';
+    row.appendChild(cell); body.appendChild(row);
+  }
   for (const item of items) {
     const row=document.createElement('tr');
     for (const column of columns) {const td=document.createElement('td');td.textContent=column.value(item);row.appendChild(td);}
@@ -10986,13 +11007,13 @@ function renderOtherConsumablesTable() {
   const foot=document.createElement('tfoot'), total=document.createElement('tr');
   for (const [index,column] of columns.entries()) {
     const td=document.createElement('td');
-    td.textContent=index===0?'TOTAL':column.totalValue?column.totalValue(report.items):'';
+    td.textContent=index===0?'TOTAL':column.totalValue?column.totalValue(items):'';
     total.appendChild(td);
   }
   foot.appendChild(total);table.replaceChildren(head,body,foot);
   table.parentElement.scrollLeft = scrollLeft;
   table.parentElement.scrollTop = scrollTop;
-  renderKardexTotalsNote(document.getElementById('inventory-other-consumables-totals-note'), report.items, inventoryKardexTableState.report);
+  renderKardexTotalsNote(document.getElementById('inventory-other-consumables-totals-note'), items, inventoryKardexTableState.report);
 }
 
 function currentInventoryColumns() {
@@ -11207,7 +11228,7 @@ async function generateInventoryReport() {
   }
   button.disabled = true;
   setStatus(status, 'Consolidando el Kardex para el período seleccionado…');
-  setStatus(dialogStatus, 'Procesando informe…');
+  setStatus(dialogStatus, inventoryCalendarData?.requiresRebuild ? 'Recalculando el inventario con los datos guardados y procesando el informe…' : 'Procesando informe…');
   try {
     const data = await apiRequest('/api/inventory/process', {
       method: 'POST',

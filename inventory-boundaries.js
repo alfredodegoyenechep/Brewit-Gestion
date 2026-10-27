@@ -25,12 +25,14 @@ function countBoundaryReport(state,location,initial,final,correction=()=>0) {
   if(missing){excluded.push({code:identity.code,reason:'Cobertura diaria incompleta para calcular el saldo inicial.'});continue;}
   const openingCorrection=anchor.date<initial?correction(identity.code,identity.unit,anchor.date,advance(initial,-1)):0;
   opening+=openingCorrection;
-  const movements=Object.fromEntries(definitions.map(([,key])=>[key,0]));let balance=opening,lastReset=initial,resetBalance=opening,rawSinceReset=0,adjustments=0;
+  const movements=Object.fromEntries(definitions.map(([,key])=>[key,0]));let balance=opening,lastReset=initial,resetBalance=opening,rawSinceReset=0,adjustments=0,hasPeriodMovements=false;
   for(let date=initial;date<final;date=advance(date,1)){
    const row=byDate.get(date);if(!row){missing=true;break;}
    if(date>initial&&row.physicalCount&&Number.isFinite(row.opening)){
     const theoretical=resetBalance+rawSinceReset+correction(identity.code,identity.unit,lastReset,advance(date,-1));
-    adjustments+=row.opening-theoretical;resetBalance=row.opening;rawSinceReset=0;lastReset=date;
+    const adjustment=row.opening-theoretical;
+    if(adjustment!==0)hasPeriodMovements=true;
+    adjustments+=adjustment;resetBalance=row.opening;rawSinceReset=0;lastReset=date;
    }
    for(const[field,key]of definitions)movements[key]+=row[field]||0;
    rawSinceReset+=net(row);balance+=net(row);
@@ -38,7 +40,7 @@ function countBoundaryReport(state,location,initial,final,correction=()=>0) {
   if(missing){excluded.push({code:identity.code,reason:'Cobertura diaria incompleta dentro del período.'});continue;}
   movements['aju-tomas-intermedias']=adjustments;
   const end=byDate.get(final),physical=!!end?.physicalCount&&Number.isFinite(end.opening);
-  items.push({code:identity.code,name:identity.name,unit:identity.unit,initialInventory:opening,initialSource:anchor.date===initial&&anchor.physicalCount?'physical':'theoretical',anchorDate:anchor.date,openingCorrection,movements,theoreticalFinal:balance+adjustments,finalInventory:physical?end.opening:null,finalIsPhysical:physical,difference:physical?end.opening-balance-adjustments:null});
+  items.push({code:identity.code,name:identity.name,unit:identity.unit,initialInventory:opening,initialSource:anchor.date===initial&&anchor.physicalCount?'physical':'theoretical',anchorDate:anchor.date,openingCorrection,movements,hasPeriodMovements,theoreticalFinal:balance+adjustments,finalInventory:physical?end.opening:null,finalIsPhysical:physical,difference:physical?end.opening-balance-adjustments:null});
  }
  if(!items.length)throw Error('No hay una toma anterior conocida para calcular los saldos iniciales. Amplía la sincronización de inventario.');
  return {dateFrom:period.from,dateTo:period.to,selection:{initialDate:initial,initialBasis:'initial',finalDate:final,finalBasis:'initial'},boundaryMode:true,movementDefinitions:[...definitions.map(([,key,label])=>({key,label})),{key:'aju-tomas-intermedias',label:'Ajuste por tomas intermedias'}],items,itemCount:items.length,excluded,physicalFinalItems:items.filter(r=>r.finalIsPhysical).length};

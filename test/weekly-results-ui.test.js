@@ -182,7 +182,7 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   assert.equal(url.searchParams.get('includeCurrent'), 'false');
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   assert.equal(await page.locator('#weekly-results-workspace').isVisible(), true);
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 27);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 28);
   assert.equal(await page.locator('.weekly-results-table thead tr').count(), 3);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 3);
   assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 10);
@@ -252,12 +252,14 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   assert.equal(await page.locator('[data-metric="mercadoPagoFee"] .weekly-results-percent').first().innerText(), '3,5%');
   assert.equal(await page.locator('[data-metric="mercadoPagoTheoretical"] th').innerText(), 'MP Teorico');
   assert.equal(await page.locator('[data-metric="mercadoPagoTheoretical"] .weekly-results-amount').first().innerText(), '$965');
-  assert.deepEqual(await page.locator('[data-metric="cashCollection"], [data-metric="cashCollection"] + tr, [data-metric="cashCollection"] + tr + tr').evaluateAll(rows => rows.map(row => row.dataset.metric)), ['cashCollection', 'mercadoPagoTheoretical', 'mercadoPagoCollection']);
+  assert.equal(await page.locator('[data-metric="mercadoPagoTheoreticalBeforeFee"] th').innerText(), 'MP Teorico antes de Comision');
+  assert.equal(await page.locator('[data-metric="mercadoPagoTheoreticalBeforeFee"] .weekly-results-amount').first().innerText(), '$1.000');
+  assert.deepEqual(await page.locator('[data-metric="cashCollection"], [data-metric="cashCollection"] + tr, [data-metric="cashCollection"] + tr + tr, [data-metric="cashCollection"] + tr + tr + tr').evaluateAll(rows => rows.map(row => row.dataset.metric)), ['cashCollection', 'mercadoPagoTheoreticalBeforeFee', 'mercadoPagoTheoretical', 'mercadoPagoCollection']);
   assert.equal(await page.locator('[data-metric="salesWithoutVat"]').count(), 0);
   assert.equal(await page.locator('[data-metric="discounts"] + tr').getAttribute('data-metric'), 'grossSalesAfterDiscounts');
   assert.equal(await page.locator('[data-metric="grossSalesAfterDiscounts"] th').innerText(), 'Venta Bruta post Dsctos');
   assert.equal(await page.locator('[data-metric="grossSalesAfterDiscounts"] .weekly-results-amount').first().innerText(), '$1.100');
-  for (const key of ['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']) {
+  for (const key of ['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoreticalBeforeFee', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']) {
     assert.ok((await page.locator(`[data-metric="${key}"] .weekly-results-percent`).allTextContents()).every(text => text === ''));
   }
   const sizes = await page.locator('.weekly-results-table tbody').evaluate(body => {
@@ -337,7 +339,7 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   await page.evaluate(() => { window.loadCafeWeeklyResults(); });
   await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
   release();
-  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 26);
+  assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 27);
 
   // Changing an option aborts the in-flight result and leaves manual generation pending.
   await page.unroute('**/api/weekly-results/stream?*');

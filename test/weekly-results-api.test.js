@@ -284,7 +284,7 @@ test('daily endpoint matches calendar weekly amounts, handles replacements and n
   app.locals.toteatStockSync.rebuild = () => { rebuilds++; throw Error('No daily inventory processing'); };
   const daily = await getDaily(base);
   assert.deepEqual(daily.days.map(day => day.date), ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11']);
-  for (const key of ['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'netSales', 'margin', 'cogs', 'tips', 'cashTips', 'mercadoPagoTips', 'mercadoPagoFee', 'cashCollection', 'mercadoPagoCollection', 'mercadoPagoTheoretical', 'collectionDifference', 'marketing', 'employees', 'waste']) {
+  for (const key of ['grossSales', 'discounts', 'grossSalesAfterDiscounts', 'netSales', 'margin', 'cogs', 'tips', 'cashTips', 'mercadoPagoTips', 'mercadoPagoFee', 'cashCollection', 'mercadoPagoCollection', 'mercadoPagoTheoreticalBeforeFee', 'mercadoPagoTheoretical', 'collectionDifference', 'marketing', 'employees', 'waste']) {
     assert.ok(daily.days.every(day => day.values[key].available), key);
     const sum = daily.days.reduce((total, day) => total + day.values[key].amount, 0);
     assert.ok(Math.abs(sum - weekly.values[key].amount) < 1e-8, key);

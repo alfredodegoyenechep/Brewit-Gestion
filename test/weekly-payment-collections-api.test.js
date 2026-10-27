@@ -57,6 +57,7 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   assert.equal(week.mercadoPagoFee.amount, 20);
   assert.equal(week.mercadoPagoCollection.amount, 1080);
   assert.ok(Math.abs(week.mercadoPagoTheoretical.amount - 1080) < 1e-8);
+  assert.ok(Math.abs(week.mercadoPagoTheoreticalBeforeFee.amount - 1100) < 1e-8);
   assert.ok(Math.abs(week.collectionDifference.amount) < 1e-8);
   assert.equal(week.collectionDifference.complete, true);
   assert.ok(Math.abs(branch(report.weeks[0]).collectionDifference.amount - 100) < 1e-8);

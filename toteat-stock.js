@@ -132,7 +132,7 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
       const version=kind=>read(path.join(uploadsRoot,'.integrations/toteat-api',kind,key,'current.json'))?.version || null;
       const dependencies={sales:version('sales'),purchases:version('purchases'),counts:version('original-counts'),master:masters()?.observedAt};
       if(state.detailSchemaVersion!==3 || state.dependencies?.sales!==dependencies.sales || state.dependencies?.purchases!==dependencies.purchases || state.dependencies?.counts!==dependencies.counts || state.masterObservedAt!==dependencies.master)
-        return {...state,stale:true,rebuildError:'El inventario está pendiente de recálculo con las fuentes actuales. Pulsa Actualizar inventario para renovarlo.'};
+        return {...state,stale:true,rebuildError:'El inventario está pendiente de recálculo porque cambiaron los datos guardados o las reglas de cálculo. Abre «Procesar Kardex propio» y confirma el período para recalcularlo con los datos disponibles.'};
     }
     return state;
   };

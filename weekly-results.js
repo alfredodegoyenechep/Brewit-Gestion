@@ -4,7 +4,8 @@ const metrics = [
   ['netSales', 'Venta neta'], ['grossSales', 'Venta bruta'], ['discounts', 'Descuentos'],
   ['grossSalesAfterDiscounts', 'Venta Bruta post Dsctos'], ['margin', 'Margen'], ['tips', 'Propinas'],
   ['mercadoPagoTips', 'MercadoPago'], ['cashTips', 'Efectivo'],
-  ['mercadoPagoFee', 'Comision Mercadopago'], ['cashCollection', 'Efectivo'], ['mercadoPagoTheoretical', 'MP Teorico'],
+  ['mercadoPagoFee', 'Comision Mercadopago'], ['cashCollection', 'Efectivo'],
+  ['mercadoPagoTheoreticalBeforeFee', 'MP Teorico antes de Comision'], ['mercadoPagoTheoretical', 'MP Teorico'],
   ['mercadoPagoCollection', 'Mercado Pago'],
   ['collectionDifference', 'Control de diferencias'], ['inventoryShortage', 'Inventario faltante'],
   ['waste', 'Merma'], ['marketing', 'Marketing'], ['employees', 'Consumo personal'],
@@ -19,7 +20,7 @@ const metrics = [
   ['cogs', 'COGs'],
   ['otherVariableCosts', 'Otros Variables']
 ];
-const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']);
+const percentlessMetrics = new Set(['grossSales', 'grossSalesAfterDiscounts', 'mercadoPagoTheoreticalBeforeFee', 'mercadoPagoTheoretical', 'mercadoPagoCollection', 'mercadoPagoTips', 'cashTips']);
 
 function reportOptions({ weeks = 2, count = weeks, period = 'week', includeCurrent = false, includeInventory = true } = {}) {
   if (!['week', 'month'].includes(period)) throw Object.assign(Error('Selecciona semanas o meses.'), { status: 400 });
@@ -96,6 +97,8 @@ function finalizeCell(data = {}, includeInventory = true, location = {}) {
   values.grossSalesAfterDiscounts = derived(values, ['grossSales', 'discounts'], (gross, discounts) => gross - discounts);
   values.mercadoPagoTheoretical = derived(values, ['grossSales', 'discounts', 'tips', 'mercadoPagoFee', 'cashCollection'],
     (gross, discounts, tips, fee, cash) => gross - discounts + tips - fee - cash);
+  values.mercadoPagoTheoreticalBeforeFee = derived(values, ['mercadoPagoTheoretical', 'mercadoPagoFee'],
+    (theoretical, fee) => theoretical + fee);
   values.collectionDifference = derived(values, ['mercadoPagoCollection', 'mercadoPagoTheoretical'],
     (mp, theoretical) => mp - theoretical);
   values.inventoryConsumptionTotal = derived(values, ['inventoryShortage', 'waste', 'marketing', 'employees', 'otherConsumables'],

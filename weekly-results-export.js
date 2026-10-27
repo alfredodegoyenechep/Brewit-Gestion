@@ -62,6 +62,7 @@
     return { title: reportTitle(data), date: data.date, colors, fontSize, columns, rows,
       context: reportContext(data),
       notes: ['Control de diferencias = Mercado Pago − MP Teorico. Descuentos incluye IVA.',
+        'MP Teorico antes de Comision = MP Teorico + comisión MercadoPago.',
         `Inventario y consumibles: intervalo entre tomas físicas. Merma, marketing y consumo personal: ${data.options?.period === 'month' ? 'mes' : 'semana'} calendario.`],
       warnings: data.warnings || [] };
   }

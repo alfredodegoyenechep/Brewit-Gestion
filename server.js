@@ -2143,9 +2143,10 @@ function createApp(options = {}) {
   function synchronizedTransactions(locationId, field) {
     return field === 'purchases' ? toteatSalesSync?.purchases.source(locationId,field) || [] : toteatSalesSync?.source(locationId,field) || [];
   }
-  function synchronizedStock(locationId) {
-    const state=stockSync.current(locationId);
+  function synchronizedStock(locationId, { recalculate = false } = {}) {
+    let state=stockSync.current(locationId);
     if(!state || state.sourceKind !== 'native-documents') throw Error('Actualiza las fuentes originales de inventario para construir el Kardex propio. No se utilizarán saldos del Kardex de Toteat.');
+    if(recalculate && state.stale) state=stockSync.rebuild(locationId);
     if(state.rebuildError)throw Error(state.rebuildError);
     return state;
   }
@@ -8558,7 +8559,7 @@ function createApp(options = {}) {
       const parsed=originalMode?null:mergedKardexData(location.id,'kardex');
       const range=originalMode?stock?.range:parsed?.groups.length?{from:parsed.groups[0].date,to:parsed.groups.at(-1).date}:null;
       if(!range)throw Error('Actualiza primero las fuentes de inventario.');
-      res.json({countDates,from:range.from,to:require('./inventory-boundaries').advance(range.to,1)});
+      res.json({countDates,from:range.from,to:require('./inventory-boundaries').advance(range.to,1),requiresRebuild:originalMode && !!stock?.stale});
     }catch(error){res.status(400).json({error:error.message});}
   });
 
@@ -8580,7 +8581,7 @@ function createApp(options = {}) {
     } catch (error) { res.status(error.status || 500).json({ error: error.message }); }
   });
 
-  function buildInventoryProcessPayload(body = {}, { stockState = null, retainDetails = true, costCutoff = null } = {}) {
+  function buildInventoryProcessPayload(body = {}, { stockState = null, retainDetails = true, costCutoff = null, recalculateStock = false } = {}) {
     const location = activeLocation(body?.location);
     if (!location) throw new Error('Select a valid active location.');
     const originalMode = synchronizedOnly || body?.source === 'originals';
@@ -8598,7 +8599,7 @@ function createApp(options = {}) {
         finalDate: body?.finalInventoryDate,
         finalBasis: boundaryMode?'initial':body?.finalInventoryBasis
       } : null;
-      const stock = stockState || (originalMode ? (synchronizedOnly ? synchronizedStock(location.id) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null);
+      const stock = stockState || (originalMode ? (synchronizedOnly ? synchronizedStock(location.id, { recalculate: recalculateStock }) : stockSync.rebuild(location.id)) : boundaryMode ? stockSync.current(location.id) : null);
       const original = originalMode ? (boundaryMode ? { parsed:null, excluded:[],physicalFinalItems:0 } : require('./inventory-original-report').originalReportData(stock, location, selection, movementDateFrom, movementDateTo)) : null;
       const parsed = originalMode ? original.parsed : mergedKardexData(location.id, 'kardex');
       const balanceDate = costCutoff || selection?.finalDate
@@ -8782,6 +8783,7 @@ function createApp(options = {}) {
         // their verified physical differences remain available without sales.
         require('./inventory-cost-summary').applyBoundaryCostSummary(executiveSummary, report, location.type === 'warehouse' || !!salesData.filesRead);
       }
+      require('./inventory-period-activity').markPeriodMovementActivity(report, { stock, parsed, consumption, location, convertQuantity: convertQuantityUnit, numericValue });
       const otherConsumables = location.id === 'main-warehouse'
         ? null
         : require('./other-consumables').separateOtherConsumables(report, executiveSummary, location.type === 'warehouse' || !!salesData.filesRead);
@@ -8833,7 +8835,7 @@ function createApp(options = {}) {
   }
 
   app.post('/api/inventory/process', (req, res) => {
-    try { return res.json(buildInventoryProcessPayload(req.body)); }
+    try { return res.json(buildInventoryProcessPayload(req.body, { recalculateStock: true })); }
     catch (error) { return res.status(error.status || 400).json({ error: error.message || 'Could not process the Kardex.' }); }
   });
 

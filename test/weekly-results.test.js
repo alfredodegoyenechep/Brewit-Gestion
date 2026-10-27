@@ -172,7 +172,7 @@ test('independent report streams the same results, isolates branch failures and 
   assert.equal(sync.weeks[0].locations[0].values.netSales.amount, 1000);
   assert.equal(sync.weeks[0].locations[1].values.netSales.amount, null);
   assert.equal(events.at(-1).completed, 4);
-  assert.equal(sync.metrics.length, 26);
+  assert.equal(sync.metrics.length, 27);
   assert.equal(sync.total, undefined);
   let calls = 0;
   assert.equal(await buildWeeklyResultsWithProgress(options, () => { calls++; return cell(); }, () => {}, () => calls === 1), null);
@@ -268,6 +268,31 @@ test('MP Teorico adds all tips, subtracts charged commission and cash, and requi
     assert.equal(finalizeCell(missing).values.mercadoPagoTheoretical.amount, null, key);
     assert.equal(finalizeCell(missing).values.mercadoPagoTheoretical.status, 'incomplete', key);
   }
+});
+
+test('MP before commission adds back the charged fee, preserving signs, zero, missing data and partial coverage', () => {
+  const source = cell();
+  const metric = () => finalizeCell(source).values.mercadoPagoTheoreticalBeforeFee;
+  assert.equal(metric().amount, 1000);
+  assert.equal(metric().complete, true);
+  assert.equal(metric().showPercent, false);
+  assert.equal(metric().percent, null);
+  source.values.mercadoPagoFee = value(0, 'complete');
+  assert.equal(metric().amount, 1000);
+  source.values.mercadoPagoFee = value(35, 'partial');
+  assert.equal(metric().amount, 1000);
+  assert.equal(metric().status, 'partial');
+  source.values.cashCollection = value(1200, 'complete');
+  assert.equal(metric().amount, 0);
+  source.values.cashCollection = value(2000, 'complete');
+  assert.equal(metric().amount, -800);
+  for (const key of ['grossSales', 'discounts', 'tips', 'mercadoPagoFee', 'cashCollection']) {
+    const missing = { ...cell(), values: { ...cell().values, [key]: value() } };
+    const result = finalizeCell(missing).values.mercadoPagoTheoreticalBeforeFee;
+    assert.equal(result.amount, null, key);
+    assert.equal(result.status, 'incomplete', key);
+  }
+  assert.equal(finalizeCell(cell(), true, { type: 'warehouse' }).values.mercadoPagoTheoreticalBeforeFee.status, 'not-applicable');
 });
 
 test('report options default to two previous weeks with inventory and reject unsupported selections', async () => {

@@ -92,7 +92,7 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   assert.equal(await page.locator('#weekly-results-export-download').isEnabled(), true, await page.locator('#weekly-results-export-status').innerText());
   assert.equal(await popup.isVisible(), true);
   assert.match(await popup.locator('h3').innerText(), /Previsualización XLSX/);
-  assert.equal(await popup.locator('table tbody tr').count(), 26);
+  assert.equal(await popup.locator('table tbody tr').count(), 27);
   assert.equal(await popup.locator('table button').count(), 0);
   assert.equal(await popup.locator('[data-metric="centralWarehouseInbound"] .weekly-results-amount').first().innerText(), '$30');
   assert.equal(await popup.locator('[data-metric="directSupplierInbound"] .weekly-results-amount').first().innerText(), '$50');
