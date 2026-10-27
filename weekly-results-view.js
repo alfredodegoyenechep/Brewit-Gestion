@@ -138,10 +138,15 @@
   };
   function renderMetricDetail(report) {
     metricSnapshot = report;
+    const onlyNonzeroAmounts = ['inventoryShortage', 'finalInventory'].includes(report.key);
+    const rows = onlyNonzeroAmounts ? report.rows.filter(row => Number.isFinite(row.amount) && row.amount !== 0) : report.rows;
     const total = paragraph(metricBody, `${report.partial ? 'Subtotal conocido' : 'Total del reporte'}: ${formatClp(report.total)}`);
     total.className = 'weekly-results-metric-total';
-    if (report.partial) paragraph(metricBody, 'Detalle parcial: los importes conocidos suman la cifra del reporte. Puede faltar cobertura del período; los registros sin saldo o costo completo se identifican en el detalle.')
+    if (report.partial) paragraph(metricBody, onlyNonzeroAmounts
+      ? 'Detalle parcial: los importes conocidos suman la cifra del reporte. Puede faltar cobertura del período, saldos o costos completos.'
+      : 'Detalle parcial: los importes conocidos suman la cifra del reporte. Puede faltar cobertura del período; los registros sin saldo o costo completo se identifican en el detalle.')
       .className = 'weekly-results-inbound-notice';
+    if (onlyNonzeroAmounts) paragraph(metricBody, 'Solo se muestran artículos con importe positivo o negativo.').className = 'panel-description';
     if (report.inventory?.movements) paragraph(metricBody,
       `Tomas físicas: ${date(report.inventory.initialDate)} → ${date(report.inventory.finalDate)} · Movimientos: ${date(report.inventory.movements.from)} – ${date(report.inventory.movements.to)}.`);
     if (report.balanceDate) paragraph(metricBody, `${report.basis === 'physical' ? 'Inventario físico' : 'Inventario teórico al cierre'} · ${date(report.balanceDate)}`);
@@ -163,7 +168,7 @@
     const normalized = value => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
     const draw = () => {
       const query = normalized(search.value.trim());
-      metricVisibleRows = report.rows.filter(row => !query || report.columns.some(column => normalized(detailText(column, row[column.key])).includes(query)));
+      metricVisibleRows = rows.filter(row => !query || report.columns.some(column => normalized(detailText(column, row[column.key])).includes(query)));
       metricVisibleRows.sort((a, b) => {
         if (a[sortKey] == null) return b[sortKey] == null ? 0 : 1;
         if (b[sortKey] == null) return -1;
@@ -184,9 +189,10 @@
       if (!metricVisibleRows.length) {
         const cell = body.insertRow().insertCell(); cell.colSpan = report.columns.length;
         cell.textContent = query ? 'No hay registros que coincidan con la búsqueda.'
+          : onlyNonzeroAmounts ? 'No hay artículos con importe distinto de cero en este período.'
           : report.partial ? 'No hay registros con detalle disponible para este período.' : 'No se registraron movimientos en el período.';
       }
-      count.textContent = `${metricVisibleRows.length} de ${report.rows.length} registros`;
+      count.textContent = `${metricVisibleRows.length} de ${rows.length} registros`;
       footer.replaceChildren();
       const amountIndex = report.columns.findIndex(column => column.key === 'amount');
       const label = document.createElement('th'); label.scope = 'row'; label.colSpan = amountIndex;
@@ -576,7 +582,12 @@
       await readStream(response, receive);
       if (request !== generation) return;
       if (!data) throw Error('Se interrumpió el cálculo. Pulsa Actualizar para volver a intentarlo.');
-      render(data); progress.value = 100; setStatus(status, `Resultados ${monthly ? 'mensuales' : 'semanales'} actualizados.`, 'success');
+      render(data); progress.value = 100;
+      const hasWarnings = data.warnings.length > 0;
+      document.getElementById('weekly-results-criteria').open = hasWarnings;
+      setStatus(status, hasWarnings
+        ? `Resultados ${monthly ? 'mensuales' : 'semanales'} con observaciones. Revisa la cobertura y los datos pendientes al pie del reporte.`
+        : `Resultados ${monthly ? 'mensuales' : 'semanales'} actualizados.`, hasWarnings ? 'warning' : 'success');
     } catch (error) {
       active.abort();
       if (request === generation && error.name !== 'AbortError') setStatus(status, error.message, 'error');

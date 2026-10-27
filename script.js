@@ -190,6 +190,7 @@ let pendingInventoryPreview = null;
 let pendingTransactionDelete = null;
 let inventoryKardexTableState = null;
 let inventoryOtherConsumablesTableState = null;
+let inventoryOtherConsumablesStickyObserver = null;
 let currentInventoryTableState = null;
 let transactionUploadContext = null;
 let reportClassicLocation = 'all';
@@ -11011,6 +11012,20 @@ function renderOtherConsumablesTable() {
     total.appendChild(td);
   }
   foot.appendChild(total);table.replaceChildren(head,body,foot);
+  inventoryOtherConsumablesStickyObserver?.disconnect();
+  const stickyHeaders = [...header.cells].slice(0, 4);
+  const updateStickyOffsets = () => {
+    const widths = stickyHeaders.map(cell => cell.getBoundingClientRect().width);
+    if (widths.some(width => width === 0)) return;
+    let left = 0;
+    widths.forEach((width, index) => {
+      table.style.setProperty(`--consumables-sticky-left-${index + 1}`, `${left}px`);
+      left += width;
+    });
+  };
+  inventoryOtherConsumablesStickyObserver = new ResizeObserver(updateStickyOffsets);
+  stickyHeaders.forEach(cell => inventoryOtherConsumablesStickyObserver.observe(cell, { box: 'border-box' }));
+  updateStickyOffsets();
   table.parentElement.scrollLeft = scrollLeft;
   table.parentElement.scrollTop = scrollTop;
   renderKardexTotalsNote(document.getElementById('inventory-other-consumables-totals-note'), items, inventoryKardexTableState.report);

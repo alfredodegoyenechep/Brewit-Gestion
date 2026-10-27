@@ -2715,9 +2715,9 @@ function createApp(options = {}) {
       String(left.record.savedAt || left.week || '').localeCompare(String(right.record.savedAt || right.week || '')));
   }
 
-  function mergedKardexData(locationId, field) {
+  function mergedKardexData(locationId, field, stockState = null) {
     if(synchronizedOnly) {
-      const state=synchronizedStock(locationId),location=activeLocation(locationId);
+      const state=stockState || synchronizedStock(locationId),location=activeLocation(locationId);
       return require('./inventory-original-report').originalReportData(state,location,{initialDate:state.range.from,finalDate:state.range.to,initialBasis:'initial',finalBasis:'final'},state.range.from,state.range.to,{waste:field==='waste',completeSeries:true}).parsed;
     }
     const sources = chronologicalSources(locationId, field);
@@ -7915,7 +7915,7 @@ function createApp(options = {}) {
   }
 
   // Weekly results are provided by the dedicated sidebar report.
-  function weeklyResultsContext(query = {}) {
+  function weeklyResultsContext(query = {}, { recalculateStock = true } = {}) {
     const options = require('./weekly-results').reportOptions(query);
     const stocks = new Map();
     const inboundValuations = new Map();
@@ -7941,7 +7941,9 @@ function createApp(options = {}) {
       stock(location, currentOnly = false) {
         if (!stocks.has(location.id)) {
           try {
-            const state = synchronizedOnly ? synchronizedStock(location.id) : currentOnly ? stockSync.current(location.id) : stockSync.rebuild(location.id);
+            // Explicit report refresh also refreshes stale local quantities. All
+            // inventory metrics in this request share the resulting snapshot.
+            const state = synchronizedOnly ? synchronizedStock(location.id, { recalculate: recalculateStock }) : currentOnly ? stockSync.current(location.id) : stockSync.rebuild(location.id);
             if (!state || state.rebuildError) throw Error(state?.rebuildError || 'Actualiza las fuentes originales de inventario.');
             stocks.set(location.id, { state });
           } catch (error) { stocks.set(location.id, { error: error.message }); }
@@ -8113,7 +8115,7 @@ function createApp(options = {}) {
           : buildCostResolver(costCutoff, [location.id]);
         let amount, partial, missingCostCodes, dates;
         if (field === 'waste') {
-          const parsed = mergedKardexData(location.id, 'waste');
+          const parsed = mergedKardexData(location.id, 'waste', synchronizedOnly ? context.stock(location, true) : null);
           if (!parsed) throw Error('No hay registros de merma disponibles.');
           const summary = buildWasteSummary(parsed, from, through, catalog, resolver);
           dates = new Set(parsed.groups.map(group => group.date));
@@ -8204,7 +8206,7 @@ function createApp(options = {}) {
     const { currentPeriods, buildDailyResultsWithProgress } = require('./weekly-results');
     let context, period, location;
     try {
-      context = weeklyResultsContext({ ...req.query, includeInventory: false });
+      context = weeklyResultsContext({ ...req.query, includeInventory: false }, { recalculateStock: false });
       const date = String(req.query.date || context.today);
       if (!isValidDate(date) || date > context.today) throw Object.assign(Error('Fecha de consulta inválida.'), { status: 400 });
       period = currentPeriods(date, context).find(week => week.from === req.query.from);

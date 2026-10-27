@@ -2639,7 +2639,8 @@ body {
   margin-top: 14px;
 }
 
-#inventory-results-table {
+#inventory-results-table,
+#inventory-other-consumables-table {
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -2674,6 +2675,38 @@ body {
   max-width: 380px;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+@media screen {
+  #inventory-other-consumables-table thead th {
+    top: 0;
+    z-index: 3;
+  }
+
+  #inventory-other-consumables-table :is(th, td):nth-child(-n + 4) {
+    position: sticky;
+    left: var(--consumables-sticky-left-1, 0px);
+    z-index: 2;
+    background: white;
+  }
+
+  #inventory-other-consumables-table :is(th, td):nth-child(2) { left: var(--consumables-sticky-left-2, 0px); }
+  #inventory-other-consumables-table :is(th, td):nth-child(3) { left: var(--consumables-sticky-left-3, 0px); }
+  #inventory-other-consumables-table :is(th, td):nth-child(4) {
+    left: var(--consumables-sticky-left-4, 0px);
+    box-shadow: 7px 0 9px -8px rgba(46, 32, 21, 0.7);
+  }
+
+  #inventory-other-consumables-table thead th:nth-child(-n + 4) {
+    z-index: 4;
+    background: var(--coffee-soft-2);
+  }
+
+  #inventory-other-consumables-table tfoot td:nth-child(-n + 4) {
+    background: #f0e3d2;
+  }
+
+  #inventory-other-consumables-table td.inventory-empty-result { position: static; }
 }
 
 #inventory-results-table thead th {

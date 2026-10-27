@@ -180,7 +180,7 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   assert.equal(url.searchParams.get('weeks'), '2');
   assert.equal(url.searchParams.get('includeInventory'), 'true');
   assert.equal(url.searchParams.get('includeCurrent'), 'false');
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   assert.equal(await page.locator('#weekly-results-workspace').isVisible(), true);
   assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 28);
   assert.equal(await page.locator('.weekly-results-table thead tr').count(), 3);
@@ -271,9 +271,9 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   assert.equal(await page.locator('[data-metric="collectionDifference"] .weekly-results-amount').first().innerText(), '$-65');
   assert.equal(await page.locator('[data-metric="collectionDifference"] .weekly-results-percent').first().innerText(), '-6,5%');
   const criteria = page.locator('#weekly-results-criteria');
-  assert.equal(await criteria.evaluate(details => details.open), false);
-  assert.equal(await criteria.locator('.weekly-results-note').isVisible(), false);
-  await criteria.locator('summary').click();
+  assert.equal(await criteria.evaluate(details => details.open), true);
+  assert.match(await page.locator('#weekly-results-status').getAttribute('class'), /warning/);
+  assert.match(await page.locator('#weekly-results-status').innerText(), /con observaciones/);
   assert.match(await criteria.innerText(), /Control de diferencias = Mercado Pago − MP Teorico/);
   assert.match(await criteria.innerText(), /Costo parcial de inventario/);
   assert.equal(await criteria.locator('.weekly-results-note').isVisible(), true);
@@ -312,7 +312,7 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   await page.locator('[data-view="financial-results"]').click();
   await page.getByRole('tab', { name: 'Resultados Semanales / Mensuales', exact: true }).click();
   assert.equal(requests, requestsBeforeReturn);
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.main-content')).marginLeft === '0px');
   await page.locator('#weekly-results-table').scrollIntoViewIfNeeded();
@@ -337,7 +337,7 @@ test('weekly financial tab waits for Actualizar, groups dynamic stores, exposes 
   });
   await page.evaluate(() => { window.loadCafeWeeklyResults(); }); await blocked;
   await page.evaluate(() => { window.loadCafeWeeklyResults(); });
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   release();
   assert.equal(await page.locator('.weekly-results-table tbody tr').count(), 27);
 
@@ -386,7 +386,7 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   const url = new URL((await request).url());
   assert.equal(url.searchParams.get('weeks'), '2');
   assert.equal(url.searchParams.get('includeInventory'), 'false');
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   assert.equal(requests, 1);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 3);
   assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 10);
@@ -400,7 +400,7 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   assert.equal(requests, 1);
   assert.equal(await page.locator('.weekly-results-table').count(), 0);
   await page.locator('#weekly-results-refresh').click();
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   assert.equal(requests, 2);
   assert.equal(await page.locator('.weekly-results-table thead tr').first().locator('th').count(), 4);
   assert.equal(await page.locator('.weekly-results-table tbody tr').first().locator('td').count(), 15);
@@ -410,7 +410,7 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   assert.equal(requests, 2);
   assert.equal(await page.locator('.weekly-results-table').count(), 0);
   await page.locator('#weekly-results-refresh').click();
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   let headings = await page.locator('.weekly-results-week-heading span').allTextContents();
   assert.match(headings[0], /^Hace 1 semana.*05-10-2026.*11-10-2026/);
   assert.match(headings[3], /^Hace 4 semanas.*14-09-2026.*20-09-2026/);
@@ -427,7 +427,7 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
   const monthlyUrl = new URL((await monthlyRequest).url());
   assert.equal(monthlyUrl.searchParams.get('period'), 'month');
   assert.equal(monthlyUrl.searchParams.get('includeCurrent'), 'false');
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados mensuales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados mensuales con observaciones.'));
   headings = await page.locator('.weekly-results-week-heading span').allTextContents();
   assert.match(headings[0], /^Hace 1 mes.*01-09-2026.*30-09-2026/);
   assert.match(headings[1], /^Hace 2 meses.*01-08-2026.*31-08-2026/);
@@ -435,7 +435,7 @@ test('options change without fetching; Actualizar applies 2/3 weeks and excluded
 
   await page.locator('#weekly-results-current').selectOption('true');
   await page.locator('#weekly-results-refresh').click();
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados mensuales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados mensuales con observaciones.'));
   assert.match(await page.locator('.weekly-results-week-heading span').first().innerText(), /^Mes actual.*01-10-2026.*31-10-2026/);
   await page.getByRole('button', { name: 'Detalle Diario del mes del 01-10-2026', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('weekly-results-daily-status').textContent === 'Detalle diario actualizado.');

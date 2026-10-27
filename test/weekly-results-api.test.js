@@ -460,6 +460,70 @@ test('synchronized sources calculate calendar waste without requiring a physical
   assert.equal(values.inventoryConsumptionTotal.amount, null);
 });
 
+test('refreshing synchronized results rebuilds stale local stock once per store and shares it across inventory metrics', async t => {
+  const { base, app } = await fixture(t, 'synchronized', true);
+  const stock = app.locals.toteatStockSync.current;
+  const rebuilt = new Map(), calls = [];
+  app.locals.toteatStockSync.current = id => rebuilt.get(id) || { ...stock(id), stale: true, rebuildError: 'Pendiente de recálculo' };
+  app.locals.toteatStockSync.rebuild = id => {
+    calls.push(id);
+    const state = stock(id);
+    state.daily.forEach(row => {
+      if (row.warehouse === 'waste') row.transfer_warehouse_in *= 2;
+    });
+    rebuilt.set(id, state);
+    return state;
+  };
+  app.locals.toteatStockSync.synchronize = () => { throw Error('No debe descargar fuentes'); };
+  for (const route of ['/api/weekly-results', '/api/weekly-results/stream']) {
+    const response = await fetch(`${base}${route}?weeks=2&includeCurrent=false`);
+    const body = await response.text();
+    const data = route.endsWith('/stream') ? JSON.parse(body.trim().split('\n').at(-1)).data : JSON.parse(body);
+    assert.equal(response.status, 200, body);
+    const cell = data.weeks[0].locations.find(cell => cell.locationId === 'store-1');
+    for (const key of ['inventoryShortage', 'waste', 'otherConsumables', 'finalInventory']) {
+      assert.equal(cell.values[key].available, true, key);
+    }
+    assert.equal(cell.values.waste.amount, -140, 'waste uses the rebuilt snapshot too');
+    assert.ok(!data.warnings.some(warning => /Pendiente de recálculo/.test(warning)));
+  }
+  assert.deepEqual(calls.sort(), ['main-warehouse', 'store-1', 'store-2', 'store-3']);
+});
+
+test('failed stock recalculation stays unavailable, is attempted once and preserves independent consumption', async t => {
+  const { base, app } = await fixture(t, 'synchronized');
+  const stock = app.locals.toteatStockSync.current;
+  const calls = [];
+  app.locals.toteatStockSync.current = id => id === 'store-1'
+    ? { ...stock(id), stale: true, rebuildError: 'Pendiente de recálculo' } : stock(id);
+  app.locals.toteatStockSync.rebuild = id => { calls.push(id); throw Error('No se pudo recalcular el inventario guardado.'); };
+  const data = await getReport(base);
+  assert.deepEqual(calls, ['store-1']);
+  const cell = data.weeks[1].locations[0];
+  for (const key of ['inventoryShortage', 'waste', 'otherConsumables', 'finalInventory', 'centralWarehouseInbound']) {
+    assert.equal(cell.values[key].available, false, key);
+    assert.equal(cell.values[key].amount, null, key);
+  }
+  assert.equal(cell.values.marketing.amount, -100);
+  assert.equal(cell.values.employees.amount, -210);
+  assert.match(cell.inventory.error, /No se pudo recalcular/);
+  assert.equal(data.weeks[1].locations[1].values.waste.amount, -70);
+});
+
+test('daily detail does not rebuild stale synchronized stock', async t => {
+  const { base, app } = await fixture(t, 'synchronized');
+  const stock = app.locals.toteatStockSync.current;
+  app.locals.toteatStockSync.current = id => ({ ...stock(id), stale: true, rebuildError: 'Pendiente de recálculo' });
+  let rebuilds = 0;
+  app.locals.toteatStockSync.rebuild = () => { rebuilds++; throw Error('El detalle diario no debe recalcular el Kardex'); };
+  const response = await fetch(`${base}/api/weekly-results/daily/stream?from=2026-10-05&location=store-1`);
+  const events = (await response.text()).trim().split('\n').map(JSON.parse);
+  assert.equal(events.at(-1).type, 'result');
+  assert.equal(events.at(-1).data.days[0].values.inventoryShortage.status, 'weekly-only');
+  assert.equal(events.at(-1).data.days[0].values.waste.available, false);
+  assert.equal(rebuilds, 0);
+});
+
 test('line discounts are not subtracted twice, missing costs suppress margin, and verified empty sales retain zero', async t => {
   const { base, root } = await fixture(t);
   workbook(path.join(root, 'sales.xlsx'), [

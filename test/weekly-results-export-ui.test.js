@@ -82,7 +82,7 @@ test('PDF and XLSX preview and download the calculated report with matching styl
   assert.equal(await page.locator('#weekly-results-pdf').isDisabled(), true);
   assert.equal(await page.locator('#weekly-results-xlsx').isDisabled(), true);
   await page.locator('#weekly-results-refresh').click();
-  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent.startsWith('Resultados semanales con observaciones.'));
   await page.locator('#weekly-results-workspace').evaluate(workspace => {
     for (const [key, color] of Object.entries({ '--bg': '#211e1b', '--bg-soft': '#27231e', '--text': '#f7ebdc', '--text-muted': '#a69d8c', '--border': '#3d3b39' })) workspace.style.setProperty(key, color);
   });
