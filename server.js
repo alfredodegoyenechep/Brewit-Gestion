@@ -884,13 +884,13 @@ function consumptionProductSheets(workbook) {
     if (codeColumn < 0 || nameColumn < 0) continue;
     const dateColumns = (rows[0] || []).map((value, column) => ({ date: cellDate(value), column }))
       .filter(item => item.date);
-    const unitColumn = findHeaderColumn(headers, ['Unidad', 'Unidad Medida', 'Unidad de medida']);
+    const unitColumn = findHeaderColumn(headers, ['Unidad', 'Unidad Medida', 'Unidad de medida', 'Medida Base', 'Unidad Base']);
     candidates.push({ sheetName, rows, codeColumn, nameColumn, costColumn, unitColumn, dateColumns });
   }
   return candidates;
 }
 
-function parseConsumptionProductsFromSheets(candidates, dateFrom, dateTo) {
+function parseConsumptionProductsFromSheets(candidates, dateFrom, dateTo, catalog = null) {
   const selected = candidates.map(candidate => {
     const dateColumns = candidate.dateColumns.filter(item => item.date >= dateFrom && item.date <= dateTo);
     return { ...candidate, dateColumns, score: dateColumns.length * 100 + (/prod|producto/i.test(candidate.sheetName) ? 10 : 0) };
@@ -902,7 +902,11 @@ function parseConsumptionProductsFromSheets(candidates, dateFrom, dateTo) {
     const code = String(row[selected.codeColumn] ?? '').trim();
     const name = String(row[selected.nameColumn] ?? '').trim();
     if (!code && !name) return [];
-    const quantities = require('./consumption-quantities').consumptionQuantities(selected.dateColumns.map(item => row[item.column]), selected.unitColumn >= 0 ? row[selected.unitColumn] : 'UN');
+    const catalogItem = catalog?.get(code);
+    const declaredUnit = selected.unitColumn >= 0 ? String(row[selected.unitColumn] ?? '').trim() : '';
+    // Numeric ingredient consumption uses its master unit; explicit cell or row units prevail.
+    const defaultUnit = declaredUnit || (catalogItem?.type === 'ingredient' ? catalogItem.unit : null) || 'UN';
+    const quantities = require('./consumption-quantities').consumptionQuantities(selected.dateColumns.map(item => row[item.column]), defaultUnit, code);
     const unitCost = selected.costColumn >= 0 ? numericValue(row[selected.costColumn]) || 0 : 0;
     return quantities.map(({unit,quantity}) => ({ code, name, unit, quantity, unitCost, totalCost: quantity * unitCost }));
   });
@@ -975,7 +979,7 @@ function parseIngredientCatalog(filePath) {
       catalog.set(code, {
         code,
         name: String(row[nameColumn] ?? '').trim(),
-        unit: String(row[unitColumn] ?? '').trim(),
+        unit: require('./consumption-quantities').consumptionUnitForCode(code, String(row[unitColumn] ?? '').trim()),
         unitCost: numericValue(row[costColumn]) || 0,
         type,
         active: activeColumn < 0 || numericValue(row[activeColumn]) !== 0,
@@ -1104,10 +1108,7 @@ function convertQuantityUnit(quantity, sourceUnit, targetUnit) {
 
 function consumptionQuantityForKardex(consumptionReport, code, targetUnit) {
   if (!consumptionReport?.available || consumptionReport.error) return 0;
-  const rows = [
-    ...(consumptionReport.products?.products || []),
-    ...(consumptionReport.ingredients?.items || [])
-  ];
+  const rows = require('./consumption-quantities').consumptionStockRows(consumptionReport);
   return rows.filter(item => item.code === code).reduce((sum, item) => {
     const converted = convertQuantityUnit(Number(item.quantity) || 0, item.unit, targetUnit);
     return sum + (converted ?? 0);
@@ -1295,10 +1296,13 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
   const ingredientsWithoutCost = new Set();
   const ingredientsWithoutConversion = new Set();
   for (const product of products) {
+    const directIngredient = catalog.get(product.code)?.type === 'ingredient';
     // Stocked finished goods are already counted in the product consumption
     // rows. Their ingredients belong to production, not to this consumption.
-    if (catalog.get(product.code)?.stockManaged === true) { stockedProducts.push({...product}); continue; }
-    const productRecipe = recipes.get(product.code);
+    if (!directIngredient && catalog.get(product.code)?.stockManaged === true) { stockedProducts.push({...product}); continue; }
+    const productRecipe = directIngredient
+      ? [{ ingredientId: product.code, ingredientName: product.name, quantity: 1, unit: product.unit, yieldRate: 100 }]
+      : recipes.get(product.code);
     if (!productRecipe?.length) {
       productsWithoutRecipe.add(product.code || product.name);
       continue;
@@ -1328,7 +1332,10 @@ function buildIngredientConsumption(products, recipes, catalog, costResolver = n
       };
       current.quantity += quantity;
       current.totalCost += quantity * current.unitCost;
-      for (const day of product.dailyQuantities || []) current.dailyQuantities.push({ ...day, quantity: day.quantity * recipe.quantity / yieldFactor * canonical.factor, productCode: product.code, productName: product.name });
+      if (directIngredient) current.includesDirectConsumption = true;
+      else current.includesRecipeConsumption = true;
+      for (const day of product.dailyQuantities || []) current.dailyQuantities.push({ ...day, quantity: day.quantity * recipe.quantity / yieldFactor * canonical.factor,
+        ...(!directIngredient ? { productCode: product.code, productName: product.name } : {}) });
       ingredients.set(key, current);
     }
   }
@@ -2774,7 +2781,7 @@ function createApp(options = {}) {
     return { sheetName: 'Consolidado', groups, movementDefinitions, products, sources };
   }
 
-  function mergedConsumptionProducts(locationId, field, dateFrom, dateTo, { allowEmpty = false } = {}) {
+  function mergedConsumptionProducts(locationId, field, dateFrom, dateTo, { allowEmpty = false, catalog = null } = {}) {
     const sources = chronologicalSources(locationId, field);
     const dailyProducts = new Map();
     const datesProcessed = new Set();
@@ -2789,7 +2796,7 @@ function createApp(options = {}) {
       for (let date = dateFrom; date <= dateTo; date = addDays(date, 1)) {
         if (dateIsExcluded(date, source.excludedRanges)) continue;
         try {
-          const parsed = parseConsumptionProductsFromSheets(sheets, date, date);
+          const parsed = parseConsumptionProductsFromSheets(sheets, date, date, catalog);
           sheetName ||= parsed.sheetName;
           datesProcessed.add(date);
           parsed.products.forEach(product => {
@@ -2812,13 +2819,14 @@ function createApp(options = {}) {
       products.set(key, current);
     });
     const items = [...products.values()];
-    return {
+    const report = {
       sheetName: sheetName || 'Productos consolidados',
       datesProcessed: [...datesProcessed].sort(),
       products: items,
       totalQuantity: items.reduce((sum, product) => sum + product.quantity, 0),
       totalCost: items.reduce((sum, product) => sum + product.totalCost, 0)
     };
+    return field === 'employees' ? require('./consumption-quantities').withEmployeeMilkSubstitutions(report, catalog) : report;
   }
 
   function latestWeeklyFile(locationId, field) {
@@ -3431,11 +3439,13 @@ function createApp(options = {}) {
     }
     if(['marketing','employees','calibrations'].includes(field)) {
       const sources=chronologicalSources(id,field),seen=new Set(),rows=[];let unreadable=0;
+      const catalogMaster=latestMasterFile('master-catalog',to,id);
+      const catalog=catalogMaster?parseIngredientCatalog(catalogMaster.filePath):null;
       for(const source of sources) {
         let sheets;try{sheets=consumptionProductSheets(XLSX.readFile(source.filePath,{cellDates:true}));}catch{unreadable++;continue;}
         for(let date=from;date<=to;date=addDays(date,1)) {
           if(dateIsExcluded(date,source.excludedRanges))continue;
-          let data;try{data=parseConsumptionProductsFromSheets(sheets,date,date);}catch{continue;}
+          let data;try{data=parseConsumptionProductsFromSheets(sheets,date,date,catalog);}catch{continue;}
           for(const p of data.products){const key=date+'|'+(p.code||normalizeHeader(p.name));if(seen.has(key))continue;seen.add(key);rows.push({Fecha:date,Código:p.code,Producto:p.name,Cantidad:p.quantity,Unidad:p.unit});}
         }
       }
@@ -4626,8 +4636,8 @@ function createApp(options = {}) {
             const internal=[];
             for(const field of ['marketing','employees','calibrations']) {
               if(!latestWeeklyFile(location.id,field))continue;
-              let products;try{products=mergedConsumptionProducts(location.id,field,from,to);}catch(e){if(/No product sheet contains dates/.test(e.message))continue;throw e;}
-              const ingredients=recipes&&ingredientCatalog?buildIngredientConsumption(products.products,recipes,ingredientCatalog,costResolver):{items:[]};
+              let products;try{products=mergedConsumptionProducts(location.id,field,from,to,{catalog:ingredientCatalog});}catch(e){if(/No product sheet contains dates/.test(e.message))continue;throw e;}
+              const ingredients=ingredientCatalog?buildIngredientConsumption(products.products,recipes||new Map(),ingredientCatalog,costResolver):{items:[]};
               internal.push({available:true,products,ingredients});
             }
             cache.set(key,{milk,syrup,packaging,internal});
@@ -7322,7 +7332,7 @@ function createApp(options = {}) {
     for (const [field, label] of [['marketing', 'Marketing'], ['employees', 'Colaboradores'], ['calibrations', 'Calibraciones y bebidas desechadas']]) {
       try {
         if (!chronologicalSources(location.id, field).length) throw new Error('no hay archivo cargado');
-        const mergedProducts = mergedConsumptionProducts(location.id, field, dateFrom, dateTo);
+        const mergedProducts = mergedConsumptionProducts(location.id, field, dateFrom, dateTo, { catalog: inventoryCatalog });
         const products = applyCatalogProductCosts(
           mergedProducts,
           inventoryCatalog,
@@ -8112,7 +8122,7 @@ function createApp(options = {}) {
           if (missingCostCodes.length && summary.items.every(item => !item.costAvailable)) throw Error('No hay costos disponibles para valorizar la merma.');
           partial = missingCostCodes.length > 0 || !covers(dates);
         } else {
-          const products = applyCatalogProductCosts(mergedConsumptionProducts(location.id, field, from, through, { allowEmpty: true }), catalog, resolver);
+          const products = applyCatalogProductCosts(mergedConsumptionProducts(location.id, field, from, through, { allowEmpty: true, catalog }), catalog, resolver);
           dates = new Set(products.datesProcessed);
           amount = products.totalCost;
           details[key] = weeklyDetailBuilder.expense(products.products);
@@ -8515,14 +8525,12 @@ function createApp(options = {}) {
     if (!stored) return res.status(404).json({ error: `No hay un archivo de ${labels[field]} disponible.` });
     try {
       const recipeResolution = resolveRecipes(req.query.dateTo, location.id);
-      const recipeMaster = recipeResolution.primary;
       const catalogMaster = latestMasterFile('master-catalog', req.query.dateTo, location.id);
-      if (!recipeMaster || !recipeResolution.recipes.size) throw new Error('No hay un maestro de recetas disponible.');
       if (!catalogMaster) throw new Error('No hay un maestro de productos / ingredientes / extras vigente para la fecha final seleccionada.');
       const catalog = parseIngredientCatalog(catalogMaster.filePath);
       const costResolver = buildCostResolver(req.query.dateTo, [location.id]);
       const products = applyCatalogProductCosts(
-        mergedConsumptionProducts(location.id, field, req.query.dateFrom, req.query.dateTo),
+        mergedConsumptionProducts(location.id, field, req.query.dateFrom, req.query.dateTo, { catalog }),
         catalog,
         costResolver
       );
@@ -8629,10 +8637,10 @@ function createApp(options = {}) {
           continue;
         }
         try {
-          const parsedProducts = mergedConsumptionProducts(location.id, field, movementDateFrom, movementDateTo);
+          const parsedProducts = mergedConsumptionProducts(location.id, field, movementDateFrom, movementDateTo, { catalog: ingredientCatalog });
           const products = ingredientCatalog ? applyCatalogProductCosts(parsedProducts, ingredientCatalog, costResolver) : parsedProducts;
-          const ingredients = recipes && ingredientCatalog
-            ? buildIngredientConsumption(products.products, recipes, ingredientCatalog, costResolver)
+          const ingredients = ingredientCatalog
+            ? buildIngredientConsumption(products.products, recipes || new Map(), ingredientCatalog, costResolver)
             : { items: [], totalCost: 0, productsWithoutRecipe: [], ingredientsWithoutCost: [], ingredientsWithoutConversion: [], error: masterError };
           const { filePath, ...publicSource } = stored;
           consumption[field] = { label, available: true, source: publicSource, products, ingredients };

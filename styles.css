@@ -2648,6 +2648,34 @@ body {
   max-height: 65vh;
 }
 
+#inventory-other-consumables-table th,
+#inventory-other-consumables-table td {
+  max-width: none;
+}
+
+#inventory-other-consumables-table th:first-child,
+#inventory-other-consumables-table td:first-child {
+  width: 420px;
+  min-width: 360px;
+  max-width: 420px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#inventory-other-consumables-table th:nth-child(2),
+#inventory-other-consumables-table td:nth-child(2) {
+  min-width: 200px;
+}
+
+#inventory-other-consumables-table th:nth-child(3),
+#inventory-other-consumables-table td:nth-child(3) {
+  width: 340px;
+  min-width: 300px;
+  max-width: 380px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 #inventory-results-table thead th {
   z-index: 5;
 }

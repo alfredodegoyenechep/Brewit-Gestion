@@ -189,6 +189,7 @@ let pendingInventorySummaryField = null;
 let pendingInventoryPreview = null;
 let pendingTransactionDelete = null;
 let inventoryKardexTableState = null;
+let inventoryOtherConsumablesTableState = null;
 let currentInventoryTableState = null;
 let transactionUploadContext = null;
 let reportClassicLocation = 'all';
@@ -10132,7 +10133,9 @@ function renderConsumptionReports(
       error.textContent = data.ingredients.error;
       ingredientPart.appendChild(error);
     } else {
-      const ingredientRows = [...data.ingredients.items.map(item => ({...item, consumptionType: 'Ingrediente de receta'})), ...(data.ingredients.stockedProducts || []).map(item => ({...item, consumptionType: 'Producto terminado'}))];
+      const ingredientRows = [...data.ingredients.items.map(item => ({...item, consumptionType: item.includesDirectConsumption
+        ? item.includesRecipeConsumption ? 'Ingrediente directo y de receta' : 'Ingrediente directo'
+        : 'Ingrediente de receta'})), ...(data.ingredients.stockedProducts || []).map(item => ({...item, consumptionType: 'Producto terminado'}))];
       ingredientPart.appendChild(buildConsumptionTable([
         { key: 'code', label: 'Código', value: item => item.code, maxChars: 18 },
         { key: 'name', label: 'Ingrediente', value: item => item.name, maxChars: 50 },
@@ -10269,6 +10272,22 @@ async function openInventoryItemDetail(item, trigger) {
   } catch(error){if(dialog.isConnected){content.textContent=error.message;content.className='form-status error';}}
 }
 
+function sortInventoryItems(items, column, sortDirection) {
+  const direction = sortDirection === 'desc' ? -1 : 1;
+  const value = column.sortValue || column.value;
+  return items.sort((left, right) => {
+    const leftValue = value(left), rightValue = value(right);
+    const leftMissing = leftValue === null || leftValue === undefined || leftValue === '';
+    const rightMissing = rightValue === null || rightValue === undefined || rightValue === '';
+    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
+    if (leftMissing) return String(left.code).localeCompare(String(right.code), 'es', { numeric: true });
+    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), 'es', { numeric: true, sensitivity: 'base' });
+    return (comparison || String(left.code).localeCompare(String(right.code), 'es', { numeric: true })) * direction;
+  });
+}
+
 function renderInventoryKardexTable() {
   if (!inventoryKardexTableState) return;
   const { report, columns } = inventoryKardexTableState;
@@ -10293,19 +10312,7 @@ function renderInventoryKardexTable() {
       && matchesInventoryQuantityFilter(theoretical, theoreticalCriterion);
   });
   const sortColumn = columns[inventoryKardexTableState.sortIndex];
-  const direction = inventoryKardexTableState.direction === 'desc' ? -1 : 1;
-  items.sort((left, right) => {
-    const leftValue = sortColumn.sortValue(left);
-    const rightValue = sortColumn.sortValue(right);
-    const leftMissing = leftValue === null || leftValue === undefined || leftValue === '';
-    const rightMissing = rightValue === null || rightValue === undefined || rightValue === '';
-    if (leftMissing !== rightMissing) return leftMissing ? 1 : -1;
-    if (leftMissing) return String(left.code).localeCompare(String(right.code), 'es', { numeric: true });
-    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
-      ? leftValue - rightValue
-      : String(leftValue).localeCompare(String(rightValue), 'es', { numeric: true, sensitivity: 'base' });
-    return (comparison || String(left.code).localeCompare(String(right.code), 'es', { numeric: true })) * direction;
-  });
+  sortInventoryItems(items, sortColumn, inventoryKardexTableState.direction);
 
   inventoryKardexTableState.visibleItems = items;
   const header = document.createElement('tr');
@@ -10934,15 +10941,43 @@ function renderInventoryResults(data) {
 
 function renderOtherConsumables(report, columns, metric) {
   const section = document.getElementById('inventory-other-consumables');
+  inventoryOtherConsumablesTableState = report?.items?.length
+    ? { report, columns, sortIndex: 1, direction: 'asc' } : null;
   section.hidden = !report?.items?.length;
   if (section.hidden) return;
   document.getElementById('inventory-other-consumables-summary').textContent = `${report.itemCount} ítems separados del Consolidado del Kardex. ${metric?.partial ? 'Subtotal parcial; los registros sin costo o toma física permanecen pendientes.' : 'Importe incluido por separado en el resumen ejecutivo.'}`;
+  renderOtherConsumablesTable();
+}
+
+function renderOtherConsumablesTable() {
+  if (!inventoryOtherConsumablesTableState) return;
+  const state = inventoryOtherConsumablesTableState;
+  const { report, columns } = state;
   const table = document.getElementById('inventory-other-consumables-table');
+  const { scrollLeft, scrollTop } = table.parentElement;
+  const items = sortInventoryItems([...report.items], columns[state.sortIndex], state.direction);
   const head = document.createElement('thead'), header = document.createElement('tr');
-  for (const column of columns) { const th=document.createElement('th'); th.textContent=column.label; header.appendChild(th); }
+  columns.forEach((column, index) => {
+    const th = document.createElement('th');
+    const active = index === state.sortIndex;
+    th.setAttribute('aria-sort', active ? state.direction === 'asc' ? 'ascending' : 'descending' : 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `inventory-sort-button${active ? ' active' : ''}`;
+    button.textContent = `${column.label}${active ? state.direction === 'asc' ? ' ▲' : ' ▼' : ''}`;
+    button.title = column.label;
+    button.addEventListener('click', () => {
+      state.direction = state.sortIndex === index && state.direction === 'asc' ? 'desc' : 'asc';
+      state.sortIndex = index;
+      renderOtherConsumablesTable();
+      table.querySelectorAll('thead button')[index].focus({ preventScroll: true });
+    });
+    th.appendChild(button);
+    header.appendChild(th);
+  });
   head.appendChild(header);
   const body=document.createElement('tbody');
-  for (const item of [...report.items].sort((a,b)=>a.code.localeCompare(b.code))) {
+  for (const item of items) {
     const row=document.createElement('tr');
     for (const column of columns) {const td=document.createElement('td');td.textContent=column.value(item);row.appendChild(td);}
     makeInventoryItemRowInteractive(row, item);
@@ -10955,6 +10990,8 @@ function renderOtherConsumables(report, columns, metric) {
     total.appendChild(td);
   }
   foot.appendChild(total);table.replaceChildren(head,body,foot);
+  table.parentElement.scrollLeft = scrollLeft;
+  table.parentElement.scrollTop = scrollTop;
   renderKardexTotalsNote(document.getElementById('inventory-other-consumables-totals-note'), report.items, inventoryKardexTableState.report);
 }
 

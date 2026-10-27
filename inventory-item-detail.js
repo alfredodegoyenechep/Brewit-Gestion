@@ -44,7 +44,7 @@ function buildItemDetail(state, location, report, item, { consumption = {}, conv
   const consumptionMovements = [];
   for (const value of Object.values(consumption)) {
     if (!value?.available || value.error) continue;
-    for (const row of [...(value.products?.products || []), ...(value.ingredients?.items || [])].filter(row => row.code === item.code)) {
+    for (const row of require('./consumption-quantities').consumptionStockRows(value).filter(row => row.code === item.code)) {
       for (const day of row.dailyQuantities || []) {
         const quantity = convertQuantity(day.quantity, row.unit, item.unit);
         if (quantity == null || quantity === 0 || day.date < from || day.date > to) continue;
