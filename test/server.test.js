@@ -1926,19 +1926,24 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   const projection = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`).then(response => response.json());
   assert.equal(projection.location.id, 'main-warehouse');
   assert.equal(projection.period.dataThrough, '2026-08-05');
-  assert.equal(projection.items.length, 1);
-  assert.equal(projection.items[0].consumption30, 5);
-  assert.equal(projection.items[0].currentInventory, 0);
-  assert.equal(projection.items[0].minDays, 7);
-  assert.equal(projection.items[0].maxDays, 14);
-  assert.equal(projection.items[0].unitsPerPackage, 1);
-  assert.equal(projection.items[0].managed, false);
+  assert.equal(projection.items.length, 2);
+  const observed = projection.items.find(item => item.key === 'I1');
+  const catalogOnly = projection.items.find(item => item.key === 'I2');
+  assert.equal(catalogOnly.currentInventory, null);
+  assert.equal(catalogOnly.hasInventoryHistory, false);
+  assert.equal(catalogOnly.needsPurchase, false);
+  assert.equal(observed.consumption30, 5);
+  assert.equal(observed.currentInventory, 0);
+  assert.equal(observed.minDays, 7);
+  assert.equal(observed.maxDays, 14);
+  assert.equal(observed.unitsPerPackage, 1);
+  assert.equal(observed.managed, false);
   assert.equal(projection.summary.managedItemCount, 0);
-  assert.equal(projection.items[0].suggestedPurchaseUnits, 1);
-  assert.equal(projection.items[0].purchaseUnit, 'CAJ');
-  assert.equal(projection.items[0].unitsPerPurchaseUnit, 12);
-  assert.equal(projection.items[0].supplier, 'Proveedor Uno');
-  assert.equal(projection.items[0].supplierInferred, true);
+  assert.equal(observed.suggestedPurchaseUnits, 1);
+  assert.equal(observed.purchaseUnit, 'CAJ');
+  assert.equal(observed.unitsPerPurchaseUnit, 12);
+  assert.equal(observed.supplier, 'Proveedor Uno');
+  assert.equal(observed.supplierInferred, true);
   assert.equal(projection.summary.missingCostCount, 0);
 
   const savePolicy = await fetch(`${baseUrl}/api/purchase-projections/policies`, {
@@ -1951,17 +1956,18 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   });
   assert.equal(savePolicy.status, 200);
   const configuredProjection = await fetch(`${baseUrl}/api/purchase-projections?location=main-warehouse`).then(response => response.json());
-  assert.equal(configuredProjection.items[0].minDays, 10);
-  assert.equal(configuredProjection.items[0].maxDays, 20);
-  assert.equal(configuredProjection.items[0].unitsPerPackage, 6);
-  assert.ok(Math.abs(configuredProjection.items[0].rawSuggestedInternalQuantity - (10 / 3)) < 1e-12);
-  assert.equal(configuredProjection.items[0].suggestedInternalQuantity, 72);
-  assert.equal(configuredProjection.items[0].managed, true);
+  const configuredItem = configuredProjection.items.find(item => item.key === 'I1');
+  assert.equal(configuredItem.minDays, 10);
+  assert.equal(configuredItem.maxDays, 20);
+  assert.equal(configuredItem.unitsPerPackage, 6);
+  assert.ok(Math.abs(configuredItem.rawSuggestedInternalQuantity - (10 / 3)) < 1e-12);
+  assert.equal(configuredItem.suggestedInternalQuantity, 72);
+  assert.equal(configuredItem.managed, true);
   assert.equal(configuredProjection.summary.managedItemCount, 1);
   assert.equal(configuredProjection.summary.purchaseItemCount, 1);
-  assert.equal(configuredProjection.items[0].supplier, 'Proveedor Dos');
-  assert.equal(configuredProjection.items[0].supplierInferred, false);
-  assert.equal(configuredProjection.items[0].supplierPurchaseReferenceMatched, false);
+  assert.equal(configuredItem.supplier, 'Proveedor Dos');
+  assert.equal(configuredItem.supplierInferred, false);
+  assert.equal(configuredItem.supplierPurchaseReferenceMatched, false);
   const invalidPolicy = await fetch(`${baseUrl}/api/purchase-projections/policies`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -2006,10 +2012,11 @@ test('lists purchases by supplier and filters price history by cafeteria and dat
   assert.deepEqual(projectionWithSelectedOrder.purchaseOrders.selectedOrderIds, [createdOrder.id]);
   assert.equal(projectionWithSelectedOrder.purchaseOrders.selectedOrderCount, 1);
   assert.equal(projectionWithSelectedOrder.purchaseOrders.orders[0].selected, true);
-  assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderInternalQuantity, 72);
-  assert.equal(projectionWithSelectedOrder.items[0].purchaseOrderConversionMissing, false);
-  assert.equal(projectionWithSelectedOrder.items[0].inventoryAfterPurchaseOrders, 72);
-  assert.equal(projectionWithSelectedOrder.items[0].coverageAfterPurchaseOrdersDays, 432);
+  const selectedItem = projectionWithSelectedOrder.items.find(item => item.key === 'I1');
+  assert.equal(selectedItem.purchaseOrderInternalQuantity, 72);
+  assert.equal(selectedItem.purchaseOrderConversionMissing, false);
+  assert.equal(selectedItem.inventoryAfterPurchaseOrders, 72);
+  assert.equal(selectedItem.coverageAfterPurchaseOrdersDays, 432);
 
   const orderList = await fetch(`${baseUrl}/api/purchase-orders?location=main-warehouse`).then(response => response.json());
   assert.equal(orderList.orders.length, 1);

@@ -4860,6 +4860,14 @@ function createApp(options = {}) {
     const supplierOptions = new Map(references.suppliers);
     supplierOptions.set('unassigned', { key: 'unassigned', name: 'Proveedor no asignado', taxId: '' });
     const products = parsed.products.filter(product => (product.code || product.name) && isProjectionItem(product));
+    const observedCodes = new Set(products.map(product => String(product.code || '').trim().toUpperCase()));
+    for (const ingredient of costCatalog.values()) {
+      const key = ingredient.code.toUpperCase();
+      if (!observedCodes.has(key) && (ingredient.type === 'ingredient' || PURCHASE_PROJECTION_EXTRA_CODES.has(key))) {
+        products.push({ code: ingredient.code, name: ingredient.name, unit: ingredient.unit, catalogOnly: true });
+        observedCodes.add(key);
+      }
+    }
     const items = [];
     yield { message: `Calculando sugerencias de ${location.name}`, completed: 0, total: products.length, unit: 'ingredientes' };
     for (const product of products) {
@@ -4871,20 +4879,20 @@ function createApp(options = {}) {
       const metricMatcher = metric => metric.startsWith('uso -') || metric.startsWith('trl-out -')
         || metric.startsWith('mov-out -') || metric.startsWith('trn-out -');
       const apiItem=apiItems.get(product.code+'|'+product.unit);
-      const consumption30 = apiItem?apiItem.consumption30:consumptionGroups.reduce((sum, group) =>
+      const consumption30 = product.catalogOnly ? 0 : apiItem?apiItem.consumption30:consumptionGroups.reduce((sum, group) =>
         sum + kardexMetricTotal(product, group, metricMatcher), 0);
-      const consumptionDays = apiItem?.consumptionDays ?? apiProjection?.days
+      const consumptionDays = product.catalogOnly ? 0 : apiItem?.consumptionDays ?? apiProjection?.days
         ?? Math.max(0, Math.round((Date.parse(today) - Date.parse(consumptionFrom)) / 86400000) + 1);
       const referenceItem = referenceItems.get(key);
-      const referenceDaily = referenceItem && referenceItem.internalUnit && product.unit
+      const referenceDaily = referenceItem && referenceItem.hasInventoryHistory !== false && referenceItem.internalUnit && product.unit
         ? convertQuantityUnit(referenceItem.ownAverageDailyConsumption, referenceItem.internalUnit, product.unit) : null;
       const consumption = replenishmentConsumption(consumption30, consumptionDays,
         referenceProjection ? referenceDaily : null, consumptionReference.percentage);
       const { averageDailyConsumption } = consumption;
       const referenceIssue = referenceProjection && referenceDaily === null
-        ? (referenceItem ? 'Unidad de referencia incompatible o desconocida.' : 'Ingrediente sin consumo verificable en la sucursal de referencia.') : null;
+        ? (referenceItem && referenceItem.hasInventoryHistory !== false ? 'Unidad de referencia incompatible o desconocida.' : 'Ingrediente sin consumo verificable en la sucursal de referencia.') : null;
       const hasFinal = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
-      const currentInventory = apiItem?apiItem.currentInventory:kardexMetricValue(product, latestGroup,
+      const currentInventory = product.catalogOnly ? null : apiItem?apiItem.currentInventory:kardexMetricValue(product, latestGroup,
         metric => metric.startsWith(hasFinal ? 'if -' : 'ii -'));
       const { latestPurchase, supplierSpecificPurchase, configuredSupplier, supplier,
         purchaseUnit, unitsPerPurchaseUnit, unitsPerPackage, estimatedPurchaseUnitCost, fallbackCostReference }
@@ -4893,9 +4901,9 @@ function createApp(options = {}) {
         });
       const minimumStock = averageDailyConsumption * minDays;
       const maximumStock = averageDailyConsumption * maxDays;
-      const ownNeedsPurchase = averageDailyConsumption > 0 && currentInventory <= minimumStock;
+      const ownNeedsPurchase = Number.isFinite(currentInventory) && averageDailyConsumption > 0 && currentInventory <= minimumStock;
       const ownSuggestedInternalQuantity = ownNeedsPurchase ? Math.max(0, maximumStock - currentInventory) : 0;
-      const rawSuggestedInternalQuantity = averageDailyConsumption > 0
+      const rawSuggestedInternalQuantity = !Number.isFinite(currentInventory) ? 0 : averageDailyConsumption > 0
         ? (currentInventory <= minimumStock
           ? Math.max(0, maximumStock - currentInventory)
           : 0)
@@ -4910,8 +4918,8 @@ function createApp(options = {}) {
         if (converted === null) purchaseOrderConversionMissing = true;
         return sum + (converted ?? 0);
       }, 0);
-      const inventoryAfterPurchaseOrders = currentInventory + purchaseOrderInternalQuantity;
-      const coverageAfterPurchaseOrdersDays = averageDailyConsumption > 0
+      const inventoryAfterPurchaseOrders = Number.isFinite(currentInventory) ? currentInventory + purchaseOrderInternalQuantity : null;
+      const coverageAfterPurchaseOrdersDays = Number.isFinite(inventoryAfterPurchaseOrders) && averageDailyConsumption > 0
         ? inventoryAfterPurchaseOrders / averageDailyConsumption
         : null;
       const projectedInternalQuantity = suggestedInternalQuantity;
@@ -4921,7 +4929,9 @@ function createApp(options = {}) {
         name: product.name,
         internalUnit: product.unit,
         currentInventory,
-        currentInventoryBasis: apiItem?'Teórico API con compensaciones e internos':hasFinal ? 'Inventario Final' : 'Inventario Inicial',
+        hasInventoryHistory: !product.catalogOnly,
+        currentInventoryBasis: product.catalogOnly ? 'Sin inventario verificable; disponible para compra manual'
+          : apiItem?'Teórico API con compensaciones e internos':hasFinal ? 'Inventario Final' : 'Inventario Inicial',
         inventoryAnchorDate:apiItem?.anchorDate||null,
         consumptionFrom:apiItem?.consumptionFrom||consumptionFrom,
         consumptionDays,
@@ -4931,7 +4941,7 @@ function createApp(options = {}) {
         referenceIssue,
         referenceConsumptionFrom: referenceItem?.consumptionFrom || null,
         referenceConsumptionDays: referenceItem?.consumptionDays ?? null,
-        currentCoverageDays: averageDailyConsumption > 0 ? currentInventory / averageDailyConsumption : null,
+        currentCoverageDays: Number.isFinite(currentInventory) && averageDailyConsumption > 0 ? currentInventory / averageDailyConsumption : null,
         minDays,
         maxDays,
         unitsPerPackage,
@@ -5014,6 +5024,7 @@ function createApp(options = {}) {
       items,
       summary: {
         itemCount: items.length,
+        catalogOnlyItemCount: items.filter(item => !item.hasInventoryHistory).length,
         managedItemCount: items.filter(item => item.managed).length,
         purchaseItemCount: items.filter(item => item.managed && item.needsPurchase).length,
         estimatedTotal: items.filter(item => item.managed).reduce((sum, item) => sum + (item.estimatedTotal || 0), 0),
@@ -5287,7 +5298,7 @@ function createApp(options = {}) {
         item.unitsPerPackage = policy.unitsPerPackage;
         item.unitsPerPackageBasis = 'purchase';
         const daily = item.averageDailyConsumption, inventory = item.currentInventory;
-        const needed = daily > 0
+        const needed = !Number.isFinite(inventory) ? 0 : daily > 0
           ? (inventory <= daily * policy.minDays ? Math.max(0, daily * policy.maxDays - inventory) : 0)
           : Math.max(0, -inventory);
         item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(needed, item.unitsPerPurchaseUnit, item.unitsPerPackage);

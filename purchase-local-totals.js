@@ -15,7 +15,7 @@ function consolidateLocalTotals(item, sources, selectedLocationId, convertQuanti
     const ownDailyConsumption = own ? convert(own.ownAverageDailyConsumption, own.internalUnit) : null;
     const substituteDailyConsumption = own ? convert(own.projectedAverageDailyConsumption, own.internalUnit) : null;
     const dailyConsumption = own && !source.consumptionError ? convert(own.averageDailyConsumption, own.internalUnit) : null;
-    const issue = source.error || (!own ? 'Ingrediente sin inventario o historial verificable en esta cafetería.'
+    const issue = source.error || (!own || own.hasInventoryHistory === false ? 'Ingrediente sin inventario o historial verificable en esta cafetería.'
       : inventory === null || ownDailyConsumption === null ? 'Unidad incompatible o desconocida.' : null);
     return {
       locationId: source.location.id,
@@ -46,8 +46,8 @@ function consolidateLocalTotals(item, sources, selectedLocationId, convertQuanti
   const localsDailyConsumptionSubtotal = locals.reduce((sum, row) => sum + (row.dailyConsumption ?? 0), 0);
   const localsInventory = localsInventorySubtotal;
   const localsDailyConsumption = localsDailyConsumptionSubtotal;
-  const totalInventory = item.currentInventory + localsInventorySubtotal;
-  const currentCoverageDays = localsDailyConsumption > 0
+  const totalInventory = Number.isFinite(item.currentInventory) ? item.currentInventory + localsInventorySubtotal : null;
+  const currentCoverageDays = Number.isFinite(totalInventory) && localsDailyConsumption > 0
     ? totalInventory / localsDailyConsumption : null;
   return {
     locals, localsInventory, localsInventorySubtotal, totalInventory,
@@ -55,7 +55,8 @@ function consolidateLocalTotals(item, sources, selectedLocationId, convertQuanti
     localsInventoryComplete: true,
     localsConsumptionComplete: true,
     currentCoverageDays,
-    coverageUnavailableReason: localsDailyConsumption === 0 ? 'Sin consumo diario en las cafeterías.' : null
+    coverageUnavailableReason: totalInventory === null ? 'Sin inventario verificable en Bodega Principal.'
+      : localsDailyConsumption === 0 ? 'Sin consumo diario en las cafeterías.' : null
   };
 }
 

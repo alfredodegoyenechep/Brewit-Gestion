@@ -31,6 +31,15 @@ test('local totals convert each quantity and use effective daily replenishment d
   assert.equal(result.locals[1].consumptionDays, 7);
 });
 
+test('a catalog-only warehouse ingredient keeps its own and total inventory unknown', () => {
+  const result = consolidateLocalTotals({ ...item, currentInventory: null, hasInventoryHistory: false },
+    [source('store', 30, 3)], 'warehouse', convert);
+  assert.equal(result.localsInventory, 30);
+  assert.equal(result.totalInventory, null);
+  assert.equal(result.currentCoverageDays, null);
+  assert.match(result.coverageUnavailableReason, /Sin inventario verificable/);
+});
+
 test('a selected store is counted once in inventory and still contributes its daily consumption once', () => {
   const result = consolidateLocalTotals({ ...item, currentInventory: 20 },
     [source('selected', 20, 10), source('other', 30, 5)], 'selected', convert);

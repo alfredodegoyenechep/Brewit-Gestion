@@ -7517,10 +7517,10 @@ function updatePurchaseOrderButton() {
 function recalculatePurchaseProjectionItem(item) {
   item.minimumStock = item.averageDailyConsumption * item.minDays;
   item.maximumStock = item.averageDailyConsumption * item.maxDays;
-  item.ownNeedsPurchase = item.averageDailyConsumption > 0 && item.currentInventory <= item.minimumStock;
+  item.ownNeedsPurchase = Number.isFinite(item.currentInventory) && item.averageDailyConsumption > 0 && item.currentInventory <= item.minimumStock;
   item.ownSuggestedInternalQuantity = item.ownNeedsPurchase
     ? Math.max(0, item.maximumStock - item.currentInventory) : 0;
-  item.rawSuggestedInternalQuantity = item.averageDailyConsumption > 0
+  item.rawSuggestedInternalQuantity = !Number.isFinite(item.currentInventory) ? 0 : item.averageDailyConsumption > 0
     ? (item.currentInventory <= item.minimumStock
       ? Math.max(0, item.maximumStock - item.currentInventory)
       : 0)
@@ -7899,7 +7899,7 @@ function openProjectionLocalDetail(key, kind, item = purchaseProjectionState?.it
   const coverage = item.coverageUnavailableReason
     ? `Cobertura actual no disponible: ${item.coverageUnavailableReason}`
     : `Cobertura actual = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit} ÷ ${formatProjectionMetric(item.localsDailyConsumption)} ${item.internalUnit}/día = ${formatProjectionOneDecimal(item.currentCoverageDays)} días.`;
-  const total = item.totalInventory === null ? 'Inventario Total no disponible: falta inventario de alguna cafetería.'
+  const total = item.totalInventory === null ? 'Inventario Total no disponible: falta inventario verificable.'
     : `Inventario Total = ${formatProjectionMetric(item.currentInventory)} (${locationName}) + ${formatProjectionMetric(item.localsInventory)} (cafeterías) = ${formatProjectionMetric(item.totalInventory)} ${item.internalUnit}.`;
   document.getElementById('projection-local-detail-calculation').textContent = `${inventory ? 'Inventario Locales' : 'Consumo Diario Locales'} = ${sum}\n${inventory ? `${total}\n` : ''}${coverage}`;
   dialog.showModal();
@@ -7926,6 +7926,7 @@ function renderPurchaseProjection() {
   const body = document.getElementById('purchase-projection-body');
   const summary = document.getElementById('purchase-projection-summary');
   const saveButton = document.getElementById('save-projection-policies');
+  document.getElementById('show-all-projection-ingredients').disabled = !purchaseProjectionState;
   const newCoverageHeader = document.getElementById('projection-new-coverage-header');
   const reference = purchaseProjectionState?.consumptionReference;
   const showsReference = reference?.active === true;
@@ -7966,6 +7967,7 @@ function renderPurchaseProjection() {
   const summaryTexts = [
     `${managedItems.length} ítem(s) administrados`,
     `${data.summary.itemCount} ítem(s) disponibles`,
+    ...(data.summary.catalogOnlyItemCount ? [`${data.summary.catalogOnlyItemCount} del maestro sin inventario verificable; disponibles para compra manual`] : []),
     `${managedPurchaseItems.length} ítem(s) por comprar`,
     `Compra estimada: ${formatClp(managedItems.reduce((sum, item) => sum + (item.estimatedTotal || 0), 0))}`,
     `${managedPurchaseItems.filter(item => !item.conversionAvailable).length} sin conversión UDC`,
@@ -8003,6 +8005,10 @@ function renderPurchaseProjection() {
       cell.title = value;
       row.appendChild(cell);
     });
+    if (item.hasInventoryHistory === false) {
+      const note = document.createElement('small'); note.textContent = 'Sin inventario verificable · compra manual';
+      row.lastElementChild.appendChild(note);
+    }
     const supplierCell = document.createElement('td');
     const supplierSelect = document.createElement('select');
     supplierSelect.className = 'projection-supplier-input';
@@ -8044,14 +8050,15 @@ function renderPurchaseProjection() {
     packageCell.appendChild(packageInput);
     row.appendChild(packageCell);
     const plainValues = [
-      { value: `${formatProjectionMetric(item.currentInventory)} ${item.internalUnit || ''}`.trim() },
+      { value: item.hasInventoryHistory === false ? 'Sin inventario verificable'
+        : `${formatProjectionMetric(item.currentInventory)} ${item.internalUnit || ''}`.trim(), title: item.currentInventoryBasis },
       ...(showsLocals ? [
         { value: projectionLocalMetric(item, 'localsInventory', 'localsInventorySubtotal'), detail: 'inventory' },
         { value: item.totalInventory === null ? 'Sin datos completos' : formatProjectionMetric(item.totalInventory), title: 'Inventario Actual de bodega + Inventario Locales.' }
       ] : []),
-      { value: formatProjectionMetric(item.consumption30), title: `Período propio: ${item.consumptionFrom} · ${item.consumptionDays} días.${item.consumptionBreakdown ? ` Ventas: ${formatProjectionMetric(item.consumptionBreakdown.sales)} · Transferencias salida: ${formatProjectionMetric(item.consumptionBreakdown.transfersOut)} · Transformaciones salida: ${formatProjectionMetric(item.consumptionBreakdown.transformationsOut)} · Compensaciones menos internos: ${formatProjectionMetric(item.consumptionBreakdown.netCompensationsAndInternal)}` : ''}` },
+      { value: item.hasInventoryHistory === false ? 'Sin historial' : formatProjectionMetric(item.consumption30), title: `Período propio: ${item.consumptionFrom} · ${item.consumptionDays} días.${item.consumptionBreakdown ? ` Ventas: ${formatProjectionMetric(item.consumptionBreakdown.sales)} · Transferencias salida: ${formatProjectionMetric(item.consumptionBreakdown.transfersOut)} · Transformaciones salida: ${formatProjectionMetric(item.consumptionBreakdown.transformationsOut)} · Compensaciones menos internos: ${formatProjectionMetric(item.consumptionBreakdown.netCompensationsAndInternal)}` : ''}` },
       ...(showsLocals ? [{ value: projectionLocalMetric(item, 'localsDailyConsumption', 'localsDailyConsumptionSubtotal'), detail: 'consumption' }] : []),
-      ...(showsOwnDaily ? [{ value: formatProjectionMetric(item.ownAverageDailyConsumption ?? item.averageDailyConsumption), title: `Promedio diario propio sobre ${item.consumptionDays} días de historial disponible. Unidad: ${item.internalUnit}.` }] : []),
+      ...(showsOwnDaily ? [{ value: item.hasInventoryHistory === false ? 'Sin historial' : formatProjectionMetric(item.ownAverageDailyConsumption ?? item.averageDailyConsumption), title: `Promedio diario propio sobre ${item.consumptionDays} días de historial disponible. Unidad: ${item.internalUnit}.` }] : []),
       ...(showsReference ? [
         { value: item.projectedAverageDailyConsumption === null ? 'Sin referencia' : formatProjectionMetric(item.projectedAverageDailyConsumption), title: item.referenceIssue || `${reference.source.name}: promedio diario × ${reference.percentage}%. Referencia desde ${item.referenceConsumptionFrom}, ${item.referenceConsumptionDays} días. Unidad: ${item.internalUnit} por día.` },
         { value: formatProjectionMetric(item.averageDailyConsumption), title: `Máximo entre el promedio diario propio y el sustitutivo. Base de cobertura y reposición en ${item.internalUnit} por día.` }
@@ -12697,6 +12704,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('projection-only-managed').addEventListener('change', renderPurchaseProjection);
   document.getElementById('refresh-purchase-projection').addEventListener('click', loadPurchaseProjection);
   document.getElementById('open-ingredient-purchase-master').addEventListener('click', openIngredientPurchaseMaster);
+  document.getElementById('show-all-projection-ingredients').addEventListener('click', () => {
+    document.getElementById('projection-only-required').checked = false;
+    document.getElementById('projection-only-managed').checked = false;
+    document.getElementById('projection-supplier-filter').value = 'all';
+    renderPurchaseProjection();
+  });
   document.getElementById('close-ingredient-purchase-master').addEventListener('click', () => {
     document.getElementById('ingredient-purchase-master-dialog').close();
   });
@@ -12803,7 +12816,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const quantity = row?.querySelector('.purchase-order-quantity');
       const item = purchaseOrderEditorState?.items.find(candidate => candidate.key === row?.dataset.key);
       if (quantity && !(Number(quantity.value) > 0)) {
-        quantity.value = String(Number(item?.suggestedPurchaseUnits) > 0 ? item.suggestedPurchaseUnits : 1);
+        quantity.value = String(Number(item?.suggestedPurchaseUnits) > 0 ? item.suggestedPurchaseUnits : item?.unitsPerPackage || 1);
       }
     }
     if (event.target.matches('.purchase-order-cost')) {

@@ -153,6 +153,101 @@ test('synchronized purchase projections exclude stock-managed products except th
   }
 });
 
+test('projections include every catalog ingredient and permit manual orders without inventing stock or reference-driven needs', async t => {
+  const { root, stocks, json, project, configure } = await setup(t);
+  const file = path.join(root, 'masters', 'catalog.xlsx'), book = XLSX.readFile(file);
+  const rows = XLSX.utils.sheet_to_json(book.Sheets.Ingr, { header: 1 });
+  rows.push(['E', 'Ingrediente nuevo', 1, 200, 'UN']);
+  book.Sheets.Ingr = XLSX.utils.aoa_to_sheet(rows); XLSX.writeFile(book, file);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'E', internalUnit: 'UN', purchaseUnit: 'Caja', unitsPerPurchaseUnit: 10,
+      transferUnit: 'Pack', unitsPerTransferUnit: 2 }] }) });
+  for (const location of ['store-2', 'main-warehouse']) await json('/api/purchase-projections/policies', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location, items: [{ key: 'E', supplierKey: '111', managed: true, minDays: 7, maxDays: 14, unitsPerPackage: 3 }] })
+  });
+  // Only the reference store has movements for E. A missing local stock must
+  // not be treated as zero to turn that reference consumption into an order.
+  stocks['store-1'].daily.push(...stocks['store-1'].daily.filter(row => row.code === 'B')
+    .map(row => ({ ...row, code: 'E', name: 'Ingrediente nuevo', unit: 'UN', use: 2 })));
+  await configure();
+  for (const [location, unit, conversion] of [['store-2', 'Pack', 2], ['main-warehouse', 'Caja', 10]]) {
+    const projection = await project(location);
+    assert.deepEqual(projection.items.map(item => item.key).sort(), ['A', 'B', 'C', 'D', 'E']);
+    const item = projection.items.find(item => item.key === 'E');
+    assert.equal(item.hasInventoryHistory, false);
+    assert.equal(item.currentInventory, null);
+    assert.equal(item.currentCoverageDays, null);
+    assert.equal(item.needsPurchase, false);
+    assert.equal(item.suggestedPurchaseUnits, null);
+    assert.deepEqual([item.purchaseUnit, item.unitsPerPurchaseUnit], [unit, conversion]);
+    assert.ok(projection.summary.catalogOnlyItemCount >= 1);
+    if (location === 'store-2') {
+      assert.ok(item.projectedAverageDailyConsumption > 0);
+      const saved = await json('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location, supplierKey: '111', projectionId: projection.projectionId, useTransferUnits: true,
+          items: [{ key: 'E', quantity: 6, unitCost: 400, purchaseUnit: 'Pack', unitsPerPurchaseUnit: 2, internalUnit: 'UN' }] }) });
+      assert.deepEqual([saved.items[0].internalQuantity, saved.total], [12, 2400]);
+    } else assert.equal(item.totalInventory, null);
+  }
+  // A synchronized ledger with no item rows still exposes the complete catalog.
+  stocks['store-2'].daily = [];
+  const empty = await project();
+  assert.equal(empty.items.length, 5);
+  assert.ok(empty.items.every(item => item.currentInventory === null && !item.needsPurchase));
+});
+
+test('UI lists a new ingredient, saves its supplier and creates a manual order without inventory history', { skip: !fs.existsSync(chrome) }, async t => {
+  const { root, base, app, json } = await setup(t);
+  const file = path.join(root, 'masters', 'catalog.xlsx'), book = XLSX.readFile(file);
+  const rows = XLSX.utils.sheet_to_json(book.Sheets.Ingr, { header: 1 });
+  rows.push(['E', 'Ingrediente nuevo', 1, 200, 'UN']); book.Sheets.Ingr = XLSX.utils.aoa_to_sheet(rows); XLSX.writeFile(book, file);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'E', internalUnit: 'UN', purchaseUnit: 'Caja', unitsPerPurchaseUnit: 10,
+      transferUnit: 'Pack', unitsPerTransferUnit: 2 }] }) });
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  page.on('dialog', dialog => dialog.accept());
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base); await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  await page.locator('#projection-location-filter').selectOption('store-2');
+  await page.locator('#refresh-purchase-projection').click();
+  await page.waitForFunction(() => purchaseProjectionState !== null);
+  const row = page.locator('#purchase-projection-body tr[data-key="E"]');
+  assert.equal(await row.count(), 0, 'the needs-only filter still applies');
+  await page.locator('#show-all-projection-ingredients').click();
+  await row.waitFor();
+  assert.match(await row.innerText(), /Ingrediente nuevo.*Sin inventario verificable/s);
+  await row.locator('.projection-supplier-input').selectOption('111');
+  await row.locator('.projection-managed-input').check();
+  await row.locator('.projection-package-input').fill('3');
+  assert.equal(await page.evaluate(() => purchaseProjectionState.items.find(item => item.key === 'E').needsPurchase), false);
+  app.locals.toteatStockSync.current = () => { throw Error('Saving a new ingredient and its order must reuse the projection'); };
+  await page.locator('#save-projection-policies').click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('guardados correctamente'));
+  await page.locator('#projection-supplier-filter').selectOption('111');
+  await page.locator('#print-purchase-order').click();
+  const editor = page.locator('#purchase-order-editor-body tr[data-key="E"]');
+  assert.equal(await editor.locator('.purchase-order-select').isChecked(), false);
+  assert.match(await editor.locator('.purchase-order-inventory').innerText(), /Sin datos/);
+  for (const checkbox of await page.locator('#purchase-order-editor-body .purchase-order-select').all()) {
+    if (await checkbox.isChecked()) await checkbox.uncheck();
+  }
+  await editor.locator('.purchase-order-select').check();
+  assert.equal(await editor.locator('.purchase-order-quantity').inputValue(), '3');
+  await editor.locator('.purchase-order-quantity').fill('6');
+  await editor.locator('.purchase-order-cost').fill('400');
+  await page.locator('#confirm-purchase-order').click();
+  await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
+  const list = await json('/api/purchase-orders?location=store-2');
+  assert.equal(list.orders.length, 1);
+  const saved = await json(`/api/purchase-orders/${list.orders[0].id}`);
+  assert.deepEqual(saved.items.map(item => [item.key, item.purchaseUnit, item.internalQuantity]), [['E', 'Pack', 12]]);
+  assert.equal(saved.total, 2400);
+  assert.deepEqual(errors, []);
+});
+
 test('legacy multiples migrate to supply units once, copy with their basis, and orders enforce the allowed supply multiple', async t => {
   const { root, json, project, base } = await setup(t);
   await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
