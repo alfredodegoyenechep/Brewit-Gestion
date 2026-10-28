@@ -1,5 +1,6 @@
 const IngredientMasterExport = (() => {
-  const headers = ['Código', 'Ingrediente', 'Unidad de Consumo', 'Unidad de Abastecimiento', 'Un. de Consumo x Un. de Abast.', 'Equivalencia'];
+  const headers = ['Código', 'Ingrediente', 'Unidad de Consumo', 'Unidad de Abastecimiento', 'Un. de Consumo x Un. de Abast.', 'Equivalencia',
+    'Unidad de Transferencia a Cafeterías', 'Un. de Consumo x Un. de Transferencia', 'Equivalencia transferencia'];
   const quantity = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(value);
 
   function values(item, draft = item) {
@@ -7,8 +8,14 @@ const IngredientMasterExport = (() => {
     const raw = draft.purchaseUnit ? draft.unitsPerPurchaseUnit : item.masterContent;
     const content = raw !== null && raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) && Number(raw) > 0
       ? Number(raw) : null;
+    const transferUnit = draft.transferUnit || unit;
+    const transferRaw = draft.transferUnit ? draft.unitsPerTransferUnit : content;
+    const transferContent = transferRaw !== null && transferRaw !== undefined && transferRaw !== ''
+      && Number.isFinite(Number(transferRaw)) && Number(transferRaw) > 0 ? Number(transferRaw) : null;
     return [item.code, item.name, item.internalUnit || 'Sin unidad de consumo', unit, content,
-      unit && content !== null ? `1 ${unit} = ${quantity(content)} ${item.internalUnit}` : 'Sin equivalencia'];
+      unit && content !== null ? `1 ${unit} = ${quantity(content)} ${item.internalUnit}` : 'Sin equivalencia',
+      transferUnit, transferContent, transferUnit && transferContent !== null
+        ? `1 ${transferUnit} = ${quantity(transferContent)} ${item.internalUnit}` : 'Sin equivalencia'];
   }
 
   function csv(rows, decimalSystem = 'comma') {
@@ -24,9 +31,9 @@ const IngredientMasterExport = (() => {
 
   function workbook(rows, XLSX) {
     const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    sheet['!cols'] = [16, 48, 20, 22, 30, 40].map(wch => ({ wch }));
+    sheet['!cols'] = [16, 48, 20, 22, 30, 40, 32, 34, 40].map(wch => ({ wch }));
     sheet['!autofilter'] = { ref: sheet['!ref'] };
-    sheet['!brewitTextColumns'] = [0, 1, 2, 3, 5];
+    sheet['!brewitTextColumns'] = [0, 1, 2, 3, 5, 6, 8];
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Ingredientes');
     return book;
@@ -37,7 +44,7 @@ const IngredientMasterExport = (() => {
     doc.setProperties({ title: 'Maestro de ingredientes', author: 'Brewit' });
     const width = doc.internal.pageSize.getWidth(), height = doc.internal.pageSize.getHeight();
     const margin = 28, bottom = height - 32, lineHeight = 11;
-    const widths = [.10, .29, .11, .13, .17, .20].map(ratio => ratio * (width - margin * 2));
+    const widths = [.07, .18, .07, .105, .115, .115, .12, .11, .115].map(ratio => ratio * (width - margin * 2));
     const font = (bold = false, size = 9) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); };
     const split = row => row.map((value, index) => doc.splitTextToSize(String(value ?? ''), widths[index] - 12));
     const draw = (cells, y, rowHeight, header = false) => {
@@ -7631,7 +7638,10 @@ async function saveConsumptionReferenceConfiguration() {
 }
 
 function ingredientMasterEquivalence(row, item, draft) {
-  row.querySelector('.ingredient-master-equivalence').textContent = IngredientMasterExport.values(item, draft)[5];
+  const values = IngredientMasterExport.values(item, draft);
+  row.querySelector('.ingredient-master-equivalence').textContent = values[5];
+  row.querySelector('.ingredient-master-transfer-equivalence').textContent = values[8];
+  if (!draft.transferUnit) row.querySelector('.ingredient-master-transfer-content').value = values[7] ?? '';
 }
 
 function visibleIngredientPurchaseMasterItems() {
@@ -7676,6 +7686,26 @@ function renderIngredientPurchaseMaster() {
     const equivalence = document.createElement('td');
     equivalence.className = 'ingredient-master-equivalence';
     row.appendChild(equivalence);
+    const transferUnitCell = document.createElement('td');
+    const transferSelect = document.createElement('select');
+    transferSelect.className = 'ingredient-master-transfer-unit';
+    transferSelect.setAttribute('aria-label', `Unidad de transferencia a cafeterías de ${item.name}`);
+    transferSelect.replaceChildren(new Option('Copiar unidad de abastecimiento', ''),
+      ...item.allowedPurchaseUnits.map(unit => new Option(unit, unit)));
+    transferSelect.value = draft.transferUnit || '';
+    transferSelect.disabled = !item.internalUnit;
+    transferUnitCell.appendChild(transferSelect); row.appendChild(transferUnitCell);
+    const transferContentCell = document.createElement('td');
+    const transferInput = document.createElement('input');
+    transferInput.type = 'number'; transferInput.min = '0'; transferInput.step = 'any'; transferInput.max = '1000000000';
+    transferInput.className = 'ingredient-master-transfer-content';
+    transferInput.value = draft.unitsPerTransferUnit ?? '';
+    transferInput.disabled = !draft.transferUnit || !item.internalUnit;
+    transferInput.setAttribute('aria-label', `Unidades de consumo en ${item.internalUnit} por unidad de transferencia a cafeterías de ${item.name}`);
+    transferContentCell.append(transferInput, ` ${item.internalUnit}`); row.appendChild(transferContentCell);
+    const transferEquivalence = document.createElement('td');
+    transferEquivalence.className = 'ingredient-master-transfer-equivalence';
+    row.appendChild(transferEquivalence);
     ingredientMasterEquivalence(row, item, draft);
     return row;
   }));
@@ -7693,8 +7723,9 @@ function exportIngredientPurchaseMaster(format) {
     const rows = items.map(item => {
       const draft = ingredientPurchaseMasterDrafts.get(item.code) || item;
       const values = IngredientMasterExport.values(item, draft);
-      if (ingredientPurchaseMasterDrafts.has(item.code) && draft.purchaseUnit
-        && (values[4] === null || values[4] > 1e9)) {
+      if (ingredientPurchaseMasterDrafts.has(item.code) && (
+        draft.purchaseUnit && (values[4] === null || values[4] > 1e9)
+        || draft.transferUnit && (values[7] === null || values[7] > 1e9))) {
         throw new Error(`${item.code}: ingresa un contenido mayor que 0, expresado en ${item.internalUnit}.`);
       }
       return values;
@@ -7725,12 +7756,22 @@ function editIngredientPurchaseMaster(event) {
   const row = event.target.closest('tr[data-code]');
   if (!row || !ingredientPurchaseMasterState) return;
   const item = ingredientPurchaseMasterState.items.find(item => item.code === row.dataset.code);
-  const purchaseUnit = row.querySelector('select').value;
-  const input = row.querySelector('input');
+  const purchaseUnit = row.querySelector('.ingredient-master-purchase-unit').value;
+  const input = row.querySelector('.ingredient-master-content');
   if (!purchaseUnit) input.value = '';
   input.disabled = !purchaseUnit;
+  const transferSelect = row.querySelector('.ingredient-master-transfer-unit');
+  let transferUnit = transferSelect.value;
+  const transferInput = row.querySelector('.ingredient-master-transfer-content');
+  if (!transferUnit) {
+    const supply = IngredientMasterExport.values(item, { purchaseUnit, unitsPerPurchaseUnit: purchaseUnit ? input.value : null });
+    transferUnit = supply[3]; transferSelect.value = transferUnit;
+    transferInput.value = supply[4] ?? '';
+  }
+  transferInput.disabled = !transferUnit;
   const draft = { code: item.code, internalUnit: item.internalUnit, purchaseUnit,
-    unitsPerPurchaseUnit: purchaseUnit ? input.value : null };
+    unitsPerPurchaseUnit: purchaseUnit ? input.value : null,
+    transferUnit, unitsPerTransferUnit: transferUnit ? transferInput.value : null };
   ingredientPurchaseMasterDrafts.set(item.code, draft);
   ingredientMasterEquivalence(row, item, draft);
   document.getElementById('save-ingredient-purchase-master').disabled = false;
@@ -7751,7 +7792,7 @@ async function openIngredientPurchaseMaster() {
     if (request !== ingredientPurchaseMasterRequest || !dialog.open) return;
     ingredientPurchaseMasterState = data;
     renderIngredientPurchaseMaster();
-    setStatus(status, `${data.items.length} ingredientes. Las unidades de abastecimiento se comparten entre todas las ubicaciones.`, 'muted');
+    setStatus(status, `${data.items.length} ingredientes. Abastecimiento para Bodega Principal y transferencia para cafeterías; equivalencias compartidas.`, 'muted');
   } catch (error) {
     if (request === ingredientPurchaseMasterRequest && dialog.open) setStatus(status, error.message, 'error');
   }
@@ -7763,8 +7804,8 @@ async function saveIngredientPurchaseMaster() {
   const button = document.getElementById('save-ingredient-purchase-master');
   if (button.disabled || !ingredientPurchaseMasterState) return;
   const items = [...ingredientPurchaseMasterDrafts.values()];
-  const invalid = items.find(item => item.purchaseUnit && (!Number.isFinite(Number(item.unitsPerPurchaseUnit))
-    || Number(item.unitsPerPurchaseUnit) <= 0 || Number(item.unitsPerPurchaseUnit) > 1e9));
+  const invalid = items.find(item => [[item.purchaseUnit, item.unitsPerPurchaseUnit], [item.transferUnit, item.unitsPerTransferUnit]]
+    .some(([unit, content]) => unit && (!Number.isFinite(Number(content)) || Number(content) <= 0 || Number(content) > 1e9)));
   if (invalid) {
     setStatus(status, `${invalid.code}: ingresa un contenido mayor que 0, expresado en ${invalid.internalUnit}.`, 'error');
     return;
@@ -7775,7 +7816,7 @@ async function saveIngredientPurchaseMaster() {
   document.getElementById('ingredient-purchase-master-search').disabled = true;
   dialog.querySelectorAll('.ingredient-purchase-master-exports button').forEach(control => { control.disabled = true; });
   dialog.querySelectorAll('tbody input, tbody select').forEach(control => { control.disabled = true; });
-  setStatus(status, 'Guardando unidades de abastecimiento…');
+  setStatus(status, 'Guardando unidades de abastecimiento y transferencia…');
   try {
     await apiRequest('/api/purchase-projections/ingredient-master', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
@@ -7784,7 +7825,7 @@ async function saveIngredientPurchaseMaster() {
     ingredientPurchaseMasterDrafts.clear();
     resetPurchaseProjection();
     setStatus(document.getElementById('purchase-projection-status'),
-      'Unidades de abastecimiento guardadas. Presiona Actualizar para cargar la proyección.', 'success');
+      'Unidades de abastecimiento y transferencia guardadas. Presiona Actualizar para cargar la proyección.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
@@ -8530,15 +8571,17 @@ function editablePurchaseOrderSupplierItem(item, options = {}) {
 function editableSavedPurchaseOrder(order, supplierItems = []) {
   const availableByKey = new Map(supplierItems.map(item => [item.key, item]));
   const savedKeys = new Set(order.items.map(item => item.key));
-  const savedItems = order.items.map(item => editablePurchaseOrderSupplierItem({
+  const originals = new Map(order.items.map(item => [item.key, item]));
+  const savedItems = (order.editingItems || order.items).map(item => editablePurchaseOrderSupplierItem({
     ...(availableByKey.get(item.key) || {}),
-    ...item
+    ...item,
+    transferUnitChanged: Boolean(item.transferUnitChanged)
   }, {
     selected: true,
     editorDefaultVisible: true,
     savedSelected: true,
-    savedQuantity: item.quantity,
-    savedUnitCost: item.unitCost
+    savedQuantity: originals.get(item.key).quantity,
+    savedUnitCost: originals.get(item.key).unitCost
   }));
   const additionalItems = supplierItems
     .filter(item => !savedKeys.has(item.key))
@@ -8547,6 +8590,7 @@ function editableSavedPurchaseOrder(order, supplierItems = []) {
   return {
     ...order,
     showAllSupplierItems: false,
+    supplierItemsLoaded: false,
     items: [...savedItems, ...additionalItems]
   };
 }
@@ -8554,6 +8598,7 @@ function editableSavedPurchaseOrder(order, supplierItems = []) {
 function purchaseOrderEditorIsDirty() {
   if (!purchaseOrderEditorState?.id) return true;
   return purchaseOrderEditorState.items.some(item => item.selected !== item.savedSelected
+    || item.transferUnitChanged
     || ((item.selected || item.savedSelected)
       && (Math.abs(Number(item.quantity) - Number(item.savedQuantity)) > 0.000001
         || Number(item.unitCost) !== Number(item.savedUnitCost))));
@@ -8609,6 +8654,8 @@ function updatePurchaseOrderEditorTotals() {
         + (belowMinimum ? ' Bajo el mínimo.' : aboveMaximum ? ' Sobre el máximo.' : ' Dentro del rango mínimo y máximo.');
     row.querySelector('.purchase-order-row-warning').textContent = [
       changed ? 'Costo modificado' : '', packageWarning,
+      item.transferConfigured === false ? 'Configura Unidad de Transferencia a Cafeterías en el maestro' : '',
+      item.transferUnitChanged ? 'Convertido a unidad de transferencia; revisa cantidad y costo' : '',
       !item.editorDefaultVisible && item.selected ? 'Ítem adicional' : ''
     ].filter(Boolean).join(' · ');
     row.classList.toggle('purchase-order-cost-modified', changed);
@@ -8641,7 +8688,9 @@ function renderPurchaseOrderEditor() {
   document.getElementById('purchase-order-editor-title').textContent = state.id
     ? `Orden de compra ${state.orderNumber}` : 'Nueva orden de compra';
   document.getElementById('purchase-order-editor-subtitle').textContent =
-    `${state.supplier.name}${state.supplier.taxId ? ` · RUT ${state.supplier.taxId}` : ''} · ${state.location.name}`;
+    `${state.supplier.name}${state.supplier.taxId ? ` · RUT ${state.supplier.taxId}` : ''} · ${state.location.name}`
+      + (state.location.type === 'store' ? ' · Unidades de transferencia a cafeterías' : ' · Unidades de abastecimiento');
+  document.getElementById('purchase-order-unit-header').textContent = state.location.type === 'store' ? 'Un. de Transferencia' : 'Un. de Abast.';
   document.getElementById('purchase-order-editor-status').textContent = state.id
     ? `Orden guardada. Última actualización: ${new Date(state.updatedAt).toLocaleString('es-CL')}.` :
       'Selecciona los ítems y confirma sus cantidades y costos antes de guardar.';
@@ -8649,7 +8698,8 @@ function renderPurchaseOrderEditor() {
   const defaultItems = state.items.filter(item => item.editorDefaultVisible || item.selected);
   const visibleItems = state.showAllSupplierItems ? state.items : defaultItems;
   showAll.checked = state.showAllSupplierItems === true;
-  showAll.disabled = state.items.length <= defaultItems.length;
+  showAll.disabled = state.supplierItemsLoading === true
+    || (state.supplierItemsLoaded === true && state.items.length <= defaultItems.length);
   document.getElementById('purchase-order-show-all-supplier-items-label').textContent =
     `Mostrar todos los ítems de ${state.supplier.name}`;
   document.getElementById('purchase-order-editor-item-count').textContent =
@@ -8719,7 +8769,7 @@ function renderPurchaseOrderEditor() {
     quantity.setAttribute('aria-label', `Cantidad UDA de ${item.name}`);
     const quantityUnit = document.createElement('span');
     quantityUnit.className = 'purchase-order-quantity-unit';
-    quantityUnit.textContent = item.purchaseUnit || '—';
+    quantityUnit.textContent = item.transferConfigured === false ? 'Sin configurar' : item.purchaseUnit || '—';
     const quantityControl = document.createElement('div');
     quantityControl.className = 'purchase-order-quantity-control';
     quantityControl.append(quantity, quantityUnit);
@@ -8728,7 +8778,7 @@ function renderPurchaseOrderEditor() {
     const coverageCell = document.createElement('td');
     coverageCell.className = 'purchase-order-coverage-after';
     row.appendChild(coverageCell);
-    [item.purchaseUnit || '—',
+    [item.transferConfigured === false ? 'Sin configurar' : item.purchaseUnit || '—',
       item.unitsPerPurchaseUnit == null ? 'Sin conversión'
         : `${formatProjectionQuantity(item.unitsPerPurchaseUnit)} ${item.internalUnit || ''} por ${item.purchaseUnit || 'Un. de Abast.'}`.trim(),
       formatProjectionQuantity(item.unitsPerPackage || 1),
@@ -8799,6 +8849,8 @@ async function confirmPurchaseOrder() {
   const status = document.getElementById('purchase-order-editor-status');
   const selected = purchaseOrderEditorState.items.filter(item => item.selected);
   if (!selected.length) return setStatus(status, 'Selecciona al menos un ítem para guardar la orden.', 'error');
+  const missingTransfer = selected.find(item => item.transferConfigured === false);
+  if (missingTransfer) return setStatus(status, `${missingTransfer.name}: configura la Unidad de Transferencia a Cafeterías y su equivalencia en el Maestro de ingredientes.`, 'error');
   if (selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
     return setStatus(status, 'Todos los ítems incluidos deben tener cantidad mayor que cero y un costo válido.', 'error');
   }
@@ -8814,8 +8866,10 @@ async function confirmPurchaseOrder() {
       location: purchaseOrderEditorState.location.id,
       supplierKey: purchaseOrderEditorState.supplier.key,
       projectionId: purchaseOrderEditorState.projectionId,
+      useTransferUnits: purchaseOrderEditorState.location.type === 'store',
       filters: purchaseOrderEditorState.filters,
-      items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
+      items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost,
+        purchaseUnit: item.purchaseUnit, unitsPerPurchaseUnit: item.unitsPerPurchaseUnit, internalUnit: item.internalUnit }))
     };
     const saved = await apiRequest(existing ? `/api/purchase-orders/${encodeURIComponent(existing)}` : '/api/purchase-orders', {
       method: existing ? 'PUT' : 'POST',
@@ -8824,7 +8878,8 @@ async function confirmPurchaseOrder() {
     });
     const supplierItems = purchaseOrderEditorState.items;
     rememberSavedPurchaseOrder(saved);
-    purchaseOrderEditorState = { ...editableSavedPurchaseOrder(saved, supplierItems), projectionId: purchaseOrderEditorState.projectionId };
+    purchaseOrderEditorState = { ...editableSavedPurchaseOrder(saved, supplierItems),
+      projectionId: purchaseOrderEditorState.projectionId, supplierItemsLoaded: purchaseOrderEditorState.supplierItemsLoaded };
     renderPurchaseOrderEditor();
     setStatus(status, `Orden ${saved.orderNumber} guardada correctamente. Ya puedes imprimirla o volver a modificarla.`, 'success');
   } catch (error) {
@@ -9064,6 +9119,44 @@ async function openSavedPurchaseOrder(orderId, printOnly = false) {
   }
 }
 
+async function showAllPurchaseOrderSupplierItems(checked) {
+  const state = purchaseOrderEditorState;
+  if (!state || state.supplierItemsLoading) return;
+  updatePurchaseOrderEditorTotals();
+  state.showAllSupplierItems = checked;
+  if (!checked || state.supplierItemsLoaded) return renderPurchaseOrderEditor();
+  state.supplierItemsLoading = true;
+  renderPurchaseOrderEditor();
+  const confirm = document.getElementById('confirm-purchase-order');
+  confirm.disabled = true;
+  const status = document.getElementById('purchase-order-editor-status');
+  setStatus(status, 'Cargando todos los artículos del proveedor…');
+  let errorMessage = null;
+  try {
+    const params = new URLSearchParams({ location: state.location.id, supplier: state.supplier.key });
+    if (state.projectionId) params.set('projectionId', state.projectionId);
+    const data = await apiRequest(`/api/purchase-projections/supplier-items?${params}`);
+    if (purchaseOrderEditorState !== state || !document.getElementById('purchase-order-editor-dialog').open) return;
+    updatePurchaseOrderEditorTotals();
+    const known = new Set(state.items.map(item => item.key));
+    state.items.push(...data.items.filter(item => !known.has(item.key)).map(item => editablePurchaseOrderSupplierItem(item)));
+    state.projectionId = data.projectionId;
+    state.supplierItemsLoaded = true;
+  } catch (error) {
+    state.showAllSupplierItems = false;
+    errorMessage = error.message;
+  } finally {
+    state.supplierItemsLoading = false;
+    if (purchaseOrderEditorState === state && document.getElementById('purchase-order-editor-dialog').open) {
+      renderPurchaseOrderEditor(); confirm.disabled = false;
+      if (errorMessage) setStatus(status, errorMessage, 'error');
+      else if (state.items.every(item => item.editorDefaultVisible || item.selected)) {
+        setStatus(status, 'Todos los artículos disponibles del proveedor ya están en la orden.', 'muted');
+      }
+    }
+  }
+}
+
 function tentativeNoPurchaseReason(item) {
   if (item.averageDailyConsumption <= 0) return 'Sin consumo registrado en los últimos 30 días.';
   if (item.currentCoverageDays !== null && item.currentCoverageDays > item.minDays) {
@@ -9094,9 +9187,9 @@ function tentativeGroupsForProjection(projection) {
         selected: Number(item.suggestedPurchaseUnits || 0) > 0,
         total: Number(item.suggestedPurchaseUnits || 0) * roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost || 0)
       })),
-      otherItems: managedItems.filter(item => !item.needsPurchase).map(item => ({
+      otherItems: projection.items.filter(item => item.supplierKey === supplierKey && !buying.some(buy => buy.key === item.key)).map(item => ({
         ...item,
-        noPurchaseReason: tentativeNoPurchaseReason(item)
+        noPurchaseReason: item.managed ? tentativeNoPurchaseReason(item) : 'No está marcado como administrado; puedes agregarlo manualmente.'
       }))
     }];
   }).sort((left, right) => left.supplier.name.localeCompare(right.supplier.name, 'es'));
@@ -9131,11 +9224,32 @@ function populateTentativeLocationFilter(preferredLocation = '') {
   populateTentativeSupplierFilter();
 }
 
+function tentativeItemIssues(item) {
+  const issues = [];
+  if (!Number.isFinite(item.quantity) || item.quantity <= 0) issues.push('Ingresa una cantidad mayor que 0 o desmarca Incluir.');
+  else if (!isSupplyMultiple(item.quantity, item.unitsPerPackage)) issues.push(purchaseQuantityPackageWarning(item, item.quantity));
+  if (!Number.isFinite(item.unitCost) || item.unitCost < 0) issues.push('Ingresa un costo válido, mayor o igual que 0.');
+  if (item.transferConfigured === false) issues.push('Configura la Unidad de Transferencia a Cafeterías y su equivalencia en el Maestro de ingredientes.');
+  else if (!(item.unitsPerPurchaseUnit > 0)) issues.push('Falta la equivalencia en unidades de consumo; revísala en el Maestro de ingredientes.');
+  return issues;
+}
+
+function tentativeOrderIssues(group) {
+  if (!group) return [];
+  const issues = [];
+  const selected = group.buyingItems.filter(item => item.selected);
+  if (group.supplier.key === 'unassigned') issues.push('Asigna un proveedor antes de confirmar la orden.');
+  if (!selected.length) issues.push('Incluye al menos un producto.');
+  for (const item of selected) for (const issue of tentativeItemIssues(item)) issues.push(`${item.code || item.key} · ${item.name}: ${issue}`);
+  return issues;
+}
+
 function updateTentativeOrderTotals() {
   const group = currentTentativeOrderGroup();
   if (!group) {
     document.getElementById('tentative-order-total').textContent = '$0';
     document.getElementById('confirm-tentative-purchase-order').disabled = true;
+    document.getElementById('tentative-order-validation').replaceChildren();
     return;
   }
   let total = 0;
@@ -9153,10 +9267,13 @@ function updateTentativeOrderTotals() {
     if (!item.conversionAvailable) warnings.push('Sin conversión UDC');
     if (item.estimatedPurchaseUnitCost === null) warnings.push('Sin costo histórico');
     if (item.unitCost !== item.referenceUnitCost) warnings.push('Costo modificado');
-    const packageWarning = purchaseQuantityPackageWarning(item, item.quantity);
-    if (packageWarning) warnings.push(packageWarning);
+    const issues = item.selected ? tentativeItemIssues(item) : [];
+    warnings.push(...issues);
+    const quantityInvalid = item.selected && (!(item.quantity > 0) || !isSupplyMultiple(item.quantity, item.unitsPerPackage));
+    row.querySelector('.tentative-order-quantity').setAttribute('aria-invalid', String(quantityInvalid));
+    row.querySelector('.tentative-order-cost').setAttribute('aria-invalid', String(item.selected && (!Number.isFinite(item.unitCost) || item.unitCost < 0)));
     row.querySelector('.tentative-order-row-warning').textContent = warnings.join(' · ');
-    row.classList.toggle('purchase-order-package-warning', Boolean(packageWarning));
+    row.classList.toggle('purchase-order-package-warning', quantityInvalid);
     row.classList.toggle('purchase-order-row-excluded', !item.selected);
     total += item.total;
   }
@@ -9164,11 +9281,18 @@ function updateTentativeOrderTotals() {
   const selected = group.buyingItems.filter(item => item.selected);
   const summaryChips = document.querySelectorAll('#tentative-orders-summary .chip');
   if (summaryChips[1]) summaryChips[1].textContent = `${selected.length} incluido(s)`;
+  const issues = tentativeOrderIssues(group);
+  const validation = document.getElementById('tentative-order-validation');
+  validation.replaceChildren();
+  if (!group.confirmedOrder && issues.length) {
+    const heading = document.createElement('strong'); heading.textContent = 'Para confirmar esta orden:';
+    const list = document.createElement('ul');
+    for (const message of issues) { const li = document.createElement('li'); li.textContent = message; list.append(li); }
+    validation.append(heading, list);
+  }
+  validation.hidden = Boolean(group.confirmedOrder) || !issues.length;
   document.getElementById('confirm-tentative-purchase-order').disabled = Boolean(group.confirmedOrder)
-    || group.supplier.key === 'unassigned'
-    || !selected.length
-    || selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0
-      || !Number.isFinite(item.unitCost) || item.unitCost < 0);
+    || Boolean(group.confirming || group.supplierItemsLoading) || issues.length > 0;
 }
 
 function renderTentativePurchaseOrderReview() {
@@ -9191,10 +9315,16 @@ function renderTentativePurchaseOrderReview() {
     return;
   }
   const selectedCount = group.buyingItems.filter(item => item.selected).length;
+  const loadButton = document.getElementById('load-tentative-supplier-items');
+  loadButton.disabled = Boolean(group.confirmedOrder || group.confirming || group.supplierItemsLoading || group.supplierItemsLoaded)
+    || group.supplier.key === 'unassigned';
+  loadButton.textContent = group.supplierItemsLoading ? 'Cargando productos…'
+    : group.supplierItemsLoaded ? 'Productos del proveedor cargados' : 'Cargar todos los productos del proveedor';
+  setStatus(document.getElementById('tentative-supplier-items-status'), group.supplierItemsError || '', group.supplierItemsError ? 'error' : '');
   summary.replaceChildren(...[
-    `${group.buyingItems.length} ítem(s) sugeridos`,
+    `${group.buyingItems.length} ítem(s) en la propuesta`,
     `${selectedCount} incluido(s)`,
-    `${group.otherItems.length} no requieren compra`
+    `${group.otherItems.length} otros productos`
   ].map(text => {
     const chip = document.createElement('span');
     chip.className = 'chip neutral';
@@ -9202,7 +9332,7 @@ function renderTentativePurchaseOrderReview() {
     return chip;
   }));
   document.getElementById('tentative-order-heading').textContent = `${location.name} · ${group.supplier.name}`;
-  const disabled = Boolean(group.confirmedOrder);
+  const disabled = Boolean(group.confirmedOrder || group.confirming);
   const buyingBody = document.getElementById('tentative-orders-buying-body');
   buyingBody.replaceChildren(...group.buyingItems.map(item => {
     const row = document.createElement('tr');
@@ -9215,10 +9345,10 @@ function renderTentativePurchaseOrderReview() {
     row.appendChild(selectCell);
     [
       item.code || '—', item.name, formatProjectionMetric(item.currentInventory),
-      item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
-      formatSupplySuggestion(item),
+      !Number.isFinite(item.currentCoverageDays) ? 'Sin datos' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
+      item.addedManually ? 'Agregado manualmente' : formatSupplySuggestion(item),
       formatProjectionQuantity(item.unitsPerPackage || 1),
-      item.purchaseUnit || '—',
+      item.transferConfigured === false ? 'Sin configurar' : item.purchaseUnit || '—',
       item.conversionAvailable ? formatProjectionQuantity(item.unitsPerPurchaseUnit) : 'Sin conversión'
     ].forEach(value => {
       const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
@@ -9242,18 +9372,23 @@ function renderTentativePurchaseOrderReview() {
   const otherBody = document.getElementById('tentative-orders-other-body');
   if (!group.otherItems.length) {
     const row = document.createElement('tr');
-    const cell = document.createElement('td'); cell.colSpan = 8; cell.textContent = 'Todos los productos administrados de este proveedor están incluidos en la sugerencia de compra.';
+    const cell = document.createElement('td'); cell.colSpan = 9; cell.textContent = 'No hay otros productos en la lista. Puedes consultar todos los productos del proveedor.';
     row.appendChild(cell); otherBody.replaceChildren(row);
   } else {
     otherBody.replaceChildren(...group.otherItems.map(item => {
       const row = document.createElement('tr');
       [
         item.code || '—', item.name, item.internalUnit || '—', formatProjectionMetric(item.currentInventory),
-        item.currentCoverageDays === null ? 'Sin consumo' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
+        !Number.isFinite(item.currentCoverageDays) ? 'Sin datos' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
         formatProjectionOneDecimal(item.minDays), formatProjectionOneDecimal(item.maxDays), item.noPurchaseReason
       ].forEach(value => {
         const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
       });
+      const action = document.createElement('td'), add = document.createElement('button');
+      add.type = 'button'; add.className = 'icon-button small'; add.dataset.tentativeAdd = item.key;
+      add.textContent = 'Agregar'; add.disabled = disabled || Boolean(group.supplierItemsLoading);
+      add.setAttribute('aria-label', `Agregar ${item.name} a la orden`);
+      action.append(add); row.append(action);
       return row;
     }));
   }
@@ -9264,6 +9399,47 @@ function renderTentativePurchaseOrderReview() {
   const printButton = document.getElementById('print-confirmed-tentative-order');
   printButton.hidden = !group.confirmedOrder;
   updateTentativeOrderTotals();
+}
+
+function addTentativeSupplierItem(key) {
+  const group = currentTentativeOrderGroup();
+  if (!group || group.confirmedOrder || group.confirming || group.supplierItemsLoading) return;
+  updateTentativeOrderTotals();
+  const index = group.otherItems.findIndex(item => item.key === key);
+  if (index < 0) return;
+  const item = group.otherItems.splice(index, 1)[0];
+  const unitCost = roundedPurchaseOrderCost(item.estimatedPurchaseUnitCost ?? 0);
+  const quantity = Number.isFinite(item.unitsPerPackage) && item.unitsPerPackage > 0 ? item.unitsPerPackage : 1;
+  group.buyingItems.push({ ...item, addedManually: true, selected: true, quantity, unitCost,
+    conversionAvailable: Number.isFinite(item.unitsPerPurchaseUnit) && item.unitsPerPurchaseUnit > 0,
+    referenceUnitCost: unitCost, total: quantity * unitCost });
+  renderTentativePurchaseOrderReview();
+}
+
+async function loadTentativeSupplierItems() {
+  const state = tentativePurchaseOrdersState, group = currentTentativeOrderGroup();
+  const location = state?.locations.find(item => item.id === document.getElementById('tentative-orders-location').value);
+  if (!group || !location || group.confirmedOrder || group.confirming || group.supplierItemsLoading) return;
+  updateTentativeOrderTotals();
+  group.supplierItemsLoading = true; group.supplierItemsError = null;
+  renderTentativePurchaseOrderReview();
+  try {
+    const params = new URLSearchParams({ location: location.id, supplier: group.supplier.key });
+    const projectionId = group.projectionId || location.projectionId;
+    if (projectionId) params.set('projectionId', projectionId);
+    const data = await apiRequest(`/api/purchase-projections/supplier-items?${params}`);
+    if (tentativePurchaseOrdersState !== state || !state.locations.includes(location) || !location.groups.includes(group)) return;
+    const known = new Set([...group.buyingItems, ...group.otherItems].map(item => item.key));
+    group.otherItems.push(...data.items.filter(item => !known.has(item.key)).map(item => ({ ...item,
+      conversionAvailable: Number.isFinite(item.unitsPerPurchaseUnit) && item.unitsPerPurchaseUnit > 0,
+      noPurchaseReason: 'Disponible para agregar manualmente; no forma parte de la sugerencia inicial.' })));
+    group.otherItems.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    group.projectionId = data.projectionId; group.supplierItemsLoaded = true;
+  } catch (error) { group.supplierItemsError = error.message; }
+  finally {
+    group.supplierItemsLoading = false;
+    if (tentativePurchaseOrdersState === state && currentTentativeOrderGroup() === group) renderTentativePurchaseOrderReview();
+  }
 }
 
 function openTentativePurchaseOrders() {
@@ -9351,19 +9527,18 @@ async function confirmTentativePurchaseOrder() {
   const locationId = document.getElementById('tentative-orders-location').value;
   const location = tentativePurchaseOrdersState?.locations.find(item => item.id === locationId);
   const status = document.getElementById('tentative-purchase-orders-status');
-  if (!group || !location || group.confirmedOrder) return;
+  if (!group || !location || group.confirmedOrder || group.confirming || group.supplierItemsLoading) return;
   updateTentativeOrderTotals();
   const selected = group.buyingItems.filter(item => item.selected);
-  if (!selected.length || selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0
-    || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
-    return setStatus(status, 'Selecciona al menos un ítem y revisa sus cantidades y costos.', 'error');
-  }
-  const invalidMultiple = selected.find(item => !isSupplyMultiple(item.quantity, item.unitsPerPackage));
-  if (invalidMultiple) return setStatus(status, `${invalidMultiple.name}: ${purchaseQuantityPackageWarning(invalidMultiple, invalidMultiple.quantity)}`, 'error');
+  const issues = tentativeOrderIssues(group);
+  if (issues.length) return setStatus(status, 'Revisa los productos indicados junto al botón de confirmación.', 'error');
   if (selected.some(item => item.unitCost !== item.referenceUnitCost)
     && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden?')) return;
   const button = document.getElementById('confirm-tentative-purchase-order');
+  group.confirming = true;
+  renderTentativePurchaseOrderReview();
   button.disabled = true;
+  setStatus(status, 'Guardando orden definitiva…');
   try {
     const saved = await apiRequest('/api/purchase-orders', {
       method: 'POST',
@@ -9371,18 +9546,21 @@ async function confirmTentativePurchaseOrder() {
       body: JSON.stringify({
         location: location.id,
         supplierKey: group.supplier.key,
-        projectionId: location.projectionId,
-        filters: { onlyRequired: true, onlyManaged: true },
-        items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost }))
+        projectionId: group.projectionId || location.projectionId,
+        useTransferUnits: location.type === 'store',
+        filters: { onlyRequired: selected.every(item => !item.addedManually), onlyManaged: selected.every(item => item.managed) },
+        items: selected.map(item => ({ key: item.key, quantity: item.quantity, unitCost: item.unitCost,
+          purchaseUnit: item.purchaseUnit, unitsPerPurchaseUnit: item.unitsPerPurchaseUnit, internalUnit: item.internalUnit }))
       })
     });
     rememberSavedPurchaseOrder(saved);
     group.confirmedOrder = saved;
-    renderTentativePurchaseOrderReview();
     setStatus(status, `Orden tentativa confirmada y guardada como ${saved.orderNumber}.`, 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
-    button.disabled = false;
+  } finally {
+    group.confirming = false;
+    renderTentativePurchaseOrderReview();
   }
 }
 
@@ -12589,10 +12767,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderTentativePurchaseOrderReview();
   });
   document.getElementById('tentative-orders-supplier').addEventListener('change', renderTentativePurchaseOrderReview);
+  document.getElementById('load-tentative-supplier-items').addEventListener('click', () => { void loadTentativeSupplierItems(); });
+  document.getElementById('tentative-orders-other-body').addEventListener('click', event => {
+    const button = event.target.closest('button[data-tentative-add]');
+    if (button) addTentativeSupplierItem(button.dataset.tentativeAdd);
+  });
   document.getElementById('tentative-orders-buying-body').addEventListener('input', updateTentativeOrderTotals);
   document.getElementById('tentative-orders-buying-body').addEventListener('change', event => {
     if (event.target.matches('.tentative-order-cost')) {
-      event.target.value = formatPurchaseOrderCost(roundedPurchaseOrderCost(parseLocalizedNumber(event.target.value)));
+      const value = roundedPurchaseOrderCost(parseLocalizedNumber(event.target.value));
+      if (Number.isFinite(value)) event.target.value = formatPurchaseOrderCost(value);
     }
     updateTentativeOrderTotals();
   });
@@ -12628,10 +12812,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updatePurchaseOrderEditorTotals();
   });
   document.getElementById('purchase-order-show-all-supplier-items').addEventListener('change', event => {
-    if (!purchaseOrderEditorState) return;
-    updatePurchaseOrderEditorTotals();
-    purchaseOrderEditorState.showAllSupplierItems = event.target.checked;
-    renderPurchaseOrderEditor();
+    void showAllPurchaseOrderSupplierItems(event.target.checked);
   });
   document.getElementById('confirm-purchase-order').addEventListener('click', confirmPurchaseOrder);
   document.getElementById('print-saved-purchase-order').addEventListener('click', () => printPurchaseOrder());

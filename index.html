@@ -1507,7 +1507,7 @@
         <button id="open-tentative-purchase-orders" class="icon-button" type="button">Órdenes tentativas</button>
         <button id="print-purchase-order" class="primary" type="button" disabled>Generar Orden de Compra PDF</button>
       </div>
-      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. La necesidad de consumo se convierte a unidades de abastecimiento y se redondea hacia arriba al múltiplo mínimo permitido para solicitar la compra.</p>
+      <p class="form-status muted">La compra se sugiere cuando el inventario llega al mínimo y se repone hasta el máximo. Bodega Principal utiliza la Unidad de Abastecimiento; las cafeterías utilizan la Unidad de Transferencia a Cafeterías. La necesidad de consumo se convierte a esa unidad y se redondea hacia arriba al múltiplo mínimo permitido.</p>
       <div class="purchase-projection-table-wrap">
         <table class="purchase-projection-table">
           <thead>
@@ -1526,7 +1526,7 @@
           <div>
             <div class="panel-eyebrow">Abastecimiento · Maestro compartido</div>
             <h2 id="ingredient-purchase-master-title">Maestro de ingredientes</h2>
-            <p class="panel-description">Unidad de consumo del maestro utilizada para expresar los consumos. Configura cuántas unidades de consumo contiene una unidad de abastecimiento; estas equivalencias se comparten entre las sucursales.</p>
+            <p class="panel-description">Configura las unidades de abastecimiento para las compras de Bodega Principal y las unidades de transferencia a cafeterías para los pedidos de los locales. Cada unidad tiene su equivalencia en unidades de consumo; estas equivalencias son compartidas.</p>
           </div>
           <button id="close-ingredient-purchase-master" class="icon-button" type="button">Cerrar</button>
         </div>
@@ -1536,7 +1536,7 @@
         <p class="form-status muted">Ejemplo: Botella de 750 ml = 0,75 L si la unidad de consumo es L, o 750 si es ML. La unidad de consumo se consulta aquí y conserva el valor del maestro.</p>
         <div class="projection-branch-orders-table-wrap ingredient-purchase-master-table-wrap">
           <table class="projection-branch-orders-table">
-            <thead><tr><th>Código</th><th>Ingrediente</th><th>Unidad de Consumo</th><th>Unidad de Abastecimiento</th><th>Un. de Consumo x Un. de Abast.</th><th>Equivalencia</th></tr></thead>
+            <thead><tr><th>Código</th><th>Ingrediente</th><th>Unidad de Consumo</th><th>Unidad de Abastecimiento</th><th>Un. de Consumo x Un. de Abast.</th><th>Equivalencia</th><th>Unidad de Transferencia a Cafeterías</th><th>Un. de Consumo x Un. de Transferencia</th><th>Equivalencia transferencia</th></tr></thead>
             <tbody id="ingredient-purchase-master-body"></tbody>
           </table>
         </div>
@@ -1548,7 +1548,7 @@
             <button id="ingredient-purchase-master-csv" class="icon-button" type="button" title="Exportar ingredientes visibles a CSV" disabled>CSV</button>
             <button id="ingredient-purchase-master-xlsx" class="icon-button" type="button" title="Exportar ingredientes visibles a Excel" disabled>XLSX</button>
           </div>
-          <button id="save-ingredient-purchase-master" class="primary" type="button" disabled>Guardar unidades de abastecimiento</button>
+          <button id="save-ingredient-purchase-master" class="primary" type="button" disabled>Guardar unidades y equivalencias</button>
         </div>
       </dialog>
       <dialog id="projection-local-detail-dialog" class="inventory-report-dialog projection-branch-orders-dialog" aria-labelledby="projection-local-detail-title">
@@ -1660,7 +1660,7 @@
         </div>
         <div class="purchase-order-editor-table-wrap">
           <table class="purchase-order-editor-table">
-            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Promedio diario</th><th>Inventario actual</th><th id="purchase-order-locals-inventory-header" hidden>Inventario Locales</th><th id="purchase-order-total-inventory-header" hidden>Inventario Total</th><th>Días actuales</th><th>Días mín.</th><th>Días máx.</th><th>Cantidad UDA</th><th>Días con esta orden</th><th>Un. de Abast.</th><th>Un. de Consumo x Un. de Abast.</th><th>Multiplo Min. Abast.</th><th>Un Abast. Sugeridas</th><th>Cantidad Un. de Cons.</th><th>Costo UDA</th><th>Total</th><th>Aviso</th></tr></thead>
+            <thead><tr><th>Incluir</th><th>Código</th><th>Producto / ingrediente</th><th>Promedio diario</th><th>Inventario actual</th><th id="purchase-order-locals-inventory-header" hidden>Inventario Locales</th><th id="purchase-order-total-inventory-header" hidden>Inventario Total</th><th>Días actuales</th><th>Días mín.</th><th>Días máx.</th><th>Cantidad UDA</th><th>Días con esta orden</th><th id="purchase-order-unit-header">Un. de Abast.</th><th>Un. de Consumo x Un. de Abast.</th><th>Multiplo Min. Abast.</th><th>Un Abast. Sugeridas</th><th>Cantidad Un. de Cons.</th><th>Costo UDA</th><th>Total</th><th>Aviso</th></tr></thead>
             <tbody id="purchase-order-editor-body"></tbody>
             <tfoot><tr><td colspan="16">TOTAL ORDEN</td><td id="purchase-order-editor-total">$0</td><td></td></tr></tfoot>
           </table>
@@ -1700,7 +1700,7 @@
           <div class="tentative-order-section-head">
             <div>
               <h3 id="tentative-order-heading">Productos por comprar</h3>
-              <p class="panel-description">Puedes ajustar inclusión, cantidad UDC y costo antes de confirmar.</p>
+              <p class="panel-description">Ajusta inclusión, cantidad en la unidad de pedido y costo antes de confirmar. Puedes desmarcar un producto para excluirlo.</p>
             </div>
             <strong id="tentative-order-total">$0</strong>
           </div>
@@ -1710,19 +1710,22 @@
               <tbody id="tentative-orders-buying-body"></tbody>
             </table>
           </div>
+          <div id="tentative-order-validation" class="form-status error tentative-order-validation" aria-live="polite" hidden></div>
           <div class="tentative-order-actions">
             <button id="confirm-tentative-purchase-order" class="primary" type="button">Confirmar orden definitiva</button>
             <button id="print-confirmed-tentative-order" class="icon-button" type="button" hidden>Imprimir / PDF</button>
           </div>
           <div class="tentative-order-section-head secondary">
             <div>
-              <h3>Otros productos administrados del proveedor</h3>
-              <p class="panel-description">Estos productos no forman parte de la orden tentativa según los criterios actuales.</p>
+              <h3>Otros productos del proveedor</h3>
+              <p class="panel-description">Puedes agregarlos aunque no tengan una necesidad de compra sugerida o no estén marcados como administrados.</p>
             </div>
+            <button id="load-tentative-supplier-items" class="icon-button" type="button">Cargar todos los productos del proveedor</button>
           </div>
+          <div id="tentative-supplier-items-status" class="form-status" aria-live="polite"></div>
           <div class="tentative-orders-table-wrap">
             <table class="tentative-orders-table tentative-orders-other-table">
-              <thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Unidad</th><th>Inventario</th><th>Cobertura actual</th><th>Días mín.</th><th>Días máx.</th><th>Motivo para no comprar</th></tr></thead>
+              <thead><tr><th>Código</th><th>Producto / ingrediente</th><th>Unidad</th><th>Inventario</th><th>Cobertura actual</th><th>Días mín.</th><th>Días máx.</th><th>Motivo para no comprar</th><th>Acción</th></tr></thead>
               <tbody id="tentative-orders-other-body"></tbody>
             </table>
           </div>

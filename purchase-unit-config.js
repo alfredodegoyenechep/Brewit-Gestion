@@ -10,21 +10,43 @@ function purchaseUnitLabel(value) {
 }
 
 function configuredPurchaseUnits(configuration, internalUnit, convertQuantity) {
-  if (!configuration) return null;
+  if (!configuration?.purchaseUnit) return null;
   const quantity = configuration.internalUnit && internalUnit
     ? convertQuantity(configuration.unitsPerPurchaseUnit, configuration.internalUnit, internalUnit) : null;
   return { purchaseUnit: configuration.purchaseUnit,
     unitsPerPurchaseUnit: Number.isFinite(quantity) && quantity > 0 ? quantity : null };
 }
 
-function configuredPurchaseCost(latestPurchase, originalConversion, configured, fallbackCost) {
+function configuredPurchaseCost(latestPurchase, originalConversion, configured, fallbackCost, { transfer = false } = {}) {
   const price = latestPurchase?.effectiveUnitPrice || latestPurchase?.listedUnitPrice || 0;
-  if (latestPurchase && purchaseUnitLabel(latestPurchase.unit) === purchaseUnitLabel(configured.purchaseUnit)) return price;
+  if (!transfer && latestPurchase && purchaseUnitLabel(latestPurchase.unit) === purchaseUnitLabel(configured.purchaseUnit)) return price;
   if (latestPurchase && originalConversion > 0 && configured.unitsPerPurchaseUnit > 0) {
     return price / originalConversion * configured.unitsPerPurchaseUnit;
   }
   return fallbackCost.source !== 'missing' && configured.unitsPerPurchaseUnit > 0
     ? fallbackCost.unitCost * configured.unitsPerPurchaseUnit : null;
+}
+
+function transferOrderItem(item, configuration, convertQuantity, policy = {}) {
+  const transfer = configuredPurchaseUnits(configuration?.transfer, item.internalUnit, convertQuantity);
+  if (!transfer) return { ...item, transferConfigured: false };
+  const changed = purchaseUnitLabel(item.purchaseUnit) !== purchaseUnitLabel(transfer.purchaseUnit)
+    || item.unitsPerPurchaseUnit !== transfer.unitsPerPurchaseUnit;
+  if (!changed) return { ...item, transferConfigured: true };
+  const oldConversion = item.unitsPerPurchaseUnit;
+  const conversion = transfer.unitsPerPurchaseUnit;
+  const ratio = oldConversion > 0 && conversion > 0 ? conversion / oldConversion : null;
+  const multiple = supplyMultipleFromPolicy(policy, conversion, transfer.purchaseUnit);
+  const quantity = value => value === 0 ? 0 : Number.isFinite(value) && ratio > 0
+    ? purchaseUnitsForInternalQuantity(value * oldConversion, conversion, multiple) : null;
+  const price = value => Number.isFinite(value) && ratio > 0 ? Math.round(value * ratio) : null;
+  const result = { ...item, purchaseUnit: transfer.purchaseUnit, unitsPerPurchaseUnit: conversion,
+    unitsPerPackage: multiple, unitsPerPackageBasis: 'purchase', transferConfigured: true, transferUnitChanged: true };
+  for (const key of ['quantity', 'suggestedPurchaseUnits']) if (Object.hasOwn(item, key)) result[key] = quantity(item[key]);
+  for (const key of ['unitCost', 'referenceUnitCost', 'estimatedPurchaseUnitCost']) if (Object.hasOwn(item, key)) result[key] = price(item[key]);
+  if (Object.hasOwn(item, 'internalQuantity')) result.internalQuantity = result.quantity === null ? null : result.quantity * conversion;
+  if (Object.hasOwn(item, 'total')) result.total = result.quantity === null || result.unitCost === null ? null : result.quantity * result.unitCost;
+  return result;
 }
 
 function supplyMultipleFromPolicy(policy, unitsPerPurchaseUnit, purchaseUnit) {
@@ -55,4 +77,4 @@ function isSupplyMultiple(quantity, minimumMultiple) {
 }
 
 module.exports = { PURCHASE_UNIT_OPTIONS, purchaseUnitLabel, configuredPurchaseUnits, configuredPurchaseCost,
-  supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple };
+  transferOrderItem, supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple };

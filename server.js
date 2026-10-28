@@ -31,7 +31,8 @@ const mercadoPagoStores = require('./mercadopago-stores');
 const { CURVES: CONSUMPTION_REFERENCE_CURVES, monthlyAnniversary, referenceStatus, replenishmentConsumption } = require('./purchase-consumption-reference');
 const { consolidateLocalTotals } = require('./purchase-local-totals');
 const { PURCHASE_UNIT_OPTIONS, purchaseUnitLabel, configuredPurchaseUnits, configuredPurchaseCost,
-  supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple } = require('./purchase-unit-config');
+  transferOrderItem, supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple } = require('./purchase-unit-config');
+const PURCHASE_PROJECTION_EXTRA_CODES = new Set(['SUB005', 'B2860', 'B2850', 'B2840', 'B2830']);
 
 const DEFAULT_PORT = 3000;
 const FIRST_WEEK = '2026-05-18';
@@ -2253,12 +2254,15 @@ function createApp(options = {}) {
     return readJson(purchaseProjectionPoliciesPath, { locations: {} });
   }
 
-  function ingredientPurchaseMaster() {
+  function ingredientPurchaseMaster({ initializeTransfers = true, persist = true, registry: suppliedRegistry = null } = {}) {
     const master = latestMasterFile('master-catalog', projectionToday());
     if (!master) throw Object.assign(new Error('Actualiza el maestro de ingredientes antes de configurar las unidades de compra.'), { status: 404 });
-    const configurations = readJson(purchaseUnitConfigurationPath, { items: {} }).items;
+    const registry = suppliedRegistry || readJson(purchaseUnitConfigurationPath, { items: {} });
+    const configurations = registry.items ||= {};
+    let initializedTransfers = 0;
     const conversions = parsePurchaseUnitConversions(master.filePath);
-    const items = [...parseIngredientCatalog(master.filePath).values()].filter(item => item.type === 'ingredient').map(item => {
+    const items = [...parseIngredientCatalog(master.filePath).values()]
+      .filter(item => item.type === 'ingredient' || PURCHASE_PROJECTION_EXTRA_CODES.has(item.code.toUpperCase())).map(item => {
       const key = item.code.toUpperCase();
       const catalog = conversions.get(key);
       const conversion = [...(catalog?.conversions.values() || [])].find(value => normalizedUnit(value.purchaseUnit) !== normalizedUnit(item.unit))
@@ -2266,14 +2270,32 @@ function createApp(options = {}) {
       const masterPurchaseUnit = conversion?.purchaseUnit || item.unit;
       const masterContent = conversion ? convertQuantityUnit(conversion.unitsPerPurchaseUnit, conversion.baseUnit, item.unit) : item.unit ? 1 : null;
       const configured = configuredPurchaseUnits(configurations?.[key], item.unit, convertQuantityUnit);
+      const purchaseUnit = purchaseUnitLabel(configured?.purchaseUnit || masterPurchaseUnit);
+      const unitsPerPurchaseUnit = configured ? configured.unitsPerPurchaseUnit : masterContent;
+      if (initializeTransfers && !configurations[key]?.transfer?.purchaseUnit && item.unit
+        && purchaseUnit && Number.isFinite(unitsPerPurchaseUnit) && unitsPerPurchaseUnit > 0) {
+        configurations[key] = { ...configurations[key], transfer: {
+          purchaseUnit, unitsPerPurchaseUnit, internalUnit: item.unit
+        }, updatedAt: new Date().toISOString() };
+        initializedTransfers++;
+      }
+      const transfer = configuredPurchaseUnits(configurations[key]?.transfer, item.unit, convertQuantityUnit);
       return { code: key, name: item.name, internalUnit: item.unit, active: item.active,
-        purchaseUnit: purchaseUnitLabel(configured?.purchaseUnit || masterPurchaseUnit),
-        unitsPerPurchaseUnit: configured ? configured.unitsPerPurchaseUnit : masterContent,
+        purchaseUnit, unitsPerPurchaseUnit,
         configured: Boolean(configured), masterPurchaseUnit: purchaseUnitLabel(masterPurchaseUnit), masterContent,
+        transferUnit: purchaseUnitLabel(transfer?.purchaseUnit), unitsPerTransferUnit: transfer?.unitsPerPurchaseUnit ?? null,
+        transferConfigured: Boolean(transfer),
         allowedPurchaseUnits: [...new Set([...PURCHASE_UNIT_OPTIONS, item.unit, purchaseUnitLabel(configured?.purchaseUnit),
+          purchaseUnitLabel(transfer?.purchaseUnit),
           ...[...(catalog?.conversions.values() || [])].map(value => purchaseUnitLabel(value.purchaseUnit))].filter(Boolean))] };
     }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    return { items, purchaseUnitOptions: PURCHASE_UNIT_OPTIONS, masterDate: master.validFrom };
+    if (initializedTransfers && persist) writeJsonAtomic(purchaseUnitConfigurationPath, registry);
+    return { items, purchaseUnitOptions: PURCHASE_UNIT_OPTIONS, masterDate: master.validFrom, initializedTransfers };
+  }
+
+  function purchaseUnitConfigurationsWithTransfers() {
+    if (latestMasterFile('master-catalog', projectionToday())) ingredientPurchaseMaster();
+    return readJson(purchaseUnitConfigurationPath, { items: {} }).items || {};
   }
 
   function consumptionReferenceFor(location) {
@@ -4577,6 +4599,57 @@ function createApp(options = {}) {
     return { local, global, bySupplier, suppliers };
   }
 
+  function purchaseOrderingDetails(key, product, location, policy, {
+    references, conversions, purchaseUnitConfigurations, supplierOptions, costResolver, costCatalog
+  }) {
+    const supplierSpecificPurchase = policy.supplierKey
+      ? references.bySupplier.get(`${key}|${policy.supplierKey}`)
+      : null;
+    const latestPurchase = supplierSpecificPurchase || references.global.get(key) || references.local.get(key) || null;
+    const catalogItem = conversions.get(key);
+    let conversion = latestPurchase ? catalogItem?.conversions.get(normalizedUnit(latestPurchase.unit)) : null;
+    if (!latestPurchase && !conversion && catalogItem) {
+      conversion = [...catalogItem.conversions.values()].find(item =>
+        normalizedUnit(item.purchaseUnit) !== normalizedUnit(catalogItem.baseUnit))
+        || [...catalogItem.conversions.values()][0]
+        || null;
+    }
+    const originalPurchaseUnit = latestPurchase?.unit || conversion?.purchaseUnit || product.unit;
+    const rawUnitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit
+      ?? (normalizedUnit(originalPurchaseUnit) === normalizedUnit(product.unit) ? 1 : null);
+    const originalUnitsPerPurchaseUnit = rawUnitsPerPurchaseUnit === null
+      ? null
+      : convertQuantityUnit(rawUnitsPerPurchaseUnit, conversion?.baseUnit || product.unit, product.unit);
+    const configuration = purchaseUnitConfigurations[key];
+    const buyingUnits = configuredPurchaseUnits(configuration, product.unit, convertQuantityUnit);
+    const transferUnits = location.type === 'store'
+      ? configuredPurchaseUnits(configuration?.transfer, product.unit, convertQuantityUnit) : null;
+    const configuredUnits = transferUnits || buyingUnits;
+    const purchaseUnit = configuredUnits?.purchaseUnit || originalPurchaseUnit;
+    const unitsPerPurchaseUnit = configuredUnits ? configuredUnits.unitsPerPurchaseUnit : originalUnitsPerPurchaseUnit;
+    const unitsPerPackage = supplyMultipleFromPolicy(policy, unitsPerPurchaseUnit, purchaseUnit);
+    const inferredSupplier = latestPurchase
+      ? { key: latestPurchase.supplierKey, name: latestPurchase.supplier, taxId: latestPurchase.supplierTaxId }
+      : supplierOptions.get('unassigned');
+    const configuredSupplier = policy.supplierKey ? supplierOptions.get(policy.supplierKey) : null;
+    const supplier = configuredSupplier || inferredSupplier || supplierOptions.get('unassigned');
+    const fallbackCostReference = costResolver.resolve(key, product.unit, costCatalog.get(key));
+    // The shared buying presentation can define the invoice conversion even
+    // when Toteat's catalog has no packaging equivalence for that purchase.
+    const costConversion = transferUnits && buyingUnits && latestPurchase
+      && purchaseUnitLabel(latestPurchase.unit) === purchaseUnitLabel(buyingUnits.purchaseUnit)
+      ? buyingUnits.unitsPerPurchaseUnit : originalUnitsPerPurchaseUnit;
+    const estimatedPurchaseUnitCost = configuredUnits
+      ? configuredPurchaseCost(latestPurchase, costConversion, configuredUnits, fallbackCostReference, { transfer: Boolean(transferUnits) })
+      : latestPurchase
+      ? latestPurchase.effectiveUnitPrice || latestPurchase.listedUnitPrice || 0
+      : fallbackCostReference.source !== 'missing' && unitsPerPurchaseUnit
+        ? fallbackCostReference.unitCost * unitsPerPurchaseUnit
+        : null;
+    return { latestPurchase, supplierSpecificPurchase, configuredSupplier, supplier,
+      purchaseUnit, unitsPerPurchaseUnit, unitsPerPackage, estimatedPurchaseUnitCost, fallbackCostReference };
+  }
+
   function projectionPurchaseOrderSelection(locationId, selectedOrderIds) {
     const dateForOrder = order => order.confirmedAt || order.updatedAt || order.createdAt || '';
     const savedOrders = readPurchaseOrders().filter(order => order.location?.id === locationId);
@@ -4776,13 +4849,12 @@ function createApp(options = {}) {
       throw error;
     }
     const catalogAssignments = parseInventoryHierarchyAssignments(catalogMaster.filePath);
-    const projectionExceptions = new Set(['SUB005', 'B2860', 'B2850', 'B2840', 'B2830']);
     const isProjectionItem = product => {
       const key = String(product.code || '').trim().toUpperCase();
-      return projectionExceptions.has(key) || catalogAssignments.get(key)?.type === 'ingredient';
+      return PURCHASE_PROJECTION_EXTRA_CODES.has(key) || catalogAssignments.get(key)?.type === 'ingredient';
     };
     const conversions = parsePurchaseUnitConversions(catalogMaster.filePath);
-    const purchaseUnitConfigurations = readJson(purchaseUnitConfigurationPath, { items: {} }).items || {};
+    const purchaseUnitConfigurations = purchaseUnitConfigurationsWithTransfers();
     const costCatalog = parseIngredientCatalog(catalogMaster.filePath);
     const costResolver = apiProjection?buildInventoryPurchaseCostResolver(today,location,state,{catalog:costCatalog}):buildCostResolver(today, [location.id]);
     const supplierOptions = new Map(references.suppliers);
@@ -4814,33 +4886,11 @@ function createApp(options = {}) {
       const hasFinal = latestGroup.metrics.some(metric => metric.normalized.startsWith('if -'));
       const currentInventory = apiItem?apiItem.currentInventory:kardexMetricValue(product, latestGroup,
         metric => metric.startsWith(hasFinal ? 'if -' : 'ii -'));
-      const supplierSpecificPurchase = policy.supplierKey
-        ? references.bySupplier.get(`${key}|${policy.supplierKey}`)
-        : null;
-      const latestPurchase = supplierSpecificPurchase || references.global.get(key) || references.local.get(key) || null;
-      const catalogItem = conversions.get(key);
-      let conversion = latestPurchase ? catalogItem?.conversions.get(normalizedUnit(latestPurchase.unit)) : null;
-      if (!latestPurchase && !conversion && catalogItem) {
-        conversion = [...catalogItem.conversions.values()].find(item =>
-          normalizedUnit(item.purchaseUnit) !== normalizedUnit(catalogItem.baseUnit))
-          || [...catalogItem.conversions.values()][0]
-          || null;
-      }
-      const originalPurchaseUnit = latestPurchase?.unit || conversion?.purchaseUnit || product.unit;
-      const rawUnitsPerPurchaseUnit = conversion?.unitsPerPurchaseUnit
-        ?? (normalizedUnit(originalPurchaseUnit) === normalizedUnit(product.unit) ? 1 : null);
-      const originalUnitsPerPurchaseUnit = rawUnitsPerPurchaseUnit === null
-        ? null
-        : convertQuantityUnit(rawUnitsPerPurchaseUnit, conversion?.baseUnit || product.unit, product.unit);
-      const configuredUnits = configuredPurchaseUnits(purchaseUnitConfigurations[key], product.unit, convertQuantityUnit);
-      const purchaseUnit = configuredUnits?.purchaseUnit || originalPurchaseUnit;
-      const unitsPerPurchaseUnit = configuredUnits ? configuredUnits.unitsPerPurchaseUnit : originalUnitsPerPurchaseUnit;
-      const unitsPerPackage = supplyMultipleFromPolicy(policy, unitsPerPurchaseUnit, purchaseUnit);
-      const inferredSupplier = latestPurchase
-        ? { key: latestPurchase.supplierKey, name: latestPurchase.supplier, taxId: latestPurchase.supplierTaxId }
-        : supplierOptions.get('unassigned');
-      const configuredSupplier = policy.supplierKey ? supplierOptions.get(policy.supplierKey) : null;
-      const supplier = configuredSupplier || inferredSupplier || supplierOptions.get('unassigned');
+      const { latestPurchase, supplierSpecificPurchase, configuredSupplier, supplier,
+        purchaseUnit, unitsPerPurchaseUnit, unitsPerPackage, estimatedPurchaseUnitCost, fallbackCostReference }
+        = purchaseOrderingDetails(key, product, location, policy, {
+          references, conversions, purchaseUnitConfigurations, supplierOptions, costResolver, costCatalog
+        });
       const minimumStock = averageDailyConsumption * minDays;
       const maximumStock = averageDailyConsumption * maxDays;
       const ownNeedsPurchase = averageDailyConsumption > 0 && currentInventory <= minimumStock;
@@ -4865,14 +4915,6 @@ function createApp(options = {}) {
         ? inventoryAfterPurchaseOrders / averageDailyConsumption
         : null;
       const projectedInternalQuantity = suggestedInternalQuantity;
-      const fallbackCostReference = costResolver.resolve(key, product.unit, costCatalog.get(key));
-      const estimatedPurchaseUnitCost = configuredUnits
-        ? configuredPurchaseCost(latestPurchase, originalUnitsPerPurchaseUnit, configuredUnits, fallbackCostReference)
-        : latestPurchase
-        ? latestPurchase.effectiveUnitPrice || latestPurchase.listedUnitPrice || 0
-        : fallbackCostReference.source !== 'missing' && unitsPerPurchaseUnit
-          ? fallbackCostReference.unitCost * unitsPerPurchaseUnit
-          : null;
       items.push({
         key,
         code: product.code,
@@ -4912,6 +4954,7 @@ function createApp(options = {}) {
         supplierPurchaseReferenceMatched: !policy.supplierKey || Boolean(supplierSpecificPurchase),
         purchaseUnit,
         unitsPerPurchaseUnit,
+        transferConfigured: location.type === 'store' ? Boolean(purchaseUnitConfigurations[key]?.transfer?.purchaseUnit) : undefined,
         suggestedInternalQuantity,
         suggestedPurchaseUnits,
         projectedInternalQuantity,
@@ -5023,6 +5066,53 @@ function createApp(options = {}) {
     return snapshot.projection;
   }
 
+  app.get('/api/purchase-projections/supplier-items', (req, res) => {
+    try {
+      const location = activeLocation(String(req.query.location || ''));
+      if (!location || !['store', 'warehouse'].includes(location.type)) return res.status(400).json({ error: 'Selecciona una cafetería o bodega activa.' });
+      const today = projectionToday(), supplierKey = String(req.query.supplier || '');
+      const references = projectionPurchaseReferences(location.id, today);
+      const supplier = references.suppliers.get(supplierKey);
+      if (!supplier || ['all', 'unassigned'].includes(supplierKey)) return res.status(400).json({ error: 'Selecciona un proveedor válido.' });
+      const master = latestMasterFile('master-catalog', today);
+      if (!master) return res.status(404).json({ error: 'Actualiza el maestro de ingredientes para consultar los artículos del proveedor.' });
+      const costCatalog = parseIngredientCatalog(master.filePath);
+      const context = { references, costCatalog, conversions: parsePurchaseUnitConversions(master.filePath),
+        purchaseUnitConfigurations: purchaseUnitConfigurationsWithTransfers(),
+        supplierOptions: new Map([...references.suppliers, ['unassigned', { key: 'unassigned', name: 'Proveedor no asignado' }]]),
+        costResolver: buildCostResolver(today, [location.id], { catalog: costCatalog }) };
+      const policies = readPurchaseProjectionPolicies().locations?.[location.id]?.items || {};
+      // Read catalog and purchase references only: the order can be edited even
+      // without a current inventory calculation for this location.
+      const items = [];
+      for (const product of costCatalog.values()) {
+        const key = product.code.toUpperCase(), policy = policies[key] || {};
+        if (product.type !== 'ingredient' && !PURCHASE_PROJECTION_EXTRA_CODES.has(key)) continue;
+        if (policy.supplierKey !== supplierKey && !references.bySupplier.has(`${key}|${supplierKey}`)) continue;
+        const details = purchaseOrderingDetails(key, product, location, { ...policy, supplierKey }, context);
+        items.push({ key, code: product.code, name: product.name, internalUnit: product.unit, supplierKey,
+          purchaseUnit: details.purchaseUnit, unitsPerPurchaseUnit: details.unitsPerPurchaseUnit,
+          unitsPerPackage: details.unitsPerPackage, unitsPerPackageBasis: 'purchase',
+          estimatedPurchaseUnitCost: details.estimatedPurchaseUnitCost,
+          currentInventory: null, averageDailyConsumption: null, suggestedPurchaseUnits: null,
+          minDays: policy.minDays ?? 7, maxDays: policy.maxDays ?? 14 });
+      }
+      // Preserve ordering units and reviewed quantities from a displayed projection.
+      if (req.query.projectionId) {
+        const reviewed = purchaseOrderProjection(location.id, String(req.query.projectionId));
+        const byKey = new Map(items.map(item => [item.key, item]));
+        for (const item of reviewed.items.filter(item => item.supplierKey === supplierKey)) byKey.set(item.key, item);
+        items.splice(0, items.length, ...byKey.values());
+      }
+      const orderingItems = currentTransferOrderItems(items, location);
+      orderingItems.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+      return res.set('Cache-Control', 'no-store').json(retainPurchaseOrderProjection({
+        location: publicLocation(location), company: readCompanyProfile(), period: { from: today, to: today },
+        supplier, suppliers: [supplier], items: orderingItems
+      }));
+    } catch (error) { return res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar los artículos del proveedor.' }); }
+  });
+
   app.get('/api/purchase-projections', async (req, res) => {
     const stream = req.query.progress === '1';
     const send = event => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
@@ -5069,30 +5159,50 @@ function createApp(options = {}) {
 
   app.put('/api/purchase-projections/ingredient-master', (req, res) => {
     try {
-      const master = ingredientPurchaseMaster();
+      const master = ingredientPurchaseMaster({ initializeTransfers: false });
       const byCode = new Map(master.items.map(item => [item.code, item]));
       const requested = req.body?.items;
       if (!Array.isArray(requested) || !requested.length) return res.status(400).json({ error: 'No se recibieron equivalencias para guardar.' });
+      const registry = readJson(purchaseUnitConfigurationPath, { items: {} });
+      registry.items ||= {};
       const updates = new Map();
       for (const item of requested) {
         const code = String(item.code || '').trim().toUpperCase();
         const ingredient = byCode.get(code);
         if (!ingredient || updates.has(code)) return res.status(400).json({ error: 'Selecciona ingredientes válidos del maestro, sin códigos repetidos.' });
         if (item.internalUnit !== ingredient.internalUnit) return res.status(409).json({ error: `La unidad interna de ${code} cambió. Cierra y vuelve a abrir el maestro para revisar la equivalencia.` });
-        const unit = purchaseUnitLabel(item.purchaseUnit);
-        if (!unit && (item.unitsPerPurchaseUnit === null || item.unitsPerPurchaseUnit === '')) { updates.set(code, null); continue; }
-        const quantity = Number(item.unitsPerPurchaseUnit);
-        if (!ingredient.internalUnit || !ingredient.allowedPurchaseUnits.includes(unit) || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1e9) {
-          return res.status(400).json({ error: `${code}: selecciona una unidad de compra válida y un contenido mayor que 0, expresado en ${ingredient.internalUnit}.` });
+        const configuration = { ...registry.items[code] };
+        let changed = false;
+        for (const [unitField, quantityField, transfer] of [
+          ['purchaseUnit', 'unitsPerPurchaseUnit', false], ['transferUnit', 'unitsPerTransferUnit', true]
+        ]) {
+          if (!Object.hasOwn(item, unitField) && !Object.hasOwn(item, quantityField)) continue;
+          changed = true;
+          const unit = purchaseUnitLabel(item[unitField]);
+          const content = item[quantityField];
+          if (!unit && (content === null || content === '')) {
+            if (transfer) delete configuration.transfer;
+            else { delete configuration.purchaseUnit; delete configuration.unitsPerPurchaseUnit; delete configuration.internalUnit; }
+            continue;
+          }
+          const quantity = Number(content);
+          if (!ingredient.internalUnit || !ingredient.allowedPurchaseUnits.includes(unit)
+            || !['number', 'string'].includes(typeof content) || !Number.isFinite(quantity) || quantity <= 0 || quantity > 1e9) {
+            return res.status(400).json({ error: `${code}: selecciona una unidad de ${transfer ? 'transferencia' : 'compra'} válida y un contenido mayor que 0, expresado en ${ingredient.internalUnit}.` });
+          }
+          const value = { purchaseUnit: unit, unitsPerPurchaseUnit: quantity, internalUnit: ingredient.internalUnit };
+          if (transfer) configuration.transfer = value;
+          else Object.assign(configuration, value);
         }
-        updates.set(code, { purchaseUnit: unit, unitsPerPurchaseUnit: quantity, internalUnit: ingredient.internalUnit, updatedAt: new Date().toISOString() });
+        if (!changed) return res.status(400).json({ error: `${code}: no se recibieron equivalencias para guardar.` });
+        updates.set(code, configuration.purchaseUnit || configuration.transfer
+          ? { ...configuration, updatedAt: new Date().toISOString() } : null);
       }
-      const registry = readJson(purchaseUnitConfigurationPath, { items: {} });
-      registry.items ||= {};
       for (const [code, configuration] of updates) {
         if (configuration) registry.items[code] = configuration;
         else delete registry.items[code];
       }
+      ingredientPurchaseMaster({ registry, persist: false });
       writeJsonAtomic(purchaseUnitConfigurationPath, registry);
       return res.json({ ok: true, saved: updates.size });
     } catch (error) { return res.status(error.status || 500).json({ error: error.message }); }
@@ -5288,11 +5398,19 @@ function createApp(options = {}) {
     };
   }
 
+  function currentTransferOrderItems(items, location) {
+    if (location?.type !== 'store') return items;
+    const configurations = purchaseUnitConfigurationsWithTransfers();
+    const policies = readPurchaseProjectionPolicies().locations?.[location.id]?.items || {};
+    return items.map(item => transferOrderItem(item, configurations[item.key], convertQuantityUnit, policies[item.key] || {}));
+  }
+
   function purchaseOrderWithCurrentDetails(order) {
     const currentLocation = readLocations().locations.find(location => location.id === order.location?.id);
     const company = readCompanyProfile();
     return {
       ...order,
+      editingItems: currentTransferOrderItems(order.items, currentLocation || order.location),
       company: {
         ...(order.company || {}),
         ...company
@@ -5315,20 +5433,28 @@ function createApp(options = {}) {
 
   ensurePurchaseOrderSequences();
 
-  function normalizedPurchaseOrderItems(requested, availableItems, existingItems = null) {
+  function normalizedPurchaseOrderItems(requested, availableItems, existingItems = null, location = null, requireTransfer = false) {
     if (!Array.isArray(requested) || !requested.length) {
       const error = new Error('Selecciona al menos un ítem para la orden de compra.');
       error.status = 400;
       throw error;
     }
-    const allowed = new Map(availableItems.map(item => [item.key, item]));
-    for (const item of existingItems || []) allowed.set(item.key, item);
+    const allowed = new Map(currentTransferOrderItems(availableItems, location).map(item => [item.key, item]));
+    for (const item of currentTransferOrderItems(existingItems || [], location)) allowed.set(item.key, item);
     const seen = new Set();
     return requested.map(requestedItem => {
       const key = String(requestedItem.key || '').trim().toUpperCase();
       const source = allowed.get(key);
       const quantity = Number(requestedItem.quantity);
       const requestedUnitCost = Number(requestedItem.unitCost);
+      if (source && location?.type === 'store' && requireTransfer) {
+        if (!source.transferConfigured || !(source.unitsPerPurchaseUnit > 0)) throw Object.assign(Error(`${source.name}: configura la Unidad de Transferencia a Cafeterías y su equivalencia en el Maestro de ingredientes.`), { status: 409 });
+        if (requestedItem.purchaseUnit !== source.purchaseUnit || requestedItem.internalUnit !== source.internalUnit
+          || !Number.isFinite(Number(requestedItem.unitsPerPurchaseUnit))
+          || Math.abs(Number(requestedItem.unitsPerPurchaseUnit) - source.unitsPerPurchaseUnit) > 1e-9) {
+          throw Object.assign(Error(`${source.name}: cambió la unidad de transferencia. Cierra y vuelve a abrir la orden para revisar cantidades y costos.`), { status: 409 });
+        }
+      }
       if (!source || seen.has(key) || !Number.isFinite(quantity) || quantity <= 0
         || !Number.isFinite(requestedUnitCost) || requestedUnitCost < 0) {
         const error = new Error('Cada ítem debe ser válido, no repetirse y tener cantidad y costo correctos.');
@@ -5391,7 +5517,7 @@ function createApp(options = {}) {
         return res.status(400).json({ error: 'Selecciona un proveedor válido para generar la orden.' });
       }
       const availableItems = projection.items.filter(item => item.supplierKey === supplierKey);
-      const items = normalizedPurchaseOrderItems(req.body?.items, availableItems);
+      const items = normalizedPurchaseOrderItems(req.body?.items, availableItems, null, projection.location, req.body?.useTransferUnits === true);
       const now = new Date();
       const stamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
       const id = `OC-${stamp.slice(0, 8)}-${stamp.slice(8)}-${crypto.randomBytes(4).toString('hex')}`;
@@ -5434,7 +5560,7 @@ function createApp(options = {}) {
       const projection = req.body?.projectionId
         ? purchaseOrderProjection(existing.location.id, req.body.projectionId) : null;
       const availableItems = projection?.items.filter(item => item.supplierKey === existing.supplier.key) || [];
-      const items = normalizedPurchaseOrderItems(req.body?.items, availableItems, existing.items);
+      const items = normalizedPurchaseOrderItems(req.body?.items, availableItems, existing.items, existing.location, req.body?.useTransferUnits === true);
       const updatedAt = new Date().toISOString();
       const order = {
         ...existing,

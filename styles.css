@@ -5292,12 +5292,14 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
 }
 
 #ingredient-purchase-master-dialog {
-  width: min(1200px, calc(100vw - 32px));
+  width: min(1500px, calc(100vw - 32px));
 }
 
 .ingredient-purchase-master-table-wrap {
   max-height: 55vh;
 }
+
+.ingredient-purchase-master-table-wrap table { min-width: 1350px; }
 
 .projection-branch-orders-actions.ingredient-purchase-master-actions {
   justify-content: space-between;
@@ -5577,6 +5579,11 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
   gap: 8px;
   margin-top: 12px;
 }
+
+.tentative-order-validation { white-space: normal; }
+.tentative-order-validation ul { margin: 8px 0; padding-left: 22px; }
+.tentative-order-validation li + li { margin-top: 5px; }
+.tentative-orders-table [aria-invalid="true"] { border-color: var(--clay); }
 
 .tentative-order-confirmed {
   color: var(--green);

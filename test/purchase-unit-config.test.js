@@ -8,6 +8,25 @@ const helpers = script.slice(script.indexOf('function supplyMultipleFromPolicy('
 const recalculate = script.slice(script.indexOf('function recalculatePurchaseProjectionItem('), script.indexOf('function updateConsumptionReferenceButton('));
 const client = new Function(`${helpers}\n${recalculate}\nreturn { supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple, recalculatePurchaseProjectionItem, projectionSuggestionMetrics };`)();
 
+test('transfer-only settings do not override buying units and costs scale even when both presentations share a label', () => {
+  assert.equal(units.configuredPurchaseUnits({ transfer: { purchaseUnit: 'Pack', unitsPerPurchaseUnit: 6 } }, 'UN', () => 6), null);
+  assert.equal(units.configuredPurchaseCost({ unit: 'Pack', effectiveUnitPrice: 1000 }, 1000,
+    { purchaseUnit: 'Pack', unitsPerPurchaseUnit: 100 }, { source: 'missing' }, { transfer: true }), 100);
+  assert.equal(units.configuredPurchaseCost({ unit: 'Pack', effectiveUnitPrice: 1000 }, 1000,
+    { purchaseUnit: 'Pack', unitsPerPurchaseUnit: 100 }, { source: 'missing' }), 1000);
+});
+
+test('editing an old order converts physical quantities and unit costs to the current transfer presentation', () => {
+  const item = { key: 'A', internalUnit: 'KG', purchaseUnit: 'Caja', unitsPerPurchaseUnit: 5,
+    quantity: 2, unitCost: 10000, referenceUnitCost: 10000, internalQuantity: 10, total: 20000 };
+  const changed = units.transferOrderItem(item, { transfer: { internalUnit: 'KG', purchaseUnit: 'Bolsa', unitsPerPurchaseUnit: .25 } }, n => n);
+  assert.deepEqual([changed.purchaseUnit, changed.quantity, changed.unitCost, changed.internalQuantity, changed.total],
+    ['Bolsa', 40, 500, 10, 20000]);
+  assert.equal(changed.transferUnitChanged, true);
+  assert.equal(item.purchaseUnit, 'Caja');
+  assert.equal(units.transferOrderItem(item, {}, n => n).transferConfigured, false);
+});
+
 test('converts need to supply units before rounding to the allowed multiple, including decimal multiples', () => {
   for (const api of [units, client]) {
     assert.equal(api.purchaseUnitsForInternalQuantity(1.4, 1.36, 1), 2);

@@ -148,6 +148,7 @@ test('synchronized purchase projections exclude stock-managed products except th
     const projection = await project(location);
     assert.deepEqual(projection.items.map(item => item.key).sort(), ['A', 'B', 'C', 'D', ...exceptions.map(code => code.toUpperCase())].sort());
     assert.equal(projection.summary.itemCount, 9);
+    if (location === 'store-2') assert.ok(projection.items.every(item => item.transferConfigured), 'all orderable ingredients receive a transfer definition');
     assert.equal(projection.items.some(item => excluded.includes(item.key)), false);
   }
 });
@@ -263,6 +264,46 @@ test('orders save and update the reviewed warehouse projection without recalcula
   assert.equal(recalculations, 0);
 });
 
+test('missing transfers are copied and persisted from supply units once, including newly encountered ingredients', async t => {
+  const { root, app, json } = await setup(t);
+  const file = path.join(root, 'config', 'purchase-unit-configuration.json');
+  fs.writeFileSync(file, JSON.stringify({ items: {
+    D: { purchaseUnit: 'Pack', unitsPerPurchaseUnit: 25, internalUnit: 'UN' },
+    B: { purchaseUnit: 'Bidón', unitsPerPurchaseUnit: 3, internalUnit: 'L',
+      transfer: { purchaseUnit: 'Botella', unitsPerPurchaseUnit: .5, internalUnit: 'L' } }
+  } }));
+  const masterFile = path.join(root, 'masters', 'catalog.xlsx'), originalMaster = fs.readFileSync(masterFile);
+  const master = await json('/api/purchase-projections/ingredient-master');
+  const item = master.items.find(item => item.code === 'D');
+  assert.deepEqual([item.transferUnit, item.unitsPerTransferUnit, item.transferConfigured], ['Pack', 25, true]);
+  let registry = JSON.parse(fs.readFileSync(file));
+  assert.deepEqual(registry.items.D.transfer, { purchaseUnit: 'Pack', unitsPerPurchaseUnit: 25, internalUnit: 'UN' });
+  assert.deepEqual(registry.items.B.transfer, { purchaseUnit: 'Botella', unitsPerPurchaseUnit: .5, internalUnit: 'L' });
+  const firstCopy = fs.readFileSync(file, 'utf8');
+  await json('/api/purchase-projections/ingredient-master');
+  assert.equal(fs.readFileSync(file, 'utf8'), firstCopy, 'reading an initialized master does not rewrite it');
+  const save = items => json('/api/purchase-projections/ingredient-master', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
+  });
+  await save([{ code: 'D', internalUnit: 'UN', purchaseUnit: 'Pack', unitsPerPurchaseUnit: 50 }]);
+  assert.equal(JSON.parse(fs.readFileSync(file)).items.D.transfer.unitsPerPurchaseUnit, 25, 'the copied transfer is independent');
+  await save([{ code: 'D', internalUnit: 'UN', transferUnit: '', unitsPerTransferUnit: null }]);
+  assert.equal(JSON.parse(fs.readFileSync(file)).items.D.transfer.unitsPerPurchaseUnit, 50, 'a missing transfer is filled again');
+  assert.deepEqual(fs.readFileSync(masterFile), originalMaster);
+  const book = XLSX.readFile(masterFile), rows = XLSX.utils.sheet_to_json(book.Sheets.Ingr, { header: 1 });
+  rows.push(['E', 'Nuevo ingrediente', 1, 20, 'UN']); book.Sheets.Ingr = XLSX.utils.aoa_to_sheet(rows); XLSX.writeFile(book, masterFile);
+  registry = JSON.parse(fs.readFileSync(file));
+  registry.items.E = { purchaseUnit: 'Caja', unitsPerPurchaseUnit: 100, internalUnit: 'UN' };
+  fs.writeFileSync(file, JSON.stringify(registry));
+  await json('/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', items: [{ key: 'E', supplierKey: '111', unitsPerPackage: 1, managed: false, minDays: 7, maxDays: 14 }] }) });
+  app.locals.toteatStockSync.current = () => { throw Error('Replicating units must not process stock'); };
+  const catalog = await json('/api/purchase-projections/supplier-items?location=store-2&supplier=111');
+  const added = catalog.items.find(item => item.key === 'E');
+  assert.deepEqual([added.purchaseUnit, added.unitsPerPurchaseUnit, added.transferConfigured], ['Caja', 100, true]);
+  assert.equal(JSON.parse(fs.readFileSync(file)).items.E.transfer.unitsPerPurchaseUnit, 100);
+});
+
 test('ingredient buying units convert quantities and prices without modifying real consumption or the original master', async t => {
   const { root, json, project, configure } = await setup(t);
   const masterPath = path.join(root, 'masters', 'catalog.xlsx');
@@ -275,7 +316,7 @@ test('ingredient buying units convert quantities and prices without modifying re
   await configure();
   const before = (await project()).items.find(item => item.key === 'A');
   const save = items => json('/api/purchase-projections/ingredient-master', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items.map(item => ({ ...item, transferUnit: item.purchaseUnit, unitsPerTransferUnit: item.unitsPerPurchaseUnit })) })
   });
   await save([{ code: 'A', internalUnit: 'L', purchaseUnit: 'Botella', unitsPerPurchaseUnit: 0.75 }]);
   const a = (await project()).items.find(item => item.key === 'A');
@@ -305,11 +346,116 @@ test('ingredient buying units convert quantities and prices without modifying re
   assert.equal((await json(`/api/purchase-orders/${order.id}`)).items[0].unitsPerPurchaseUnit, 0.75);
 });
 
+test('warehouse buying and cafeteria transfer units have independent conversions, costs and saved orders', async t => {
+  const { root, json, project } = await setup(t);
+  const save = items => json('/api/purchase-projections/ingredient-master', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
+  });
+  await save([{ code: 'A', internalUnit: 'L', purchaseUnit: 'Bidón', unitsPerPurchaseUnit: 3,
+    transferUnit: 'Botella', unitsPerTransferUnit: .75 }]);
+  const master = (await json('/api/purchase-projections/ingredient-master')).items.find(item => item.code === 'A');
+  assert.deepEqual([master.purchaseUnit, master.unitsPerPurchaseUnit, master.transferUnit, master.unitsPerTransferUnit],
+    ['Bidón', 3, 'Botella', .75]);
+  const savedOrders = [];
+  for (const [id, unit, conversion, cost] of [
+    ['main-warehouse', 'Bidón', 3, 300], ['store-2', 'Botella', .75, 75], ['store-1', 'Botella', 750, 75]
+  ]) {
+    const projection = await project(id), item = projection.items.find(item => item.key === 'A');
+    assert.deepEqual([item.purchaseUnit, item.unitsPerPurchaseUnit, item.estimatedPurchaseUnitCost], [unit, conversion, cost]);
+    if (item.needsPurchase) assert.equal(item.suggestedInternalQuantity, item.suggestedPurchaseUnits * conversion);
+    const order = await json('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: id, projectionId: projection.projectionId, supplierKey: item.supplierKey,
+        items: [{ key: 'A', quantity: 2, unitCost: cost, purchaseUnit: 'INVALID', unitsPerPurchaseUnit: 999 }] }) });
+    assert.deepEqual([order.items[0].purchaseUnit, order.items[0].internalQuantity, order.items[0].total],
+      [unit, 2 * conversion, 2 * cost]);
+    savedOrders.push(order);
+  }
+  // Updating or restoring one presentation leaves the other independent.
+  await save([{ code: 'A', internalUnit: 'L', purchaseUnit: 'Pack', unitsPerPurchaseUnit: 6 }]);
+  assert.equal((await project()).items.find(item => item.key === 'A').unitsPerPurchaseUnit, .75);
+  await save([{ code: 'A', internalUnit: 'L', purchaseUnit: '', unitsPerPurchaseUnit: null }]);
+  assert.equal((await project('main-warehouse')).items.find(item => item.key === 'A').unitsPerPurchaseUnit, 1);
+  assert.equal((await project()).items.find(item => item.key === 'A').unitsPerPurchaseUnit, .75);
+  await save([{ code: 'A', internalUnit: 'L', transferUnit: '', unitsPerTransferUnit: null }]);
+  assert.equal((await project()).items.find(item => item.key === 'A').unitsPerPurchaseUnit, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'config', 'purchase-unit-configuration.json'))).items.A.transfer,
+    { purchaseUnit: 'L', unitsPerPurchaseUnit: 1, internalUnit: 'L' });
+  for (const order of savedOrders) {
+    assert.deepEqual((await json(`/api/purchase-orders/${order.id}`)).items, order.items);
+    const edited = await json(`/api/purchase-orders/${order.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ key: 'A', quantity: 3, unitCost: order.items[0].unitCost }] }) });
+    assert.equal(edited.items[0].purchaseUnit, order.location.type === 'store' ? 'L' : order.items[0].purchaseUnit);
+    assert.equal(edited.items[0].internalQuantity, 3 * (order.location.type === 'store'
+      ? order.items[0].internalUnit === 'ML' ? 1000 : 1 : order.items[0].unitsPerPurchaseUnit));
+  }
+});
+
+test('saved cafeteria order editing and stale supplier snapshots use current transfer units and reject an old unit basis', async t => {
+  const { base, json, project } = await setup(t);
+  const projection = await project();
+  const order = await json('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', supplierKey: '111', projectionId: projection.projectionId,
+      items: [{ key: 'A', quantity: 2, unitCost: 100 }] }) });
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', purchaseUnit: 'Bidón', unitsPerPurchaseUnit: 3,
+      transferUnit: 'Botella', unitsPerTransferUnit: .25 }] }) });
+  const opened = await json(`/api/purchase-orders/${order.id}`);
+  assert.deepEqual(opened.items, order.items, 'opening keeps the stored order intact');
+  assert.deepEqual([opened.editingItems[0].purchaseUnit, opened.editingItems[0].quantity, opened.editingItems[0].unitCost], ['Botella', 8, 25]);
+  const catalog = await json(`/api/purchase-projections/supplier-items?location=store-2&supplier=111&projectionId=${projection.projectionId}`);
+  assert.equal(catalog.items.find(item => item.key === 'A').purchaseUnit, 'Botella');
+  const update = item => fetch(`${base}/api/purchase-orders/${order.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ useTransferUnits: true, items: [item] }) });
+  const rejected = await update({ key: 'A', quantity: 2, unitCost: 100, purchaseUnit: 'L', unitsPerPurchaseUnit: 1, internalUnit: 'L' });
+  assert.equal(rejected.status, 409);
+  assert.deepEqual((await json(`/api/purchase-orders/${order.id}`)).items, order.items);
+  const saved = await update({ key: 'A', quantity: 8, unitCost: 25, purchaseUnit: 'Botella', unitsPerPurchaseUnit: .25, internalUnit: 'L' });
+  assert.equal(saved.status, 200);
+  const data = await saved.json();
+  assert.deepEqual([data.items[0].purchaseUnit, data.items[0].internalQuantity, data.total], ['Botella', 2, 200]);
+});
+
+test('transfer costs use the configured buying presentation when invoice packaging is absent from the catalog', async t => {
+  const { root, json, project } = await setup(t);
+  const file = path.join(root, 'purchases.xlsx'), book = XLSX.readFile(file);
+  const rows = XLSX.utils.sheet_to_json(book.Sheets.Compras, { header: 1 });
+  rows[1][9] = 'Pack'; rows[1][10] = 2400; rows[1][11] = 2400; rows[1][13] = 2400;
+  book.Sheets.Compras = XLSX.utils.aoa_to_sheet(rows); XLSX.writeFile(book, file);
+  for (const transferUnit of ['Pack', 'Botella']) {
+    await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', purchaseUnit: 'Pack', unitsPerPurchaseUnit: 12,
+        transferUnit, unitsPerTransferUnit: 3 }] }) });
+    const warehouse = (await project('main-warehouse')).items.find(item => item.key === 'A');
+    const store = (await project()).items.find(item => item.key === 'A');
+    assert.equal(warehouse.estimatedPurchaseUnitCost, 2400);
+    assert.equal(store.estimatedPurchaseUnitCost, 600, `${transferUnit}: 2400 / 12 L × 3 L`);
+    assert.equal(store.purchaseUnit, transferUnit);
+  }
+});
+
+test('transfer equivalences reject invalid batches atomically and preserve the purchase presentation', async t => {
+  const { root, base, json } = await setup(t);
+  const url = '/api/purchase-projections/ingredient-master';
+  await json(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', purchaseUnit: 'Bidón', unitsPerPurchaseUnit: 3 }] }) });
+  const file = path.join(root, 'config', 'purchase-unit-configuration.json'), before = fs.readFileSync(file, 'utf8');
+  const valid = { code: 'A', internalUnit: 'L', transferUnit: 'Botella', unitsPerTransferUnit: .75 };
+  for (const patch of [{ transferUnit: 'Invalid' }, { unitsPerTransferUnit: 0 }, { unitsPerTransferUnit: -1 },
+    { unitsPerTransferUnit: null }, { unitsPerTransferUnit: true }, { unitsPerTransferUnit: 'bad' }, { unitsPerTransferUnit: 1e10 }]) {
+    const response = await fetch(base + url, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ ...valid, code: 'B' }, { ...valid, ...patch }] }) });
+    assert.equal(response.status, 400);
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+  }
+});
+
 test('ingredient buying-unit configuration needs no stock and rejects invalid batches atomically', async t => {
   const { root, stocks, base, json } = await setup(t);
   stocks['store-1'] = null;
   stocks['store-2'] = null;
   assert.equal((await json('/api/purchase-projections/ingredient-master')).items.length, 4);
+  const configurationFile = path.join(root, 'config', 'purchase-unit-configuration.json');
+  const before = fs.readFileSync(configurationFile, 'utf8');
   const valid = { code: 'A', internalUnit: 'L', purchaseUnit: 'Botella', unitsPerPurchaseUnit: 0.75 };
   for (const [patch, status] of [
     [{ code: 'missing' }, 400], [{ internalUnit: 'ML' }, 409], [{ purchaseUnit: 'Invalid' }, 400],
@@ -320,7 +466,7 @@ test('ingredient buying-unit configuration needs no stock and rejects invalid ba
       body: JSON.stringify({ items: [{ ...valid, code: 'B' }, { ...valid, ...patch }] })
     });
     assert.equal(response.status, status);
-    assert.equal(fs.existsSync(path.join(root, 'config', 'purchase-unit-configuration.json')), false);
+    assert.equal(fs.readFileSync(configurationFile, 'utf8'), before);
   }
 });
 
@@ -810,13 +956,15 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   for (const label of ['Botella', 'Bidón', 'Pack', 'Caja', 'Bolsa', 'Lata']) {
     assert.ok((await row.locator('select option').allTextContents()).includes(label));
   }
-  await row.locator('select').selectOption('Botella');
-  await row.locator('input').fill('0.75');
+  await row.locator('.ingredient-master-purchase-unit').selectOption('Botella');
+  await row.locator('.ingredient-master-content').fill('0.75');
+  await row.locator('.ingredient-master-transfer-unit').selectOption('Botella');
+  await row.locator('.ingredient-master-transfer-content').fill('0.75');
   assert.match(await row.locator('.ingredient-master-equivalence').innerText(), /1 Botella = 0,75 L/);
   await search.fill('incompatible');
   assert.equal(await page.locator('#ingredient-purchase-master-body tr').count(), 1);
   await search.fill('A');
-  assert.equal(await row.locator('input').inputValue(), '0.75');
+  assert.equal(await row.locator('.ingredient-master-content').inputValue(), '0.75');
   await search.fill('leche');
   for (const format of ['pdf', 'csv', 'xlsx']) {
     const ready = page.waitForEvent('download');
@@ -840,20 +988,24 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   await search.fill('no existe');
   for (const format of ['pdf', 'csv', 'xlsx']) assert.equal(await page.locator(`#ingredient-purchase-master-${format}`).isDisabled(), true);
   await search.fill('leche');
-  await row.locator('input').fill('0');
+  await row.locator('.ingredient-master-content').fill('0');
   await page.locator('#ingredient-purchase-master-csv').click();
   assert.match(await page.locator('#ingredient-purchase-master-status').innerText(), /mayor que 0/);
   assert.equal(projectionRequests, 0);
   await page.locator('#close-ingredient-purchase-master').click();
-  assert.equal(fs.existsSync(path.join(root, 'config', 'purchase-unit-configuration.json')), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'config', 'purchase-unit-configuration.json'))).items.A.purchaseUnit, undefined);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'B', internalUnit: 'L', transferUnit: 'L', unitsPerTransferUnit: 1 }] }) });
   await open.click();
   await row.waitFor();
-  assert.equal(await row.locator('select').inputValue(), 'L');
-  await row.locator('select').selectOption('Botella');
-  await row.locator('input').fill('0');
+  assert.equal(await row.locator('.ingredient-master-purchase-unit').inputValue(), 'L');
+  await row.locator('.ingredient-master-purchase-unit').selectOption('Botella');
+  await row.locator('.ingredient-master-content').fill('0');
   await page.locator('#save-ingredient-purchase-master').click();
   assert.match(await page.locator('#ingredient-purchase-master-status').innerText(), /mayor que 0/);
-  await row.locator('input').fill('0.75');
+  await row.locator('.ingredient-master-content').fill('0.75');
+  await row.locator('.ingredient-master-transfer-unit').selectOption('Botella');
+  await row.locator('.ingredient-master-transfer-content').fill('0.75');
   await page.locator('#save-ingredient-purchase-master').click();
   await dialog.waitFor({ state: 'hidden' });
   assert.equal(projectionRequests, 0);
@@ -894,7 +1046,7 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   await page.locator('#print-purchase-order').click();
   const editorRow = page.locator('#purchase-order-editor-body tr[data-key="A"]');
   const quantity = editorRow.locator('.purchase-order-quantity');
-  assert.equal(await page.locator('.purchase-order-editor-table th:not([hidden])').nth(10).innerText(), 'Un. de Abast.');
+  assert.equal(await page.locator('.purchase-order-editor-table th:not([hidden])').nth(10).innerText(), 'Un. de Transferencia');
   assert.equal(await editorRow.locator('td').nth(11).innerText(), '0,75 L por Botella');
   assert.equal(await editorRow.locator('.purchase-order-quantity-unit').innerText(), 'Botella');
   assert.equal(await editorRow.locator('.purchase-order-consumption-quantity').innerText(), '45 L');
@@ -956,6 +1108,69 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   await page.waitForFunction(() => !document.getElementById('print-saved-purchase-order').disabled);
   assert.equal((await json('/api/purchase-orders/' + savedOrder.id)).items[0].internalQuantity, 54);
   await page.screenshot({ path: '/private/tmp/brewit-purchase-order-units.png' });
+  assert.deepEqual(errors, []);
+});
+
+test('UI edits and exports independent transfer units, preserves drafts and applies each presentation to its location', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base, json } = await setup(t);
+  const browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  await page.locator('#projection-location-filter').selectOption('store-2');
+  await page.locator('#open-ingredient-purchase-master').click();
+  const row = page.locator('#ingredient-purchase-master-body tr[data-code="A"]');
+  await row.waitFor();
+  assert.equal(await row.locator('.ingredient-master-transfer-unit').inputValue(), 'L');
+  assert.equal(await row.locator('.ingredient-master-transfer-content').isEnabled(), true);
+  await row.locator('.ingredient-master-purchase-unit').selectOption('Bidón');
+  await row.locator('.ingredient-master-content').fill('3');
+  assert.match(await row.locator('.ingredient-master-transfer-equivalence').innerText(), /1 L = 1 L/);
+  await row.locator('.ingredient-master-transfer-unit').selectOption('');
+  assert.equal(await row.locator('.ingredient-master-transfer-unit').inputValue(), 'Bidón');
+  assert.equal(await row.locator('.ingredient-master-transfer-content').inputValue(), '3');
+  await row.locator('.ingredient-master-transfer-unit').selectOption('Botella');
+  await row.locator('.ingredient-master-transfer-content').fill('0.75');
+  const search = page.locator('#ingredient-purchase-master-search');
+  await search.fill('incompatible');
+  await search.fill('leche');
+  assert.equal(await row.locator('.ingredient-master-content').inputValue(), '3');
+  assert.equal(await row.locator('.ingredient-master-transfer-content').inputValue(), '0.75');
+  assert.match(await row.locator('.ingredient-master-transfer-equivalence').innerText(), /1 Botella = 0,75 L/);
+  for (const format of ['pdf', 'csv', 'xlsx']) {
+    const ready = page.waitForEvent('download');
+    await page.locator(`#ingredient-purchase-master-${format}`).click();
+    const bytes = fs.readFileSync(await (await ready).path());
+    if (format === 'pdf') assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
+    else {
+      const book = XLSX.read(format === 'csv' ? bytes.toString('utf8') : bytes,
+        format === 'csv' ? { type: 'string', raw: true } : {});
+      const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1 });
+      assert.match(rows[0][6], /Transferencia a Cafeterías/);
+      assert.equal(rows[1][3], 'Bidón'); assert.equal(rows[1][4], format === 'csv' ? '3' : 3);
+      assert.equal(rows[1][6], 'Botella'); assert.equal(rows[1][7], format === 'csv' ? '0,75' : .75);
+    }
+  }
+  await row.locator('.ingredient-master-transfer-content').fill('0');
+  await page.locator('#save-ingredient-purchase-master').click();
+  assert.match(await page.locator('#ingredient-purchase-master-status').innerText(), /mayor que 0/);
+  await row.locator('.ingredient-master-transfer-content').fill('0.75');
+  await page.locator('#save-ingredient-purchase-master').click();
+  await page.locator('#ingredient-purchase-master-dialog').waitFor({ state: 'hidden' });
+  const master = (await json('/api/purchase-projections/ingredient-master')).items.find(item => item.code === 'A');
+  assert.deepEqual([master.purchaseUnit, master.unitsPerPurchaseUnit, master.transferUnit, master.unitsPerTransferUnit],
+    ['Bidón', 3, 'Botella', .75]);
+  await page.locator('#projection-only-required').uncheck();
+  const projectionRow = page.locator('#purchase-projection-body tr[data-key="A"]');
+  for (const [location, expected] of [['store-2', ['L', 'Botella', '0,75 L']], ['main-warehouse', ['L', 'Bidón', '3 L']]]) {
+    await page.locator('#projection-location-filter').selectOption(location);
+    await page.locator('#refresh-purchase-projection').click();
+    await page.waitForFunction(() => document.getElementById('purchase-projection-workspace').getAttribute('aria-busy') === 'false');
+    assert.deepEqual((await projectionRow.locator('td').allTextContents()).slice(4, 7), expected);
+  }
   assert.deepEqual(errors, []);
 });
 
@@ -1038,8 +1253,78 @@ test('past orders show the projection list before a delayed refresh and preserve
   assert.match(await page.locator('#past-purchase-orders-status').innerText(), /Aún no hay órdenes/);
 });
 
+test('supplier catalog includes historical and assigned products without inventory and validates added order items', async t => {
+  const { root, app, project, json, base } = await setup(t);
+  const projection = await project();
+  const order = await json('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', supplierKey: '111', projectionId: projection.projectionId,
+      items: [{ key: 'A', quantity: 2, unitCost: 100 }] }) });
+  // B was bought from this supplier but is currently assigned to another one.
+  fs.writeFileSync(path.join(root, 'config', 'purchase-projection-policies.json'), JSON.stringify({ locations: {
+    'store-2': { items: { B: { supplierKey: '222' }, D: { supplierKey: '111' } } }
+  } }));
+  let stockReads = 0;
+  app.locals.toteatStockSync.current = () => { stockReads++; throw Error('Do not read inventory'); };
+  const catalog = await json('/api/purchase-projections/supplier-items?location=store-2&supplier=111');
+  assert.deepEqual(catalog.items.map(item => item.key).sort(), ['A', 'B', 'D']);
+  assert.equal(catalog.items.find(item => item.key === 'B').estimatedPurchaseUnitCost, 100);
+  assert.ok(catalog.items.every(item => item.currentInventory === null && item.averageDailyConsumption === null));
+  const saved = await json(`/api/purchase-orders/${order.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectionId: catalog.projectionId, items: [{ key: 'A', quantity: 3, unitCost: 100 }, { key: 'B', quantity: 2, unitCost: 100 }] }) });
+  assert.deepEqual(saved.items.map(item => [item.key, item.quantity]), [['A', 3], ['B', 2]]);
+  const invalid = await fetch(`${base}/api/purchase-orders/${order.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectionId: catalog.projectionId, items: [{ key: 'C', quantity: 1, unitCost: 1 }] }) });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual((await json(`/api/purchase-orders/${order.id}`)).items, saved.items);
+  assert.equal(stockReads, 0);
+});
+
+test('saved order without a projection can load all supplier items, retry failures and save additions without stock recalculation', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base, app, project, json } = await setup(t);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: ['A', 'B'].map(code => ({ code, internalUnit: 'L', transferUnit: 'L', unitsPerTransferUnit: 1 })) }) });
+  const projection = await project();
+  const order = await json('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', supplierKey: '111', projectionId: projection.projectionId,
+      items: [{ key: 'A', quantity: 24, unitCost: 100 }] }) });
+  let stockReads = 0;
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  app.locals.toteatStockSync.current = () => { stockReads++; throw Error('Do not read inventory'); };
+  await page.evaluate(orderId => openSavedPurchaseOrder(orderId), order.id);
+  const row = page.locator('#purchase-order-editor-body tr[data-key="A"]');
+  await row.locator('.purchase-order-quantity').fill('25');
+  const showAll = page.locator('#purchase-order-show-all-supplier-items');
+  assert.equal(await showAll.isEnabled(), true);
+  let attempts = 0;
+  await page.route('**/api/purchase-projections/supplier-items?*', route => ++attempts === 1
+    ? route.fulfill({ status: 500, json: { error: 'Reintenta la consulta del proveedor.' } }) : route.continue());
+  await showAll.check();
+  await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('Reintenta'));
+  assert.equal(await showAll.isEnabled(), true);
+  assert.equal(await row.locator('.purchase-order-quantity').inputValue(), '25');
+  await showAll.check();
+  const additional = page.locator('#purchase-order-editor-body tr[data-key="B"]');
+  await additional.waitFor();
+  assert.equal(await additional.locator('.purchase-order-select').isChecked(), false);
+  assert.equal(await row.locator('.purchase-order-quantity').inputValue(), '25');
+  assert.equal((await json(`/api/purchase-orders/${order.id}`)).items.length, 1);
+  await additional.locator('.purchase-order-select').check();
+  await additional.locator('.purchase-order-quantity').fill('2');
+  await page.locator('#confirm-purchase-order').click();
+  await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
+  const saved = await json(`/api/purchase-orders/${order.id}`);
+  assert.deepEqual(saved.items.map(item => [item.key, item.quantity]), [['A', 25], ['B', 2]]);
+  assert.equal(stockReads, 0);
+});
+
 test('saved order editor reuses the displayed projection and opens and saves without inventory recalculation', { skip: !fs.existsSync(chrome) }, async t => {
   const { base, app, project, json } = await setup(t);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: ['A', 'B'].map(code => ({ code, internalUnit: 'L', transferUnit: 'L', unitsPerTransferUnit: 1 })) }) });
   const projection = await project('store-2');
   const order = await json('/api/purchase-orders', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1077,7 +1362,7 @@ test('saved order editor reuses the displayed projection and opens and saves wit
   await additional.locator('.purchase-order-quantity').fill('2');
   const saveRequest = page.waitForRequest(request => request.method() === 'PUT' && new URL(request.url()).pathname.endsWith(order.id));
   await page.locator('#confirm-purchase-order').click();
-  assert.equal((await saveRequest).postDataJSON().projectionId, projection.projectionId);
+  assert.ok((await saveRequest).postDataJSON().projectionId);
   await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
   assert.deepEqual((await json('/api/purchase-orders/' + order.id)).items.map(item => item.key), ['A', 'B']);
   assert.equal(await page.evaluate(orderId => pastPurchaseOrdersCache.get('store-2').find(item => item.id === orderId).itemCount, order.id), 2);
@@ -1089,7 +1374,7 @@ test('saved order editor reuses the displayed projection and opens and saves wit
     }, { orderId: order.id, available });
     await editor.waitFor();
     assert.equal(await row.locator('.purchase-order-inventory').innerText(), 'Sin datos');
-    assert.equal(await page.locator('#purchase-order-show-all-supplier-items').isDisabled(), true);
+    assert.equal(await page.locator('#purchase-order-show-all-supplier-items').isEnabled(), true);
     await row.locator('.purchase-order-quantity').fill(available ? '26' : '25');
     await page.locator('#confirm-purchase-order').click();
     await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
@@ -1170,6 +1455,103 @@ test('purchase order coverage uses consolidated warehouse demand and handles una
   assert.equal(await page.locator('#purchase-order-locals-inventory-header').isVisible(), false);
   assert.equal(await page.locator('.purchase-order-editor-table tfoot td').first().getAttribute('colspan'), '16');
   assert.equal(projectionRequests, 0);
+});
+
+test('tentative orders explain confirmation blockers and add unmanaged and catalog-only supplier products', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base, root, app, json, project } = await setup(t);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: ['A', 'B'].map(code => ({ code, internalUnit: 'L', transferUnit: 'L', unitsPerTransferUnit: 1 })) }) });
+  await json('/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', items: [{ key: 'A', supplierKey: '111', managed: true,
+      minDays: 7, maxDays: 14, unitsPerPackage: 2 }] }) });
+  const projection = await project();
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base);
+  await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  await page.evaluate(projection => {
+    openTentativePurchaseOrders();
+    const groups = tentativeGroupsForProjection(projection);
+    groups[0].buyingItems[0].quantity = 0;
+    tentativePurchaseOrdersState = { locations: [{ ...projection.location, projectionId: projection.projectionId, period: projection.period, groups }] };
+    populateTentativeLocationFilter(projection.location.id); renderTentativePurchaseOrderReview();
+  }, projection);
+  const confirm = page.locator('#confirm-tentative-purchase-order');
+  const validation = page.locator('#tentative-order-validation');
+  const row = key => page.locator(`#tentative-orders-buying-body tr[data-key="${key}"]`);
+  assert.equal(await confirm.isDisabled(), true);
+  assert.match(await validation.innerText(), /A · A:.*cantidad mayor que 0/);
+  await row('A').locator('.tentative-order-quantity').fill('1');
+  assert.match(await validation.innerText(), /múltiplos de 2 L/);
+  assert.equal(await row('A').locator('.tentative-order-quantity').getAttribute('aria-invalid'), 'true');
+  await row('A').locator('.tentative-order-quantity').fill('2');
+  assert.equal(await confirm.isEnabled(), true);
+  assert.equal(await validation.isVisible(), false);
+  await page.locator('[data-tentative-add="B"]').click();
+  assert.equal(await row('B').locator('.tentative-order-select').isChecked(), true);
+  assert.equal(await row('B').locator('.tentative-order-quantity').inputValue(), '1');
+  await row('B').locator('.tentative-order-cost').fill('');
+  assert.match(await validation.innerText(), /B · B:.*costo válido/);
+  await row('B').locator('.tentative-order-cost').fill('100');
+  await row('B').locator('.tentative-order-quantity').fill('0');
+  assert.equal(await confirm.isDisabled(), true);
+  await row('B').locator('.tentative-order-select').uncheck();
+  assert.equal(await confirm.isEnabled(), true);
+  await row('B').locator('.tentative-order-select').check();
+  await row('B').locator('.tentative-order-quantity').fill('1');
+  await page.evaluate(() => { currentTentativeOrderGroup().buyingItems[0].transferConfigured = false; renderTentativePurchaseOrderReview(); });
+  assert.match(await validation.innerText(), /Unidad de Transferencia a Cafeterías/);
+  await page.evaluate(() => { currentTentativeOrderGroup().buyingItems[0].transferConfigured = true; renderTentativePurchaseOrderReview(); });
+  // An item absent from the inventory projection can still be ordered from its supplier.
+  const masterFile = path.join(root, 'masters', 'catalog.xlsx'), book = XLSX.readFile(masterFile);
+  const catalogRows = XLSX.utils.sheet_to_json(book.Sheets.Ingr, { header: 1 });
+  catalogRows.push(['E', 'Extra de proveedor', 1, 200, 'UN']);
+  book.Sheets.Ingr = XLSX.utils.aoa_to_sheet(catalogRows); XLSX.writeFile(book, masterFile);
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'E', internalUnit: 'UN', transferUnit: 'UN', unitsPerTransferUnit: 1 }] }) });
+  await json('/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', items: [{ key: 'E', supplierKey: '111', managed: false,
+      minDays: 7, maxDays: 14, unitsPerPackage: 1 }] }) });
+  let stockReads = 0;
+  app.locals.toteatStockSync.current = () => { stockReads++; throw Error('Do not recalculate inventory to add products or confirm'); };
+  let loads = 0;
+  await page.route('**/api/purchase-projections/supplier-items?*', route => ++loads === 1
+    ? route.fulfill({ status: 500, json: { error: 'Reintenta la consulta de productos.' } }) : route.continue());
+  await row('A').locator('.tentative-order-quantity').fill('4');
+  const load = page.locator('#load-tentative-supplier-items');
+  await load.click();
+  await page.waitForFunction(() => document.getElementById('tentative-supplier-items-status').textContent.includes('Reintenta'));
+  assert.equal(await row('A').locator('.tentative-order-quantity').inputValue(), '4');
+  await load.click();
+  await page.locator('[data-tentative-add="E"]').waitFor();
+  const ids = await page.evaluate(() => ({ location: tentativePurchaseOrdersState.locations[0].projectionId, group: currentTentativeOrderGroup().projectionId }));
+  assert.equal(ids.location, projection.projectionId);
+  assert.ok(ids.group && ids.group !== ids.location);
+  await page.locator('[data-tentative-add="E"]').click();
+  assert.equal(await row('E').locator('.tentative-order-quantity').inputValue(), '1');
+  assert.equal(await confirm.isEnabled(), true);
+  let saves = 0;
+  await page.route('**/api/purchase-orders', route => ++saves === 1
+    ? route.fulfill({ status: 500, json: { error: 'Reintenta guardar la orden.' } }) : route.continue());
+  await confirm.click();
+  await page.waitForFunction(() => document.getElementById('tentative-purchase-orders-status').textContent.includes('Reintenta guardar'));
+  assert.equal(await confirm.isEnabled(), true);
+  assert.equal(await row('A').locator('.tentative-order-quantity').inputValue(), '4');
+  await confirm.click();
+  await page.waitForFunction(() => document.getElementById('tentative-purchase-orders-status').textContent.includes('confirmada y guardada'));
+  const orders = await json('/api/purchase-orders?location=store-2');
+  assert.equal(orders.orders.length, 1);
+  const saved = await json(`/api/purchase-orders/${orders.orders[0].id}`);
+  assert.deepEqual(saved.items.map(item => [item.key, item.quantity]), [['A', 4], ['B', 1], ['E', 1]]);
+  assert.equal(saved.total, 700);
+  assert.equal(saved.filters.onlyManaged, false);
+  assert.equal(saved.filters.onlyRequired, false);
+  assert.equal(await confirm.isDisabled(), true);
+  assert.equal(await page.locator('#print-confirmed-tentative-order').isVisible(), true);
+  assert.equal(stockReads, 0);
+  assert.deepEqual(errors, []);
 });
 
 test('UI saves reference configuration without loading projection, then shows comparable consumption on refresh', { skip: !fs.existsSync(chrome) }, async t => {
