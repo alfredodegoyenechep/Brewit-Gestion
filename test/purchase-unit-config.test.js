@@ -6,7 +6,7 @@ const units = require('../purchase-unit-config');
 const script = fs.readFileSync(path.join(__dirname, '../script.js'), 'utf8');
 const helpers = script.slice(script.indexOf('function supplyMultipleFromPolicy('), script.indexOf('function filteredPurchaseProjectionItems('));
 const recalculate = script.slice(script.indexOf('function recalculatePurchaseProjectionItem('), script.indexOf('function updateConsumptionReferenceButton('));
-const client = new Function(`${helpers}\n${recalculate}\nreturn { supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple, recalculatePurchaseProjectionItem, projectionSuggestionMetrics };`)();
+const client = new Function('ReplenishmentPolicy', `${helpers}\n${recalculate}\nreturn { supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple, recalculatePurchaseProjectionItem, projectionSuggestionMetrics };`)(require('../replenishment-policy'));
 
 test('transfer-only settings do not override buying units and costs scale even when both presentations share a label', () => {
   assert.equal(units.configuredPurchaseUnits({ transfer: { purchaseUnit: 'Pack', unitsPerPurchaseUnit: 6 } }, 'UN', () => 6), null);

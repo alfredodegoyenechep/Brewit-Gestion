@@ -255,3 +255,19 @@ test('UI requires an origin and confirmation, leaves data intact on cancellation
   assert.equal(await row.locator('.projection-managed-input').isChecked(), false);
   assert.deepEqual(errors, []);
 });
+
+test('inventory quantity limits validate atomically, preserve day settings and copy between locations', async t => {
+  const { base, read, copy } = await setup(t);
+  const save = items => fetch(base + '/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-1', items }) });
+  const a = { key: 'A', minDays: 3, maxDays: 10, unitsPerPackage: 1, supplierKey: 'supplier-a', managed: true, minInventory: 2.5, maxInventory: 500 };
+  assert.equal((await save([a])).status, 200);
+  const before = read();
+  for (const limits of [{ minInventory: -1 }, { minInventory: 501 }, { maxInventory: null }, { maxInventory: 'invalid' }, { maxInventory: true }, { maxInventory: 1e10 }]) {
+    assert.equal((await save([{ ...a, maxInventory: 600 }, { ...a, key: 'B', ...limits }])).status, 400);
+    assert.deepEqual(read(), before);
+  }
+  assert.equal((await copy({ location: 'store-2', sourceLocation: 'store-1', confirmed: true })).status, 200);
+  assert.deepEqual([read().locations['store-2'].items.A.minInventory, read().locations['store-2'].items.A.maxInventory], [2.5, 500]);
+  assert.deepEqual([read().locations['store-2'].items.A.minDays, read().locations['store-2'].items.A.maxDays], [3, 10]);
+});

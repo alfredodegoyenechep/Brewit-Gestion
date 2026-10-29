@@ -54,11 +54,11 @@ function differences(report, { consumables = false } = {}) {
         : 'Conserva el signo del Kardex: positivo indica sobrante y negativo, faltante. Los consumibles se presentan en su propio reporte.'] };
 }
 
-function balances(items, excluded = []) {
+function balances(items, excluded = [], configurations = {}) {
   const { isOther } = require('./other-consumables');
   const rows = items.map(item => ({
     code: item.code, name: item.name, quantity: item.quantity, unit: item.unit,
-    group: isOther(item.code) ? 'Otros consumibles' : 'Inventario sin consumibles',
+    group: isOther(item.code, configurations) ? 'Otros consumibles' : 'Inventario sin consumibles',
     unitCost: item.costAvailable ? item.unitCost : null,
     amount: item.costAvailable && Number.isFinite(item.quantity) ? item.quantity * item.unitCost : null,
     status: !Number.isFinite(item.quantity) ? 'Sin saldo físico' : !item.costAvailable ? 'Sin costo completo' : 'Valorizado'

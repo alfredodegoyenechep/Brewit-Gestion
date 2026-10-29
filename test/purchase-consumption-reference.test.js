@@ -1710,3 +1710,132 @@ test('UI saves reference configuration without loading projection, then shows co
   assert.equal(await open.isDisabled(), true);
   assert.deepEqual(errors, []);
 });
+
+test('inventory replenishment is shared in the master, uses location quantities without consumption, and orders retain its criteria', async t => {
+  const { root, stocks, json, project, configure, base } = await setup(t);
+  const saveMaster = items => json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) });
+  const updatePolicy = (location, minInventory, maxInventory, projectionId) => json('/api/purchase-projections/policies', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location, projectionId,
+      items: [{ key: 'A', minDays: 7, maxDays: 14, minInventory, maxInventory, unitsPerPackage: 1, supplierKey: '111', managed: true }] }) });
+  await saveMaster([{ code: 'A', internalUnit: 'L', replenishmentMode: 'inventory', purchaseUnit: 'Caja', unitsPerPurchaseUnit: 10, transferUnit: 'Botella', unitsPerTransferUnit: 2 }]);
+  await configure();
+  for (const id of ['store-2', 'main-warehouse']) {
+    for (const row of stocks[id].daily.filter(row => row.code === 'A')) Object.assign(row, { opening: 5, closing: 5, use: 0 });
+    await updatePolicy(id, 6, 17);
+    const projection = await project(id), item = projection.items.find(item => item.key === 'A');
+    assert.equal(item.replenishmentMode, 'inventory');
+    assert.equal(item.currentInventory, 5);
+    assert.equal(item.rawSuggestedInternalQuantity, 12);
+    assert.equal(item.minimumStock, 6);
+    assert.equal(item.maximumStock, 17);
+    assert.equal(item.needsPurchase, true);
+    assert.equal(item.suggestedPurchaseUnits, id === 'store-2' ? 6 : 2);
+    if (id === 'store-2') {
+      assert.ok(item.averageDailyConsumption > 0, 'reference demand cannot change inventory thresholds');
+      await updatePolicy(id, 6, 11, projection.projectionId);
+      const order = await json('/api/purchase-orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: id, supplierKey: '111', projectionId: projection.projectionId, useTransferUnits: true,
+          items: [{ key: 'A', quantity: 3, unitCost: 200, purchaseUnit: 'Botella', unitsPerPurchaseUnit: 2, internalUnit: 'L' }] }) });
+      assert.deepEqual([order.items[0].replenishmentMode, order.items[0].minInventory, order.items[0].maxInventory, order.items[0].suggestedPurchaseUnits], ['inventory', 6, 11, 3]);
+      await updatePolicy(id, 4, 11);
+      assert.equal((await project(id)).items.find(item => item.key === 'A').needsPurchase, false);
+    }
+  }
+  await updatePolicy('store-2', null, null);
+  const pending = (await project()).items.find(item => item.key === 'A');
+  assert.equal(pending.replenishmentConfigured, false);
+  assert.equal(pending.needsPurchase, false);
+  const masterFile = path.join(root, 'config', 'purchase-unit-configuration.json');
+  const before = fs.readFileSync(masterFile, 'utf8');
+  const invalid = await fetch(base + '/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', replenishmentMode: 'recipe' }, { code: 'B', internalUnit: 'L', replenishmentMode: 'unknown' }] }) });
+  assert.equal(invalid.status, 400);
+  assert.equal(fs.readFileSync(masterFile, 'utf8'), before);
+  await saveMaster([{ code: 'A', internalUnit: 'L', replenishmentMode: 'recipe' }]);
+  const reverted = (await project()).items.find(item => item.key === 'A');
+  assert.equal(reverted.replenishmentMode, 'recipe');
+  assert.ok(reverted.rawSuggestedInternalQuantity > 12, 'recipe mode again uses daily reference demand');
+  assert.equal(reverted.purchaseUnit, 'Botella');
+});
+
+test('master replenishment changes reclassify inventory and weekly final balances without losing combined totals', async t => {
+  const { app, stocks, json } = await setup(t);
+  app.locals.toteatStockSync.rebuild = id => stocks[id];
+  const process = () => json('/api/inventory/process', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', source: 'originals', criteriaMode: 'count-boundaries', initialInventoryDate: '2026-09-20', finalInventoryDate: '2026-09-26' }) });
+  const before = await process();
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', replenishmentMode: 'inventory' }] }) });
+  const after = await process();
+  assert.ok(before.report.items.some(item => item.code === 'A'));
+  assert.ok(!after.report.items.some(item => item.code === 'A'));
+  assert.deepEqual(after.otherConsumables.items.map(item => item.code), ['A']);
+  assert.equal(after.report.totalCost + after.otherConsumables.totalCost, before.report.totalCost);
+  const configurations = { A: { replenishmentMode: 'inventory' }, PAC014: { replenishmentMode: 'recipe' } };
+  const balances = require('../weekly-results-details').balances([
+    { code: 'A', quantity: 2, unitCost: 100, costAvailable: true },
+    { code: 'PAC014', quantity: 3, unitCost: 10, costAvailable: true }
+  ], [], configurations);
+  assert.deepEqual(balances.rows.map(row => row.group), ['Otros consumibles', 'Inventario sin consumibles']);
+  assert.deepEqual(balances.groups.map(group => group.amount), [30, 200]);
+});
+
+test('UI configures inventory replenishment, edits fractional stock limits and saves a cafeteria order', { skip: !fs.existsSync(chrome) }, async t => {
+  const { stocks, base, json } = await setup(t);
+  for (const row of stocks['store-2'].daily.filter(row => row.code === 'A')) Object.assign(row, { opening: 2, closing: 2, use: 0 });
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'A', internalUnit: 'L', transferUnit: 'Botella', unitsPerTransferUnit: 2 }] }) });
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base); await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  await page.locator('#projection-location-filter').selectOption('store-2');
+  await page.locator('#open-ingredient-purchase-master').click();
+  const masterRow = page.locator('#ingredient-purchase-master-body tr[data-code="A"]');
+  await masterRow.locator('.ingredient-master-replenishment-mode').selectOption('inventory');
+  await page.locator('#save-ingredient-purchase-master').click();
+  await page.waitForFunction(() => !document.getElementById('ingredient-purchase-master-dialog').open);
+  await page.locator('#refresh-purchase-projection').click();
+  await page.waitForFunction(() => purchaseProjectionState !== null);
+  await page.locator('#show-all-projection-ingredients').click();
+  const row = page.locator('#purchase-projection-body tr[data-key="A"]');
+  assert.equal(await row.locator('.projection-min-input').getAttribute('data-field'), 'minInventory');
+  assert.equal(await row.locator('.projection-min-input').inputValue(), '');
+  assert.match(await row.innerText(), /Configura inventario mínimo y máximo/);
+  await row.locator('.projection-min-input').fill('3.5');
+  await row.locator('.projection-max-input').fill('10.5');
+  await row.locator('.projection-managed-input').check();
+  await row.locator('.projection-supplier-input').selectOption('111');
+  assert.equal(await page.evaluate(() => purchaseProjectionState.items.find(item => item.key === 'A').suggestedPurchaseUnits), 5);
+  await page.locator('#save-projection-policies').click();
+  await page.waitForFunction(() => document.getElementById('purchase-projection-status').textContent.includes('guardados correctamente'));
+  await page.locator('#projection-supplier-filter').selectOption('111');
+  await page.locator('#print-purchase-order').click();
+  const orderRow = page.locator('#purchase-order-editor-body tr[data-key="A"]');
+  assert.match(await orderRow.locator('.purchase-order-min-days').innerText(), /3,50 L/);
+  assert.match(await orderRow.locator('.purchase-order-coverage-after').innerText(), /12,00 L/);
+  await page.locator('#confirm-purchase-order').click();
+  await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
+  const orders = await json('/api/purchase-orders?location=store-2');
+  const saved = await json(`/api/purchase-orders/${orders.orders[0].id}`);
+  assert.equal(saved.items[0].replenishmentMode, 'inventory');
+  assert.equal(saved.items[0].quantity, 5);
+  assert.deepEqual(errors, []);
+});
+
+test('first master access initializes existing consumables by inventory and preserves later explicit method choices', async t => {
+  const { root, json } = await setup(t);
+  const file = path.join(root, 'masters', 'catalog.xlsx'), book = XLSX.readFile(file);
+  const rows = XLSX.utils.sheet_to_json(book.Sheets.Ingr, { header: 1 });
+  rows.push(['PAC014', 'Papel sandwich', 1, 100, 'UN']);
+  book.Sheets.Ingr = XLSX.utils.aoa_to_sheet(rows); XLSX.writeFile(book, file);
+  const master = await json('/api/purchase-projections/ingredient-master');
+  assert.equal(master.items.find(item => item.code === 'PAC014').replenishmentMode, 'inventory');
+  assert.equal(master.items.find(item => item.code === 'A').replenishmentMode, 'recipe');
+  const configFile = path.join(root, 'config', 'purchase-unit-configuration.json');
+  assert.equal(JSON.parse(fs.readFileSync(configFile)).items.PAC014.replenishmentMode, 'inventory');
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: [{ code: 'PAC014', internalUnit: 'UN', replenishmentMode: 'recipe' }] }) });
+  assert.equal((await json('/api/purchase-projections/ingredient-master')).items.find(item => item.code === 'PAC014').replenishmentMode, 'recipe');
+});

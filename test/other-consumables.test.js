@@ -37,3 +37,14 @@ test('unknown count and cost remain visible in Other Consumables without fabrica
   assert.equal(other.items.length,1);assert.equal(report.items.length,0);
   assert.equal(summary.metrics.otherConsumables.amount,null);assert.equal(summary.metrics.otherConsumables.partial,true);
 });
+
+test('explicit master methods add new consumables and remove previous codes from both included and excluded rows', () => {
+  const item = code => ({ code, totalCost: -10, totalCostBeforeCompensations: -10, costAvailable: true });
+  const report = { boundaryMode: true, items: [item('NEW'), item('PAC014'), item('NORMAL')], excluded: [{ code: 'NEW' }, { code: 'PAC014' }] };
+  const summary = { netSales: 100, metrics: { adjustedKardexTotalCost: {} } };
+  const other = separateOtherConsumables(report, summary, true, { NEW: { replenishmentMode: 'inventory' }, PAC014: { replenishmentMode: 'recipe' } });
+  assert.deepEqual(other.items.map(row => row.code), ['NEW']);
+  assert.deepEqual(other.excluded.map(row => row.code), ['NEW']);
+  assert.deepEqual(report.items.map(row => row.code), ['PAC014', 'NORMAL']);
+  assert.deepEqual(report.excluded.map(row => row.code), ['PAC014']);
+});

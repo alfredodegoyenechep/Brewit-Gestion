@@ -32,6 +32,7 @@ const { CURVES: CONSUMPTION_REFERENCE_CURVES, monthlyAnniversary, referenceStatu
 const { consolidateLocalTotals } = require('./purchase-local-totals');
 const { PURCHASE_UNIT_OPTIONS, purchaseUnitLabel, configuredPurchaseUnits, configuredPurchaseCost,
   transferOrderItem, supplyMultipleFromPolicy, purchaseUnitsForInternalQuantity, isSupplyMultiple } = require('./purchase-unit-config');
+const ReplenishmentPolicy = require('./replenishment-policy');
 const PURCHASE_PROJECTION_EXTRA_CODES = new Set(['SUB005', 'B2860', 'B2850', 'B2840', 'B2830']);
 
 const DEFAULT_PORT = 3000;
@@ -2259,11 +2260,15 @@ function createApp(options = {}) {
     if (!master) throw Object.assign(new Error('Actualiza el maestro de ingredientes antes de configurar las unidades de compra.'), { status: 404 });
     const registry = suppliedRegistry || readJson(purchaseUnitConfigurationPath, { items: {} });
     const configurations = registry.items ||= {};
-    let initializedTransfers = 0;
+    let initializedTransfers = 0, initializedReplenishmentModes = 0;
     const conversions = parsePurchaseUnitConversions(master.filePath);
     const items = [...parseIngredientCatalog(master.filePath).values()]
       .filter(item => item.type === 'ingredient' || PURCHASE_PROJECTION_EXTRA_CODES.has(item.code.toUpperCase())).map(item => {
       const key = item.code.toUpperCase();
+      if (!Object.hasOwn(ReplenishmentPolicy.labels, configurations[key]?.replenishmentMode)) {
+        configurations[key] = { ...configurations[key], replenishmentMode: ReplenishmentPolicy.modeFor(key, configurations[key]) };
+        initializedReplenishmentModes++;
+      }
       const catalog = conversions.get(key);
       const conversion = [...(catalog?.conversions.values() || [])].find(value => normalizedUnit(value.purchaseUnit) !== normalizedUnit(item.unit))
         || [...(catalog?.conversions.values() || [])][0];
@@ -2281,7 +2286,7 @@ function createApp(options = {}) {
       }
       const transfer = configuredPurchaseUnits(configurations[key]?.transfer, item.unit, convertQuantityUnit);
       return { code: key, name: item.name, internalUnit: item.unit, active: item.active,
-        purchaseUnit, unitsPerPurchaseUnit,
+        purchaseUnit, unitsPerPurchaseUnit, replenishmentMode: configurations[key].replenishmentMode,
         configured: Boolean(configured), masterPurchaseUnit: purchaseUnitLabel(masterPurchaseUnit), masterContent,
         transferUnit: purchaseUnitLabel(transfer?.purchaseUnit), unitsPerTransferUnit: transfer?.unitsPerPurchaseUnit ?? null,
         transferConfigured: Boolean(transfer),
@@ -2289,8 +2294,8 @@ function createApp(options = {}) {
           purchaseUnitLabel(transfer?.purchaseUnit),
           ...[...(catalog?.conversions.values() || [])].map(value => purchaseUnitLabel(value.purchaseUnit))].filter(Boolean))] };
     }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    if (initializedTransfers && persist) writeJsonAtomic(purchaseUnitConfigurationPath, registry);
-    return { items, purchaseUnitOptions: PURCHASE_UNIT_OPTIONS, masterDate: master.validFrom, initializedTransfers };
+    if ((initializedTransfers || initializedReplenishmentModes) && persist) writeJsonAtomic(purchaseUnitConfigurationPath, registry);
+    return { items, purchaseUnitOptions: PURCHASE_UNIT_OPTIONS, masterDate: master.validFrom, initializedTransfers, initializedReplenishmentModes };
   }
 
   function purchaseUnitConfigurationsWithTransfers() {
@@ -3578,6 +3583,7 @@ function createApp(options = {}) {
   app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
   app.get('/styles.css', (req, res) => res.sendFile(path.join(__dirname, 'styles.css')));
+  app.get('/replenishment-policy.js', (req, res) => res.sendFile(path.join(__dirname, 'replenishment-policy.js')));
   app.get('/script.js', (req, res) => res.sendFile(path.join(__dirname, 'script.js')));
   app.get('/sales-projection.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-projection.js')));
   app.get('/sales-projection-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-projection-view.js')));
@@ -4899,16 +4905,12 @@ function createApp(options = {}) {
         = purchaseOrderingDetails(key, product, location, policy, {
           references, conversions, purchaseUnitConfigurations, supplierOptions, costResolver, costCatalog
         });
-      const minimumStock = averageDailyConsumption * minDays;
-      const maximumStock = averageDailyConsumption * maxDays;
-      const ownNeedsPurchase = Number.isFinite(currentInventory) && averageDailyConsumption > 0 && currentInventory <= minimumStock;
-      const ownSuggestedInternalQuantity = ownNeedsPurchase ? Math.max(0, maximumStock - currentInventory) : 0;
-      const rawSuggestedInternalQuantity = !Number.isFinite(currentInventory) ? 0 : averageDailyConsumption > 0
-        ? (currentInventory <= minimumStock
-          ? Math.max(0, maximumStock - currentInventory)
-          : 0)
-        : Math.max(0, -currentInventory);
-      const needsPurchase = rawSuggestedInternalQuantity > 0;
+      const replenishmentMode = ReplenishmentPolicy.modeFor(key, purchaseUnitConfigurations[key]);
+      const minInventory = ReplenishmentPolicy.quantity(policy.minInventory);
+      const maxInventory = ReplenishmentPolicy.quantity(policy.maxInventory);
+      const replenishment = ReplenishmentPolicy.metrics({ replenishmentMode, minInventory, maxInventory,
+        currentInventory, averageDailyConsumption, minDays, maxDays });
+      const { rawSuggestedInternalQuantity, needsPurchase } = replenishment;
       const suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(rawSuggestedInternalQuantity, unitsPerPurchaseUnit, unitsPerPackage);
       const suggestedInternalQuantity = suggestedPurchaseUnits === null ? rawSuggestedInternalQuantity
         : Number((suggestedPurchaseUnits * unitsPerPurchaseUnit).toPrecision(12));
@@ -4947,11 +4949,8 @@ function createApp(options = {}) {
         unitsPerPackage,
         unitsPerPackageBasis: 'purchase',
         managed,
-        minimumStock,
-        maximumStock,
-        ownNeedsPurchase,
-        ownSuggestedInternalQuantity,
-        rawSuggestedInternalQuantity,
+        replenishmentMode, minInventory, maxInventory,
+        ...replenishment,
         purchaseOrderInternalQuantity,
         purchaseOrderConversionMissing,
         inventoryAfterPurchaseOrders,
@@ -5049,7 +5048,7 @@ function createApp(options = {}) {
     const projectionId = crypto.randomUUID();
     const fields = ['key', 'code', 'name', 'supplierKey', 'internalUnit', 'purchaseUnit', 'unitsPerPurchaseUnit',
       'unitsPerPackage', 'unitsPerPackageBasis', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost',
-      'currentInventory', 'averageDailyConsumption'];
+      'currentInventory', 'averageDailyConsumption', 'minDays', 'maxDays', 'replenishmentMode', 'minInventory', 'maxInventory'];
     const snapshot = { createdAt: Date.now(), projection: {
       location: projection.location, company: projection.company, period: projection.period,
       suppliers: projection.suppliers,
@@ -5106,7 +5105,9 @@ function createApp(options = {}) {
           unitsPerPackage: details.unitsPerPackage, unitsPerPackageBasis: 'purchase',
           estimatedPurchaseUnitCost: details.estimatedPurchaseUnitCost,
           currentInventory: null, averageDailyConsumption: null, suggestedPurchaseUnits: null,
-          minDays: policy.minDays ?? 7, maxDays: policy.maxDays ?? 14 });
+          minDays: policy.minDays ?? 7, maxDays: policy.maxDays ?? 14,
+          replenishmentMode: ReplenishmentPolicy.modeFor(key, context.purchaseUnitConfigurations[key]),
+          minInventory: ReplenishmentPolicy.quantity(policy.minInventory), maxInventory: ReplenishmentPolicy.quantity(policy.maxInventory) });
       }
       // Preserve ordering units and reviewed quantities from a displayed projection.
       if (req.query.projectionId) {
@@ -5184,6 +5185,13 @@ function createApp(options = {}) {
         if (item.internalUnit !== ingredient.internalUnit) return res.status(409).json({ error: `La unidad interna de ${code} cambió. Cierra y vuelve a abrir el maestro para revisar la equivalencia.` });
         const configuration = { ...registry.items[code] };
         let changed = false;
+        if (Object.hasOwn(item, 'replenishmentMode')) {
+          if (!Object.hasOwn(ReplenishmentPolicy.labels, item.replenishmentMode)) {
+            return res.status(400).json({ error: `${code}: selecciona un método de reposición válido.` });
+          }
+          configuration.replenishmentMode = item.replenishmentMode;
+          changed = true;
+        }
         for (const [unitField, quantityField, transfer] of [
           ['purchaseUnit', 'unitsPerPurchaseUnit', false], ['transferUnit', 'unitsPerTransferUnit', true]
         ]) {
@@ -5206,7 +5214,7 @@ function createApp(options = {}) {
           else Object.assign(configuration, value);
         }
         if (!changed) return res.status(400).json({ error: `${code}: no se recibieron equivalencias para guardar.` });
-        updates.set(code, configuration.purchaseUnit || configuration.transfer
+        updates.set(code, configuration.purchaseUnit || configuration.transfer || configuration.replenishmentMode
           ? { ...configuration, updatedAt: new Date().toISOString() } : null);
       }
       for (const [code, configuration] of updates) {
@@ -5267,22 +5275,31 @@ function createApp(options = {}) {
     registry.locations[location.id] ||= { items: {} };
     for (const item of requested) {
       const key = String(item.key || '').trim().toUpperCase();
+      const previous = registry.locations[location.id].items[key] || {};
       const minDays = Number(item.minDays);
       const maxDays = Number(item.maxDays);
       const unitsPerPackage = item.unitsPerPackage === undefined ? 1 : Number(item.unitsPerPackage);
       const managed = item.managed === true;
       const supplierKey = String(item.supplierKey || 'unassigned').trim();
+      const minInventory = ReplenishmentPolicy.quantity(item.minInventory === undefined ? previous.minInventory : item.minInventory);
+      const maxInventory = ReplenishmentPolicy.quantity(item.maxInventory === undefined ? previous.maxInventory : item.maxInventory);
+      if (!ReplenishmentPolicy.validInventoryRange(minInventory, maxInventory)
+        || ['minInventory', 'maxInventory'].some(field => item[field] != null && item[field] !== '' && ReplenishmentPolicy.quantity(item[field]) === null)) {
+        return res.status(400).json({ error: `${key}: ingresa inventarios mínimo y máximo válidos en unidades de consumo; el máximo debe ser mayor o igual al mínimo.` });
+      }
       if (!key || !Number.isFinite(minDays) || !Number.isFinite(maxDays) || !Number.isFinite(unitsPerPackage)
         || minDays < 0 || maxDays < minDays || maxDays > 365 || unitsPerPackage <= 0 || unitsPerPackage > 1000000) {
         return res.status(400).json({ error: 'Cada ítem debe tener días mínimos, días máximos y un múltiplo mínimo de abastecimiento válidos; el máximo no puede ser menor que el mínimo.' });
       }
       registry.locations[location.id].items[key] = {
-        minDays, maxDays, unitsPerPackage, unitsPerPackageBasis: 'purchase', supplierKey, managed, updatedAt: new Date().toISOString()
+        minDays, maxDays, minInventory, maxInventory, unitsPerPackage, unitsPerPackageBasis: 'purchase', supplierKey, managed, updatedAt: new Date().toISOString()
       };
     }
     writeJsonAtomic(purchaseProjectionPoliciesPath, registry);
     // Update ordering rules against the reviewed inventory snapshot; do not read stock again.
-    const snapshot = purchaseOrderProjections.get(req.body?.projectionId);
+    const projectionId = String(req.body?.projectionId || '');
+    const snapshot = purchaseOrderProjections.get(projectionId)
+      || (/^[0-9a-f-]{36}$/.test(projectionId) ? readJson(projectionCacheFile(projectionId), null) : null);
     const clearedCostKeys = [];
     if (snapshot?.projection.location.id === location.id
       && Date.now() - snapshot.createdAt <= purchaseOrderProjectionLifetime) {
@@ -5297,12 +5314,12 @@ function createApp(options = {}) {
         item.supplierKey = policy.supplierKey;
         item.unitsPerPackage = policy.unitsPerPackage;
         item.unitsPerPackageBasis = 'purchase';
-        const daily = item.averageDailyConsumption, inventory = item.currentInventory;
-        const needed = !Number.isFinite(inventory) ? 0 : daily > 0
-          ? (inventory <= daily * policy.minDays ? Math.max(0, daily * policy.maxDays - inventory) : 0)
-          : Math.max(0, -inventory);
-        item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(needed, item.unitsPerPurchaseUnit, item.unitsPerPackage);
+        Object.assign(item, { minDays: policy.minDays, maxDays: policy.maxDays,
+          minInventory: policy.minInventory, maxInventory: policy.maxInventory });
+        Object.assign(item, ReplenishmentPolicy.metrics(item));
+        item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(item.rawSuggestedInternalQuantity, item.unitsPerPurchaseUnit, item.unitsPerPackage);
       }
+      writeJsonAtomic(projectionCacheFile(projectionId), snapshot);
     }
     return res.json({ ok: true, saved: requested.length, clearedCostKeys });
   });
@@ -5335,12 +5352,17 @@ function createApp(options = {}) {
     for (const [key, policy] of sourceItems) {
       const minDays = Number(policy.minDays ?? 7), maxDays = Number(policy.maxDays ?? 14);
       const unitsPerPackage = Number(policy.unitsPerPackage ?? 1);
+      const minInventory = ReplenishmentPolicy.quantity(policy.minInventory), maxInventory = ReplenishmentPolicy.quantity(policy.maxInventory);
+      if (!ReplenishmentPolicy.validInventoryRange(minInventory, maxInventory)) {
+        return res.status(400).json({ error: `Revisa los inventarios mínimo y máximo de ${key} antes de copiarlos.` });
+      }
       if (!Number.isFinite(minDays) || !Number.isFinite(maxDays) || !Number.isFinite(unitsPerPackage)
         || minDays < 0 || maxDays < minDays || maxDays > 365 || unitsPerPackage <= 0 || unitsPerPackage > 1000000) {
         return res.status(400).json({ error: `Revisa los criterios guardados de ${key} en la cafetería de origen antes de copiarlos.` });
       }
       items[key] = { minDays, maxDays, unitsPerPackage, supplierKey: String(policy.supplierKey || 'unassigned').trim(),
         managed: policy.managed === true, updatedAt,
+        ...(Object.hasOwn(policy, 'minInventory') || Object.hasOwn(policy, 'maxInventory') ? { minInventory, maxInventory } : {}),
         ...(policy.unitsPerPackageBasis === 'purchase' ? { unitsPerPackageBasis: 'purchase' } : {}) };
     }
     registry.locations ||= {};
@@ -5491,6 +5513,9 @@ function createApp(options = {}) {
         unitsPerPurchaseUnit: Number.isFinite(unitsPerPurchaseUnit) ? unitsPerPurchaseUnit : null,
         unitsPerPackage: Number.isFinite(unitsPerPackage) && unitsPerPackage > 0 ? unitsPerPackage : 1,
         unitsPerPackageBasis: 'purchase',
+        replenishmentMode: source.replenishmentMode || 'recipe',
+        minInventory: source.minInventory ?? null, maxInventory: source.maxInventory ?? null,
+        minDays: source.minDays ?? null, maxDays: source.maxDays ?? null,
         suggestedPurchaseUnits: source.suggestedPurchaseUnits ?? null,
         referenceUnitCost: referenceCost,
         quantity,
@@ -8149,7 +8174,7 @@ function createApp(options = {}) {
     const available = item => Number.isFinite(item.quantity) && item.costAvailable && Number.isFinite(item.unitCost);
     const known = items.filter(available);
     const missingCodes = items.filter(item => !available(item)).map(item => item.code);
-    collectDetail(weeklyDetailBuilder.balances(items, excluded));
+    collectDetail(weeklyDetailBuilder.balances(items, excluded, readJson(purchaseUnitConfigurationPath, { items: {} }).items));
     return value(known.length ? known.reduce((sum, item) => sum + item.quantity * item.unitCost, 0) : null,
       excluded.length || missingCodes.length ? 'partial' : 'complete', { basis, date, costCutoff: date, missingCodes });
   }
@@ -8925,7 +8950,8 @@ function createApp(options = {}) {
       require('./inventory-period-activity').markPeriodMovementActivity(report, { stock, parsed, consumption, location, convertQuantity: convertQuantityUnit, numericValue });
       const otherConsumables = location.id === 'main-warehouse'
         ? null
-        : require('./other-consumables').separateOtherConsumables(report, executiveSummary, location.type === 'warehouse' || !!salesData.filesRead);
+        : require('./other-consumables').separateOtherConsumables(report, executiveSummary, location.type === 'warehouse' || !!salesData.filesRead,
+          readJson(purchaseUnitConfigurationPath, { items: {} }).items);
       const { applyInventoryValueSummary, inventoryValue } = require('./inventory-cost-summary');
       applyInventoryValueSummary(executiveSummary, report, otherConsumables);
       if (originalMode && boundaryMode) {

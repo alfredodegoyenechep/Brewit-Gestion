@@ -1,15 +1,9 @@
-const CODES = new Set([
-  'PAC014','PAC015','PAC016','PAC017','PAC018','PAC019','PAC020','PAC021','PAC022',
-  'PAC023','PAC026','PAC027','PAC028','PAC029','PAC030','PAC031',
-  'JUG005','JUG006','JUG007',
-  'IAM001','IAM002','IAM003','IAG001','IAG002','IAG003','IAG004','IAG005',
-  '6a062289438313ae8fee6459','6a062287438313ae8fee6455'
-]);
-const isOther = code => CODES.has(String(code).trim());
-function separateOtherConsumables(report, summary, adjustmentsAvailable) {
+const { legacyConsumables: CODES, modeFor } = require('./replenishment-policy');
+const isOther = (code, configurations = {}) => modeFor(code, configurations[String(code).trim().toUpperCase()]) === 'inventory';
+function separateOtherConsumables(report, summary, adjustmentsAvailable, configurations = {}) {
   const subset = selected => {
-    const items = report.items.filter(item => isOther(item.code) === selected);
-    const excluded = (report.excluded || []).filter(item => isOther(item.code) === selected);
+    const items = report.items.filter(item => isOther(item.code, configurations) === selected);
+    const excluded = (report.excluded || []).filter(item => isOther(item.code, configurations) === selected);
     return {...report,items,excluded,itemCount:items.length,
       physicalFinalItems:items.filter(item=>item.finalIsPhysical).length,
       totalCostBeforeCompensations:items.every(item=>Number.isFinite(item.totalCostBeforeCompensations)&&item.costAvailable)?items.reduce((sum,item)=>sum+item.totalCostBeforeCompensations,0):null,

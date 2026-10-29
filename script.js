@@ -1,6 +1,6 @@
 const IngredientMasterExport = (() => {
   const headers = ['Código', 'Ingrediente', 'Unidad de Consumo', 'Unidad de Abastecimiento', 'Un. de Consumo x Un. de Abast.', 'Equivalencia',
-    'Unidad de Transferencia a Cafeterías', 'Un. de Consumo x Un. de Transferencia', 'Equivalencia transferencia'];
+    'Unidad de Transferencia a Cafeterías', 'Un. de Consumo x Un. de Transferencia', 'Equivalencia transferencia', 'Método de reposición'];
   const quantity = value => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 4 }).format(value);
 
   function values(item, draft = item) {
@@ -15,7 +15,8 @@ const IngredientMasterExport = (() => {
     return [item.code, item.name, item.internalUnit || 'Sin unidad de consumo', unit, content,
       unit && content !== null ? `1 ${unit} = ${quantity(content)} ${item.internalUnit}` : 'Sin equivalencia',
       transferUnit, transferContent, transferUnit && transferContent !== null
-        ? `1 ${transferUnit} = ${quantity(transferContent)} ${item.internalUnit}` : 'Sin equivalencia'];
+        ? `1 ${transferUnit} = ${quantity(transferContent)} ${item.internalUnit}` : 'Sin equivalencia',
+      (draft.replenishmentMode || item.replenishmentMode) === 'inventory' ? 'Por inventario mínimo y máximo' : 'Por Consumo Receta'];
   }
 
   function csv(rows, decimalSystem = 'comma') {
@@ -31,9 +32,9 @@ const IngredientMasterExport = (() => {
 
   function workbook(rows, XLSX) {
     const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    sheet['!cols'] = [16, 48, 20, 22, 30, 40, 32, 34, 40].map(wch => ({ wch }));
+    sheet['!cols'] = [16, 48, 20, 22, 30, 40, 32, 34, 40, 36].map(wch => ({ wch }));
     sheet['!autofilter'] = { ref: sheet['!ref'] };
-    sheet['!brewitTextColumns'] = [0, 1, 2, 3, 5, 6, 8];
+    sheet['!brewitTextColumns'] = [0, 1, 2, 3, 5, 6, 8, 9];
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Ingredientes');
     return book;
@@ -44,7 +45,7 @@ const IngredientMasterExport = (() => {
     doc.setProperties({ title: 'Maestro de ingredientes', author: 'Brewit' });
     const width = doc.internal.pageSize.getWidth(), height = doc.internal.pageSize.getHeight();
     const margin = 28, bottom = height - 32, lineHeight = 11;
-    const widths = [.07, .18, .07, .105, .115, .115, .12, .11, .115].map(ratio => ratio * (width - margin * 2));
+    const widths = [.06, .15, .06, .09, .10, .095, .11, .10, .105, .13].map(ratio => ratio * (width - margin * 2));
     const font = (bold = false, size = 9) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); };
     const split = row => row.map((value, index) => doc.splitTextToSize(String(value ?? ''), widths[index] - 12));
     const draw = (cells, y, rowHeight, header = false) => {
@@ -137,6 +138,9 @@ let consumptionReferenceConfiguration = null;
 let ingredientPurchaseMasterState = null;
 let ingredientPurchaseMasterDrafts = new Map();
 let ingredientPurchaseMasterRequest = 0;
+const ingredientPurchaseMasterSort = { key: 'name', direction: 'asc' };
+const ingredientPurchaseMasterSortFields = { code: 0, name: 1, internalUnit: 2, replenishmentMode: 9,
+  purchaseUnit: 3, unitsPerPurchaseUnit: 4, equivalence: 5, transferUnit: 6, unitsPerTransferUnit: 7, transferEquivalence: 8 };
 let purchaseOrderEditorState = null;
 const pastPurchaseOrdersCache = new Map();
 let pastPurchaseOrdersRequestSequence = 0;
@@ -7515,17 +7519,7 @@ function updatePurchaseOrderButton() {
 }
 
 function recalculatePurchaseProjectionItem(item) {
-  item.minimumStock = item.averageDailyConsumption * item.minDays;
-  item.maximumStock = item.averageDailyConsumption * item.maxDays;
-  item.ownNeedsPurchase = Number.isFinite(item.currentInventory) && item.averageDailyConsumption > 0 && item.currentInventory <= item.minimumStock;
-  item.ownSuggestedInternalQuantity = item.ownNeedsPurchase
-    ? Math.max(0, item.maximumStock - item.currentInventory) : 0;
-  item.rawSuggestedInternalQuantity = !Number.isFinite(item.currentInventory) ? 0 : item.averageDailyConsumption > 0
-    ? (item.currentInventory <= item.minimumStock
-      ? Math.max(0, item.maximumStock - item.currentInventory)
-      : 0)
-    : Math.max(0, -item.currentInventory);
-  item.needsPurchase = item.rawSuggestedInternalQuantity > 0;
+  Object.assign(item, ReplenishmentPolicy.metrics(item));
   item.suggestedPurchaseUnits = purchaseUnitsForInternalQuantity(
     item.rawSuggestedInternalQuantity, item.unitsPerPurchaseUnit, item.unitsPerPackage
   );
@@ -7647,11 +7641,20 @@ function ingredientMasterEquivalence(row, item, draft) {
 function visibleIngredientPurchaseMasterItems() {
   const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   const query = normalize(document.getElementById('ingredient-purchase-master-search').value);
-  return (ingredientPurchaseMasterState?.items || []).filter(item => normalize(`${item.code} ${item.name}`).includes(query));
+  const items = (ingredientPurchaseMasterState?.items || []).filter(item => normalize(`${item.code} ${item.name}`).includes(query));
+  const sortIndex = ingredientPurchaseMasterSortFields[ingredientPurchaseMasterSort.key];
+  return sortRows(items.map(item => ({ item,
+    sortValue: IngredientMasterExport.values(item, ingredientPurchaseMasterDrafts.get(item.code) || item)[sortIndex]
+  })), { key: 'sortValue', direction: ingredientPurchaseMasterSort.direction }).map(row => row.item);
 }
 
 function renderIngredientPurchaseMaster() {
   const items = visibleIngredientPurchaseMasterItems();
+  document.querySelectorAll('#ingredient-purchase-master-dialog thead th[data-sort-key]').forEach(header => {
+    markSortableHeader(header, header.dataset.sortKey, ingredientPurchaseMasterSort, header.textContent.replace(/ [▲▼]$/, ''));
+    header.tabIndex = 0;
+    header.title = 'Ordenar ascendente o descendente';
+  });
   document.getElementById('ingredient-purchase-master-body').replaceChildren(...items.map(item => {
     const draft = ingredientPurchaseMasterDrafts.get(item.code) || item;
     const row = document.createElement('tr');
@@ -7661,6 +7664,13 @@ function renderIngredientPurchaseMaster() {
       cell.textContent = value;
       row.appendChild(cell);
     }
+    const methodCell = document.createElement('td');
+    const method = document.createElement('select');
+    method.className = 'ingredient-master-replenishment-mode';
+    method.setAttribute('aria-label', `Método de reposición de ${item.name}`);
+    method.replaceChildren(...Object.entries(ReplenishmentPolicy.labels).map(([key, label]) => new Option(label, key)));
+    method.value = draft.replenishmentMode || item.replenishmentMode || 'recipe';
+    methodCell.append(method); row.append(methodCell);
     const unitCell = document.createElement('td');
     const select = document.createElement('select');
     select.className = 'ingredient-master-purchase-unit';
@@ -7771,7 +7781,8 @@ function editIngredientPurchaseMaster(event) {
   transferInput.disabled = !transferUnit;
   const draft = { code: item.code, internalUnit: item.internalUnit, purchaseUnit,
     unitsPerPurchaseUnit: purchaseUnit ? input.value : null,
-    transferUnit, unitsPerTransferUnit: transferUnit ? transferInput.value : null };
+    transferUnit, unitsPerTransferUnit: transferUnit ? transferInput.value : null,
+    replenishmentMode: row.querySelector('.ingredient-master-replenishment-mode').value };
   ingredientPurchaseMasterDrafts.set(item.code, draft);
   ingredientMasterEquivalence(row, item, draft);
   document.getElementById('save-ingredient-purchase-master').disabled = false;
@@ -7792,7 +7803,7 @@ async function openIngredientPurchaseMaster() {
     if (request !== ingredientPurchaseMasterRequest || !dialog.open) return;
     ingredientPurchaseMasterState = data;
     renderIngredientPurchaseMaster();
-    setStatus(status, `${data.items.length} ingredientes. Abastecimiento para Bodega Principal y transferencia para cafeterías; equivalencias compartidas.`, 'muted');
+    setStatus(status, `${data.items.length} ingredientes. Método de reposición y equivalencias compartidos. Mínimos y máximos por ubicación en la proyección.`, 'muted');
   } catch (error) {
     if (request === ingredientPurchaseMasterRequest && dialog.open) setStatus(status, error.message, 'error');
   }
@@ -7816,7 +7827,7 @@ async function saveIngredientPurchaseMaster() {
   document.getElementById('ingredient-purchase-master-search').disabled = true;
   dialog.querySelectorAll('.ingredient-purchase-master-exports button').forEach(control => { control.disabled = true; });
   dialog.querySelectorAll('tbody input, tbody select').forEach(control => { control.disabled = true; });
-  setStatus(status, 'Guardando unidades de abastecimiento y transferencia…');
+  setStatus(status, 'Guardando configuración de ingredientes…');
   try {
     await apiRequest('/api/purchase-projections/ingredient-master', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items })
@@ -7825,7 +7836,7 @@ async function saveIngredientPurchaseMaster() {
     ingredientPurchaseMasterDrafts.clear();
     resetPurchaseProjection();
     setStatus(document.getElementById('purchase-projection-status'),
-      'Unidades de abastecimiento y transferencia guardadas. Presiona Actualizar para cargar la proyección.', 'success');
+      'Configuración de ingredientes guardada. Presiona Actualizar para cargar la proyección y renovar los reportes de inventario.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
@@ -8005,6 +8016,15 @@ function renderPurchaseProjection() {
       cell.title = value;
       row.appendChild(cell);
     });
+    {
+      const methodNote = document.createElement('small');
+      methodNote.textContent = ReplenishmentPolicy.labels[item.replenishmentMode || 'recipe'];
+      row.lastElementChild.append(methodNote);
+    }
+    if (item.replenishmentMode === 'inventory' && !item.replenishmentConfigured) {
+      const note = document.createElement('small'); note.textContent = 'Configura inventario mínimo y máximo';
+      row.lastElementChild.append(note);
+    }
     if (item.hasInventoryHistory === false) {
       const note = document.createElement('small'); note.textContent = 'Sin inventario verificable · compra manual';
       row.lastElementChild.appendChild(note);
@@ -8051,7 +8071,8 @@ function renderPurchaseProjection() {
     row.appendChild(packageCell);
     const plainValues = [
       { value: item.hasInventoryHistory === false ? 'Sin inventario verificable'
-        : `${formatProjectionMetric(item.currentInventory)} ${item.internalUnit || ''}`.trim(), title: item.currentInventoryBasis },
+        : `${formatProjectionMetric(item.currentInventory)} ${item.internalUnit || ''}`.trim(), title: item.currentInventoryBasis,
+        lowCoverage: item.replenishmentMode === 'inventory' && Number.isFinite(item.minInventory) && Number.isFinite(item.currentInventory) && item.currentInventory < item.minInventory },
       ...(showsLocals ? [
         { value: projectionLocalMetric(item, 'localsInventory', 'localsInventorySubtotal'), detail: 'inventory' },
         { value: item.totalInventory === null ? 'Sin datos completos' : formatProjectionMetric(item.totalInventory), title: 'Inventario Actual de bodega + Inventario Locales.' }
@@ -8066,7 +8087,7 @@ function renderPurchaseProjection() {
       {
         value: item.currentCoverageDays === null ? (showsLocals && item.coverageUnavailableReason !== 'Sin consumo diario en las cafeterías.' ? 'Sin datos completos' : 'Sin consumo') : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
         title: showsLocals ? item.coverageUnavailableReason || 'Inventario Total ÷ Consumo Diario Locales.' : '',
-        lowCoverage: item.currentCoverageDays !== null && item.currentCoverageDays < item.minDays
+        lowCoverage: item.replenishmentMode !== 'inventory' && item.currentCoverageDays !== null && item.currentCoverageDays < item.minDays
       }
     ];
     plainValues.forEach(entry => {
@@ -8084,17 +8105,21 @@ function renderPurchaseProjection() {
       if (entry.lowCoverage) cell.classList.add('projection-coverage-low');
       row.appendChild(cell);
     });
-    for (const [field, value] of [['minDays', item.minDays], ['maxDays', item.maxDays]]) {
+    const inventoryMethod = item.replenishmentMode === 'inventory';
+    for (const [field, value] of inventoryMethod
+      ? [['minInventory', item.minInventory], ['maxInventory', item.maxInventory]] : [['minDays', item.minDays], ['maxDays', item.maxDays]]) {
       const cell = document.createElement('td');
       const input = document.createElement('input');
       input.type = 'number';
       input.min = '0';
-      input.max = '365';
-      input.step = '1';
-      input.value = String(value);
-      input.className = `projection-${field === 'minDays' ? 'min' : 'max'}-input`;
-      input.setAttribute('aria-label', `${field === 'minDays' ? 'Días mínimos' : 'Días máximos'} de ${item.name}`);
-      cell.appendChild(input);
+      input.max = inventoryMethod ? '1000000000' : '365';
+      input.step = inventoryMethod ? 'any' : '1';
+      input.value = value == null ? '' : String(value);
+      const isMinimum = field === 'minDays' || field === 'minInventory';
+      input.className = `projection-${isMinimum ? 'min' : 'max'}-input`;
+      input.dataset.field = field;
+      input.setAttribute('aria-label', `${inventoryMethod ? isMinimum ? 'Inventario mínimo' : 'Inventario máximo' : isMinimum ? 'Días mínimos' : 'Días máximos'} de ${item.name}`);
+      cell.append(input, document.createTextNode(inventoryMethod ? ` ${item.internalUnit}` : ' días'));
       row.appendChild(cell);
     }
     const leadingResultValues = [
@@ -8156,7 +8181,7 @@ function renderPurchaseProjection() {
       } else {
         newCoverageCell.textContent = `${formatProjectionOneDecimal(item.coverageAfterPurchaseOrdersDays)} días`;
         newCoverageCell.title = 'Inventario actual + OC seleccionadas, dividido por el consumo diario.';
-        if (item.coverageAfterPurchaseOrdersDays < item.minDays) {
+        if (item.replenishmentMode !== 'inventory' && item.coverageAfterPurchaseOrdersDays < item.minDays) {
           newCoverageCell.classList.add('projection-coverage-low');
         }
       }
@@ -8332,7 +8357,7 @@ async function loadPurchaseProjection(options = {}) {
   const draftCriteria = options.preserveDraftCriteria && purchaseProjectionState?.location.id === location
     ? new Map(purchaseProjectionState.items.map(item => [item.key, {
       minDays: item.minDays,
-      maxDays: item.maxDays,
+      maxDays: item.maxDays, minInventory: item.minInventory, maxInventory: item.maxInventory,
       unitsPerPackage: item.unitsPerPackage,
       managed: item.managed,
       supplierKey: item.supplierKey
@@ -8368,6 +8393,7 @@ async function loadPurchaseProjection(options = {}) {
         if (!draft) return;
         item.minDays = draft.minDays;
         item.maxDays = draft.maxDays;
+        item.minInventory = draft.minInventory; item.maxInventory = draft.maxInventory;
         item.unitsPerPackage = draft.unitsPerPackage;
         item.managed = draft.managed;
         item.supplierKey = draft.supplierKey;
@@ -8501,8 +8527,9 @@ async function savePurchaseProjectionPolicies() {
   for (const item of purchaseProjectionState.items) {
     const row = rows.get(item.key);
     if (!row) continue;
-    item.minDays = Number(row.querySelector('.projection-min-input').value);
-    item.maxDays = Number(row.querySelector('.projection-max-input').value);
+    for (const input of row.querySelectorAll('.projection-min-input, .projection-max-input')) {
+      item[input.dataset.field] = item.replenishmentMode === 'inventory' ? ReplenishmentPolicy.quantity(input.value) : Number(input.value);
+    }
     item.unitsPerPackage = Number(row.querySelector('.projection-package-input').value);
     item.supplierKey = row.querySelector('.projection-supplier-input').value;
     item.managed = row.querySelector('.projection-managed-input').checked;
@@ -8510,8 +8537,9 @@ async function savePurchaseProjectionPolicies() {
   const invalid = purchaseProjectionState.items.find(item =>
     !Number.isFinite(item.minDays) || !Number.isFinite(item.maxDays) || !Number.isFinite(item.unitsPerPackage)
     || item.minDays < 0 || item.maxDays < item.minDays || item.maxDays > 365
+    || !ReplenishmentPolicy.validInventoryRange(item.minInventory ?? null, item.maxInventory ?? null)
     || item.unitsPerPackage <= 0 || item.unitsPerPackage > 1000000);
-  if (invalid) return setStatus(status, `Revisa los días mínimos, máximos y los múltiplos mínimos de abastecimiento de ${invalid.name}.`, 'error');
+  if (invalid) return setStatus(status, `Revisa los mínimos, máximos y el múltiplo de abastecimiento de ${invalid.name}.`, 'error');
   button.disabled = true;
   try {
     const result = await apiRequest('/api/purchase-projections/policies', {
@@ -8521,7 +8549,7 @@ async function savePurchaseProjectionPolicies() {
         location: state.location.id,
         projectionId: state.projectionId,
         items: state.items.map(item => ({
-          key: item.key, minDays: item.minDays, maxDays: item.maxDays, unitsPerPackage: item.unitsPerPackage,
+          key: item.key, minDays: item.minDays, maxDays: item.maxDays, minInventory: item.minInventory, maxInventory: item.maxInventory, unitsPerPackage: item.unitsPerPackage,
           supplierKey: item.supplierKey, managed: item.managed
         }))
       })
@@ -8613,7 +8641,7 @@ function purchaseOrderEditorIsDirty() {
 
 function purchaseOrderCoverageMetrics(item) {
   // Use the same inventory and daily demand as the projection, including locals for warehouses.
-  const inventory = item.totalInventory === undefined ? item.currentInventory : item.totalInventory;
+  const inventory = item.replenishmentMode === 'inventory' || item.totalInventory === undefined ? item.currentInventory : item.totalInventory;
   const daily = item.localsDailyConsumption === undefined ? item.averageDailyConsumption : item.localsDailyConsumption;
   const currentDays = Number.isFinite(inventory) && Number.isFinite(daily) && daily > 0
     ? inventory / daily : null;
@@ -8625,7 +8653,8 @@ function purchaseOrderCoverageMetrics(item) {
     ? (inventory + addedQuantity) / daily : null;
   const unavailable = !Number.isFinite(inventory) || !Number.isFinite(daily) ? 'Sin datos'
     : daily <= 0 ? 'Sin consumo' : addedQuantity === null ? 'Sin conversión' : 'Sin datos';
-  return { inventory, daily, currentDays, afterDays, unavailable };
+  return { inventory, daily, currentDays, afterDays, unavailable,
+    afterInventory: Number.isFinite(inventory) && addedQuantity !== null ? inventory + addedQuantity : null };
 }
 
 function updatePurchaseOrderEditorTotals() {
@@ -8649,14 +8678,17 @@ function updatePurchaseOrderEditorTotals() {
       ? 'Sin conversión' : `${formatProjectionQuantity(consumptionQuantity)} ${item.internalUnit || ''}`.trim();
     const coverage = purchaseOrderCoverageMetrics(item);
     const coverageCell = row.querySelector('.purchase-order-coverage-after');
-    coverageCell.textContent = coverage.afterDays === null ? coverage.unavailable
-      : `${formatProjectionOneDecimal(coverage.afterDays)} días`;
-    const belowMinimum = coverage.afterDays !== null && Number.isFinite(item.minDays) && coverage.afterDays < item.minDays;
-    const aboveMaximum = coverage.afterDays !== null && Number.isFinite(item.maxDays) && coverage.afterDays > item.maxDays;
+    const inventoryMethod = item.replenishmentMode === 'inventory';
+    coverageCell.textContent = inventoryMethod ? coverage.afterInventory === null ? 'Sin datos' : `${formatProjectionMetric(coverage.afterInventory)} ${item.internalUnit}`
+      : coverage.afterDays === null ? coverage.unavailable : `${formatProjectionOneDecimal(coverage.afterDays)} días`;
+    const result = inventoryMethod ? coverage.afterInventory : coverage.afterDays;
+    const min = inventoryMethod ? item.minInventory : item.minDays, max = inventoryMethod ? item.maxInventory : item.maxDays;
+    const belowMinimum = Number.isFinite(result) && Number.isFinite(min) && result < min;
+    const aboveMaximum = Number.isFinite(result) && Number.isFinite(max) && result > max;
     coverageCell.classList.toggle('purchase-order-coverage-low', belowMinimum);
     coverageCell.classList.toggle('purchase-order-coverage-high', aboveMaximum);
     const inventoryName = item.totalInventory === undefined ? 'Inventario actual' : 'Inventario Total';
-    coverageCell.title = coverage.afterDays === null ? coverage.unavailable
+    coverageCell.title = inventoryMethod ? 'Saldo de esta ubicación + cantidad incluida en esta orden, en unidades de consumo.' : coverage.afterDays === null ? coverage.unavailable
       : `${item.selected ? `(${inventoryName} + cantidad de esta orden en unidades de consumo)` : `${inventoryName} (ítem excluido)`} ÷ promedio diario.`
         + (belowMinimum ? ' Bajo el mínimo.' : aboveMaximum ? ' Sobre el máximo.' : ' Dentro del rango mínimo y máximo.');
     row.querySelector('.purchase-order-row-warning').textContent = [
@@ -8691,7 +8723,7 @@ function renderPurchaseOrderEditor() {
   document.getElementById('purchase-order-total-inventory-header').hidden = !showsLocals;
   document.querySelector('.purchase-order-editor-table tfoot td').colSpan = showsLocals ? 18 : 16;
   document.getElementById('purchase-order-coverage-description').textContent =
-    `Días con esta orden = (${showsLocals ? 'inventario total' : 'inventario actual'} + compra incluida en unidades de consumo) ÷ promedio diario. Se actualiza al cambiar cantidades o incluir productos. Rojo: bajo el mínimo; naranja: sobre el máximo.`;
+    `Días con esta orden = (${showsLocals ? 'inventario total' : 'inventario actual'} + compra incluida en unidades de consumo) ÷ promedio diario. Para reposición por inventario se compara el saldo de la ubicación más la compra con los mínimos y máximos en unidades de consumo. Se actualiza al cambiar cantidades o incluir productos. Rojo: bajo el mínimo; naranja: sobre el máximo.`;
   document.getElementById('purchase-order-editor-title').textContent = state.id
     ? `Orden de compra ${state.orderNumber}` : 'Nueva orden de compra';
   document.getElementById('purchase-order-editor-subtitle').textContent =
@@ -8746,11 +8778,11 @@ function renderPurchaseOrderEditor() {
           ? formatProjectionMetric(item.totalInventory) : 'Sin datos',
           title: 'Inventario actual + inventario de las cafeterías. Base de los días de cobertura.' }
       ] : []),
-      { className: 'purchase-order-coverage-current', value: coverage.currentDays === null
+      { className: 'purchase-order-coverage-current', value: item.replenishmentMode === 'inventory' ? `${formatProjectionMetric(coverage.inventory)} ${item.internalUnit}` : coverage.currentDays === null
         ? (Number.isFinite(coverage.inventory) && Number.isFinite(coverage.daily) && coverage.daily <= 0 ? 'Sin consumo' : 'Sin datos') : `${formatProjectionOneDecimal(coverage.currentDays)} días`,
-        title: `${showsLocals ? 'Inventario Total' : 'Inventario actual'} ÷ promedio diario.` },
-      { className: 'purchase-order-min-days', value: Number.isFinite(item.minDays) ? `${formatProjectionQuantity(item.minDays)} días` : 'Sin datos' },
-      { className: 'purchase-order-max-days', value: Number.isFinite(item.maxDays) ? `${formatProjectionQuantity(item.maxDays)} días` : 'Sin datos' }
+        title: item.replenishmentMode === 'inventory' ? 'Saldo de esta ubicación en unidades de consumo.' : `${showsLocals ? 'Inventario Total' : 'Inventario actual'} ÷ promedio diario.` },
+      { className: 'purchase-order-min-days', value: item.replenishmentMode === 'inventory' ? `${formatProjectionMetric(item.minInventory)} ${item.internalUnit}` : Number.isFinite(item.minDays) ? `${formatProjectionQuantity(item.minDays)} días` : 'Sin datos' },
+      { className: 'purchase-order-max-days', value: item.replenishmentMode === 'inventory' ? `${formatProjectionMetric(item.maxInventory)} ${item.internalUnit}` : Number.isFinite(item.maxDays) ? `${formatProjectionQuantity(item.maxDays)} días` : 'Sin datos' }
     ].forEach(entry => {
       const cell = document.createElement('td');
       cell.className = entry.className;
@@ -9165,6 +9197,11 @@ async function showAllPurchaseOrderSupplierItems(checked) {
 }
 
 function tentativeNoPurchaseReason(item) {
+  if (item.replenishmentMode === 'inventory') {
+    if (!Number.isFinite(item.currentInventory)) return 'Sin inventario verificable; disponible para compra manual.';
+    if (!ReplenishmentPolicy.metrics(item).replenishmentConfigured) return 'Configura inventario mínimo y máximo.';
+    return `Inventario actual: ${formatProjectionMetric(item.currentInventory)} ${item.internalUnit}. Mínimo: ${formatProjectionMetric(item.minInventory)}; máximo: ${formatProjectionMetric(item.maxInventory)}.`;
+  }
   if (item.averageDailyConsumption <= 0) return 'Sin consumo registrado en los últimos 30 días.';
   if (item.currentCoverageDays !== null && item.currentCoverageDays > item.minDays) {
     return `Cobertura actual de ${formatProjectionOneDecimal(item.currentCoverageDays)} días, sobre el mínimo de ${formatProjectionOneDecimal(item.minDays)} días.`;
@@ -9387,7 +9424,8 @@ function renderTentativePurchaseOrderReview() {
       [
         item.code || '—', item.name, item.internalUnit || '—', formatProjectionMetric(item.currentInventory),
         !Number.isFinite(item.currentCoverageDays) ? 'Sin datos' : `${formatProjectionOneDecimal(item.currentCoverageDays)} días`,
-        formatProjectionOneDecimal(item.minDays), formatProjectionOneDecimal(item.maxDays), item.noPurchaseReason
+        item.replenishmentMode === 'inventory' ? `${formatProjectionMetric(item.minInventory)} ${item.internalUnit}` : `${formatProjectionOneDecimal(item.minDays)} días`,
+        item.replenishmentMode === 'inventory' ? `${formatProjectionMetric(item.maxInventory)} ${item.internalUnit}` : `${formatProjectionOneDecimal(item.maxDays)} días`, item.noPurchaseReason
       ].forEach(value => {
         const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
       });
@@ -10019,6 +10057,37 @@ function formatKardexCost(value) {
   }).format(Number(value) || 0);
 }
 
+function enableInventorySectionSorting(table, columns, items) {
+  const body = table.tBodies[0];
+  const records = items.map((item, index) => ({ item, row: body.rows[index] }));
+  const state = { key: null, direction: 'asc' };
+  const headers = [...table.tHead.rows[0].cells];
+  const buttons = headers.map((header, index) => {
+    header.setAttribute('aria-sort', 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'inventory-sort-button';
+    button.textContent = columns[index].label;
+    button.title = columns[index].label;
+    button.addEventListener('click', () => {
+      applySort(state, String(index));
+      const column = columns[index];
+      const value = column.sortValue || column.value;
+      const sorted = sortRows(records.map(record => ({ ...record, value: value(record.item) })),
+        { key: 'value', direction: state.direction });
+      if (records.length) body.replaceChildren(...sorted.map(record => record.row));
+      headers.forEach((cell, position) => {
+        const active = position === index;
+        cell.setAttribute('aria-sort', active ? state.direction === 'asc' ? 'ascending' : 'descending' : 'none');
+        buttons[position].classList.toggle('active', active);
+        buttons[position].textContent = columns[position].label + (active ? state.direction === 'asc' ? ' ▲' : ' ▼' : '');
+      });
+    });
+    header.replaceChildren(button);
+    return button;
+  });
+}
+
 function populateWasteSummaryTable(table, report) {
   const visibleDefinitions = report.additionDefinitions.filter(definition =>
     definition.key.startsWith('mov-in-')
@@ -10032,18 +10101,21 @@ function populateWasteSummaryTable(table, report) {
       key: definition.key,
       label: definition.label,
       value: item => formatInventoryQuantity(item.additions[definition.key]),
+      sortValue: item => item.additions[definition.key],
       total: formatInventoryQuantity(report.additionTotals?.[definition.key])
     })),
     {
       key: 'total',
       label: 'Total adiciones',
       value: item => formatInventoryQuantity(item.total),
+      sortValue: item => item.total,
       total: formatInventoryQuantity(report.totalAdditions)
     },
     {
       key: 'unitCost',
       label: 'Costo unitario',
       value: item => item.costAvailable ? formatClp(item.unitCost) : 'Sin costo',
+      sortValue: item => item.costAvailable ? item.unitCost : null,
       total: ''
     },
     { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item), total: '' },
@@ -10051,6 +10123,7 @@ function populateWasteSummaryTable(table, report) {
       key: 'cost',
       label: 'Costo total',
       value: item => item.costAvailable ? formatClp(item.totalCost) : 'Sin costo',
+      sortValue: item => item.costAvailable ? item.totalCost : null,
       total: formatClp(report.totalCost)
     }
   ];
@@ -10092,6 +10165,7 @@ function populateWasteSummaryTable(table, report) {
   });
   footer.appendChild(totalRow);
   table.replaceChildren(head, body, footer);
+  enableInventorySectionSorting(table, columns, report.items);
 }
 
 function renderWasteSummary(data) {
@@ -10190,6 +10264,7 @@ function buildConsumptionTable(columns, rows, totals = null) {
     table.appendChild(foot);
   }
   wrap.appendChild(table);
+  enableInventorySectionSorting(table, columns, rows);
   return wrap;
 }
 
@@ -10293,10 +10368,10 @@ function renderConsumptionReports(
     productPart.append(productTitle, buildConsumptionTable([
       { key: 'code', label: 'Código', value: item => item.code, maxChars: 18 },
       { key: 'name', label: 'Producto', value: item => item.name, maxChars: 50 },
-      { key: 'quantity', label: 'Cantidad', value: item => `${formatInventoryQuantity(item.quantity)} ${item.unitNeedsConfirmation ? '(unidad por confirmar)' : item.unit || ''}` },
-      { key: 'unitCost', label: 'Costo unit.', value: item => item.costSource === 'missing' ? 'Pendiente' : formatClp(item.unitCost) },
+      { key: 'quantity', label: 'Cantidad', sortValue: item => item.quantity, value: item => `${formatInventoryQuantity(item.quantity)} ${item.unitNeedsConfirmation ? '(unidad por confirmar)' : item.unit || ''}` },
+      { key: 'unitCost', label: 'Costo unit.', sortValue: item => item.costSource === 'missing' || item.costAvailable === false ? null : item.unitCost, value: item => item.costSource === 'missing' ? 'Pendiente' : formatClp(item.unitCost) },
       { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item) },
-      { key: 'totalCost', label: 'Costo total', value: item => item.costSource === 'missing' ? 'Pendiente' : formatClp(item.totalCost) }
+      { key: 'totalCost', label: 'Costo total', sortValue: item => item.costSource === 'missing' || item.costAvailable === false ? null : item.totalCost, value: item => item.costSource === 'missing' ? 'Pendiente' : formatClp(item.totalCost) }
     ], productRows, {
       code: 'TOTAL',
       quantity: quantitiesByUnit(productRows),
@@ -10327,12 +10402,12 @@ function renderConsumptionReports(
       ingredientPart.appendChild(buildConsumptionTable([
         { key: 'code', label: 'Código', value: item => item.code, maxChars: 18 },
         { key: 'name', label: 'Ingrediente', value: item => item.name, maxChars: 50 },
-        { key: 'quantity', label: 'Cantidad', value: item => formatInventoryQuantity(item.quantity) },
+        { key: 'quantity', label: 'Cantidad', sortValue: item => item.quantity, value: item => formatInventoryQuantity(item.quantity) },
         { key: 'unit', label: 'Unidad', value: item => item.unit },
         { key: 'consumptionType', label: 'Tipo de insumo', value: item => item.consumptionType },
-        { key: 'unitCost', label: 'Costo unit.', value: item => formatClp(item.unitCost) },
+        { key: 'unitCost', label: 'Costo unit.', sortValue: item => item.costSource === 'missing' || item.costAvailable === false ? null : item.unitCost, value: item => formatClp(item.unitCost) },
         { key: 'costSource', label: 'Origen costo', value: item => costSourceShort(item) },
-        { key: 'totalCost', label: 'Costo total', value: item => formatClp(item.totalCost) }
+        { key: 'totalCost', label: 'Costo total', sortValue: item => item.costSource === 'missing' || item.costAvailable === false ? null : item.totalCost, value: item => formatClp(item.totalCost) }
       ], ingredientRows, {
         code: 'TOTAL',
         quantity: quantitiesByUnit(ingredientRows),
@@ -10629,11 +10704,11 @@ function renderLac001SubstitutionReport(report) {
   const columns = [
     { label: 'Código extra', value: item => item.code },
     { label: 'Extra', value: item => item.name },
-    { label: 'Ventas con extra', value: item => String(item.salesCount) },
-    { label: 'Cantidad de sustituciones', value: item => formatKardexQuantity(item.substitutionCount) },
-    { label: 'LAC001 sustituido (L)', value: item => formatKardexQuantity(item.lac001VolumeLiters) },
+    { label: 'Ventas con extra', sortValue: item => item.salesCount, value: item => String(item.salesCount) },
+    { label: 'Cantidad de sustituciones', sortValue: item => item.substitutionCount, value: item => formatKardexQuantity(item.substitutionCount) },
+    { label: 'LAC001 sustituido (L)', sortValue: item => item.lac001VolumeLiters, value: item => formatKardexQuantity(item.lac001VolumeLiters) },
     { label: 'Origen costo', value: item => costSourceShort(item) },
-    { label: 'Costo LAC001 sustituido', value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
+    { label: 'Costo LAC001 sustituido', sortValue: item => item.hasCost ? item.substitutedCost : null, value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
   ];
   const headRow = document.createElement('tr');
   columns.forEach(column => {
@@ -10664,6 +10739,7 @@ function renderLac001SubstitutionReport(report) {
   const foot = document.createElement('tfoot');
   foot.appendChild(footRow);
   table.replaceChildren(head, body, foot);
+  enableInventorySectionSorting(table, columns, report.items);
   section.hidden = false;
 }
 
@@ -10729,16 +10805,17 @@ function renderSyrupSauceSubstitutionReport(report) {
       value: item => item.baseProducts.map(product => `${product.code} · ${product.name}`).join(', ') || 'Sin producto base identificable',
       expandable: true
     },
-    { label: 'Ventas', value: item => String(item.salesCount) },
-    { label: 'Sustituciones', value: item => formatKardexQuantity(item.substitutionCount) },
+    { label: 'Ventas', sortValue: item => item.salesCount, value: item => String(item.salesCount) },
+    { label: 'Sustituciones', sortValue: item => item.substitutionCount, value: item => formatKardexQuantity(item.substitutionCount) },
     {
       label: 'Cantidad teórica sustituida',
+      sortValue: item => item.status === 'resolved' ? item.theoreticalQuantity : null,
       value: item => item.status === 'resolved'
         ? `${formatKardexQuantity(item.theoreticalQuantity)} ${item.unit}`
         : 'Sin cantidad identificable'
     },
     { label: 'Origen costo', value: item => costSourceShort(item) },
-    { label: 'Costo sustituido', value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
+    { label: 'Costo sustituido', sortValue: item => item.hasCost ? item.substitutedCost : null, value: item => item.hasCost ? formatClp(item.substitutedCost) : 'Sin costo' }
   ];
   const table = document.getElementById('inventory-syrup-substitution-table');
   const head = document.createElement('thead');
@@ -10788,6 +10865,7 @@ function renderSyrupSauceSubstitutionReport(report) {
     });
   foot.appendChild(footRow);
   table.replaceChildren(head, body, foot);
+  enableInventorySectionSorting(table, columns, report.items);
   section.hidden = false;
 }
 
@@ -10826,10 +10904,10 @@ function renderInventoryAvoidedPackagingReport(report) {
     { label: 'Tipo', value: item => item.kind === 'lid' ? 'Tapa' : 'Vaso' },
     { label: 'Código', value: item => item.code || '' },
     { label: 'Insumo desechable', value: item => item.name },
-    { label: 'Cantidad no utilizada', value: item => `${formatKardexQuantity(item.quantity)} ${item.unit || 'UN'}` },
-    { label: 'Costo unitario', value: item => item.hasCost ? formatClp(item.unitCost) : 'Sin costo' },
+    { label: 'Cantidad no utilizada', sortValue: item => item.quantity, value: item => `${formatKardexQuantity(item.quantity)} ${item.unit || 'UN'}` },
+    { label: 'Costo unitario', sortValue: item => item.hasCost ? item.unitCost : null, value: item => item.hasCost ? formatClp(item.unitCost) : 'Sin costo' },
     { label: 'Origen costo', value: item => costSourceShort(item) },
-    { label: 'Ahorro valorizado', value: item => item.hasCost ? formatClp(item.totalCost) : 'Sin costo' }
+    { label: 'Ahorro valorizado', sortValue: item => item.hasCost ? item.totalCost : null, value: item => item.hasCost ? formatClp(item.totalCost) : 'Sin costo' }
   ];
   const table = document.getElementById('inventory-avoided-packaging-table');
   const head = document.createElement('thead');
@@ -10873,6 +10951,7 @@ function renderInventoryAvoidedPackagingReport(report) {
     });
   foot.appendChild(footRow);
   table.replaceChildren(head, body, foot);
+  enableInventorySectionSorting(table, columns, packaging);
   section.hidden = false;
 }
 
@@ -12720,6 +12799,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     ingredientPurchaseMasterRequest += 1;
   });
   document.getElementById('ingredient-purchase-master-search').addEventListener('input', renderIngredientPurchaseMaster);
+  const sortIngredientMaster = event => {
+    const header = event.target.closest('th[data-sort-key]');
+    if (!header || document.getElementById('ingredient-purchase-master-dialog').dataset.saving === 'true') return;
+    if (event.type === 'keydown') {
+      if (!['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+    }
+    applySort(ingredientPurchaseMasterSort, header.dataset.sortKey);
+    renderIngredientPurchaseMaster();
+  };
+  document.querySelector('#ingredient-purchase-master-dialog thead').addEventListener('click', sortIngredientMaster);
+  document.querySelector('#ingredient-purchase-master-dialog thead').addEventListener('keydown', sortIngredientMaster);
   document.getElementById('ingredient-purchase-master-body').addEventListener('input', editIngredientPurchaseMaster);
   document.getElementById('ingredient-purchase-master-body').addEventListener('change', editIngredientPurchaseMaster);
   document.getElementById('save-ingredient-purchase-master').addEventListener('click', saveIngredientPurchaseMaster);
@@ -12753,7 +12844,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const header = event.target.closest('th[data-sort-key]');
     if (!header) return;
     applySort(purchaseProjectionSort, header.dataset.sortKey,
-      ['managed', 'unitsPerPackage', 'currentInventory', 'localsInventory', 'totalInventory', 'localsDailyConsumption', 'consumption30', 'ownAverageDailyConsumption', 'projectedAverageDailyConsumption', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'suggestedConsumptionQuantity', 'coverageAfterSuggestionDays', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
+      ['minimumStock', 'maximumStock', 'managed', 'unitsPerPackage', 'currentInventory', 'localsInventory', 'totalInventory', 'localsDailyConsumption', 'consumption30', 'ownAverageDailyConsumption', 'projectedAverageDailyConsumption', 'averageDailyConsumption', 'currentCoverageDays', 'minDays', 'maxDays', 'suggestedInternalQuantity', 'suggestedConsumptionQuantity', 'coverageAfterSuggestionDays', 'unitsPerPurchaseUnit', 'suggestedPurchaseUnits', 'estimatedPurchaseUnitCost', 'estimatedTotal'].includes(header.dataset.sortKey) ? 'desc' : 'asc');
     renderPurchaseProjection();
   });
   document.getElementById('save-projection-policies').addEventListener('click', savePurchaseProjectionPolicies);
@@ -12847,9 +12938,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const editsMinimum = event.target.matches('.projection-min-input');
     const editsMaximum = event.target.matches('.projection-max-input');
     const editsPackage = event.target.matches('.projection-package-input');
-    if ((editsMinimum || editsMaximum || editsPackage) && event.target.value !== '') {
-      if (editsMinimum) item.minDays = Number(event.target.value);
-      if (editsMaximum) item.maxDays = Number(event.target.value);
+    if ((editsMinimum || editsMaximum || editsPackage) && (event.target.value !== '' || item.replenishmentMode === 'inventory')) {
+      if (editsMinimum || editsMaximum) item[event.target.dataset.field] = item.replenishmentMode === 'inventory'
+        ? ReplenishmentPolicy.quantity(event.target.value) : Number(event.target.value);
       if (editsPackage) item.unitsPerPackage = Number(event.target.value);
       recalculatePurchaseProjectionItem(item);
       const inputClass = editsMinimum ? '.projection-min-input'

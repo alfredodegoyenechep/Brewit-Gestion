@@ -12,10 +12,10 @@ const item = { code: '000123', name: 'Café; "Especial"\nMolido', internalUnit: 
   purchaseUnit: 'Bolsa', unitsPerPurchaseUnit: .75, masterPurchaseUnit: 'kg', masterContent: 1 };
 
 test('exports current values, drafts and restored master equivalences without inventing missing quantities', () => {
-  assert.deepEqual(exporter.values(item), ['000123', item.name, 'kg', 'Bolsa', .75, '1 Bolsa = 0,75 kg', 'Bolsa', .75, '1 Bolsa = 0,75 kg']);
+  assert.deepEqual(exporter.values(item), ['000123', item.name, 'kg', 'Bolsa', .75, '1 Bolsa = 0,75 kg', 'Bolsa', .75, '1 Bolsa = 0,75 kg', 'Por Consumo Receta']);
   assert.deepEqual(exporter.values(item, { purchaseUnit: 'Pack', unitsPerPurchaseUnit: '6' }).slice(3, 6), ['Pack', 6, '1 Pack = 6 kg']);
   assert.deepEqual(exporter.values(item, { purchaseUnit: '', unitsPerPurchaseUnit: null }).slice(3, 6), ['kg', 1, '1 kg = 1 kg']);
-  assert.deepEqual(exporter.values(item, { ...item, transferUnit: 'Pack', unitsPerTransferUnit: '.25' }).slice(6),
+  assert.deepEqual(exporter.values(item, { ...item, transferUnit: 'Pack', unitsPerTransferUnit: '.25' }).slice(6, 9),
     ['Pack', .25, '1 Pack = 0,25 kg']);
   for (const content of [null, '', undefined, -1, 0, NaN]) {
     assert.equal(exporter.values({ ...item, unitsPerPurchaseUnit: content })[4], null);
@@ -39,15 +39,15 @@ test('CSV preserves accents, separators, quotes, newlines and configured decimal
 
 test('XLSX round trip retains numeric content, text codes and text that resembles formulas', () => {
   const rows = [exporter.values({ ...item, transferUnit: 'Pack', unitsPerTransferUnit: .25 }),
-    ['=1+1', '123.45', 'kg', 'Caja', 1000, '1 Caja = 1.000 kg', 'Bolsa', 10, '1 Bolsa = 10 kg']];
+    ['=1+1', '123.45', 'kg', 'Caja', 1000, '1 Caja = 1.000 kg', 'Bolsa', 10, '1 Bolsa = 10 kg', 'Por inventario mínimo y máximo']];
   const book = exporter.workbook(rows, XLSX);
-  assert.deepEqual(book.Sheets.Ingredientes['!brewitTextColumns'], [0, 1, 2, 3, 5, 6, 8]);
+  assert.deepEqual(book.Sheets.Ingredientes['!brewitTextColumns'], [0, 1, 2, 3, 5, 6, 8, 9]);
   const read = XLSX.read(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }));
   assert.deepEqual(XLSX.utils.sheet_to_json(read.Sheets.Ingredientes, { header: 1 }), [exporter.headers, ...rows]);
   assert.equal(read.Sheets.Ingredientes.E2.t, 'n');
   assert.equal(read.Sheets.Ingredientes.H2.t, 'n');
   assert.equal(read.Sheets.Ingredientes.A3.f, undefined);
-  assert.equal(read.Sheets.Ingredientes['!autofilter'].ref, 'A1:I3');
+  assert.equal(read.Sheets.Ingredientes['!autofilter'].ref, 'A1:J3');
 });
 
 test('PDF downloads as a real document and repeats headers on every page, including long row continuations', () => {

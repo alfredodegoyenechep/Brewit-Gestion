@@ -2094,6 +2094,11 @@ body {
   background: rgba(46, 32, 21, 0.55);
 }
 
+#inventory-report-results {
+  box-sizing: border-box;
+  width: min(2000px, calc(100vw - 32px));
+}
+
 .inventory-period-card h3,
 .inventory-report-results h3 {
   margin-top: 6px;
@@ -5292,7 +5297,7 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
 }
 
 #ingredient-purchase-master-dialog {
-  width: min(1500px, calc(100vw - 32px));
+  width: min(1875px, calc(100vw - 32px));
 }
 
 .ingredient-purchase-master-table-wrap {
