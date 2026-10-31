@@ -5,7 +5,7 @@
   const count = value => value == null ? '—' : new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(value);
   const money = value => value == null ? '—' : formatClp(value);
   const percent = value => value == null ? '—' : `${new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)}%`;
-  const state = { report: null, generation: 0, controller: null, optionsController: null, optionsLocation: null, products: [], groupedProducts: [], selected: new Set() };
+  const state = { report: null, generation: 0, controller: null, optionsController: null, optionsLocation: null, products: [], groupedProducts: [], selected: new Set(), sort: { column: 1, direction: 'desc' }, viewPath: null, navigation: [] };
   const status = (message, type = 'muted') => setStatus(byId('status'), message, type);
   const runButton = byId('filters').querySelector('[type=submit]');
   function syncDates() {
@@ -76,9 +76,37 @@
     }
   }
   const headers = ['Jerarquía / Producto', 'Venta neta', 'Unidades', '1–15 días', '16–30 días', '31–60 días', '61–90 días', 'Sin antecedente ≤90 d', 'Sin vínculo identificable'];
+  function currentView() {
+    const data = state.report;
+    if (!data?.hierarchyTree || state.viewPath === null) return data;
+    let node = data.hierarchyTree;
+    for (const name of state.viewPath) { node = node.children.find(child => child.path.at(-1) === name); if (!node) return data; }
+    return { ...data, rows: [...node.children, ...node.products], totals: { ...node, label: 'Total jerarquía' } };
+  }
+  function navigate(path) {
+    state.navigation.push(state.viewPath); state.viewPath = path; render(currentView());
+    byId('results').querySelector('.product-recurrence-back')?.focus();
+  }
+  function sortedRows(data) {
+    const value = row => [row.label, row.netSales, row.units, ...[15, 30, 60, 90].map(days => row.windows[days].percent), row.withoutRecent.percent, row.unclassified.percent][state.sort.column];
+    return [...data.rows].sort((left, right) => {
+      const a = value(left), b = value(right);
+      if (a == null || b == null) return a == null && b == null ? left.label.localeCompare(right.label, 'es') : a == null ? 1 : -1;
+      const comparison = state.sort.column === 0 ? a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' }) : a - b;
+      return comparison * (state.sort.direction === 'asc' ? 1 : -1) || left.label.localeCompare(right.label, 'es');
+    });
+  }
   function appendRow(parent, row, total = false) {
     const tr = el('tr'); if (total) tr.className = 'product-recurrence-total';
-    const title = el('th', row.label); title.scope = 'row'; tr.append(title, el('td', money(row.netSales)), el('td', count(row.units)));
+    const title = el('th'); title.scope = 'row';
+    if (!total && row.kind === 'hierarchy' && state.report.hierarchyTree) {
+      const button = el('button', undefined, 'product-recurrence-drill'), arrow = el('span', '›');
+      button.type = 'button'; button.setAttribute('aria-label', `Ver detalle de ${row.label}`); arrow.setAttribute('aria-hidden', 'true');
+      button.append(el('span', row.label), arrow); button.addEventListener('click', () => navigate(row.path)); title.append(button);
+      tr.className = 'product-recurrence-hierarchy-row';
+      tr.addEventListener('click', event => { if (!event.target.closest('button')) navigate(row.path); });
+    } else title.textContent = row.label;
+    tr.append(title, el('td', money(row.netSales)), el('td', count(row.units)));
     for (const metric of [...[15, 30, 60, 90].map(days => row.windows[days]), row.withoutRecent, row.unclassified]) {
       const cell = el('td'); cell.append(el('strong', percent(metric.percent)), el('small', money(metric.netSales))); tr.append(cell);
     }
@@ -86,6 +114,22 @@
   }
   function render(data) {
     const root = byId('results'); root.replaceChildren();
+    if (data.filters.groupBy === 'hierarchy' && data.hierarchyTree) {
+      const navigation = el('nav', undefined, 'product-recurrence-navigation'); navigation.setAttribute('aria-label', 'Ruta de jerarquías');
+      const initial = el('button', 'Vista inicial', 'icon-button small'); initial.type = 'button';
+      initial.addEventListener('click', () => { state.viewPath = null; state.navigation = []; render(currentView()); });
+      navigation.append(initial);
+      if (state.viewPath !== null) {
+        const back = el('button', '← Volver', 'icon-button small product-recurrence-back'); back.type = 'button';
+        back.addEventListener('click', () => { state.viewPath = state.navigation.pop() ?? null; render(currentView()); }); navigation.prepend(back);
+        state.viewPath.forEach((name, index) => {
+          const separator = el('span', '›'); separator.setAttribute('aria-hidden', 'true'); navigation.append(separator);
+          if (index === state.viewPath.length - 1) { const current = el('strong', name); current.setAttribute('aria-current', 'location'); navigation.append(current); }
+          else { const link = el('button', name, 'icon-button small'); link.type = 'button'; link.addEventListener('click', () => navigate(state.viewPath.slice(0, index + 1))); navigation.append(link); }
+        });
+      }
+      root.append(navigation, el('p', 'Haz clic en una jerarquía para abrir su detalle hasta llegar a los productos.', 'panel-description'));
+    }
     const kpis = el('div', undefined, 'recurrence-kpis product-recurrence-kpis');
     for (const [title, value, note] of [
       ['Venta neta', money(data.totals.netSales), 'Total de la selección'], ['Unidades vendidas', count(data.totals.units), 'Total de la selección'],
@@ -94,15 +138,34 @@
     ]) { const card = el('article', undefined, 'recurrence-kpi'); card.append(el('h4', title), el('strong', value), el('p', note)); kpis.append(card); }
     root.append(kpis);
     const wrap = el('div', undefined, 'recurrence-scroll'), table = el('table', undefined, 'sales-dashboard-table recurrence-table product-recurrence-table');
-    const head = table.createTHead().insertRow(); headers.forEach(title => { const cell = el('th', title); cell.scope = 'col'; head.append(cell); });
-    const body = table.createTBody(); data.rows.forEach(row => appendRow(body, row));
-    if (!data.rows.length) { const cell = body.insertRow().insertCell(); cell.colSpan = headers.length; cell.className = 'empty-state'; cell.textContent = 'No hay ventas para los filtros seleccionados.'; }
+    const head = table.createTHead().insertRow(), body = table.createTBody();
+    function paintRows() {
+      body.replaceChildren(); sortedRows(data).forEach(row => appendRow(body, row));
+      if (!data.rows.length) { const cell = body.insertRow().insertCell(); cell.colSpan = headers.length; cell.className = 'empty-state'; cell.textContent = 'No hay ventas para los filtros seleccionados.'; }
+      [...head.cells].forEach((cell, index) => {
+        const active = index === state.sort.column;
+        cell.setAttribute('aria-sort', active ? state.sort.direction === 'asc' ? 'ascending' : 'descending' : 'none');
+        cell.querySelector('.product-recurrence-sort-arrow').textContent = active ? state.sort.direction === 'asc' ? '↑' : '↓' : '↕';
+      });
+    }
+    headers.forEach((title, index) => {
+      const cell = el('th'), button = el('button', undefined, 'product-recurrence-sort'), arrow = el('span', '↕', 'product-recurrence-sort-arrow');
+      cell.scope = 'col'; button.type = 'button'; button.setAttribute('aria-label', `Ordenar por ${title}`);
+      button.title = `Ordenar por ${title}${index >= 3 ? ' (porcentaje)' : ''}`; arrow.setAttribute('aria-hidden', 'true');
+      button.append(el('span', title), arrow);
+      button.addEventListener('click', () => {
+        state.sort = { column: index, direction: state.sort.column === index ? state.sort.direction === 'asc' ? 'desc' : 'asc' : index === 0 ? 'asc' : 'desc' };
+        paintRows();
+      });
+      cell.append(button); head.append(cell);
+    });
+    paintRows();
     appendRow(table.createTFoot(), data.totals, true); wrap.append(table); root.append(wrap);
     root.append(el('p', data.denominator, 'panel-description'));
     const notes = el('details', undefined, 'recurrence-notices'); notes.append(el('summary', 'Alcance y calidad del reporte'), el('p', data.monetaryBasis), el('p', data.definition));
     for (const [label, coverage] of [['Ventas', data.coverage.sales], ['Historial MP de 90 días', data.coverage.history], ['Detalle de pagos', data.coverage.payments]]) notes.append(el('p', `${label}: ${coverage.coveredDays} de ${coverage.expectedDays} días con cobertura acreditada.`));
     data.warnings.forEach(warning => notes.append(el('p', warning))); root.append(notes);
-    byId('context').textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${data.filters.groupBy === 'product' ? 'Por producto' : `Jerarquías, nivel ${data.filters.level}`}${data.filters.groupFormats ? ' · Formatos CL, GR y XTR agrupados' : ''} · Corte de ventas ${data.asOf.replace('T', ' ')} · Corte de identidad ${data.identityAsOf.replace('T', ' ')}`;
+    byId('context').textContent = `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · ${data.filters.groupBy === 'product' ? 'Por producto' : `Jerarquías, nivel ${data.filters.level}`}${state.viewPath !== null ? ` · Detalle: ${state.viewPath.join(' / ')}` : ''}${data.filters.groupFormats ? ' · Formatos CL, GR y XTR agrupados' : ''} · Corte de ventas ${data.asOf.replace('T', ' ')} · Corte de identidad ${data.identityAsOf.replace('T', ' ')}`;
   }
   byId('filters').addEventListener('submit', async event => {
     event.preventDefault(); dirty();
@@ -114,7 +177,7 @@
     try {
       const data = await apiRequest(`/api/sales/product-recurrence?${query}`, { signal: controller.signal });
       if (controller.signal.aborted || generation !== state.generation) return;
-      state.report = data; render(data); byId('export').disabled = false;
+      state.report = data; state.viewPath = null; state.navigation = []; render(data); byId('export').disabled = false;
       status(data.status === 'complete' ? 'Reporte generado.' : data.status === 'partial' ? 'Reporte generado con datos provisionales. Revisa la cobertura y calidad.' : 'Sin ventas acreditadas para esta selección.', data.status === 'complete' ? 'success' : 'warning');
     } catch (error) { if (!controller.signal.aborted && generation === state.generation) status(error.message, 'error'); }
     finally { if (generation === state.generation) { byId('progress').hidden = true; runButton.disabled = false; byId('filters').setAttribute('aria-busy', 'false'); } }
@@ -138,11 +201,11 @@
   byId('search').addEventListener('input', renderProducts);
   byId('clear').addEventListener('click', () => { state.selected.clear(); renderProducts(); dirty(); });
   byId('export').addEventListener('click', () => {
-    const data = state.report; if (!data) return;
+    const data = currentView(); if (!data) return;
     const book = XLSX.utils.book_new();
     const exportHeaders = ['Jerarquía / Producto', 'Venta neta', 'Unidades', ...['1–15 días', '16–30 días', '31–60 días', '61–90 días', 'Sin antecedente ≤90 d', 'Sin vínculo identificable'].flatMap(title => [`${title} ($)`, `${title} (%)`])];
     const exportRow = row => [row.label, row.netSales, row.units, ...[...[15, 30, 60, 90].map(days => row.windows[days]), row.withoutRecent, row.unclassified].flatMap(m => [m.netSales, m.percent == null ? null : Number(m.percent.toFixed(1))])];
-    const sheet = XLSX.utils.aoa_to_sheet([exportHeaders, ...data.rows.map(exportRow), exportRow(data.totals)]);
+    const sheet = XLSX.utils.aoa_to_sheet([exportHeaders, ...sortedRows(data).map(exportRow), exportRow(data.totals)]);
     for (let row = 1; row <= data.rows.length + 1; row++) for (let column = 4; column < exportHeaders.length; column += 2) {
       const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
       if (cell?.t === 'n') cell.z = '0.0"%"';
@@ -150,7 +213,7 @@
     XLSX.utils.book_append_sheet(book, sheet, 'Producto-Recurrencia');
     XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
       ['Cafetería', data.scope.label], ['Desde', data.period.from], ['Hasta', data.period.to], ['Corte ventas', data.asOf], ['Corte identidad', data.identityAsOf],
-      ['Filtros', JSON.stringify(data.filters)], ['Definición', data.definition], ['Base', data.denominator], ['Importes', data.monetaryBasis],
+      ['Filtros', JSON.stringify(data.filters)], ['Detalle jerarquía', state.viewPath?.join(' / ') || 'Vista inicial'], ['Orden', `${headers[state.sort.column]} · ${state.sort.direction === 'asc' ? 'Ascendente' : 'Descendente'}`], ['Definición', data.definition], ['Base', data.denominator], ['Importes', data.monetaryBasis],
       ['Estado', data.status], ['Versión', data.definitionVersion], ['Identidad', data.identityDefinitionVersion], ['Versiones de fuentes', JSON.stringify(data.sourceVersions)],
       ['Cobertura', JSON.stringify(data.coverage)], ...data.warnings.map(warning => ['Observación', warning])
     ]), 'Consulta y criterios');

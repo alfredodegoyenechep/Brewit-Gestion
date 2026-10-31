@@ -128,3 +128,92 @@ test('changing filters cancels slow product reports and failures remain retryabl
   await page.locator('#product-recurrence-filters [type=submit]').click(); await page.locator('#product-recurrence-status').filter({ hasText: 'Reporte generado' }).waitFor();
   assert.ok(!(await page.locator('#product-recurrence-status').innerText()).includes('Respuesta antigua'));
 });
+
+test('every product recurrence column sorts both ways locally, keeps missing values last and exports the displayed order', { skip: !fs.existsSync(chrome) }, async t => {
+  const s = await setup(t, false, orders), browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage(); let requests = 0;
+  await page.route('**/api/sales/product-recurrence?*', async route => {
+    requests++; const response = await route.fetch(), data = await response.json();
+    data.rows = [
+      ['Álamo', 100, 11, [15, 10, 5, 0, 60, 10]],
+      ['Café', 2000, 2, [10, 20, 0, 40, 25, 5]],
+      ['Té', 300, 1, [30, 0, 10, 20, 40, 0]],
+      ['Zeta', null, null, [null, null, null, null, null, null]]
+    ].map(([label, netSales, units, values]) => ({ label, netSales, units,
+      windows: Object.fromEntries([15, 30, 60, 90].map((days, i) => [days, { percent: values[i], netSales: 0 }])),
+      withoutRecent: { percent: values[4], netSales: 0 }, unclassified: { percent: values[5], netSales: 0 } }));
+    await route.fulfill({ json: data });
+  });
+  await page.goto(s.base);
+  await page.getByRole('link', { name: 'Estadísticas por producto y horario', exact: true }).click();
+  await page.getByRole('tab', { name: 'Producto-Recurrencia', exact: true }).click();
+  await page.locator('#product-recurrence-period').selectOption('custom');
+  await page.locator('#product-recurrence-from').fill('2026-10-01'); await page.locator('#product-recurrence-to').fill('2026-10-07');
+  await page.locator('#product-recurrence-filters [type=submit]').click(); await page.locator('#product-recurrence-status').filter({ hasText: 'Reporte generado' }).waitFor();
+  const cells = page.locator('.product-recurrence-table thead th'), names = () => page.locator('.product-recurrence-table tbody th').allTextContents();
+  const footer = await page.locator('.product-recurrence-table tfoot').innerText();
+  const expected = [
+    ['Álamo', 'Café', 'Té', 'Zeta'], ['Álamo', 'Té', 'Café'], ['Té', 'Café', 'Álamo'],
+    ['Café', 'Álamo', 'Té'], ['Té', 'Álamo', 'Café'], ['Café', 'Álamo', 'Té'],
+    ['Álamo', 'Té', 'Café'], ['Café', 'Té', 'Álamo'], ['Té', 'Café', 'Álamo']
+  ];
+  for (let index = 0; index < expected.length; index++) {
+    const cell = cells.nth(index), button = cell.getByRole('button');
+    await button.click();
+    if (await cell.getAttribute('aria-sort') !== 'ascending') { await button.focus(); await page.keyboard.press('Enter'); }
+    assert.equal(await cell.getAttribute('aria-sort'), 'ascending');
+    assert.deepEqual(await names(), index === 0 ? expected[index] : [...expected[index], 'Zeta']);
+    await button.click(); assert.equal(await cell.getAttribute('aria-sort'), 'descending');
+    assert.deepEqual(await names(), index === 0 ? [...expected[index]].reverse() : [...expected[index]].reverse().concat('Zeta'));
+  }
+  assert.equal(requests, 1); assert.equal(await page.locator('.product-recurrence-table tfoot').innerText(), footer);
+  const displayed = await names(), pending = page.waitForEvent('download'); await page.locator('#product-recurrence-export').click();
+  const file = path.join(os.tmpdir(), `product-recurrence-sorted-${Date.now()}.xlsx`); await (await pending).saveAs(file); t.after(() => fs.rmSync(file, { force: true }));
+  const book = XLSX.readFile(file), exported = XLSX.utils.sheet_to_json(book.Sheets['Producto-Recurrencia']);
+  assert.deepEqual(exported.slice(0, -1).map(row => row['Jerarquía / Producto']), displayed);
+  assert.equal(exported.at(-1)['Jerarquía / Producto'], 'Total selección');
+});
+
+test('hierarchies open locally down to grouped products with branch totals, breadcrumbs, back navigation and scoped export', { skip: !fs.existsSync(chrome) }, async t => {
+  const fixture = [{ ...orders[0], lines: [
+    { code: 'CL', name: 'Cappuccino (CL)', categoryPath: ['Barra Cafe', 'Calientes', 'Café espresso'], quantity: 1, netSales: 1000 },
+    { code: 'GR', name: 'Cappuccino (GR)', categoryPath: ['Barra Cafe', 'Calientes', 'Café espresso'], quantity: 2, netSales: 2000 },
+    { code: 'DIRECT', name: 'Espresso', categoryPath: ['Barra Cafe'], quantity: 1, netSales: 500 },
+    { code: 'ICED', name: 'Iced Coffee', categoryPath: ['Barra Cafe', 'Frías'], quantity: 1, netSales: 1500 }
+  ] }, orders[1]];
+  const s = await setup(t, false, fixture), browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage(); let requests = 0;
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/sales/product-recurrence') requests++; });
+  await page.goto(s.base); await page.getByRole('link', { name: 'Estadísticas por producto y horario', exact: true }).click();
+  await page.getByRole('tab', { name: 'Producto-Recurrencia', exact: true }).click();
+  await page.locator('#product-recurrence-period').selectOption('custom');
+  await page.locator('#product-recurrence-from').fill('2026-10-01'); await page.locator('#product-recurrence-to').fill('2026-10-07');
+  await page.locator('#product-recurrence-formats').check();
+  await page.locator('#product-recurrence-filters [type=submit]').click(); await page.locator('#product-recurrence-status').filter({ hasText: 'Reporte generado' }).waitFor();
+  const sale = () => page.locator('.product-recurrence-kpis article').first().locator('strong').innerText();
+  assert.equal(await sale(), '$7.000');
+  await page.getByRole('button', { name: 'Ver detalle de Barra Cafe', exact: true }).click();
+  assert.equal(await sale(), '$5.000'); assert.equal(await page.locator('.product-recurrence-table tbody tr').count(), 3);
+  assert.match(await page.locator('.product-recurrence-table tbody').innerText(), /Espresso/);
+  await page.getByRole('button', { name: 'Ver detalle de Calientes', exact: true }).click();
+  await page.getByRole('button', { name: 'Ver detalle de Café espresso', exact: true }).focus(); await page.keyboard.press('Enter');
+  assert.equal(await sale(), '$3.000');
+  assert.equal(await page.locator('.product-recurrence-table tbody tr').count(), 1);
+  assert.match(await page.locator('.product-recurrence-table tbody').innerText(), /Cappuccino · CL \/ GR.*3\.000.*100,0%/s);
+  assert.equal(await page.locator('.product-recurrence-table tbody button').count(), 0);
+  assert.match(await page.locator('#product-recurrence-context').innerText(), /Barra Cafe \/ Calientes \/ Café espresso/);
+  const pending = page.waitForEvent('download'); await page.locator('#product-recurrence-export').click();
+  const file = path.join(os.tmpdir(), `product-recurrence-branch-${Date.now()}.xlsx`); await (await pending).saveAs(file); t.after(() => fs.rmSync(file, { force: true }));
+  const book = XLSX.readFile(file), exported = XLSX.utils.sheet_to_json(book.Sheets['Producto-Recurrencia']);
+  assert.equal(exported.length, 2); assert.equal(exported[0]['Venta neta'], 3000); assert.equal(exported[1]['Jerarquía / Producto'], 'Total jerarquía');
+  assert.ok(JSON.stringify(XLSX.utils.sheet_to_json(book.Sheets['Consulta y criterios'])).includes('Barra Cafe / Calientes / Café espresso'));
+  await page.getByRole('button', { name: '← Volver', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: 'Ver detalle de Café espresso', exact: true }).count(), 1);
+  await page.getByRole('navigation', { name: 'Ruta de jerarquías' }).getByRole('button', { name: 'Barra Cafe', exact: true }).click();
+  assert.equal(await sale(), '$5.000');
+  await page.getByRole('button', { name: 'Vista inicial', exact: true }).click(); assert.equal(await sale(), '$7.000');
+  assert.equal(await page.locator('.product-recurrence-table tbody tr').count(), 2); assert.equal(requests, 1);
+  await page.getByRole('button', { name: 'Ver detalle de Barra Cafe', exact: true }).click();
+  await page.locator('#product-recurrence-filters [type=submit]').click(); await page.locator('#product-recurrence-status').filter({ hasText: 'Reporte generado' }).waitFor();
+  assert.equal(await sale(), '$7.000'); assert.equal(await page.locator('.product-recurrence-back').count(), 0);
+});

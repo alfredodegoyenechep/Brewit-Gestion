@@ -77,6 +77,8 @@ function buildProductRecurrence(state, orders, coverage = [], query = {}, warnin
   const blank = (key, label, path = []) => ({ key, label, path, netSales: 0, units: 0, missingSales: 0,
     windows: Object.fromEntries(WINDOWS.map(days => [days, { days, netSales: 0 }])), withoutRecent: { netSales: 0 }, unclassified: { netSales: 0 } });
   const totals = blank('total', 'Total selección'), groups = new Map();
+  const nodeFor = path => ({ ...blank(JSON.stringify(path), path.at(-1) || 'Total selección', path), children: new Map(), products: new Map() });
+  const hierarchyTree = filters.groupBy === 'hierarchy' ? nodeFor([]) : null;
   function add(row, line, category) {
     const amount = lineSales(line);
     row.units += Number.isFinite(line.quantity) ? line.quantity : 0;
@@ -109,7 +111,27 @@ function buildProductRecurrence(state, orders, coverage = [], query = {}, warnin
         if (line.code && !group.codes.includes(String(line.code))) group.codes.push(String(line.code));
       }
       add(groups.get(key), line, category); add(totals, line, category);
+      if (hierarchyTree) {
+        let node = hierarchyTree; add(node, line, category);
+        for (let depth = 1; depth <= path.length; depth++) {
+          const name = path[depth - 1];
+          if (!node.children.has(name)) node.children.set(name, nodeFor(path.slice(0, depth)));
+          node = node.children.get(name); add(node, line, category);
+        }
+        if (!node.products.has(identity.key)) node.products.set(identity.key, { ...blank(identity.key,
+          identity.format ? identity.name : `${identity.name}${line.code ? ` · ${line.code}` : ''}`, path), kind: 'product' });
+        const product = node.products.get(identity.key);
+        if (identity.format) {
+          product.codes ||= [];
+          if (line.code && !product.codes.includes(String(line.code))) product.codes.push(String(line.code));
+        }
+        add(product, line, category);
+      }
     }
+  }
+  function serializeNode(node) {
+    const { children, products, ...values } = node;
+    return { ...finish(values), kind: 'hierarchy', children: [...children.values()].map(serializeNode), products: [...products.values()].map(finish) };
   }
   function finish(row) {
     const denominator = row.missingSales ? null : row.netSales;
@@ -124,7 +146,8 @@ function buildProductRecurrence(state, orders, coverage = [], query = {}, warnin
   const paymentCoverage = recurrence.coverageFor(coverage, report.locationIds, report.period.from, report.period.to, 'payment-details');
   return { definitionVersion: VERSION, identityDefinitionVersion: recurrence.VERSION, scope: report.scope, period: report.period,
     asOf, identityAsOf: report.asOf, filters, windows: WINDOWS, totals: finish(totals),
-    rows: [...groups.values()].map(finish).sort((a, b) => (b.netSales || 0) - (a.netSales || 0) || a.label.localeCompare(b.label, 'es')),
+    rows: [...groups.values()].map(row => ({ ...finish(row), kind: filters.groupBy })).sort((a, b) => (b.netSales || 0) - (a.netSales || 0) || a.label.localeCompare(b.label, 'es')),
+    ...(hierarchyTree ? { hierarchyTree: serializeNode(hierarchyTree) } : {}),
     status: !groups.size ? salesCoverage.complete ? 'no_activity' : 'no_data' : warnings.length || report.eligibilityPartial || totals.missingSales || !salesCoverage.complete || !historyCoverage.complete || !paymentCoverage.complete ? 'partial' : 'complete',
     coverage: { sales: salesCoverage, history: historyCoverage, payments: paymentCoverage }, linkage: purchases.linkage,
     monetaryBasis: 'Venta neta de las líneas TotEat después de descuentos, sin IVA, con la misma base del análisis de ventas. No se usa el importe MercadoPago como venta de producto.',

@@ -75,6 +75,33 @@ test('filtering products cannot resolve ambiguous whole-order links or divided p
   const split = build(state(records), [order('split', undefined, [line()], { explicitPaymentIds: [], paymentDuePartial: true })], coverage);
   assert.equal(split.totals.unclassified.netSales, 1000);
 });
+test('hierarchy detail partitions each parent into subhierarchies and directly assigned products from the same classification', () => {
+  const lines = [
+    { ...line('CL', 1000, 1, ['Barra', 'Calientes', 'Café']), name: 'Cappuccino (CL)' },
+    { ...line('GR', 2000, 2, ['Barra', 'Calientes', 'Café']), name: 'Cappuccino (GR)' },
+    line('DIRECT', 500, 1, ['Barra']), line('ICED', 1500, 1, ['Barra', 'Frías'])
+  ];
+  const snapshot = state([mp('prior', '2026-10-01'), mp('sale', '2026-10-31')]);
+  const orders = [order('sale', undefined, lines), order('unknown', undefined, [line('RETAIL', 2000, 1, ['Retail'])])];
+  const report = build(snapshot, orders, coverage, { groupFormats: true });
+  assert.equal(report.totals.netSales, 7000); assert.equal(report.hierarchyTree.netSales, 7000);
+  const barra = report.hierarchyTree.children.find(node => node.label === 'Barra');
+  assert.equal(barra.netSales, 5000); assert.equal(barra.units, 5); assert.equal(barra.windows[30].percent, 100);
+  assert.equal(barra.children.length, 2); assert.equal(barra.products.length, 1); assert.equal(barra.products[0].netSales, 500);
+  const leaf = barra.children.find(node => node.label === 'Calientes').children[0];
+  assert.deepEqual(leaf.path, ['Barra', 'Calientes', 'Café']); assert.equal(leaf.children.length, 0); assert.equal(leaf.products.length, 1);
+  assert.equal(leaf.products[0].label, 'Cappuccino · CL / GR'); assert.equal(leaf.products[0].netSales, 3000); assert.equal(leaf.products[0].units, 3);
+  function reconciles(node) {
+    const rows = [...node.children, ...node.products];
+    assert.ok(Math.abs(node.netSales - rows.reduce((n, row) => n + row.netSales, 0)) < 0.01);
+    for (const days of [15, 30, 60, 90]) assert.ok(Math.abs(node.windows[days].netSales - rows.reduce((n, row) => n + row.windows[days].netSales, 0)) < 0.01);
+    assert.equal(node.units, rows.reduce((n, row) => n + row.units, 0)); node.children.forEach(reconciles);
+  }
+  reconciles(report.hierarchyTree);
+  const filtered = build(snapshot, orders, coverage, { level: 2, hierarchy: '["Barra","Calientes"]', groupFormats: true });
+  assert.equal(filtered.hierarchyTree.netSales, 3000); assert.equal(filtered.hierarchyTree.children.length, 1);
+  assert.equal(filtered.hierarchyTree.children[0].children.length, 1); assert.equal(filtered.rows[0].kind, 'hierarchy');
+});
 test('selected location controls the entire history, while all locations combine previous purchases', () => {
   const records = [mp('previous', '2026-10-30', '1111', 'b', 1), mp('current', '2026-10-31')];
   const local = build(state(records), [order('current')], coverage);

@@ -9722,6 +9722,16 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .product-recurrence-table th:first-child { min-width: 210px; }
 .product-recurrence-table tr > :not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
 .product-recurrence-table td small { display: block; color: var(--text-muted); margin-top: 5px; }
+.product-recurrence-sort { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: inherit; cursor: pointer; }
+.product-recurrence-table th:first-child .product-recurrence-sort { justify-content: flex-start; }
+.product-recurrence-sort:hover { color: var(--text); }
+.product-recurrence-sort:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
+.product-recurrence-sort-arrow { flex: 0 0 auto; }
+.product-recurrence-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 0 10px; font-size: 12px; }
+.product-recurrence-drill { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.product-recurrence-drill:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
+.product-recurrence-hierarchy-row { cursor: pointer; }
+.product-recurrence-hierarchy-row:hover { background: var(--coffee-soft); }
 .product-recurrence-total { font-weight: 900; background: var(--panel-soft); }
 .product-recurrence-kpis { margin: 18px 0; }
 .product-recurrence-definition { margin-top: 20px; font-size: 12px; line-height: 1.6; }
