@@ -1,0 +1,636 @@
+{
+  "auditedOn": "2026-10-31",
+  "period": {
+    "from": "2026-10-28",
+    "to": "2026-10-30",
+    "mode": "custom",
+    "previous": {
+      "from": "2026-10-25",
+      "to": "2026-10-27"
+    },
+    "commonMonthTruncation": false
+  },
+  "filters": {
+    "groupBy": "product",
+    "level": 1,
+    "groupFormats": true,
+    "products": [
+      "B1030",
+      "B1040",
+      "B1070",
+      "B1000"
+    ],
+    "hierarchy": []
+  },
+  "sourceVersions": {
+    "mp": "f241497f90e2d24530076b80e9c758573ac0b78ca8136e36abd23759b96f5b1e",
+    "purchases": "ddc6b868a72ad7fb3411c8683b6381005f57a81b1da0c7311aa79791d6ec9013"
+  },
+  "sourceUnchangedDuringAudit": true,
+  "checks": {
+    "reproducesLiveReportExactly": true,
+    "independentLineAggregationMatches": true,
+    "independentLatestDateClassificationMatches": true,
+    "checkedProductLines": 91
+  },
+  "selectedProducts": [
+    {
+      "name": "Cappuccino",
+      "netSales": 170420.16806722703,
+      "units": 50,
+      "lines": 46,
+      "orders": 45,
+      "buckets": {
+        "15": {
+          "netSales": 62521.00840336134,
+          "units": 18,
+          "lines": 18,
+          "orders": 17
+        },
+        "30": {
+          "netSales": 7058.823529411766,
+          "units": 2,
+          "lines": 2,
+          "orders": 2
+        },
+        "60": {
+          "netSales": 3277.310924369748,
+          "units": 1,
+          "lines": 1,
+          "orders": 1
+        },
+        "withoutRecent": {
+          "netSales": 91008.40336134455,
+          "units": 27,
+          "lines": 23,
+          "orders": 23
+        },
+        "unclassified": {
+          "netSales": 6554.621848739496,
+          "units": 2,
+          "lines": 2,
+          "orders": 2
+        }
+      },
+      "returningAges": [
+        1,
+        49,
+        12,
+        2,
+        14,
+        5,
+        1,
+        24,
+        1,
+        20,
+        8,
+        1,
+        1,
+        2,
+        9,
+        2,
+        2,
+        1,
+        1,
+        1,
+        4
+      ]
+    },
+    {
+      "name": "Cortado",
+      "netSales": 63529.41176470587,
+      "units": 27,
+      "lines": 27,
+      "orders": 27,
+      "buckets": {
+        "15": {
+          "netSales": 28235.294117647052,
+          "units": 12,
+          "lines": 12,
+          "orders": 12
+        },
+        "withoutRecent": {
+          "netSales": 23529.411764705877,
+          "units": 10,
+          "lines": 10,
+          "orders": 10
+        },
+        "unclassified": {
+          "netSales": 11764.70588235294,
+          "units": 5,
+          "lines": 5,
+          "orders": 5
+        }
+      },
+      "returningAges": [
+        5,
+        9,
+        13,
+        5,
+        5,
+        13,
+        103,
+        12,
+        14,
+        3,
+        2,
+        1,
+        14
+      ]
+    },
+    {
+      "name": "Expreso Doble",
+      "netSales": 40840.3361344538,
+      "units": 18,
+      "lines": 18,
+      "orders": 18,
+      "buckets": {
+        "15": {
+          "netSales": 6806.72268907563,
+          "units": 3,
+          "lines": 3,
+          "orders": 3
+        },
+        "30": {
+          "netSales": 2268.90756302521,
+          "units": 1,
+          "lines": 1,
+          "orders": 1
+        },
+        "60": {
+          "netSales": 2268.90756302521,
+          "units": 1,
+          "lines": 1,
+          "orders": 1
+        },
+        "withoutRecent": {
+          "netSales": 29495.79831932774,
+          "units": 13,
+          "lines": 13,
+          "orders": 13
+        }
+      },
+      "returningAges": [
+        49,
+        127,
+        3,
+        1,
+        3,
+        17
+      ]
+    }
+  ],
+  "total": {
+    "key": "total",
+    "label": "Total selección",
+    "path": [],
+    "netSales": 274789.92,
+    "units": 95,
+    "missingSales": 0,
+    "windows": {
+      "15": {
+        "days": 15,
+        "netSales": 97563.03,
+        "percent": 35.5
+      },
+      "30": {
+        "days": 30,
+        "netSales": 9327.73,
+        "percent": 3.39
+      },
+      "60": {
+        "days": 60,
+        "netSales": 5546.22,
+        "percent": 2.02
+      },
+      "90": {
+        "days": 90,
+        "netSales": 0,
+        "percent": 0
+      }
+    },
+    "withoutRecent": {
+      "netSales": 144033.61,
+      "percent": 52.42
+    },
+    "unclassified": {
+      "netSales": 18319.33,
+      "percent": 6.67
+    },
+    "recurring": {
+      "netSales": 112436.97,
+      "percent": 40.92
+    }
+  },
+  "controlAllProducts": {
+    "window61to90": {
+      "days": 90,
+      "netSales": 53361.34,
+      "percent": 1.73
+    },
+    "products": [
+      {
+        "product": "Sandwich Croissant Pechuga Pavo Ahumado / Queso Mantecoso · B2770",
+        "netSales": 4033.61,
+        "percent": 4
+      },
+      {
+        "product": "Latte clásico · B1080 / B1090",
+        "netSales": 6554.62,
+        "percent": 9.19
+      },
+      {
+        "product": "Iced Latte · B1860 / B1870 / B1880",
+        "netSales": 3781.51,
+        "percent": 5.61
+      },
+      {
+        "product": "Chai Latte (hot) · B2070 / B2080",
+        "netSales": 3445.38,
+        "percent": 6.14
+      },
+      {
+        "product": "Tropical Pop Boba(te verde) · B3490",
+        "netSales": 4117.65,
+        "percent": 7.69
+      },
+      {
+        "product": "Latte Vainilla · B1100 / B1110",
+        "netSales": 3445.38,
+        "percent": 7.14
+      },
+      {
+        "product": "Sandwich Miga Integral Queso Mantecoso Palta Rucula · B2910",
+        "netSales": 4117.65,
+        "percent": 11.11
+      },
+      {
+        "product": "Smoothie Yoghurt Mango–Frutilla · B2590 / B2600 / B2610",
+        "netSales": 4705.88,
+        "percent": 17.83
+      },
+      {
+        "product": "Hojaldre de Chocolate · B2640",
+        "netSales": 1512.61,
+        "percent": 8.4
+      },
+      {
+        "product": "Smoothie Yoghurt Frutilla · B2560 / B2570",
+        "netSales": 4369.75,
+        "percent": 27.08
+      },
+      {
+        "product": "Chocolate caliente · B1260 / B1270",
+        "netSales": 4033.61,
+        "percent": 36.92
+      },
+      {
+        "product": "Medialuna Dulce (1 un) · B2710",
+        "netSales": 924.37,
+        "percent": 11.11
+      },
+      {
+        "product": "Frappé Choc Chips Crema · B1690",
+        "netSales": 7394.96,
+        "percent": 100
+      },
+      {
+        "product": "Boike Agua sin Gas · B3020",
+        "netSales": 924.37,
+        "percent": 14.29
+      }
+    ]
+  },
+  "observedPaymentHistory": {
+    "store-1:2026-05": {
+      "payments": 772,
+      "identifiable": 771,
+      "first": "2026-05-18",
+      "last": "2026-05-30"
+    },
+    "store-1:2026-06": {
+      "payments": 2094,
+      "identifiable": 2091,
+      "first": "2026-06-01",
+      "last": "2026-06-30"
+    },
+    "store-1:2026-07": {
+      "payments": 2358,
+      "identifiable": 2354,
+      "first": "2026-07-01",
+      "last": "2026-07-31"
+    },
+    "store-1:2026-08": {
+      "payments": 2598,
+      "identifiable": 2591,
+      "first": "2026-08-01",
+      "last": "2026-08-31"
+    },
+    "store-1:2026-09": {
+      "payments": 2241,
+      "identifiable": 2235,
+      "first": "2026-09-01",
+      "last": "2026-09-30"
+    },
+    "store-1:2026-10": {
+      "payments": 2110,
+      "identifiable": 2104,
+      "first": "2026-10-01",
+      "last": "2026-10-30"
+    },
+    "store-2:2026-10": {
+      "payments": 940,
+      "identifiable": 937,
+      "first": "2026-10-02",
+      "last": "2026-10-30"
+    }
+  },
+  "coverage": {
+    "sales": {
+      "source": "sales",
+      "from": "2026-10-28",
+      "to": "2026-10-30",
+      "locations": [
+        {
+          "locationId": "store-1",
+          "from": "2026-10-28",
+          "to": "2026-10-30",
+          "expectedDays": 3,
+          "coveredDays": 3,
+          "missing": [],
+          "complete": true,
+          "evidence": [
+            "toteat-api:store-1:sales"
+          ]
+        },
+        {
+          "locationId": "store-2",
+          "from": "2026-10-28",
+          "to": "2026-10-30",
+          "expectedDays": 3,
+          "coveredDays": 3,
+          "missing": [],
+          "complete": true,
+          "evidence": [
+            "toteat-api:store-2:sales"
+          ]
+        }
+      ],
+      "complete": true,
+      "coveredDays": 3,
+      "expectedDays": 3
+    },
+    "history": {
+      "source": "mercadopago",
+      "from": "2026-07-30",
+      "to": "2026-10-30",
+      "locations": [
+        {
+          "locationId": "store-1",
+          "from": "2026-07-30",
+          "to": "2026-10-30",
+          "expectedDays": 93,
+          "coveredDays": 0,
+          "missing": [
+            "2026-07-30",
+            "2026-07-31",
+            "2026-08-01",
+            "2026-08-02",
+            "2026-08-03",
+            "2026-08-04",
+            "2026-08-05",
+            "2026-08-06",
+            "2026-08-07",
+            "2026-08-08",
+            "2026-08-09",
+            "2026-08-10",
+            "2026-08-11",
+            "2026-08-12",
+            "2026-08-13",
+            "2026-08-14",
+            "2026-08-15",
+            "2026-08-16",
+            "2026-08-17",
+            "2026-08-18",
+            "2026-08-19",
+            "2026-08-20",
+            "2026-08-21",
+            "2026-08-22",
+            "2026-08-23",
+            "2026-08-24",
+            "2026-08-25",
+            "2026-08-26",
+            "2026-08-27",
+            "2026-08-28",
+            "2026-08-29",
+            "2026-08-30",
+            "2026-08-31",
+            "2026-09-01",
+            "2026-09-02",
+            "2026-09-03",
+            "2026-09-04",
+            "2026-09-05",
+            "2026-09-06",
+            "2026-09-07",
+            "2026-09-08",
+            "2026-09-09",
+            "2026-09-10",
+            "2026-09-11",
+            "2026-09-12",
+            "2026-09-13",
+            "2026-09-14",
+            "2026-09-15",
+            "2026-09-16",
+            "2026-09-17",
+            "2026-09-18",
+            "2026-09-19",
+            "2026-09-20",
+            "2026-09-21",
+            "2026-09-22",
+            "2026-09-23",
+            "2026-09-24",
+            "2026-09-25",
+            "2026-09-26",
+            "2026-09-27",
+            "2026-09-28",
+            "2026-09-29",
+            "2026-09-30",
+            "2026-10-01",
+            "2026-10-02",
+            "2026-10-03",
+            "2026-10-04",
+            "2026-10-05",
+            "2026-10-06",
+            "2026-10-07",
+            "2026-10-08",
+            "2026-10-09",
+            "2026-10-10",
+            "2026-10-11",
+            "2026-10-12",
+            "2026-10-13",
+            "2026-10-14",
+            "2026-10-15",
+            "2026-10-16",
+            "2026-10-17",
+            "2026-10-18",
+            "2026-10-19",
+            "2026-10-20",
+            "2026-10-21",
+            "2026-10-22",
+            "2026-10-23",
+            "2026-10-24",
+            "2026-10-25",
+            "2026-10-26",
+            "2026-10-27",
+            "2026-10-28",
+            "2026-10-29",
+            "2026-10-30"
+          ],
+          "complete": false,
+          "evidence": []
+        },
+        {
+          "locationId": "store-2",
+          "from": "2026-07-30",
+          "to": "2026-10-30",
+          "expectedDays": 93,
+          "coveredDays": 19,
+          "missing": [
+            "2026-07-30",
+            "2026-07-31",
+            "2026-08-01",
+            "2026-08-02",
+            "2026-08-03",
+            "2026-08-04",
+            "2026-08-05",
+            "2026-08-06",
+            "2026-08-07",
+            "2026-08-08",
+            "2026-08-09",
+            "2026-08-10",
+            "2026-08-11",
+            "2026-08-12",
+            "2026-08-13",
+            "2026-08-14",
+            "2026-08-15",
+            "2026-08-16",
+            "2026-08-17",
+            "2026-08-18",
+            "2026-08-19",
+            "2026-08-20",
+            "2026-08-21",
+            "2026-08-22",
+            "2026-08-23",
+            "2026-08-24",
+            "2026-08-25",
+            "2026-08-26",
+            "2026-08-27",
+            "2026-08-28",
+            "2026-08-29",
+            "2026-08-30",
+            "2026-08-31",
+            "2026-09-01",
+            "2026-09-02",
+            "2026-09-03",
+            "2026-09-04",
+            "2026-09-05",
+            "2026-09-06",
+            "2026-09-07",
+            "2026-09-08",
+            "2026-09-09",
+            "2026-09-10",
+            "2026-09-11",
+            "2026-09-12",
+            "2026-09-13",
+            "2026-09-14",
+            "2026-09-15",
+            "2026-09-16",
+            "2026-09-17",
+            "2026-09-18",
+            "2026-09-19",
+            "2026-09-20",
+            "2026-09-21",
+            "2026-09-22",
+            "2026-09-23",
+            "2026-09-24",
+            "2026-09-25",
+            "2026-09-26",
+            "2026-09-27",
+            "2026-09-28",
+            "2026-09-29",
+            "2026-09-30",
+            "2026-10-01",
+            "2026-10-02",
+            "2026-10-03",
+            "2026-10-04",
+            "2026-10-05",
+            "2026-10-06",
+            "2026-10-07",
+            "2026-10-08",
+            "2026-10-09",
+            "2026-10-10",
+            "2026-10-11"
+          ],
+          "complete": false,
+          "evidence": [
+            "5896eede-ffc0-43c8-9c4a-6b8780b4d735/a2151b61-4cba-4d67-a849-8baf6e030103",
+            "5896eede-ffc0-43c8-9c4a-6b8780b4d735/ba45b0bc-b7dd-4afa-a9d6-817f3da5266f",
+            "5896eede-ffc0-43c8-9c4a-6b8780b4d735/6d93b554-33f5-4e42-b67b-24ee8482e7cf",
+            "5896eede-ffc0-43c8-9c4a-6b8780b4d735/13ac57cd-f027-45f8-84d0-bad97c94d9b8",
+            "6092c94a-014c-4079-854f-d999e472e705/045c4f5c-27a1-4f1f-b337-ef79802354dc",
+            "6092c94a-014c-4079-854f-d999e472e705/4757438d-33cf-449f-abe9-47c9de2a37c1",
+            "a55797fa-829c-49a0-9c87-d68a4118e94f/ee8b5944-5651-45ef-bef9-e6e9c0c180cb",
+            "a55797fa-829c-49a0-9c87-d68a4118e94f/eec4e1cc-abe8-4a5d-ac1d-f67db4d18eaf",
+            "a55797fa-829c-49a0-9c87-d68a4118e94f/645c1fe2-471c-48b6-aebb-72b6dd79e207"
+          ]
+        }
+      ],
+      "complete": false,
+      "coveredDays": 0,
+      "expectedDays": 93
+    },
+    "payments": {
+      "source": "payment-details",
+      "from": "2026-10-28",
+      "to": "2026-10-30",
+      "locations": [
+        {
+          "locationId": "store-1",
+          "from": "2026-10-28",
+          "to": "2026-10-30",
+          "expectedDays": 3,
+          "coveredDays": 3,
+          "missing": [],
+          "complete": true,
+          "evidence": [
+            "toteat-api:store-1:payment-details"
+          ]
+        },
+        {
+          "locationId": "store-2",
+          "from": "2026-10-28",
+          "to": "2026-10-30",
+          "expectedDays": 3,
+          "coveredDays": 3,
+          "missing": [],
+          "complete": true,
+          "evidence": [
+            "toteat-api:store-2:payment-details"
+          ]
+        }
+      ],
+      "complete": true,
+      "coveredDays": 3,
+      "expectedDays": 3
+    }
+  },
+  "warnings": [
+    "Se omitió una hoja sin encabezados MercadoPago (La Concepcion).",
+    "No se puede acreditar continuidad con archivos MP ausentes o ilegibles (La Concepcion).",
+    "Identidad aproximada: un medio de pago no equivale a una persona.",
+    "Consolidado aproximado: no está acreditada una identidad global entre cuentas de pago.",
+    "Los reportes SETTLEMENT acreditan operaciones observadas, no todos los estados de aprobación y devolución.",
+    "No existe evidencia suficiente de un último día completamente cubierto. Los datos observados son provisionales.",
+    "Historial de 90 días incompleto: los tramos reflejan antecedentes observados y son provisionales. Sin antecedente observado no significa cliente nuevo."
+  ]
+}

@@ -1,0 +1,39 @@
+AUDITORÍA PRODUCTO-RECURRENCIA — 31 de octubre de 2026
+
+Consulta: Todas las cafeterías, 28–30 de octubre de 2026.
+Productos: B1030, B1040, B1070 y B1000; formatos CL/GR/XTR agrupados.
+
+RESULTADO
+Se reproducen exactamente los $274.789,92 de venta neta y 95 unidades del reporte.
+La suma independiente de 91 líneas coincide con cada importe y tramo del reporte.
+Las versiones de fuentes permanecieron estables durante la revisión.
+
+CORTADO — 27 COMPRAS / 27 UNIDADES
+1–15 días: 12 unidades, $28.235,29, 44,4% de la venta.
+Edades observadas: 1, 2, 3, 5, 5, 5, 9, 12, 13, 13, 14 y 14 días.
+16–30 / 31–60 / 61–90 días: ninguna compra con su último antecedente en estos tramos.
+Sin antecedente observado ≤90 días: 10 unidades, $23.529,41, 37,0%.
+De estas 10 compras, 9 no tienen fecha anterior identificable observada y una tiene
+como último antecedente el 17 de julio: 103 días antes de su compra del 28 de octubre.
+Sin vínculo identificable: 5 unidades, $11.764,71, 18,5%; 4 vínculos ambiguos y 1 sin vínculo confiable.
+
+CONTROL DE LA COLUMNA 61–90 DÍAS
+En todos los productos del mismo período hay $53.361,34 asignados a ese tramo, en 14 grupos.
+Ejemplos: Latte clásico, $6.554,62 (9,2%); Iced Latte, $3.781,51 (5,6%);
+Chai Latte (hot), $3.445,38 (6,1%).
+Cappuccino, Cortado y Expresso Doble no tienen una compra anterior más reciente en 61–90 días.
+Las columnas se refieren a la última compra anterior del medio de pago, de cualquier
+producto y monto. Un cliente que compró hace 80 y 3 días se asigna a 1–15, una sola vez.
+
+LÍMITES DE LOS DATOS
+La Concepción tiene pagos observados desde el 18 de mayo de 2026; Portal Lyon desde
+el 2 de octubre de 2026. No se acredita continuidad completa de 90 días para la red.
+Una advertencia de lectura afecta un archivo antiguo marcado como MercadoPago que
+no contiene encabezados MP; la cobertura acreditada no equivale al rango de pagos observados.
+Por ello, Sin antecedente observado NO equivale a cliente nuevo, y un 0,0% representa
+ninguna venta clasificada en ese tramo entre los datos observados, no ausencia garantizada
+de compras reales. La identidad y los vínculos siguen siendo estimados según los criterios vigentes.
+
+No se modificaron cálculos, fuentes ni reglas de identidad durante esta auditoría.
+Detalle trazable por pedido: PRODUCTO_RECURRENCIA_DETALLE.csv.
+Resumen y conciliación numérica: PRODUCTO_RECURRENCIA_AUDITORIA.json.

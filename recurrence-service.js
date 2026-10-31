@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const engine = require('./recurrence');
 const purchaseHistory = require('./recurrence-history');
+const productRecurrence = require('./product-recurrence');
 const error = (status, message) => Object.assign(new Error(message), { status });
 function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCutoff, clock = Date.now, ttl = 3600000, limit = 8 }) {
   const reports = new Map();
@@ -15,6 +16,27 @@ function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCut
     if (current.mp !== entry.versions.mp || (purchases && current.purchases !== entry.versions.purchases)) throw error(409, 'Las fuentes cambiaron desde la generación del reporte. Pulsa Generar reportes para trabajar con una versión coherente.');
   };
   async function request(action, input = {}, owner = 'local') {
+    if (action === 'product-options') {
+      const versions = fingerprint(input);
+      const data = readOrders(input, null);
+      if (fingerprint(input).purchases !== versions.purchases) throw error(409, 'Las ventas cambiaron durante la carga. Vuelve a cargar las opciones.');
+      return { ...productRecurrence.productOptions(data.orders), warnings: data.warnings || [] };
+    }
+    if (action === 'product-generate') {
+      productRecurrence.selection(input);
+      const versions = fingerprint(input), source = readSource(input);
+      // Custom dates avoid the equal-month comparison truncation of the customer summary.
+      const period = engine.resolvePeriod(input.period === 'current-month'
+        ? { period: 'custom', dateFrom: `${source.today.slice(0, 7)}-01`, dateTo: source.today } : input,
+      source.today, engine.lastCompleteDay(source.coverage, source.locationIds, source.today, source.today));
+      const state = engine.buildReport(source, { ...input, period: 'custom', dateFrom: period.from, dateTo: period.to });
+      const data = readOrders(input, state.report.period);
+      const result = productRecurrence.buildProductRecurrence(state, data.orders, source.coverage,
+        { ...input, serverCutoff: input.serverCutoff || source.cutoff }, data.warnings);
+      const after = fingerprint(input);
+      if (after.mp !== versions.mp || after.purchases !== versions.purchases) throw error(409, 'Las fuentes cambiaron durante el cálculo. Vuelve a generar el reporte.');
+      return { ...result, sourceVersions: versions };
+    }
     if (action === 'generate') {
       const versions = fingerprint(input), networkVersion = fingerprint({ ...input, location: 'all' }).mp, cacheInput = { ...input };
       // The request clock does not change closed historical windows. Current periods retain their exact cutoff.
@@ -112,6 +134,8 @@ function registerRecurrenceRoutes(app, service) {
     } catch (e) { return res.status(e.status || 500).json({ error: e.message || 'No se pudo preparar el reporte de recurrencia.' }); }
   };
   app.get('/api/sales/recurrence', run('generate'));
+  app.get('/api/sales/product-recurrence/options', run('product-options'));
+  app.get('/api/sales/product-recurrence', run('product-generate'));
   app.get('/api/sales/recurrence/:id/:section', run(null));
 }
 module.exports = { createRecurrenceService, registerRecurrenceRoutes };

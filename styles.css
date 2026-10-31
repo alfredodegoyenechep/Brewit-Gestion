@@ -9705,6 +9705,28 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 
 /* Recurrence v2: readable cards, explicit sources and independently scrollable detail. */
 .recurrence-workspace { min-width: 0; }
+.product-recurrence-workspace { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.product-recurrence-workspace [hidden] { display: none !important; }
+.product-recurrence-workspace > .panel-head { align-items: flex-start; flex-wrap: wrap; }
+.product-recurrence-workspace > .panel-head > div { min-width: 0; flex: 1 1 250px; }
+.product-recurrence-workspace h3 { margin: 5px 0; font-size: calc(22px * var(--font-scale)); }
+.product-recurrence-picker { margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; }
+.product-recurrence-picker-head { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.product-recurrence-picker-head > label { display: grid; gap: 6px; flex: 1 1 200px; min-width: 0; }
+.product-recurrence-picker-head input { width: 100%; min-width: 0; }
+.product-recurrence-picker-head > span { color: var(--text-muted); font-size: 12px; }
+.product-recurrence-products { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 8px; max-height: 260px; overflow-y: auto; }
+.product-recurrence-products > label { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 8px; overflow-wrap: anywhere; }
+.product-recurrence-products input { flex: 0 0 auto; }
+.product-recurrence-table { min-width: 1050px; }
+.product-recurrence-table th:first-child { min-width: 210px; }
+.product-recurrence-table tr > :not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.product-recurrence-table td small { display: block; color: var(--text-muted); margin-top: 5px; }
+.product-recurrence-total { font-weight: 900; background: var(--panel-soft); }
+.product-recurrence-kpis { margin: 18px 0; }
+.product-recurrence-definition { margin-top: 20px; font-size: 12px; line-height: 1.6; }
+.product-recurrence-definition summary { cursor: pointer; font-weight: 800; }
+#product-recurrence-progress { width: 100%; }
 .recurrence-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px 0; margin: 12px 0 20px; border-bottom: 1px solid var(--border); }
 .recurrence-tabs button { padding: 10px 16px; color: var(--text); border: 1px solid var(--border); border-radius: 9px; background: var(--panel); font: inherit; cursor: pointer; }
 .recurrence-tabs [aria-selected='true'] { background: var(--coffee); color: #fff5e9; font-weight: 800; }

@@ -13692,8 +13692,9 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
   ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-filters', '#sales-insight-range-status', '#sales-insight-context', '#sales-insight-filter-note', '.sales-insights-grid']],
   ['ingredients', 'Ventas por ingredientes', ['#sales-ingredients-workspace']],
   ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
-  ['customers', 'Clientes recurrentes', ['.mercadopago-panel']]
-]);
+  ['customers', 'Clientes recurrentes', ['.mercadopago-panel']],
+  ['product-recurrence', 'Producto-Recurrencia', ['#product-recurrence-workspace']]
+], key => { if (key === 'product-recurrence') window.openProductRecurrence?.(); });
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
   ['weekly', 'Resultados Semanales / Mensuales', ['#weekly-results-workspace']],
   ['statement', 'Estado de resultados', ['#financial-results-filters', '#financial-results-status', '#financial-results-summary', '.financial-statement-panel', '#financial-warnings']],

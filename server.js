@@ -3596,6 +3596,7 @@ function createApp(options = {}) {
   app.get('/toteat-stock-view.js', (req, res) => res.sendFile(path.join(__dirname, 'toteat-stock-view.js')));
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
   app.get('/recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'recurrence-view.js')));
+  app.get('/product-recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-recurrence-view.js')));
   app.get('/sales-clusters-view.js', (req, res) => res.sendFile(path.join(__dirname, 'sales-clusters-view.js')));
   app.get('/weekly-results-view.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-view.js')));
   app.get('/weekly-results-export.js', (req, res) => res.sendFile(path.join(__dirname, 'weekly-results-export.js')));
@@ -6417,6 +6418,7 @@ function createApp(options = {}) {
     filesFor: (location, field) => field === 'sales' ? storedSalesFiles(location) : storedTransactionFiles(location, field),
     manifests: () => historicalControl.manifests(), today: projectionToday, cutoff: () => salesReportClock().cutoff,
     ordersFor(query, period) {
+      period ||= { from: '2000-01-01', to: projectionToday() };
       const payload = buildDemandSource({ locations: query.location || 'all', mode: 'custom', dateFrom: period.from, dateTo: period.to });
       const rawByOrder = new Map();
       for (const store of payload.stores) {
@@ -6440,6 +6442,7 @@ function createApp(options = {}) {
         return { ...clean, netSales: net, ticketGross: Number.isFinite(gross) ? gross : null,
           monetaryVerified: net !== null, paymentDuePartial: order.paymentDuePartial || raw.length > 1,
           lines: eligibleLines.map(line => ({ ...line,
+            productNetSales: line.netSales,
             netSales: net !== null && gross > 0 && line.paidGross !== null ? line.paidGross / gross * net : 0 })) };
       });
       return { orders, warnings: payload.source.warnings };

@@ -775,6 +775,39 @@
         </section>
         <dialog id="recurrence-detail-dialog" class="demand-dialog" aria-labelledby="recurrence-detail-title"><div class="demand-dialog-head"><h3 id="recurrence-detail-title">Detalle del reporte</h3><button id="recurrence-detail-close" class="icon-button" type="button">Cerrar</button></div><p id="recurrence-detail-status" role="status" aria-live="polite"></p><div id="recurrence-detail-content"></div><div class="demand-dialog-pages"><button id="recurrence-detail-prev" class="icon-button" type="button">Anterior</button><span id="recurrence-detail-page"></span><button id="recurrence-detail-next" class="icon-button" type="button">Siguiente</button></div></dialog>
       </section>
+
+      <section id="product-recurrence-workspace" class="panel product-recurrence-workspace" aria-labelledby="product-recurrence-title">
+        <div class="panel-head">
+          <div><div class="panel-eyebrow">Comportamiento de compra por producto</div><h3 id="product-recurrence-title">Producto-Recurrencia</h3><p class="panel-description">Ventas y unidades por jerarquía o productos seleccionados, con el porcentaje de venta asociado a compras anteriores del mismo medio de pago.</p></div>
+          <button id="product-recurrence-export" class="icon-button" type="button" disabled>Exportar XLSX</button>
+        </div>
+        <form id="product-recurrence-filters" class="financial-results-filters sales-report-filters">
+          <label>Cafetería<select id="product-recurrence-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select></label>
+          <label>Período<select id="product-recurrence-period"><option value="last-28-days">Últimos 28 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Personalizado</option></select></label>
+          <label>Desde<input id="product-recurrence-from" type="date" required disabled></label>
+          <label>Hasta<input id="product-recurrence-to" type="date" required disabled></label>
+          <label>Mostrar por<select id="product-recurrence-group"><option value="hierarchy">Jerarquía</option><option value="product">Productos seleccionados</option></select></label>
+          <label>Jerarquía<select id="product-recurrence-hierarchy"><option value="[]">Todas las jerarquías</option></select></label>
+          <label id="product-recurrence-level-field">Nivel de agrupación<select id="product-recurrence-level"><option value="1">Nivel 1</option></select></label>
+          <label class="sales-report-checkbox"><input id="product-recurrence-formats" type="checkbox"> Agrupar formatos de vaso (CL, GR, XTR)</label>
+          <button class="primary" type="submit">Generar reporte</button>
+        </form>
+        <div id="product-recurrence-picker" class="product-recurrence-picker" hidden>
+          <div class="product-recurrence-picker-head"><label for="product-recurrence-search">Buscar productos<input id="product-recurrence-search" type="search" placeholder="Nombre o código"></label><span id="product-recurrence-selection-count">Todos los productos</span><button id="product-recurrence-clear" class="icon-button small" type="button">Limpiar selección</button></div>
+          <p class="panel-description">Marca uno o varios productos. Sin selección se incluyen todos; la búsqueda solo filtra la lista de opciones. Al agrupar formatos aparece una opción por bebida y se seleccionan juntos todos sus formatos disponibles.</p>
+          <div id="product-recurrence-products" class="product-recurrence-products" role="group" aria-label="Productos a incluir"></div>
+        </div>
+        <p id="product-recurrence-options-status" class="form-status" role="status" aria-live="polite"></p>
+        <p id="product-recurrence-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reporte.</p>
+        <progress id="product-recurrence-progress" hidden aria-label="Preparando Producto-Recurrencia"></progress>
+        <p id="product-recurrence-context" class="panel-description"></p>
+        <div id="product-recurrence-results"><p class="empty-state">Genera el reporte para consultar ventas, unidades y recurrencia por producto.</p></div>
+        <details class="product-recurrence-definition"><summary>Cómo se calcula</summary>
+          <p>Se busca la compra anterior más reciente del mismo medio de pago en una fecha local distinta, de cualquier producto y monto. Cada venta se asigna una sola vez: 1–15, 16–30, 31–60 o 61–90 días. Los tramos son excluyentes.</p>
+          <p>El porcentaje divide la venta recurrente de cada tramo por la venta neta total de la fila, incluidas las ventas sin vínculo identificable. La cafetería seleccionada define dónde buscar antecedentes; Todas considera la red.</p>
+          <p>Se aplican los criterios de Clientes recurrentes: identidad aproximada del medio de pago, pagos válidos y vínculos confiables con TotEat. Sin vínculo se muestra por separado. Un medio de pago no equivale necesariamente a una persona; un historial incompleto produce resultados provisionales.</p>
+        </details>
+      </section>
     </section>
 
     <section id="weekly-report" style="display:none;">
@@ -2793,6 +2826,7 @@
   <script src="replenishment-policy.js"></script>
   <script src="script.js"></script>
   <script src="recurrence-view.js"></script>
+  <script src="product-recurrence-view.js"></script>
   <script src="sales-projection.js"></script>
   <script src="sales-projection-view.js"></script>
   <script src="/vendor/jspdf.umd.min.js"></script>
