@@ -3953,6 +3953,10 @@ function renderSalesInsights() {
   const originalInsight = salesDashboardState.sales.productInsights[key];
   if (!originalInsight) return;
   const insight = originalInsight.analysisProducts ? {...originalInsight,...window.buildFilteredSalesInsights(originalInsight.analysisProducts,{bar:salesProductFilters.bar,groupFormats:salesProductFilters.groupFormats,rankBy})} : originalInsight;
+  const totalNetSales = insight.totalNetSales ?? insight.hierarchyTree?.netSales ?? 0;
+  const totalUnits = (insight.hierarchyTree?.products || []).reduce((sum, product) => sum + product.quantity, 0);
+  document.getElementById('sales-ranking-total-sales').textContent = formatClp(totalNetSales);
+  document.getElementById('sales-ranking-total-units').textContent = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(totalUnits);
   const productContainer = document.getElementById('sales-top-products');
   if (!insight.topProducts.length) {
     productContainer.textContent = 'No hay productos vendidos en este período.';

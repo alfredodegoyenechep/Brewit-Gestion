@@ -7676,6 +7676,45 @@ button:disabled {
   gap: 20px;
 }
 
+.sales-ranking-head,
+.sales-ranking-controls {
+  flex-wrap: wrap;
+}
+
+.sales-ranking-title {
+  flex: 1 1 220px;
+}
+
+.sales-ranking-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+.sales-ranking-controls > label {
+  white-space: nowrap;
+  font-size: calc(12px * var(--font-scale));
+}
+
+.sales-ranking-totals {
+  display: flex;
+  gap: 20px;
+  margin: 0;
+}
+
+.sales-ranking-totals dt {
+  color: var(--text-muted);
+  font-size: calc(10px * var(--font-scale));
+}
+
+.sales-ranking-totals dd {
+  margin: 3px 0 0;
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .hourly-demand-panel h3 {
   margin: 5px 0 0;
   font-size: calc(22px * var(--font-scale));
@@ -9710,3 +9749,14 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .recurrence-history-chart { color: var(--text); max-width: 100%; overflow-x: auto; }
 .recurrence-history-chart svg { display: block; width: 100%; min-width: 540px; }
 #recurrence-network-content > details, #recurrence-monthly-content > details { margin: 18px 0; }
+
+.weekly-results-detail.weekly-results-reconciliation { width: min(1800px, 96vw); box-sizing: border-box; margin: auto; }
+.weekly-results-reconciliation .panel-head { align-items: flex-start; gap: 16px; }
+.weekly-results-reconciliation-section { margin-top: 24px; }
+.weekly-results-reconciliation-section h4 { margin-bottom: 12px; }
+.weekly-results-reconciliation .weekly-results-metric-table { min-width: 1680px; }
+.weekly-results-reconciliation .weekly-results-metric-table td { vertical-align: top; }
+.weekly-results-reconciliation tr:is([data-status="toteat-only"], [data-status="mp-only"], [data-status="ambiguous"], [data-status="difference"], [data-status="sales-payment-gap"]) { background: var(--clay-soft); }
+.weekly-results-reconciliation tr:not([data-status="matched"]):not([data-status="cash"]) td:nth-child(11) { color: var(--red); font-weight: 800; }
+.weekly-results-reconciliation tr[data-status="cash"] { color: var(--text-muted); }
+.weekly-results-reconciled { color: var(--green); font-weight: 700; }

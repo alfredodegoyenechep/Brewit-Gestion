@@ -7634,7 +7634,7 @@ function createApp(options = {}) {
     return result;
   }
 
-  function mercadoPagoFeesForPeriod(stores, dateFrom, dateTo, { collectionField = 'TRANSACTION_AMOUNT' } = {}) {
+  function mercadoPagoFeesForPeriod(stores, dateFrom, dateTo, { collectionField = 'TRANSACTION_AMOUNT', includeDetails = false } = {}) {
     const vatFactor = 1.18;
     const facts = [];
     const seen = new Set();
@@ -7666,7 +7666,9 @@ function createApp(options = {}) {
               if (fee !== null) locationsWithFee.add(location.id);
               const collectedAmount = numericValue(rowValue(row, [collectionField]));
               if (collectedAmount !== null) locationsWithCollection.add(location.id);
-              facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee), collectedAmount });
+              facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee), collectedAmount,
+                ...(includeDetails ? { key: uniqueId, sourceId, dateTime: mercadoPagoDateTime(row),
+                  transactionAmount: numericValue(rowValue(row, ['TRANSACTION_AMOUNT'])) } : {}) });
             }
           }
           locationsWithFiles.add(location.id);
@@ -7701,7 +7703,7 @@ function createApp(options = {}) {
         coveredLocations: locationsWithCollection.size,
         totalLocations: stores.length
       },
-      warnings
+      warnings, ...(includeDetails ? { facts } : {})
     };
   }
 
@@ -8185,6 +8187,7 @@ function createApp(options = {}) {
     const isWarehouse = location.type === 'warehouse';
     const values = {}, warnings = [], sources = {}, details = {};
     const { from, through } = period;
+    let reconciliationSales = [], reconciliationPayments = [], reconciliationSettlements = [];
     const costCutoff = period.valuationThrough || through;
     const sourceInfo = source => ({ name: source.record?.originalName || source.record?.name || source.originalName,
       range: source.record?.confirmedRange || source.record?.detectedRange || source.confirmedRange || null });
@@ -8207,7 +8210,10 @@ function createApp(options = {}) {
     if (!isWarehouse) try {
       const payload = buildFinancialResultsPayload({ location: location.id, dateFrom: from, dateTo: through,
         skipInventory: true }, { costCutoff,
-        onRevenueFacts: facts => { details.netSales = weeklyDetailBuilder.sales(facts); } });
+        onRevenueFacts: facts => {
+          details.netSales = weeklyDetailBuilder.sales(facts);
+          reconciliationSales = facts.map(({ orderKey, date, netSales }) => ({ orderKey, date, netSales }));
+        } });
       const files = storedSalesFiles(location.id), coverage = fileCoverage(files);
       const available = payload.revenue.filesRead > 0 && (coverage.available || payload.revenue.lineCount > 0);
       const status = coverage.complete && payload.revenue.filesRead === files.length ? 'complete' : 'partial';
@@ -8229,6 +8235,7 @@ function createApp(options = {}) {
       const state = toteatSalesSync.get(location.id);
       const payments = toteatPaymentCollections([{ location, state }], from, through, { includeCollectionTotals: true, includeDetails: true });
       details.tips = weeklyDetailBuilder.tips(payments.tipDetails);
+      reconciliationPayments = payments.paymentDetails;
       values.tips = fromMetric(payments.tips);
       values.mercadoPagoTips = fromMetric({ ...payments.mercadoPagoTips, available: payments.tips.available });
       values.cashTips = fromMetric(payments.cashTips);
@@ -8237,7 +8244,8 @@ function createApp(options = {}) {
       warnings.push(...payments.warnings);
     } catch (error) { failure('Propinas y efectivo', error); }
     if (!isWarehouse) try {
-      const mp = mercadoPagoFeesForPeriod([location], from, through, { collectionField: 'REAL_AMOUNT' });
+      const mp = mercadoPagoFeesForPeriod([location], from, through, { collectionField: 'REAL_AMOUNT', includeDetails: true });
+      reconciliationSettlements = mp.facts;
       const files = storedTransactionFiles(location.id, 'mercadopago'), coverage = fileCoverage(files);
       const mercadoPagoSources = files.map(sourceInfo);
       sources.mercadoPago = { name: 'Mercado Pago · REAL_AMOUNT (después de fees)', files: mercadoPagoSources };
@@ -8354,6 +8362,18 @@ function createApp(options = {}) {
           : { costCutoff: key === 'tips' || key === 'netSales' ? null : costCutoff };
       const id = weeklyDetailReports.put(key, detail, values[key], location, period, context.today, metadata);
       if (id) detailReports[key] = id;
+    }
+    if (!isWarehouse) {
+      const computed = require('./weekly-results').finalizeCell({ values }, context.includeInventory, location).values;
+      const metric = computed.collectionDifference;
+      if (metric.available) {
+        const totals = Object.fromEntries(['grossSales', 'discounts', 'tips', 'cashCollection', 'mercadoPagoFee',
+          'mercadoPagoTheoretical', 'mercadoPagoCollection', 'collectionDifference'].map(key => [key, computed[key].amount]));
+        const detail = require('./collection-reconciliation').buildCollectionReconciliation({
+          sales: reconciliationSales, payments: reconciliationPayments, settlements: reconciliationSettlements, totals });
+        const id = weeklyDetailReports.put('collectionDifference', detail, metric, location, period, context.today);
+        if (id) detailReports.collectionDifference = id;
+      }
     }
     return { values, inventory, sources, detailReports, warnings: [...new Set(warnings)] };
   }

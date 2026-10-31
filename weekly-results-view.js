@@ -27,6 +27,10 @@
   const metricDownload = document.getElementById('weekly-results-metric-xlsx');
   let metricController = null, metricGeneration = 0, metricSnapshot = null, metricVisibleRows = [];
   const metricCache = new Map();
+  const reconciliationDialog = document.getElementById('weekly-results-reconciliation');
+  const reconciliationBody = document.getElementById('weekly-results-reconciliation-body');
+  const reconciliationStatus = document.getElementById('weekly-results-reconciliation-status');
+  let reconciliationController = null, reconciliationGeneration = 0;
   const pdfButton = document.getElementById('weekly-results-pdf');
   const xlsxButton = document.getElementById('weekly-results-xlsx');
   const exportDialog = document.getElementById('weekly-results-export');
@@ -300,6 +304,89 @@
     if (source.missingCostCodes?.length) paragraph(inboundBody, `Sin costo completo: ${source.missingCostCodes.join(', ')}.`);
     inboundDialog.showModal();
   }
+  function renderReconciliation(report) {
+    const labels = { matched: 'Pareado', difference: 'Pareado con diferencia', cash: 'Efectivo',
+      'toteat-only': 'Solo TotEat', 'mp-only': 'Solo MercadoPago', ambiguous: 'Pareo ambiguo',
+      'sales-payment-gap': 'Diferencia ventas / pagos TotEat' };
+    const totals = report.totals;
+    const total = paragraph(reconciliationBody, `Control de diferencias: ${formatClp(report.total)}`);
+    total.className = 'weekly-results-metric-total';
+    paragraph(reconciliationBody, `MercadoPago neto: ${formatClp(totals.mercadoPagoCollection)} · MP teórico: ${formatClp(totals.mercadoPagoTheoretical)}.`);
+    if (report.partial) paragraph(reconciliationBody, 'Reporte parcial: se analizan los subtotales conocidos y la cobertura disponible.');
+    const check = paragraph(reconciliationBody, totals.reconciled
+      ? `Total de movimientos observados: ${formatClp(totals.exceptionTotal)}. Coincide con el Control de diferencias.`
+      : `Total explicado: ${formatClp(totals.explained)}. Pendiente de explicar respecto al reporte: ${formatClp(totals.reportGap)}.`);
+    check.className = totals.reconciled ? 'weekly-results-reconciled' : 'weekly-results-difference';
+    if (totals.creditNoteCount) paragraph(reconciliationBody,
+      `Notas de crédito TotEat por revisar: ${totals.creditNoteCount} · Aporte a la diferencia: ${formatClp(totals.creditNoteContribution)}. Revisa su devolución o compensación en MercadoPago.`);
+    const columns = [
+      ['toteatTime', 'TotEat · Fecha y hora'], ['orderId', 'TotEat · Comanda'], ['paymentId', 'TotEat · Pago'],
+      ['method', 'TotEat · Medio'], ['toteatAmount', 'TotEat · Importe', true],
+      ['mpTime', 'MP · Fecha y hora'], ['mpId', 'MP · Operación'], ['mpGross', 'MP · Bruto', true],
+      ['mpFee', 'MP · Comisión', true], ['mpNet', 'MP · Abono neto', true],
+      ['amount', 'Aporte a la diferencia', true], ['status', 'Estado'], ['matching', 'Criterio de pareo'], ['reason', 'Observación']
+    ];
+    const addTable = (title, rows, id) => {
+      const section = document.createElement('section'); section.className = 'weekly-results-reconciliation-section';
+      const heading = document.createElement('h4'); heading.textContent = `${title} (${rows.length})`; section.append(heading);
+      if (!rows.length) { paragraph(section, 'No hay movimientos en esta sección.'); reconciliationBody.append(section); return; }
+      const wrap = document.createElement('div'); wrap.className = 'weekly-results-metric-table-wrap'; wrap.tabIndex = 0;
+      const table = document.createElement('table'); table.id = id; table.className = 'weekly-results-metric-table';
+      const head = table.createTHead().insertRow(), body = table.createTBody(), foot = table.createTFoot().insertRow();
+      let sort = { key: null, direction: 'asc' };
+      const text = (row, key, currency) => row[key] == null ? '—' : key === 'status' ? labels[row.status] + (row.documentType === 'NC' ? ' · Nota de crédito' : '')
+        : currency ? formatClp(row[key]) : key === 'toteatTime' || key === 'mpTime' ? String(row[key]).replace('T', ' ') : String(row[key]);
+      const draw = () => {
+        const ordered = sort.key ? [...rows].sort((a, b) => {
+          const left = a[sort.key], right = b[sort.key];
+          if (left == null) return right == null ? 0 : 1;
+          if (right == null) return -1;
+          return (typeof left === 'number' ? left - right : String(left).localeCompare(String(right), 'es', { numeric: true })) * (sort.direction === 'asc' ? 1 : -1);
+        }) : rows;
+        body.replaceChildren(...ordered.map(item => {
+          const row = document.createElement('tr'); row.dataset.status = item.status;
+          for (const [key, , currency] of columns) {
+            const cell = row.insertCell(); cell.textContent = text(item, key, currency);
+            if (currency) cell.className = 'numeric';
+          }
+          return row;
+        }));
+        [...head.cells].forEach((cell, index) => cell.setAttribute('aria-sort', columns[index][0] === sort.key ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'));
+      };
+      columns.forEach(([key, label, currency]) => {
+        const cell = document.createElement('th'), button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+        button.addEventListener('click', () => { sort = { key, direction: sort.key === key && sort.direction === 'asc' ? 'desc' : 'asc' }; draw(); });
+        cell.append(button); head.append(cell);
+        const totalCell = foot.insertCell(); totalCell.textContent = key === 'amount' ? formatClp(rows.reduce((sum, row) => sum + row.amount, 0)) : key === 'toteatTime' ? 'TOTAL' : '';
+        if (currency) totalCell.className = 'numeric';
+      });
+      draw(); wrap.append(table); section.append(wrap); reconciliationBody.append(section);
+    };
+    addTable('Movimientos sin pareo y diferencias por revisar', report.exceptions, 'weekly-reconciliation-exceptions');
+    addTable('Todas las transacciones del período y su pareo', report.rows, 'weekly-reconciliation-transactions');
+    const notes = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Criterios de cálculo y pareo'; notes.append(summary);
+    report.notes.forEach(note => paragraph(notes, note)); reconciliationBody.append(notes);
+  }
+  async function openReconciliation(result, { location, period }) {
+    reconciliationController?.abort();
+    const request = ++reconciliationGeneration, active = new AbortController(); reconciliationController = active;
+    reconciliationBody.replaceChildren();
+    paragraph(reconciliationBody, `Control de diferencias: ${formatClp(result.values.collectionDifference.amount)}`).className = 'weekly-results-metric-total';
+    document.getElementById('weekly-results-reconciliation-context').textContent = `${location.name} · ${date(period.from)} – ${date(period.through)} · America/Santiago`;
+    setStatus(reconciliationStatus, 'Cargando transacciones y pareos del reporte…'); reconciliationDialog.setAttribute('aria-busy', 'true');
+    if (!reconciliationDialog.open) reconciliationDialog.showModal();
+    try {
+      const id = result.detailReports.collectionDifference;
+      let report = metricCache.get(id);
+      if (!report) {
+        const response = await fetch(`/api/weekly-results/details/${encodeURIComponent(id)}`, { signal: active.signal });
+        report = await response.json(); if (!response.ok) throw Error(report.error || 'No se pudo cargar el análisis.');
+      }
+      if (request !== reconciliationGeneration || !reconciliationDialog.open) return;
+      metricCache.set(id, report); reconciliationBody.replaceChildren(); renderReconciliation(report); setStatus(reconciliationStatus, '');
+    } catch (error) { if (request === reconciliationGeneration && error.name !== 'AbortError') setStatus(reconciliationStatus, error.message, 'error'); }
+    finally { if (request === reconciliationGeneration) { reconciliationController = null; reconciliationDialog.setAttribute('aria-busy', 'false'); } }
+  }
   function metricCells(row, key, result, weekStart = false, detailContext = null) {
     const metric = result?.values[key], showPercent = metric?.showPercent !== false;
     const amount = row.insertCell(), percent = document.createElement('td');
@@ -333,6 +420,13 @@
       const note = document.createElement('span'); note.className = 'weekly-results-inventory-dates';
       note.textContent = 'Reversas / devoluciones'; amount.append(note);
     }
+    if (key === 'collectionDifference' && metric?.available && result?.detailReports?.collectionDifference && detailContext) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.className = 'weekly-results-inbound-button weekly-results-metric-button'; button.textContent = amount.firstChild.textContent;
+      button.title = 'Analizar transacciones TotEat y MercadoPago'; button.setAttribute('aria-haspopup', 'dialog');
+      button.setAttribute('aria-label', `Analizar Control de diferencias: ${button.textContent} · ${detailContext.location.name}`);
+      button.addEventListener('click', () => openReconciliation(result, detailContext)); amount.firstChild.replaceWith(button);
+    }
     if (inboundLabels[key] && metric?.status !== 'not-applicable' && detailContext && Array.isArray(result?.sources?.[key]?.items)) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'weekly-results-inbound-button';
       button.textContent = amount.firstChild.textContent;
@@ -360,6 +454,7 @@
   }
   function cancelDaily(close = false) {
     closeInbound();
+    if (reconciliationDialog.open) reconciliationDialog.close();
     dailyController?.abort(); dailyController = null; dailyGeneration++;
     dailyDialog.setAttribute('aria-busy', 'false');
     if (close && dailyDialog.open) dailyDialog.close();
@@ -614,6 +709,11 @@
     setStatus(status, 'Pulsa Actualizar para aplicar las opciones seleccionadas.');
   });
   document.getElementById('weekly-results-detail-close').addEventListener('click', () => dialog.close());
+  document.getElementById('weekly-results-reconciliation-close').addEventListener('click', () => reconciliationDialog.close());
+  reconciliationDialog.addEventListener('close', () => {
+    reconciliationController?.abort(); reconciliationController = null; reconciliationGeneration++;
+    reconciliationDialog.setAttribute('aria-busy', 'false');
+  });
   document.getElementById('weekly-results-inbound-close').addEventListener('click', () => inboundDialog.close());
   document.getElementById('weekly-results-metric-close').addEventListener('click', () => metricDialog.close());
   metricDialog.addEventListener('close', () => {

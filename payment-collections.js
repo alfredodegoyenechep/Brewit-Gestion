@@ -7,6 +7,7 @@ function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollection
   let tips = 0, cashTips = 0, cashCollection = 0, collectionCoveredLocations = 0;
   const warnings = [];
   const tipGroups = new Map();
+  const paymentDetails = [];
   for (const { location, state } of sources) {
     if (!state) {
       complete = false;
@@ -36,6 +37,14 @@ function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollection
         continue;
       }
       let hasCash = false;
+      if (includeDetails) {
+        const closed = localTimestamp(payment.dateClosed);
+        paymentDetails.push({ paymentId: id, orderId: String(payment.orderId ?? ''),
+          documentType: payment.fiscalType || '', referencedPaymentId: String(payment.referencedPayment?.id || ''),
+          dateTime: `${closed.date}T${closed.time}`, change: payment.change,
+          forms: payment.paymentForms.map(form => ({ id: form.id, name: form.name, amount: form.amount,
+            tip: form.tip, reference: String(form.comment || ''), method: form.method || '' })) });
+      }
       for (const form of payment.paymentForms) {
         if (includeDetails) {
           const key = JSON.stringify([location.id, date, form.id]);
@@ -65,7 +74,7 @@ function toteatPaymentCollections(sources, dateFrom, dateTo, { includeCollection
       cashCollection: { amount: cashCollection, ...coverage, available: collectionCoveredLocations > 0 }
     } : {}),
     warnings,
-    ...(includeDetails ? { tipDetails: [...tipGroups.values()].map(({ ids, ...row }) => ({ ...row, payments: ids.size })) } : {})
+    ...(includeDetails ? { paymentDetails, tipDetails: [...tipGroups.values()].map(({ ids, ...row }) => ({ ...row, payments: ids.size })) } : {})
   };
 }
 

@@ -429,7 +429,16 @@
       <p id="sales-insight-filter-note" class="panel-description">Los filtros aplican a ambos cuadros. Ranking de hasta 100 productos. Participación y acumulado sobre la venta neta total del filtro, incluidos los productos fuera del top 100. Otros incluye los productos sin clasificación de barra.</p>
       <div class="sales-insights-grid">
         <section class="panel">
-          <div class="panel-head"><div><div class="panel-eyebrow">Ranking</div><h3>Productos más vendidos</h3></div><label>Ordenar por <select id="sales-ranking-order"><option value="quantity">Unidades vendidas</option><option value="netSales" selected>Venta neta ($)</option></select></label></div>
+          <div class="panel-head sales-ranking-head">
+            <div class="sales-ranking-title"><div class="panel-eyebrow">Ranking</div><h3>Productos más vendidos</h3></div>
+            <div class="sales-ranking-controls">
+              <label for="sales-ranking-order">Ordenar por <select id="sales-ranking-order"><option value="quantity">Unidades vendidas</option><option value="netSales" selected>Venta neta ($)</option></select></label>
+              <dl class="sales-ranking-totals" aria-label="Totales del filtro aplicado">
+                <div><dt>Total venta neta</dt><dd id="sales-ranking-total-sales">—</dd></div>
+                <div><dt>Unidades vendidas</dt><dd id="sales-ranking-total-units">—</dd></div>
+              </dl>
+            </div>
+          </div>
           <div id="sales-top-products" class="sales-ranked-list"></div>
         </section>
         <section class="panel">
@@ -1855,6 +1864,15 @@
         </div>
         <div id="weekly-results-export-status" class="form-status" aria-live="polite"></div>
         <div id="weekly-results-export-body"></div>
+      </dialog>
+      <dialog id="weekly-results-reconciliation" class="weekly-results-detail weekly-results-reconciliation" aria-labelledby="weekly-results-reconciliation-title" aria-describedby="weekly-results-reconciliation-context">
+        <div class="panel-head">
+          <div><div class="panel-eyebrow">TotEat · MercadoPago</div><h3 id="weekly-results-reconciliation-title">Análisis del Control de diferencias</h3></div>
+          <button id="weekly-results-reconciliation-close" class="secondary" type="button" autofocus>Cerrar</button>
+        </div>
+        <p id="weekly-results-reconciliation-context" class="panel-description"></p>
+        <div id="weekly-results-reconciliation-status" class="form-status" role="status"></div>
+        <div id="weekly-results-reconciliation-body"></div>
       </dialog>
       <dialog id="weekly-results-metric-detail" class="weekly-results-detail weekly-results-metric-detail" aria-labelledby="weekly-results-metric-title" aria-describedby="weekly-results-metric-context">
         <div class="panel-head">
