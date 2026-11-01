@@ -133,6 +133,7 @@ function orderMatches(order, filters) {
     && (!filters.product || line.code === filters.product)
     && (!filters.category || String(line.categoryId || line.hierarchyId || '').startsWith(filters.category)))) return false;
   if (filters.product && !order.lines.some(line => !line.isExtra && line.code === filters.product)) return false;
+  if (filters.productCodes?.length && !order.lines.some(line => !line.isExtra && !line.extraHierarchyId && !line.isComponent && !line.parentLineId && filters.productCodes.includes(line.code))) return false;
   if (filters.category && !order.lines.some(line => !line.isExtra && String(line.categoryId || line.hierarchyId || '').startsWith(filters.category))) return false;
   if (filters.nameGender && filters.nameGender !== 'all' && order.nameGenderSegment !== filters.nameGender) return false;
   if (filters.recurrence && filters.recurrence !== 'all' && order.recurrenceGroup !== filters.recurrence) return false;
@@ -540,7 +541,7 @@ function buildDemandAnalysis(input) {
       comparisons: 'Solo se publican variaciones cuando apertura, horario habitual, cierres declarados y rangos de archivos del período comparado están cubiertos. Los rangos indican cobertura declarada, no garantizan integridad del archivo ni reconstruyen cambios históricos de horario.',
       demand: 'Se analizan ventas registradas; no se miden quiebres ni clientes que no compraron.',
       basket: 'Soporte, confianza condicional y lift; un lift alto sin suficiente soporte no justifica un combo.',
-      identity: 'El nombre se segmenta solo de forma agregada y orientativa. La recurrencia corresponde a instrumentos de pago pseudonimizados vinculados por coincidencia de local, fecha, monto y hora; no a personas confirmadas.',
+      identity: 'El género procede de indicaciones registradas en la fuente o revisiones del pedido. La recurrencia corresponde a instrumentos de pago pseudonimizados vinculados por coincidencia de local, fecha, monto y hora; no a personas confirmadas.',
       limitations: 'Cada bloque publica su alcance, denominador y limitaciones. Dato ausente no se interpreta como cero y se analizan únicamente ventas observadas.'
     }
   };

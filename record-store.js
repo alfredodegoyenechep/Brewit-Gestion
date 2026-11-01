@@ -6,6 +6,8 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const XLSX = require('xlsx');
 const roots = new Set();
+const publications = new (require('node:events').EventEmitter)();
+function onPublished(callback) { publications.on('published', callback); return () => publications.off('published', callback); }
 const FORMAT = 'brewit-records-v1';
 const suffix = '.records.json';
 const workbookCache=new Map();
@@ -120,13 +122,14 @@ function save(file, data, provenance = {}) {
   atomic(descriptorPath(file), JSON.stringify(d));
   return d;
 }
-function saveWorkbook(file, book) { return save(file, workbookData(book), { savedAt: new Date().toISOString(), origin: 'generated-data' }); }
+function saveWorkbook(file, book) { const result = save(file, workbookData(book), { savedAt: new Date().toISOString(), origin: 'generated-data' }); publications.emit('published', path.resolve(file)); return result; }
 function importFile(source, destination = source, root) {
   if (root) registerRoot(root);
   const existing = descriptor(source);
   if (existing) {
     load(source);
     if (descriptorPath(source) !== descriptorPath(destination)) atomic(descriptorPath(destination), JSON.stringify(existing));
+    publications.emit('published', path.resolve(destination));
     return existing;
   }
   const bytes = fs.readFileSync(source);
@@ -149,6 +152,7 @@ function importFile(source, destination = source, root) {
   }
   if (data.kind === 'text' && !Buffer.from(data.lines.join('\n')).equals(bytes)) throw Error('El texto fuente no está codificado en UTF-8.');
   atomic(descriptorPath(destination), JSON.stringify(d));
+  publications.emit('published', path.resolve(destination));
   return d;
   } finally { fs.rmSync(descriptorPath(candidate), { force: true }); }
 }
@@ -244,5 +248,5 @@ function collectGarbage(root,{minimumAgeMs=3600000}={}) {
   }
   return removed;
 }
-module.exports = { referencedBlobs,collectGarbage,registerRoot, managed, descriptorPath, descriptor, resolve, put, load, hash,
+module.exports = { onPublished, referencedBlobs,collectGarbage,registerRoot, managed, descriptorPath, descriptor, resolve, put, load, hash,
   importFile, removeOriginal, readWorkbook, saveWorkbook, exportData, download, middleware, fs: sourceFs };

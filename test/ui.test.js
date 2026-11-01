@@ -106,7 +106,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
     'sales', 'demand-analysis',
     'inventory', 'purchases', 'purchase-projection', 'past-orders',
     'products', 'ingredients', 'cost-review',
-    'findings', 'transaction-audit', 'uploads', 'historical-control', 'config'
+    'findings', 'transaction-audit', 'gender-review', 'uploads', 'historical-control', 'config'
   ]);
   await page.waitForFunction(() => !document.querySelector('[data-report-chart="report-summary-day"]')?.disabled);
   assert.equal(await page.locator('#weekly-report [data-report-chart]').count(), 22);

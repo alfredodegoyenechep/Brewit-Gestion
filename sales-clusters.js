@@ -1,8 +1,9 @@
 const crypto = require('node:crypto');
 const Decimal = require('decimal.js');
 const { orderMatches } = require('./demand-analysis');
+const { genderForOrder } = require('./product-gender');
 
-const VERSION = 'sales-clusters-v1.3.0';
+const VERSION = 'sales-clusters-v1.4.1';
 const PARAMETER_DEFINITIONS = [
   ['minimumOrders', 'Pedidos mínimos para calcular', 100, 2, null, 1],
   ['dimensionCoverage', 'Cobertura mínima de una dimensión (%)', 50, 0, 100, 1],
@@ -32,7 +33,7 @@ const DIMENSIONS = [
   { key: 'mode', label: 'Modalidad', levels: [['mode', 'En local / para llevar']], defaultLevel: 'mode' },
   { key: 'location', label: 'Cafetería', levels: [['location', 'Establecimiento']], defaultLevel: 'location' },
   { key: 'recurrence', label: 'Recurrencia observada', levels: [['transaction', 'Compra anterior observada'], ['observed', 'Compra en una fecha anterior']], defaultLevel: 'transaction', defaultEnabled: false },
-  { key: 'gender', label: 'Género estimado por nombre', levels: [['name', 'Estimación por nombre registrado'], ['validated', 'Solo género declarado o validado']], defaultLevel: 'name', defaultEnabled: false }
+  { key: 'gender', label: 'Género registrado / revisado', levels: [['validated', 'Dato registrado o revisión']], defaultLevel: 'validated', defaultEnabled: false }
 ];
 const DEFAULT_DIMENSIONS = Object.fromEntries(DIMENSIONS.map(d => [d.key, { enabled: d.defaultEnabled !== false, level: d.defaultLevel }]));
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
@@ -62,7 +63,8 @@ function normalizeConfig(input = {}) {
   const dimensions = {};
   if (Object.keys(input.dimensions || {}).some(key => !DIMENSIONS.some(d => d.key === key))) invalid('Hay dimensiones desconocidas.');
   for (const definition of DIMENSIONS) {
-    const value = input.dimensions?.[definition.key] || DEFAULT_DIMENSIONS[definition.key];
+    let value = input.dimensions?.[definition.key] || DEFAULT_DIMENSIONS[definition.key];
+    if (definition.key === 'gender' && value.level === 'name') value = { ...value, level: 'validated' };
     if (typeof value.enabled !== 'boolean' || !definition.levels.some(([level]) => level === value.level)) invalid(`Configuración inválida: ${definition.label}.`);
     const threshold = value.minimumCoverage;
     if (threshold !== undefined && threshold !== null && threshold !== '' &&
@@ -74,6 +76,11 @@ function normalizeConfig(input = {}) {
   }
   if (!Object.values(dimensions).some(d => d.enabled)) invalid('Activa al menos una dimensión para agrupar los pedidos.');
   const filters = { ...(input.filters || {}) };
+  if (typeof filters.productCodes === 'string') { try { filters.productCodes = JSON.parse(filters.productCodes); } catch { invalid('Selección de productos inválida.'); } }
+  if (filters.productCodes !== undefined) {
+    if (!Array.isArray(filters.productCodes) || filters.productCodes.length > 500 || filters.productCodes.some(c => typeof c !== 'string' || !c.trim() || c.length > 100)) invalid('Selección de productos inválida.');
+    filters.productCodes = [...new Set(filters.productCodes.map(c => c.trim().toUpperCase()))];
+  }
   for (const key of ['minSpend', 'maxSpend', 'hourFrom', 'hourTo', 'minDiscount', 'maxDiscount']) {
     if (filters[key] === undefined || filters[key] === '') { delete filters[key]; continue; }
     if (!validNumber(filters[key]) || Number(filters[key]) < 0) invalid(`Filtro inválido: ${key}.`);
@@ -212,8 +219,8 @@ function rawFeature(order, key, level, transform) {
     return ['returning-instrument', 'single-observed-date'].includes(value) ? value : null;
   }
   if (key === 'gender') {
-    if (level === 'name') return ['feminine-associated', 'masculine-associated'].includes(order.nameGenderSegment) ? order.nameGenderSegment : null;
-    return order.validatedGender && (order.genderBasis === 'explicit' || order.genderBasis === 'calibrated' && order.genderConfidence >= 0.9) ? order.validatedGender : null;
+    const gender = genderForOrder(order);
+    return gender === 'unknown' ? null : gender;
   }
   return null;
 }
@@ -230,13 +237,13 @@ function buildFeatures(orders, config, suppliedTransform, suppliedActive) {
     const share = percent(known.length, orders.length);
     const minimumCoverage = config.dimensions[definition.key].minimumCoverage ?? config.parameters.dimensionCoverage;
     const available = share >= minimumCoverage && known.length > 0 && variability > 1;
-    const reason = !known.length ? definition.key === 'gender' ? level === 'name' ? 'Sin nombres clasificables en el diccionario.' : 'Sin género explícito o inferencia calibrada; la asociación por nombre no lo acredita.' : 'Sin valores conocidos.' :
+    const reason = !known.length ? definition.key === 'gender' ? 'Sin género registrado en la fuente ni asignaciones proporcionadas mediante revisión.' : 'Sin valores conocidos.' :
       share < minimumCoverage ? `Cobertura ${share.toFixed(1)} % inferior al umbral ${minimumCoverage} %.` : variability < 2 ? 'Sin variación suficiente.' : '';
     coverage.push({ key: definition.key, label: definition.label, level, type, known: known.length, coverage: share, variability, available,
       requested: config.dimensions[definition.key].enabled, minimumCoverage, reason,
-      ...(definition.key === 'gender' && level === 'name' ? { basis: 'Asociación lingüística por nombre; no confirma el género de la persona.' } : {}) });
+      ...(definition.key === 'gender' ? { basis: 'Dato de la fuente o asignación proporcionada mediante revisión del pedido.' } : {}) });
     if (definition.key === 'gender') {
-      const named = orders.filter(order => ['feminine-associated', 'masculine-associated'].includes(order.nameGenderSegment)).length;
+      const named = orders.filter(order => genderForOrder(order) !== 'unknown').length;
       coverage.at(-1).nameCoverage = percent(named, orders.length);
       coverage.at(-1).nameKnown = named;
     }
@@ -263,8 +270,8 @@ function buildFeatures(orders, config, suppliedTransform, suppliedActive) {
 
 function identityDiagnostics(orders, sourceDiagnostics = {}) {
   const count = reason => orders.filter(order => order.recurrenceUnavailableReason === reason).length;
-  return { gender: { source: 'Comentarios de Detalle Pagos de Toteat',
-    named: orders.filter(order => ['feminine-associated', 'masculine-associated'].includes(order.nameGenderSegment)).length },
+  return { gender: { source: 'Asignación vigente del pedido: revisión manual o dato registrado en la fuente',
+    named: orders.filter(order => genderForOrder(order) !== 'unknown').length },
     recurrence: { orders: orders.length,
       classified: orders.filter(order => ['returning-instrument', 'single-observed-date'].includes(order.recurrenceGroup)).length,
       noPaymentData: count('no-payment-data'), ambiguous: count('ambiguous'),
@@ -454,7 +461,7 @@ function valueLabel(key, value, orders) {
   if (key === 'mode') return { takeaway: 'Para llevar', dineIn: 'En local', unknown: 'Sin clasificar' }[value] || value;
   if (key === 'recurrence') return { 'returning-instrument': 'Repetición observada', 'single-observed-date': 'Primera observación', unknown: 'Sin vínculo confiable' }[value] || value;
   if (key === 'location') return orders.find(o => o.locationId === value)?.locationName || value;
-  if (key === 'gender') return { 'feminine-associated': 'Nombre asociado a femenino', 'masculine-associated': 'Nombre asociado a masculino' }[value] || value;
+  if (key === 'gender') return { feminine: 'Femenino', masculine: 'Masculino', 'feminine-associated': 'Femenino', 'masculine-associated': 'Masculino' }[value] || value;
   return value;
 }
 function characterize(indices, otherIndices, features, orders, parameters) {

@@ -28,6 +28,19 @@ async function initializeDemandView(initialLocations = []) {
     document.querySelectorAll('.demand-custom-date').forEach(label => { label.hidden = !custom; });
   });
   document.getElementById('demand-filters').addEventListener('submit', event => { event.preventDefault(); loadDemandAnalysis(); });
+  window.addEventListener('sales-gender-updated', () => {
+    demandView.controller?.abort(); demandView.generation++;
+    demandView.report = null; demandView.query = '';
+    for (const [control, disabled] of demandView.restoreControls || []) control.disabled = disabled;
+    demandView.restoreControls = null;
+    document.getElementById('demand-filters').removeAttribute('aria-busy');
+    document.querySelector('#demand-filters [type=submit]').textContent = 'Analizar';
+    document.getElementById('demand-progress').hidden = true;
+    document.getElementById('demand-report').hidden = true;
+    document.getElementById('demand-detail-dialog').close();
+    document.getElementById('demand-advanced-dialog').close();
+    setStatus(document.getElementById('demand-status'), 'Las asignaciones de género cambiaron. Pulsa Analizar para actualizar todas las secciones.');
+  });
   document.querySelectorAll('[data-demand-tab]').forEach(button => button.addEventListener('click', () => {
     demandView.tab = button.dataset.demandTab;
     document.querySelectorAll('[data-demand-tab]').forEach(tab => tab.classList.toggle('active', tab === button));
@@ -207,7 +220,7 @@ function renderDemandReport(report) {
     demandKpi('Modalidad clasificada', coverage.orders ? demandPercent((coverage.orders - coverage.unknownModeOrders) / coverage.orders * 100) : '—', 'En local / para llevar desde Detalle Pagos'),
     demandKpi('Costo completo', coverage.orders ? demandPercent(coverage.costCoveredOrders / coverage.orders * 100) : '—', 'Pedidos con margen calculable'),
     demandKpi('Vínculo MercadoPago', paymentLink?.orders ? demandPercent(paymentLink.linkedPercent) : '—', 'Solo coincidencias uno-a-uno de alta confianza'),
-    demandKpi('Género estimado por nombre', demandPercent(report.nameSegments?.classifiedPercent), 'Cobertura orientativa; no identidad confirmada')
+    demandKpi('Género registrado / revisado', demandPercent(report.nameSegments?.classifiedPercent), 'Cobertura de datos registrados y revisiones')
   );
   const body = document.getElementById('demand-locations-body'); body.replaceChildren();
   for (const location of report.locations) {
@@ -358,11 +371,11 @@ function renderDemandExploration() {
   } else if (demandView.tab === 'segments') {
     const segments = report.nameSegments;
     root.append(demandScopeAndLimits(segments.scope, segments.limitations),
-      demandEl('p', `Cobertura clasificable: ${segments.classifiableOrders}/${report.summary.orders} pedidos (${demandPercent(segments.classifiedPercent)}). Por diccionario: ${segments.dictionaryOrders ?? 0}; por inferencia de menor certeza: ${segments.inferredOrders ?? 0}. Los porcentajes de penetración usan como denominador los pedidos de cada segmento y pueden sumar más de 100% entre categorías.`, 'demand-meta'));
+      demandEl('p', `Cobertura clasificable: ${segments.classifiableOrders}/${report.summary.orders} pedidos (${demandPercent(segments.classifiedPercent)}). Los porcentajes de penetración usan como denominador los pedidos de cada segmento y pueden sumar más de 100% entre categorías.`, 'demand-meta'));
     root.append(demandTable([
-      { label: 'Género estimado por nombre', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
-      { label: 'Por diccionario', value: item => item.dictionaryOrders ?? 0 },
-      { label: 'Por inferencia', value: item => item.inferredOrders ?? 0 },
+      { label: 'Género registrado / revisado', value: item => item.label }, { label: 'Pedidos', value: item => item.orders },
+      { label: 'En fuente', value: item => item.reportedOrders ?? 0 },
+      { label: 'Revisados', value: item => item.reviewedOrders ?? 0 },
       { label: 'Venta neta', value: item => demandMoney(item.netSales) }, { label: 'Part. venta', value: item => demandPercent(item.salesSharePercent) },
       { label: 'Ticket promedio', value: item => demandMoney(item.averageTicketGross) }, { label: 'Ticket mediano', value: item => demandMoney(item.medianTicketGross) },
       { label: 'Productos / pedido', value: item => demandNumber(item.productsPerOrder) }, { label: 'Para llevar', value: item => demandPercent(item.takeawayPercent) },

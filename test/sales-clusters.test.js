@@ -18,7 +18,7 @@ test('umbrales por variable prevalecen sobre el general y validan el rango', () 
   const dims = dimensions('gender', 'mode'); dims.gender.minimumCoverage = 40;
   const orders = Array.from({ length: 10 }, (_, i) => ({ ...order(i),
     mode: i < 4 ? i % 2 ? 'dineIn' : 'takeaway' : 'unknown',
-    nameGenderSegment: i < 4 ? i % 2 ? 'feminine-associated' : 'masculine-associated' : 'unavailable' }));
+    validatedGender: i < 4 ? i % 2 ? 'feminine' : 'masculine' : null, genderBasis: 'manual' }));
   const config = normalizeConfig({ dimensions: dims });
   const coverage = optionsFor(input(orders), config).coverage;
   assert.equal(coverage.find(d => d.key === 'gender').available, true);
@@ -62,13 +62,18 @@ test('asociación de nombre no habilita género aunque se reduzca la cobertura',
   assert.equal(options.eligibleOrders, 0);
 });
 
-test('estimación por nombre mide cobertura y omite nombres indeterminados o ausentes', () => {
+test('género registrado o revisado mide cobertura y omite asignaciones ausentes', () => {
   const orders = [order(0), order(1), order(2), order(3)].map((o, i) => ({ ...o,
-    nameGenderSegment: ['feminine-associated', 'masculine-associated', 'indeterminate', 'unavailable'][i] }));
+    validatedGender: ['feminine', 'masculine', null, null][i], genderBasis: i === 0 ? 'manual' : 'explicit' }));
   const options = optionsFor(input(orders), normalizeConfig({ dimensions: dimensions('gender') }));
   const gender = options.coverage.find(d => d.key === 'gender');
   assert.equal(gender.known, 2); assert.equal(gender.coverage, 50);
-  assert.equal(gender.available, true); assert.match(gender.basis, /no confirma/);
+  assert.equal(gender.available, true); assert.match(gender.basis, /revisión del pedido/);
+  assert.equal(gender.nameKnown, 2);
+  assert.equal(options.identityDiagnostics.gender.named, 2);
+  const revised = orders.map(o => ({ ...o, declaredGender: 'masculine' }));
+  const features = buildFeatures(revised, normalizeConfig({ dimensions: dimensions('gender') }));
+  assert.deepEqual(features.raw.map(row => row.gender), ['feminine', 'masculine', null, null]);
 });
 
 test('recurrencia usa historia anterior; repetición futura y mismo día no alteran primera observación', () => {

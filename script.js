@@ -243,11 +243,11 @@ function organizeWorkspaceNavigation() {
   savedOrdersLink.innerHTML = '<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg><span class="nav-text">Órdenes guardadas</span>';
   links.set('past-orders', savedOrdersLink);
   const groups = [
-    { label: 'Ventas y resultados', views: ['report', 'financial-results'] },
+    { label: 'Ventas y resultados', views: ['report', 'financial-results', 'board-reports'] },
     { label: 'Análisis de ventas', views: ['sales', 'demand-analysis'] },
     { label: 'Inventario y compras', views: ['inventory', 'purchases', 'purchase-projection', 'past-orders'] },
     { label: 'Productos y costos', views: ['products', 'ingredients', 'cost-review'] },
-    { label: 'Control y configuración', views: ['findings', 'transaction-audit', 'uploads', 'historical-control', 'config'] }
+    { label: 'Control y configuración', views: ['findings', 'transaction-audit', 'gender-review', 'uploads', 'historical-control', 'config'] }
   ];
   navigation.replaceChildren(...groups.map(group => {
     const section = document.createElement('section');
@@ -525,6 +525,7 @@ function initializeSettingsWorkspace() {
 initializeSettingsWorkspace();
 
 function setView(view, { confirmed = false } = {}) {
+  if (view !== 'sales') window.cancelProductXray?.();
   if (view === 'weekly-results') {
     setView('financial-results', { confirmed });
     document.getElementById('financial-results-workspace-tab-weekly').click();
@@ -558,6 +559,12 @@ function setView(view, { confirmed = false } = {}) {
     loader.style.display = '';
     loadUploadOverview();
     return;
+  }
+  if (view === 'board-reports') { const panel = document.getElementById('board-reports'); panel.hidden = false; panel.style.display = ''; window.openBoardReport?.(); return; }
+  if (view === 'gender-review') {
+    const review = document.getElementById('gender-review-workspace');
+    review.hidden = false; review.style.display = '';
+    window.openGenderReview?.(); return;
   }
   if (view === 'historical-control') {
     const history = document.getElementById('historical-workspace');
@@ -1728,7 +1735,7 @@ function renderFinancialStatement(data) {
     label: 'Costo directo de productos',
     amount: productCostAmount,
     percentage: percentOfSales(productCostAmount),
-    context: `Fuentes vigentes al corte del reporte. Costo disponible en ${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas; ${data.revenue.costSources?.['sales-export'] || 0} usan Costo del archivo de ventas como respaldo. Confirmar base sin IVA de cada fuente.`, className: 'financial-cost-row'
+    context: `Fuentes vigentes en la fecha de cada venta. Costo disponible en ${data.revenue.linesWithCost} de ${data.revenue.lineCount} líneas; ${data.revenue.costSources?.['sales-export'] || 0} usan Costo del archivo de ventas como respaldo. Confirmar base sin IVA de cada fuente.`, className: 'financial-cost-row'
   });
   append({
     label: 'Margen de Contribución', amount: statement.contributionMargin,
@@ -1886,7 +1893,7 @@ function renderFinancialResults(data) {
     return card;
   }));
   document.getElementById('financial-statement-context').textContent =
-    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo al corte del reporte.`;
+    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo histórico a fecha de venta.`;
   const badge = document.getElementById('financial-statement-badge');
   badge.textContent = statement.dataCoverageComplete ? 'EBITDA 4 Wall · cobertura completa' : 'EBITDA 4 Wall · revisar cobertura';
   badge.className = `chip ${statement.dataCoverageComplete ? 'positive' : 'neutral'}`;
@@ -1896,7 +1903,7 @@ function renderFinancialResults(data) {
 
 function renderFinancialCosts(data) {
   document.getElementById('financial-costs-context').textContent =
-    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo al corte del reporte.`;
+    `${data.scope.label} · ${formatReportDate(data.period.from)} – ${formatReportDate(data.period.to)} · Costo histórico a fecha de venta.`;
   const missingCosts = data.revenue.missingCostProducts || [];
   const missingPanel = document.getElementById('financial-missing-costs');
   missingPanel.hidden = !missingCosts.length;
@@ -2098,7 +2105,7 @@ async function loadSalesReport(prefix) {
     }
     calculatedViewKeys.set(prefix, request.key);
     document.getElementById(`${prefix}-context`).textContent = hasPeriod
-      ? `${data.scope.label} · ${formatReportDate(dateFrom)} – ${formatReportDate(dateTo)}${endpoint === '/api/financial-results' ? ' · Costo al corte del reporte.' : ''}`
+      ? `${data.scope.label} · ${formatReportDate(dateFrom)} – ${formatReportDate(dateTo)}${endpoint === '/api/financial-results' ? ' · Costo histórico a fecha de venta.' : ''}`
       : `${data.scope.label} · Últimos 6 meses y últimas 8 semanas · Corte al ${formatReportDate(data.date)}.`;
     const message = endpoint === '/api/financial-results'
       ? `${data.revenue.lineCount} línea(s) de venta procesadas para ${data.scope.label}.`
@@ -3404,7 +3411,7 @@ function renderNetworkSalesDashboard(report) {
     ? `En ${coverage.ordersWithNetFieldConsistentCost || 0} pedido(s), todos los costos concuerdan con el campo «Monto neto» de Compras; los demás usan fuentes no cotejadas. Esto no sustituye la revisión tributaria de las facturas.`
     : '';
   const missingSources = missingStores.length ? ` Sin archivos legibles: ${missingStores.join(', ')}.` : '';
-  const valuationNote = 'Costo según fuentes vigentes al corte del reporte.';
+  const valuationNote = 'Costo histórico según las fuentes vigentes en la fecha de cada venta.';
   document.getElementById('network-sales-coverage').textContent = `${costCoverage} ${valuationNote} ${costBasisCoverage}${missingSources} ${report.coverageNote || ''}`.trim();
   setReportChart('report-network', {
     type: 'bar',
@@ -13693,8 +13700,15 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
   ['ingredients', 'Ventas por ingredientes', ['#sales-ingredients-workspace']],
   ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
   ['customers', 'Clientes recurrentes', ['.mercadopago-panel']],
-  ['product-recurrence', 'Producto-Recurrencia', ['#product-recurrence-workspace']]
-], key => { if (key === 'product-recurrence') window.openProductRecurrence?.(); });
+  ['product-recurrence', 'Producto-Recurrencia', ['#product-recurrence-workspace']],
+  ['product-gender', 'Producto-Género', ['#product-gender-workspace']],
+  ['product-xray', 'X-ray producto', ['#product-xray-workspace']]
+], key => {
+  if (key === 'product-recurrence') window.openProductRecurrence?.();
+  if (key === 'product-gender') window.openProductGender?.();
+  if (key === 'product-xray') window.openProductXray?.();
+  else window.cancelProductXray?.();
+});
 installWorkspaceTabs('financial-results-workspace', '.financial-results-heading', [
   ['weekly', 'Resultados Semanales / Mensuales', ['#weekly-results-workspace']],
   ['statement', 'Estado de resultados', ['#financial-results-filters', '#financial-results-status', '#financial-results-summary', '.financial-statement-panel', '#financial-warnings']],

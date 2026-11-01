@@ -1475,10 +1475,10 @@ test('reports product sales by selected recipe ingredients and extras hierarchie
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-15' });
   const catalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
-    ['pl', 'np', 'st', 'je', 'ce'],
-    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Extras *', 'Costo'],
-    ['P1', 'Bebida Caliente', 1, 'BA.001', 500],
-    ['P2', 'Bebida Fría', 1, 'BA.002', 400]
+    ['pl', 'np', 'st', 'je', 'ce', 'ub'],
+    ['ID Producto **', 'Nombre Producto *', 'Activo', 'Jerarquías de Extras *', 'Costo', 'Medida Base'],
+    ['P1', 'Bebida Caliente', 1, 'BA.001', 500, 'UN'],
+    ['P2', 'Bebida Fría', 1, 'BA.002', 400, 'UN']
   ]), 'Prod');
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
     ['pl', 'np', 'st', 'ji', 'ub', 'ce'],
@@ -1722,8 +1722,9 @@ test('builds financial results by hierarchy, bar and main ingredient with Mercad
   assert.equal(Math.round(report.statement.netSales), 3000, JSON.stringify(report));
   assert.equal(report.revenue.linesWithCost, 3);
   assert.equal(report.revenue.linesWithNetFieldConsistentCost, 0);
-  assert.equal(report.revenue.linesWithUnverifiedCost, 3);
-  assert.ok(report.warnings.some(warning => warning.includes('sin cotejo con «Monto neto»')));
+  assert.equal(report.revenue.linesWithUnverifiedCost, 0);
+  assert.equal(report.revenue.linesWithDeclaredNetCost, 3);
+  assert.ok(!report.warnings.some(warning => warning.includes('sin cotejo con «Monto neto»')));
   assert.equal(report.revenue.latestSaleDate, '2026-08-10');
   assert.equal(report.revenue.hierarchies.length, 2);
   assert.equal(Math.round(report.revenue.bars.reduce((sum, item) => sum + item.netSales, 0)), 3000);
@@ -3507,7 +3508,7 @@ test('audits transactions with date, amount and discount filters and complete or
   assert.equal(invalid.status, 400);
 });
 
-test('uses report-cutoff costs for network and financial reports even with a retired valuation override', async t => {
+test('uses historical sale-date costs for network and financial reports and ignores retired valuation overrides', async t => {
   const baseUrl = await startTestServer(t, { reportToday: '2026-08-20' });
   const catalog = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(catalog, XLSX.utils.aoa_to_sheet([
@@ -3543,30 +3544,30 @@ test('uses report-cutoff costs for network and financial reports even with a ret
   assert.equal((await confirmTransactions(baseUrl, purchaseInspection)).status, 200);
 
   const defaultNetwork = await fetch(`${baseUrl}/api/reports/network-sales`).then(response => response.json());
-  assert.equal(defaultNetwork.rows[0].currentMonth.cost, 60);
-  assert.equal(defaultNetwork.sourceCoverage.costValuationDate, 'period-end');
+  assert.equal(defaultNetwork.rows[0].currentMonth.cost, 40);
+  assert.equal(defaultNetwork.sourceCoverage.costValuationDate, 'sale-date');
   const networkResponse = await fetch(`${baseUrl}/api/reports/network-sales?costValuation=historical`);
   assert.equal(networkResponse.status, 200);
   const network = await networkResponse.json();
   assert.equal(network.rows[0].currentMonth.sales, 200);
-  assert.equal(network.rows[0].currentMonth.cost, 60);
-  assert.equal(network.rows[0].currentMonth.marginPercent, 70);
+  assert.equal(network.rows[0].currentMonth.cost, 40);
+  assert.equal(network.rows[0].currentMonth.marginPercent, 80);
   assert.deepEqual(network.sourceCoverage, defaultNetwork.sourceCoverage);
 
   const defaultFinancial = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20`).then(response => response.json());
-  assert.equal(defaultFinancial.statement.productCost, 60);
-  assert.equal(defaultFinancial.revenue.costValuationDate, 'period-end');
+  assert.equal(defaultFinancial.statement.productCost, 40);
+  assert.equal(defaultFinancial.revenue.costValuationDate, 'sale-date');
   const financialResponse = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-01&dateTo=2026-08-20&costValuation=historical`);
   assert.equal(financialResponse.status, 200);
   const financial = await financialResponse.json();
-  assert.equal(financial.statement.productCost, 60);
-  assert.equal(financial.revenue.costValuationDate, 'period-end');
+  assert.equal(financial.statement.productCost, 40);
+  assert.equal(financial.revenue.costValuationDate, 'sale-date');
   assert.deepEqual(financial.revenue.costSources, defaultFinancial.revenue.costSources);
 
   const beforePurchase = await fetch(`${baseUrl}/api/financial-results?location=store-1&dateFrom=2026-08-10&dateTo=2026-08-10&costValuation=historical`)
     .then(response => response.json());
   assert.equal(beforePurchase.statement.productCost, 10); // The purchase after the cutoff cannot apply.
-  assert.equal(beforePurchase.revenue.costValuationDate, 'period-end');
+  assert.equal(beforePurchase.revenue.costValuationDate, 'sale-date');
   assert.deepEqual(beforePurchase.revenue.costSources, { recipe: 0, purchase: 0, master: 1, 'sales-export': 0, missing: 0 });
 });
 
@@ -3643,7 +3644,7 @@ test('builds the sales dashboard and identifies recurring MercadoPago customers 
   const paymentDetailsRows = [
     ['DateClosing', 'Ticket', 'General Comment', 'Due'],
     ['8/8/26 10:00 AM', 'order-prior', 'Cliente llevar', 0.119],
-    ['8/15/26 11:00 AM', 'order-today', 'serbir en mesa', 0.238]
+    ['8/15/26 11:00 AM', 'order-today', 'servir en mesa', 0.238]
   ];
   const paymentDetailsInspection = await inspectTransactions(baseUrl, 'store-1', [{
     field: 'payment-details', contents: paymentDetailsRows.map(row => row.join('\t')).join('\n'), filename: 'detalle-pagos-dashboard.csv'

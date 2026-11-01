@@ -42,26 +42,26 @@ test('segmentos explicitan cobertura y denominadores', () => {
   const result = aggregateNameSegments([order({ nameGenderSegment: 'feminine-associated' }), order({ orderKey: 'b' })]);
   assert.equal(result.classifiableOrders, 1);
   assert.equal(result.classifiedPercent, 50);
-  assert.match(result.limitations, /no confirma identidad ni género/i);
+  assert.match(result.limitations, /no equivalen a personas únicas/i);
   assert.deepEqual(parseTimeBands({ morningEnd: 10, middayEnd: 15, afternoonEnd: 19 }).map(item => item.from), [0, 10, 15, 19]);
 });
 
 
-test('desglosa diccionario e inferencia sin alterar totales por segmento', () => {
+test('desglosa fuente y revisiones sin alterar totales por segmento', () => {
   const orders = [
-    { ...order({ nameGenderSegment: 'feminine-associated' }), nameClassificationMethod: 'dictionary' },
-    { ...order({ orderKey: 'b', nameGenderSegment: 'feminine-associated' }), nameClassificationMethod: 'inference' },
-    { ...order({ orderKey: 'c', nameGenderSegment: 'masculine-associated' }), nameClassificationMethod: 'dictionary' },
+    { ...order({ nameGenderSegment: 'feminine-associated' }), nameClassificationMethod: 'source' },
+    { ...order({ orderKey: 'b', nameGenderSegment: 'feminine-associated' }), nameClassificationMethod: 'manual' },
+    { ...order({ orderKey: 'c', nameGenderSegment: 'masculine-associated' }), nameClassificationMethod: 'source' },
     order({ orderKey: 'd', nameGenderSegment: 'indeterminate' }),
     order({ orderKey: 'e', nameGenderSegment: 'unavailable' })
   ];
   const report = aggregateNameSegments(orders);
-  assert.equal(report.dictionaryOrders, 2);
-  assert.equal(report.inferredOrders, 1);
+  assert.equal(report.reportedOrders, 2);
+  assert.equal(report.reviewedOrders, 1);
   assert.equal(report.classifiableOrders, 3);
   assert.equal(report.classifiedPercent, 60);
   assert.equal(report.segments[0].orders, 2);
-  assert.equal(report.segments[0].dictionaryOrders, 1);
-  assert.equal(report.segments[0].inferredOrders, 1);
+  assert.equal(report.segments[0].reportedOrders, 1);
+  assert.equal(report.segments[0].reviewedOrders, 1);
   assert.equal(report.segments.reduce((sum, row) => sum + row.orders, 0), 5);
 });

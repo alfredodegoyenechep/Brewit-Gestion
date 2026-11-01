@@ -198,7 +198,12 @@ function buildProductAnalytics(snapshot, filters) {
       };
       value.units += item.quantity;
       value.netSales += item.netSales;
-      value.cost += item.quantity * (product.unitCost || 0);
+      const historical = Object.hasOwn(item, 'historicalUnitCost');
+      value.cost += item.quantity * (historical ? item.historicalUnitCost || 0 : product.unitCost || 0);
+      if (historical) {
+        value.costAvailable = (value.hasHistoricalCost ? value.costAvailable : true) && item.historicalCostAvailable;
+        value.hasHistoricalCost = true; value.costSource = item.historicalCostSource; value.costSourceDate = item.historicalCostDate;
+      }
       value.orders.add(item.order.orderKey);
       value.dailyUnits[item.order.date] = (value.dailyUnits[item.order.date] || 0) + item.quantity;
       value.dailySales[item.order.date] = (value.dailySales[item.order.date] || 0) + item.netSales;
@@ -215,6 +220,7 @@ function buildProductAnalytics(snapshot, filters) {
       const regression = linearRegression(daily.map((units, index) => ({ x: index, y: units })));
       return [code, {
         ...value,
+        unitCost: value.hasHistoricalCost ? value.units ? value.cost / value.units : null : value.unitCost,
         orders: value.orders.size,
         averagePrice: value.units ? value.netSales / value.units : 0,
         margin: value.costAvailable && value.netSales ? (value.netSales - value.cost) / value.netSales * 100 : null,

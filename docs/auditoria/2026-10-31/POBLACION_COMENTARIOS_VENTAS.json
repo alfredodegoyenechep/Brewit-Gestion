@@ -1,0 +1,24 @@
+{
+  "orders": 13512,
+  "byLocation": {
+    "La Concepcion": 12533,
+    "Portal Lyon": 979
+  },
+  "lyon": {
+    "total": 978,
+    "assigned": 3,
+    "pending": 975,
+    "reviewed": 0,
+    "withoutComment": 74
+  },
+  "lyonReturned": 978,
+  "missingOriginal": 0,
+  "additional": 0,
+  "warnings": [],
+  "elapsedMs": 11372,
+  "extractorVersion": "recorded-name-search-v3",
+  "matchingOriginalIds": true,
+  "originalCommentDifferences": 0,
+  "liveInterfaceVerified": true,
+  "browserErrors": []
+}

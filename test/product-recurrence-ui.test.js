@@ -20,7 +20,7 @@ test('product recurrence UI: manual generation, product selection, hierarchy lev
   await page.goto(s.base); await page.waitForFunction(() => document.querySelector('#product-recurrence-location option[value="store-1"]'));
   await page.getByRole('link', { name: 'Estadísticas por producto y horario', exact: true }).click();
   const tabs = await page.locator('#sales-workspace > .workspace-tabs > button').allTextContents();
-  assert.deepEqual(tabs.slice(-2), ['Clientes recurrentes', 'Producto-Recurrencia']);
+  assert.deepEqual(tabs.slice(-4), ['Clientes recurrentes', 'Producto-Recurrencia', 'Producto-Género', 'X-ray producto']);
   await page.getByRole('tab', { name: 'Producto-Recurrencia', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('product-recurrence-hierarchy').options.length === 5);
   assert.equal(requests.length, 0);

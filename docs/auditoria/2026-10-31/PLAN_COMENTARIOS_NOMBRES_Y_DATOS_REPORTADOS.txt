@@ -1,0 +1,193 @@
+PLAN DE IMPLEMENTACIÓN — COMENTARIOS, NOMBRES Y DATOS REPORTADOS
+Fecha: 2026-10-31
+Estado: propuesta técnica; no modifica fuentes ni reportes.
+
+1. MATERIAL REVISADO Y RESULTADO DE LA AUDITORÍA
+
+Especificación: Downloads/Especificacion_Codex_Nombres_Portal_Lyon.txt.
+Libro: Downloads/PEDIDOS_PORTAL_LYON_BUSQUEDA_NOMBRES_2026-10-03_2026-10-30.xlsx.
+SHA-256 del libro revisado:
+1548101a469bc2a90db10a9770112c64116cfbc7bd48f24f86ac41f02fb6d687
+
+La especificación se considera material de diseño para evaluar, no instrucciones
+para ejecutar cambios automáticamente. El pedido de este turno es preparar un plan.
+
+Se verificaron las seis hojas del libro. Las cinco hojas originales conservan sus
+valores. La nueva hoja «Revisión nombres y género» contiene 978 comandas únicas,
+almacenadas como texto. Las columnas A–J conservan los datos originales; las únicas
+diferencias de representación son celdas vacías frente a cadenas vacías.
+
+Resultados ya contenidos en la hoja, no calculados como nuevas atribuciones:
+  Femenino: 557; Masculino: 266; No atribuible: 81; Sin información: 74.
+  Estados: 820 propuestas heurísticas, 3 literales, 81 pendientes, 74 sin dato.
+  Pendientes: 59 candidatos normalizados distintos.
+  T, U y V: ninguna revisión manual, categoría manual ni evidencia completada.
+  200 candidatos antes pendientes reciben propuesta M/F en el material adjunto.
+  18 nombres antes reconocidos pasan a No atribuible en ese material.
+
+Los porcentajes 85–98% son valoraciones heurísticas según la propia especificación.
+No demuestran exactitud ni calibración. Las 823 propuestas M/F incluyen tres
+indicaciones literales y 820 estimaciones; no son 823 decisiones humanas verificadas.
+
+Se inspeccionaron las fórmulas y sus valores almacenados, sin ejecutar un motor
+de cálculo de Excel. O utiliza confianza heurística > F4; X copia O salvo edición
+manual. U prevalece en X incluso si V está vacío: S muestra un aviso, pero X no
+bloquea el resultado. Por ello, X no acredita aprobación. La biblioteca SheetJS
+empleada por la aplicación no recalcula estas fórmulas al leer el archivo.
+
+2. ALCANCE DE ESTE PLAN
+
+Implementar lectura común de comentarios para todos los locales, normalización,
+extracción de nombres, reconocimiento de modalidad, trazabilidad, revisión humana
+de extracciones y lectura de indicaciones expresas de género en la fuente.
+
+La atribución de género de clientes a partir de nombres, apodos o reconstrucciones
+de nombres queda fuera del plan. No se diseñan consultas a servicios de inferencia
+de género ni un clasificador entrenado sobre las propuestas de la planilla.
+La denominación «asociación convencional» no convierte esa atribución por pedido
+en información explícita de la fuente.
+
+El material recibido puede conservarse con su procedencia y condición de propuesta;
+sus etiquetas inferidas no se promoverán automáticamente a género reportado.
+
+3. PROBLEMAS REPRODUCIDOS EN EL CÓDIGO ACTUAL
+
+recorded-name-search.js:
+  - searchKey elimina todas las marcas Unicode: Núñez y Nunez terminan en la misma
+    clave. No distingue una equivalencia secundaria de una coincidencia exacta.
+  - No devuelve posiciones del nombre dentro del comentario original.
+  - «no es para el hombre, es para Ana» produce Masculino indicado en texto:
+    explicitCommentGender no reconoce el alcance de esa negación.
+  - «para Ana y Juan» conserva un único texto candidato con las palabras operativas,
+    en vez de dos candidatos separados con sus posiciones.
+  - «dom Juan Pablo» queda ambiguo, sin propuesta documentada de extracción.
+  - Las reglas de primera/última letra impiden sugerir Ignacio para Ognacio.
+    Grabiela recibe Graciela como sugerencia y omite Gabriela.
+  - Nombres fuera de la lista reciben sugerencias innecesarias: Marisela/Mariela,
+    Lucina/Luciana, Natalina/Natalia y Vanesa/Vanessa. No hay una comprobación
+    independiente de existencia del nombre exacto antes de proponer correcciones.
+
+Integración:
+  - server.js/paymentDetailModes ya recoge comentarios sin exigir servir/llevar.
+  - El análisis del Excel es un script independiente, no un paso persistido de carga.
+  - Caracterización y Clusters usan todavía name-segmentation.js; Producto-Género
+    utiliza datos explícitos. Los criterios no están unificados.
+  - El objeto que clusterSource envía al motor omite los campos de género explícito
+    que sí existen en las órdenes normalizadas.
+  - Producto-Género agrupa ausencia y ambigüedad en una sola columna.
+
+4. ORDEN DE IMPLEMENTACIÓN
+
+Fase 1 — Contrato común e importación de revisión
+  Crear un análisis derivado por (local_id, comanda_id); ambos identificadores texto.
+  Conservar comentarios por pago, archivo de origen, versión y huella del contenido.
+  Reunir pagos de una comanda sin duplicar pedidos ni concatenar textos antes de
+  resolver posibles contradicciones. Mantener los originales inmutables.
+  Importar el Excel como revisión externa con validación de tipos, claves,
+  categorías y pertenencia al local. No confiar en valores cacheados de fórmulas.
+  Reimportar por clave estable, no por posición de fila. Validar la evidencia antes
+  de aceptar una decisión; no considerar «Propuesta heurística» una aprobación.
+
+Fase 2 — Normalización y extracción comunes
+  Crear order-comment-analysis.js, reutilizable desde cargas API, archivos y lector
+  histórico. Evolucionar recorded-name-search.js como componente de extracción.
+  Conservar texto NFC y posiciones sobre el original. Usar una clave principal que
+  preserve ñ, guiones y apóstrofos, y otra tolerante a acentos para buscar candidatos.
+  Distinguir nombre observado, clave de búsqueda y grafía propuesta para presentar.
+  Separar instrucciones operativas por frases y contexto. Extraer varios fragmentos
+  si hay varias personas; no escoger uno por su posición ni eliminarlo silenciosamente.
+  Priorizar compuestos, conservar posibles apellidos y registrar la interpretación
+  de tratamientos. La propuesta «dom»→«don» no modifica el comentario original.
+  Modalidad: LLEVAR, SERVIR, SIN_INFORMACION o NO_IDENTIFICABLE.
+  Una modalidad ausente nunca impide reconocer un candidato a nombre.
+
+Fase 3 — Base de nombres y revisión de candidatos
+  Mantener una base de nombres y grafías, sin asociaciones de género, con versiones,
+  evidencia de reconocimiento y variantes aprobadas. Los apodos permanecen como se
+  observaron; reconocer Gabo no implica expandirlo a Gabriel.
+  Consultar primero la grafía exacta. La ausencia en la base no demuestra una errata.
+  Generar después alternativas de escritura con distancia y motivo; no sustituir
+  automáticamente el nombre ni presentar similitud textual como probabilidad.
+  Permitir propuestas que cambien primera o última letra, conservando alternativas.
+  Agrupar la revisión por candidato y motivo, con ejemplos y número de pedidos.
+  Separar corrección de un pedido de aprobación de una variante general.
+  Una caída técnica deja el análisis pendiente; no equivale a ausencia de información.
+
+Fase 4 — Indicaciones explícitas y procedencia
+  Procesar menciones literales junto a sus fragmentos originales. Resolver el alcance
+  de negaciones, referencias a varias personas y contradicciones entre pagos.
+  Una palabra aislada detectada no basta si el contexto niega su aplicación al pedido.
+  Guardar el valor como reportado en la fuente, sin afirmar que verifica identidad.
+  Separar estado del nombre, disponibilidad de género y estado de revisión.
+  Un nombre reconocible por sí solo no rellena el campo de género reportado.
+  Mantener fuente, motivo, autor/fecha de revisión y versión; no asignar confianza
+  estadística a una lectura literal o a una corrección humana.
+
+Fase 5 — Población histórica y nuevas cargas
+  Persistir los análisis como datos derivados separados del almacén de originales.
+  Incluir versión del extractor y del diccionario en la huella del análisis.
+  Ejecutar primero un piloto reproducible sobre las 978 comandas del libro.
+  Comparar extracciones y registrar cambios sin convertir propuestas de género del
+  libro en valores confirmados. Conciliar pedidos antes y después.
+  Después recorrer fuentes activas de todos los locales, respetando rangos excluidos,
+  anulaciones y prioridades API/archivos ya existentes. No reactivar históricos que
+  el sistema no utiliza para ventas.
+  Ejecutar por lotes reanudables; publicar cada versión solo tras validación. Repetir
+  la ejecución no duplica pedidos ni revisiones. Si cambia el comentario, conservar
+  la revisión anterior como histórica y pedir revisión cuando deje de ser aplicable.
+  Añadir el mismo paso después de cada carga nueva y al sustituir una fuente.
+
+Fase 6 — Reportes y validación
+  Adaptar server.js, product-gender.js, product-gender-view.js y sales-clusters.js
+  para transportar el análisis común con su procedencia. Proponer el mismo contrato
+  explícito para Caracterización, revisando sus etiquetas y definición actuales.
+  Los reportes dejan de clasificar por su cuenta al abrirse. Mostrar cobertura de
+  nombre y de dato reportado por separado, con motivo de falta de clasificación.
+  Las versiones de análisis/revisión invalidan las cachés de reportes aunque las
+  ventas originales no hayan cambiado. Mantener apertura por jerarquía, ordenación,
+  agrupación de vasos y porcentajes a un decimal.
+  Exportar el resultado y su procedencia con la misma definición que la pantalla.
+
+5. DATOS MÍNIMOS DEL ANÁLISIS DERIVADO
+
+  local_id, comanda_id, source_version, comment_hash
+  original_comments[]: texto, pago y archivo de origen
+  extracted_spans[]: texto, inicio, fin, función y comentario de origen
+  observed_name, normalized_name_key, proposed_name
+  name_status: RECONOCIDO, PENDIENTE, AMBIGUO, SIN_NOMBRE
+  candidates[]: grafía, distancia, similitud, motivo y versión de fuente
+  service_mode, service_mode_reason
+  reported_gender, reported_gender_status, reported_gender_evidence
+  review_status, reviewed_by, reviewed_at, review_evidence, review_scope
+  analysis_version, dictionary_version, analyzed_at
+
+Las propuestas externas recibidas tienen su propia procedencia y estado; no se
+mezclan con reported_gender. Toda modificación de revisión genera una nueva versión.
+
+6. CRITERIOS DE ACEPTACIÓN
+
+  - Alfredo/alfredo/ALFREDO se reconocen con la misma clave, mostrando Alfredo.
+  - María José y José María conservan sus nombres compuestos y orden.
+  - Las grafías con ñ conservan su distinción principal respecto de n.
+  - «para llevar, sin azúcar» no inventa un nombre.
+  - «llevar, tamara» y «rosa llevar» conservan los fragmentos personales exactos.
+  - «para Ana y Juan» devuelve ambos fragmentos y marca ambigüedad.
+  - Marisela, Lucina, Natalina y Vanesa no se reemplazan por vecinos de la base.
+  - «no es para el hombre, es para Ana» no atribuye una mención masculina al pedido.
+  - «hombre» permite conservar una indicación literal sin inventar un nombre.
+  - Las propuestas de corrección nunca se confunden con nombres confirmados.
+  - La carga y recarga conservan las 978 comandas como texto, sin duplicados,
+    alteraciones de originales ni pérdida de revisiones documentadas.
+  - Cambiar una regla actualiza análisis y cachés de forma controlada y auditable.
+  - Ventas, unidades y pedidos concilian entre fuentes, pantalla, detalle y Excel.
+
+7. ENTREGABLES
+
+  A. Extractor compartido con pruebas de contexto y normalización.
+  B. Almacén de análisis derivados y revisiones, importador idempotente y cola de revisión.
+  C. Comando de población histórica y enlace con nuevas cargas.
+  D. Reportes conectados al contrato común y Excel del piloto con diferencias explicadas.
+
+Prioridad: corregir normalización y lectura contextual; validar el piloto de Lyon;
+después integrar persistencia, cargas y reportes. Este documento es un plan, no una
+declaración de que esas funciones ya estén implementadas.

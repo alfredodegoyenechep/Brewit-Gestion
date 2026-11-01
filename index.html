@@ -93,6 +93,10 @@
         </svg>
         <span class="nav-text">Datos y sincronización</span>
       </a>
+      <a href="#" class="nav-link" data-view="gender-review">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h12v18H4zM7 7h6M7 11h4M14 15l2 2 5-5" /></svg>
+        <span class="nav-text">Revisión de género de ventas</span>
+      </a>
       <a href="#" class="nav-link" data-view="historical-control">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11a9 9 0 1 1 3 7M3 4v7h7M12 7v5l3 2" /></svg>
         <span class="nav-text">Control histórico</span>
@@ -103,6 +107,10 @@
           <path d="m15 7 2-2 2 2M17 5v5" />
         </svg>
         <span class="nav-text">Resultados Financieros</span>
+      </a>
+      <a href="#" class="nav-link" data-view="board-reports">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v13H3zM12 17v4M8 21h8M6 13V9m5 4V7m5 6v-3" /></svg>
+        <span class="nav-text">Presentación a directorio</span>
       </a>
       <a href="#" class="nav-link" data-view="demand-analysis">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M5 16V9m5 7V5m5 11v-4m5 4V7" /><path d="m4 6 5-3 5 5 5-4" /></svg>
@@ -143,6 +151,56 @@
   </aside>
 
   <main class="main-content">
+    <section id="board-reports" class="panel" hidden style="display:none">
+      <p class="eyebrow">VENTAS Y RESULTADOS</p><h1>Presentación a directorio</h1>
+      <p>Un cierre mensual de compañía y de cada cafetería. Dieciséis páginas generales más dos por local, con versiones guardadas.</p>
+      <form id="board-form" class="board-controls">
+        <label>Mes del cierre<select id="board-month" required aria-label="Mes del cierre"></select></label>
+        <button id="board-generate" type="submit" class="primary">Generar presentación</button>
+        <button id="board-cancel" type="button" hidden>Cancelar generación</button>
+        <label>Archivo de versiones<select id="board-versions"><option value="">Versiones guardadas</option></select></label>
+      </form>
+      <progress id="board-progress" max="100" value="0" hidden></progress>
+      <p id="board-status" role="status" aria-live="polite">Selecciona un mes y genera la presentación.</p>
+      <div id="board-exports" class="board-controls" hidden><button id="board-present" type="button">Presentar en pantalla</button><a id="board-pdf" class="button">Exportar PDF</a><a id="board-pptx" class="button">Exportar PowerPoint editable</a></div>
+      <div id="board-viewer" hidden>
+        <div class="board-viewer"><nav id="board-thumbnails" aria-label="Páginas de la presentación"></nav><div class="board-canvas"><div id="board-slide"></div><div class="board-controls board-pagination"><button id="board-previous" type="button">Anterior</button><span id="board-page"></span><button id="board-next" type="button">Siguiente</button></div></div></div>
+        <details class="board-quality"><summary>Alcance, calidad y notas</summary><div id="board-notes"></div></details>
+      </div>
+      <dialog id="board-dialog" class="board-dialog" aria-label="Presentación a directorio"><div id="board-large-slide"></div><div class="board-controls board-pagination"><button id="board-large-previous" type="button">Anterior</button><span id="board-large-page"></span><button id="board-large-next" type="button">Siguiente</button><button id="board-close" type="button">Cerrar</button></div></dialog>
+    </section>
+    <section id="gender-review-workspace" hidden style="display:none" aria-labelledby="gender-review-title">
+      <div class="panel-header"><div><div class="panel-eyebrow">Control y configuración</div><h2 id="gender-review-title">Revisión de género de ventas</h2><p class="panel-description">Revisa los comentarios y nombres de los pedidos. Exporta los pendientes, completa Género asignado y carga la planilla para aplicar tus revisiones.</p></div></div>
+      <form id="gender-review-filters" class="financial-results-filters">
+        <label>Cafetería<select id="gender-review-location"><option value="all">Todas las cafeterías</option></select></label>
+        <label>Desde<input id="gender-review-from" type="date"></label><label>Hasta<input id="gender-review-to" type="date"></label>
+        <label>Estado<select id="gender-review-state"><option value="pending">Pendientes de revisión</option><option value="unassigned">Todos sin asignación M/F</option><option value="reviewed">Revisados</option><option value="all">Todos los pedidos</option></select></label>
+        <label>Nombre<select id="gender-review-name"><option value="all">Con y sin nombre</option><option value="with">Con nombre candidato</option><option value="without">Sin nombre candidato</option><option value="ambiguous">Nombre ambiguo</option></select></label>
+        <label>Buscar<input id="gender-review-search" type="search" placeholder="Comanda, nombre o comentario"></label>
+        <button type="submit" class="primary">Consultar</button><button id="gender-review-all-history" type="button" class="icon-button">Todo el histórico</button>
+      </form>
+      <p id="gender-review-status" class="form-status" role="status" aria-live="polite"></p>
+      <div id="gender-review-summary" class="recurrence-kpis"></div>
+      <section class="panel gender-review-import" aria-labelledby="gender-review-import-title">
+        <div class="panel-header"><h3 id="gender-review-import-title">Revisar mediante planilla</h3><button id="gender-review-export" type="button" class="icon-button" disabled>Exportar registros filtrados</button></div>
+        <p class="panel-description">Completa la columna Género asignado con Masculino, Femenino, No atribuible o Sin información. Las filas vacías se conservan. Cada asignación corresponde al pedido de esa fila.</p>
+        <form id="gender-review-upload" class="gender-review-upload">
+          <label>Planilla revisada<input id="gender-review-file" type="file" accept=".xlsx" required></label>
+          <button id="gender-review-preview-button" class="primary" type="submit">Revisar archivo</button>
+        </form>
+        <p id="gender-review-import-status" class="form-status" role="status" aria-live="polite"></p>
+        <div id="gender-review-errors" class="gender-review-errors" hidden></div>
+        <div id="gender-review-preview" hidden aria-labelledby="gender-review-preview-title">
+          <h4 id="gender-review-preview-title">Resumen de asignaciones</h4><p id="gender-review-preview-file"></p><p id="gender-review-preview-summary"></p>
+          <div id="gender-review-preview-categories" class="recurrence-kpis"></div>
+          <p>Confirma para aplicar todas las asignaciones del resumen.</p>
+          <div class="gender-review-actions"><button id="gender-review-apply" class="primary" type="button">Confirmar asignaciones</button><button id="gender-review-cancel" class="icon-button" type="button">Cancelar</button></div>
+        </div>
+      </section>
+      <div class="panel gender-review-scroll"><table id="gender-review-table"><thead><tr><th>Fecha / cafetería</th><th>Pedido / Comanda</th><th>Comentario original</th><th>Nombre obtenido</th><th>Género actual</th><th>Revisión</th></tr></thead><tbody id="gender-review-body"></tbody></table></div>
+      <div class="gender-review-actions"><button id="gender-review-prev" class="icon-button" type="button">Anterior</button><span id="gender-review-page"></span><button id="gender-review-next" class="icon-button" type="button">Siguiente</button></div>
+    </section>
+
     <section id="findings-workspace" class="findings-workspace" style="display:none;">
       <div class="findings-heading">
         <div>
@@ -806,6 +864,54 @@
           <p>Se busca la compra anterior más reciente del mismo medio de pago en una fecha local distinta, de cualquier producto y monto. Cada venta se asigna una sola vez: 1–15, 16–30, 31–60 o 61–90 días. Los tramos son excluyentes.</p>
           <p>El porcentaje divide la venta recurrente de cada tramo por la venta neta total de la fila, incluidas las ventas sin vínculo identificable. La cafetería seleccionada define dónde buscar antecedentes; Todas considera la red.</p>
           <p>Se aplican los criterios de Clientes recurrentes: identidad aproximada del medio de pago, pagos válidos y vínculos confiables con TotEat. Sin vínculo se muestra por separado. Un medio de pago no equivale necesariamente a una persona; un historial incompleto produce resultados provisionales.</p>
+        </details>
+      </section>
+
+      <section id="product-xray-workspace" class="panel product-recurrence-workspace" aria-labelledby="product-xray-title">
+        <div class="panel-head"><div><div class="panel-eyebrow">Radiografía del producto</div><h3 id="product-xray-title">X-ray producto</h3><p class="panel-description">Todos los formatos en una ficha: receta, rentabilidad, evolución y patrones de consumo.</p></div><div class="xray-actions"><button id="product-xray-open" type="button" class="icon-button" disabled>Ver informe en ventana</button><button id="product-xray-pdf" type="button" class="icon-button" disabled>Exportar PDF</button><button id="product-xray-export" type="button" class="icon-button" disabled>Exportar XLSX</button><button id="product-xray-pdf-cancel" type="button" class="icon-button" hidden>Cancelar PDF</button></div></div>
+        <form id="product-xray-filters" class="financial-results-filters sales-report-filters">
+          <label>Cafetería<select id="product-xray-location"><option value="all">Todas las cafeterías</option></select></label>
+          <label>Período<select id="product-xray-period"><option value="last-28-days">Últimos 28 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Personalizado</option></select></label>
+          <label>Desde<input id="product-xray-from" type="date" required disabled></label><label>Hasta<input id="product-xray-to" type="date" required disabled></label>
+          <label>Jerarquía<select id="product-xray-hierarchy"><option value="[]">Todas las jerarquías</option></select></label>
+          <label>Buscar producto<input id="product-xray-search" type="search" placeholder="Nombre o código"></label>
+          <label class="xray-family">Producto y sus formatos<select id="product-xray-family"><option value="">Todos los productos de la selección</option></select></label>
+          <button id="product-xray-generate" class="primary" type="submit">Generar informe</button><button id="product-xray-cancel" class="icon-button" type="button" hidden>Cancelar</button>
+        </form>
+        <p id="product-xray-status" class="form-status" role="status" aria-live="polite">Selecciona una jerarquía o deja todas. Elegir un producto es opcional.</p><progress id="product-xray-progress" max="4" hidden aria-label="Preparando X-ray producto"></progress>
+        <p class="panel-description">Sin seleccionar un producto se incluyen todos los de la jerarquía elegida. La búsqueda solo filtra las opciones del selector.</p><div id="product-xray-result-slot"><div id="product-xray-results"></div></div>
+      </section>
+
+      <section id="product-gender-workspace" class="panel product-recurrence-workspace product-gender-workspace" aria-labelledby="product-gender-title">
+        <div class="panel-head">
+          <div><div class="panel-eyebrow">Comportamiento de compra por producto</div><h3 id="product-gender-title">Producto-Género</h3><p class="panel-description">Ventas y unidades por jerarquía o productos seleccionados, desglosadas por género registrado o revisado. Los datos ausentes se muestran como No informado / no identificable.</p></div>
+          <button id="product-gender-export" class="icon-button" type="button" disabled>Exportar XLSX</button>
+        </div>
+        <form id="product-gender-filters" class="financial-results-filters sales-report-filters">
+          <label>Cafetería<select id="product-gender-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select></label>
+          <label>Período<select id="product-gender-period"><option value="last-28-days">Últimos 28 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Personalizado</option></select></label>
+          <label>Desde<input id="product-gender-from" type="date" required disabled></label>
+          <label>Hasta<input id="product-gender-to" type="date" required disabled></label>
+          <label>Mostrar por<select id="product-gender-group"><option value="hierarchy">Jerarquía</option><option value="product">Productos seleccionados</option></select></label>
+          <label>Jerarquía<select id="product-gender-hierarchy"><option value="[]">Todas las jerarquías</option></select></label>
+          <label id="product-gender-level-field">Nivel de agrupación<select id="product-gender-level"><option value="1">Nivel 1</option></select></label>
+          <label class="sales-report-checkbox"><input id="product-gender-formats" type="checkbox"> Agrupar formatos de vaso (CL, GR, XTR)</label>
+          <button class="primary" type="submit">Generar reporte</button>
+        </form>
+        <div id="product-gender-picker" class="product-recurrence-picker" hidden>
+          <div class="product-recurrence-picker-head"><label for="product-gender-search">Buscar productos<input id="product-gender-search" type="search" placeholder="Nombre o código"></label><span id="product-gender-selection-count">Todos los productos</span><button id="product-gender-clear" class="icon-button small" type="button">Limpiar selección</button></div>
+          <p class="panel-description">Marca uno o varios productos. Sin selección se incluyen todos; la búsqueda solo filtra la lista de opciones. Al agrupar formatos aparece una opción por bebida y se seleccionan juntos todos sus formatos disponibles.</p>
+          <div id="product-gender-products" class="product-recurrence-products" role="group" aria-label="Productos a incluir"></div>
+        </div>
+        <p id="product-gender-options-status" class="form-status" role="status" aria-live="polite"></p>
+        <p id="product-gender-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reporte.</p>
+        <progress id="product-gender-progress" hidden aria-label="Preparando Producto-Género"></progress>
+        <p id="product-gender-context" class="panel-description"></p>
+        <div id="product-gender-results"><p class="empty-state">Genera el reporte para consultar ventas, unidades y género por producto.</p></div>
+        <details class="product-recurrence-definition"><summary>Cómo se calcula</summary>
+          <p>Masculino y Femenino usan únicamente género registrado en las fuentes o asignado mediante una revisión del pedido. Los datos ausentes, contradictorios u otras categorías se incluyen en No informado / no identificable.</p>
+          <p>Cada porcentaje divide la venta neta de ese segmento por toda la venta neta de la fila. Las tres categorías son excluyentes e incluyen toda la venta y las unidades de la selección.</p>
+          <p>No se deduce género a partir del nombre ni del medio de pago. La información disponible y su cobertura se indican en Alcance y calidad del reporte.</p>
         </details>
       </section>
     </section>
@@ -2627,14 +2733,14 @@
         <label>Producto<select id="demand-product"><option value="">Todos</option></select></label>
         <label>Modalidad<select id="demand-mode"><option value="all">Todas</option><option value="takeaway">Para llevar</option><option value="dineIn">En local</option><option value="unknown">Sin clasificar</option></select></label>
         <label>Tamaño / formato<select id="demand-size" disabled aria-describedby="demand-size-note"><option value="">Sin formatos identificados</option></select></label>
-        <label>Género estimado por nombre<select id="demand-name-gender"><option value="all">Todos</option><option value="feminine-associated">Asociación femenina</option><option value="masculine-associated">Asociación masculina</option><option value="indeterminate">Indeterminado</option><option value="unavailable">Sin nombre utilizable</option></select></label>
+        <label>Género registrado / revisado<select id="demand-name-gender"><option value="all">Todos</option><option value="feminine-associated">Femenino</option><option value="masculine-associated">Masculino</option><option value="indeterminate">Indeterminado</option><option value="unavailable">Sin información</option></select></label>
         <label>Intervalo de precios (CLP)<input id="demand-price-band" type="number" value="500" min="100" max="10000" step="100" /></label>
         <button class="primary" type="submit">Analizar</button>
         <p id="demand-size-note" class="demand-filter-note">Tamaño / formato identifica el campo de venta o los sufijos CL, GR y XTR del producto. Selecciona pedidos que contienen ese formato.</p>
       </form>
       <div id="demand-report" hidden>
         <section class="demand-section"><div class="demand-section-head"><div><div class="panel-eyebrow">01 · Hechos</div><h3>Resumen del período</h3></div><button type="button" class="icon-button demand-detail" data-kind="all">Ver pedidos</button></div><div id="demand-context" class="demand-meta"></div><div id="demand-summary" class="demand-kpis"></div><div id="demand-comparison" class="demand-note"></div><div id="demand-coverage" class="demand-note"></div><h4>Calidad y capacidad actual</h4><div id="demand-quality" class="demand-kpis"></div><div class="demand-scroll"><table class="demand-table"><thead><tr><th>Local</th><th>Pedidos</th><th>Venta neta</th><th>Ticket mediano con IVA</th><th>Descuento</th><th>Margen neto</th><th>vs período equivalente</th><th></th></tr></thead><tbody id="demand-locations-body"></tbody></table></div></section>
-        <section class="demand-section"><div class="panel-eyebrow">02 · Exploración</div><h3>Cómo se compone la venta</h3><p class="panel-description">Venta y margen netos; tickets y precios pagados con IVA. Una compra observada no equivale a una persona única.</p><div class="demand-tabs"><button type="button" data-demand-tab="products" class="active">Productos</button><button type="button" data-demand-tab="categories">Categorías</button><button type="button" data-demand-tab="baskets">Combinaciones</button><button type="button" data-demand-tab="occasions">Ocasiones</button><button type="button" data-demand-tab="segments">Género estimado por nombre</button><button type="button" data-demand-tab="spending">Gasto y precios</button><button type="button" data-demand-tab="time">Horarios y evolución</button></div><div id="demand-exploration"></div></section>
+        <section class="demand-section"><div class="panel-eyebrow">02 · Exploración</div><h3>Cómo se compone la venta</h3><p class="panel-description">Venta y margen netos; tickets y precios pagados con IVA. Una compra observada no equivale a una persona única.</p><div class="demand-tabs"><button type="button" data-demand-tab="products" class="active">Productos</button><button type="button" data-demand-tab="categories">Categorías</button><button type="button" data-demand-tab="baskets">Combinaciones</button><button type="button" data-demand-tab="occasions">Ocasiones</button><button type="button" data-demand-tab="segments">Género registrado / revisado</button><button type="button" data-demand-tab="spending">Gasto y precios</button><button type="button" data-demand-tab="time">Horarios y evolución</button></div><div id="demand-exploration"></div></section>
         <section class="demand-section"><div class="panel-eyebrow">03 · Interpretación</div><h3>Hipótesis por validar</h3><p class="panel-description">Estas explicaciones son posibles, no relaciones causales comprobadas.</p><div id="demand-hypotheses" class="demand-card-grid"></div></section>
         <section class="demand-section"><div class="panel-eyebrow">04 · Decisiones</div><h3>Acciones y próximas investigaciones</h3><div id="demand-actions" class="demand-card-grid"></div></section>
         <section class="demand-section"><div class="panel-eyebrow">Módulos que evolucionan con los datos</div><h3>Disponibilidad del análisis avanzado</h3><div id="demand-advanced" class="demand-card-grid"></div><div id="demand-methodology" class="demand-note"></div><button type="button" id="sales-clusters-open" class="primary">Análisis de clusters</button></section>
@@ -2826,7 +2932,12 @@
   <script src="replenishment-policy.js"></script>
   <script src="script.js"></script>
   <script src="recurrence-view.js"></script>
+  <script src="product-report-view.js"></script>
   <script src="product-recurrence-view.js"></script>
+  <script src="product-gender-view.js"></script>
+  <script src="product-xray-document.js"></script>
+  <script src="product-xray-view.js"></script>
+  <script src="gender-review-view.js"></script>
   <script src="sales-projection.js"></script>
   <script src="sales-projection-view.js"></script>
   <script src="/vendor/jspdf.umd.min.js"></script>
@@ -2837,5 +2948,7 @@
   <script src="toteat-purchases-view.js"></script>
   <script src="toteat-masters-view.js"></script>
   <script src="toteat-stock-view.js"></script>
+  <script src="/board-deck.js"></script>
+  <script src="/board-report-view.js"></script>
 </body>
 </html>

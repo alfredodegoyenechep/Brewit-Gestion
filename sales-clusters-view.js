@@ -2,7 +2,7 @@
 (() => {
   const storageKey = 'brewit.salesClusters.preferences.v1', savedKey = 'brewit.salesClusters.saved.v1';
   const state = { options: null, job: null, starting: false, controller: null, result: null, resultJobId: null, parent: null, referenceJobId: null,
-    timer: null, page: 1, detailClusterId: null, generation: 0, controlsReady: false };
+    timer: null, page: 1, detailClusterId: null, generation: 0, controlsReady: false, genderRevision: 0, xray: null };
   const byId = suffix => document.getElementById(`sales-clusters-${suffix}`);
   const el = (tag, text, cls) => { const node = document.createElement(tag); if (text != null) node.textContent = String(text); if (cls) node.className = cls; return node; };
   const readStorage = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } };
@@ -22,6 +22,7 @@
     const result = { locations: byId('location').value, mode: 'custom', dateFrom: byId('from').value, dateTo: byId('to').value,
       nameGender: 'all' };
     for (const [key, suffix] of Object.entries(fields)) if (byId(suffix).value !== '') result[key] = byId(suffix).value;
+    if (state.xray) { result.productCodes = state.xray.productCodes; result.xraySourceVersion = state.xray.sourceVersion; delete result.product; delete result.category; }
     if (!result.dateFrom || !result.dateTo || result.dateFrom > result.dateTo) throw new Error('Selecciona un período válido y en orden.');
     if (state.options && result.dateTo > state.options.today) throw new Error('El período no puede incluir fechas futuras.');
     return result;
@@ -103,14 +104,6 @@
       byId(`minimum-coverage-${item.key}`).disabled = Boolean(state.referenceJobId);
       byId(`minimum-coverage-${item.key}`).placeholder = `General: ${options.parameters.dimensionCoverage} %`;
       byId(`dimension-note-${item.key}`).textContent = `${demandPercent(item.coverage)} conocida · Mínimo ${demandPercent(item.minimumCoverage)}${item.reason ? ` · ${item.reason}` : ''}${item.basis ? ` · ${item.basis}` : ''}`;
-      if (item.key === 'gender' && item.level === 'validated') {
-        byId(`dimension-note-${item.key}`).append(document.createTextNode(` · Estimación por nombre disponible: ${demandPercent(item.nameCoverage)} (${demandNumber(item.nameKnown)} pedidos).`));
-        if (item.nameKnown && !state.referenceJobId) {
-          byId(`dimension-note-${item.key}`).append(button('Usar estimación por nombre', () => {
-            select.value = 'name'; markDirty(); reviewCoverage();
-          }));
-        }
-      }
     }
     root.append(notes);
     const recurrence = options.identityDiagnostics?.recurrence;
@@ -131,7 +124,7 @@
   async function loadCoverage() {
     const generation = ++state.generation;
     const current = filters(), config = configuration();
-    const query = new URLSearchParams(current); query.set('configuration', JSON.stringify(config));
+    const query = new URLSearchParams(current); if (current.productCodes) query.set('productCodes', JSON.stringify(current.productCodes)); query.set('configuration', JSON.stringify(config));
     if (state.parent) { query.set('parentJobId', state.parent.jobId); query.set('parentClusterId', state.parent.clusterId); }
     if (state.referenceJobId) query.set('referenceJobId', state.referenceJobId);
     const options = await apiRequest(`/api/sales-clusters/options?${query}`);
@@ -141,7 +134,7 @@
     renderCoverage(options); return options;
   }
   async function reviewCoverage() {
-    try { status('Revisando cobertura y dimensiones…'); await loadCoverage(); status('Cobertura actualizada.'); }
+    try { status('Revisando cobertura y dimensiones…'); if (await loadCoverage()) status('Cobertura actualizada.'); }
     catch (error) { status(error.message, 'error'); }
   }
   function setBusy(busy) {
@@ -155,7 +148,9 @@
     for (const suffix of ['results', 'detail', 'context']) byId(suffix).querySelectorAll('button').forEach(n => n.disabled = busy);
   }
   function renderContext() {
-    const root = byId('context'); root.replaceChildren(); root.hidden = !state.parent && !state.referenceJobId;
+    const root = byId('context'); root.replaceChildren(); root.hidden = !state.parent && !state.referenceJobId && !state.xray;
+    if (state.xray) { root.append(el('p', `X-ray producto · ${state.xray.name} · ${state.xray.productCodes.join(' / ')}. Pedidos completos con cualquiera de estos formatos.`));
+      root.append(button('Usar filtros generales', () => { state.xray = null; state.parent = null; state.referenceJobId = null; unlockReference(); renderContext(); open(); })); }
     if (state.parent) {
       root.append(el('p', `Profundizar: ${state.parent.name}. Se utilizarán solamente los pedidos de este grupo; ajusta las dimensiones y calcula.`));
       root.append(button('Volver al resultado padre', async () => {
@@ -171,7 +166,7 @@
         state.referenceJobId = null; unlockReference(); renderContext(); reviewCoverage();
       }));
     }
-    for (const suffix of ['location', 'from', 'to', ...Object.values(fields)]) byId(suffix).disabled = Boolean(state.parent);
+    for (const suffix of ['location', 'from', 'to', ...Object.values(fields)]) byId(suffix).disabled = Boolean(state.parent || state.xray);
   }
   function unlockReference() {
     byId('dimensions').querySelectorAll('input, select').forEach(n => n.disabled = false);
@@ -195,11 +190,12 @@
     if (state.job || state.starting) return;
     try {
       if (!state.parent && !state.referenceJobId) {
-        const selected = document.getElementById('demand-location').value || 'all';
+        const selected = state.xray?.location || document.getElementById('demand-location').value || 'all';
         const options = demandView.options;
         byId('location').replaceChildren(new Option('Todas las cafeterías', 'all'), ...(options?.locations || []).map(l => new Option(l.name, l.id)));
+        if (state.xray && ![...byId('location').options].some(o => o.value === selected)) byId('location').append(new Option(state.xray.locationLabel || selected, selected));
         byId('location').value = selected;
-        const period = demandView.report?.period;
+        const period = state.xray?.period || demandView.report?.period;
         byId('from').value = period?.from || document.getElementById('demand-from').value;
         byId('to').value = period?.to || document.getElementById('demand-to').value;
         if (!state.options) {
@@ -208,12 +204,13 @@
         }
         byId('category').value = document.getElementById('demand-category').value;
         byId('product').value = document.getElementById('demand-product').value;
-        byId('mode').value = document.getElementById('demand-mode').value;
+        byId('mode').value = state.xray ? 'all' : document.getElementById('demand-mode').value;
         byId('recurrence').value = 'all';
       }
       status('Preparando cobertura y parámetros…');
       const options = await loadCoverage();
       if (!options) return;
+      if (state.xray) byId('dimension-gender').checked = true;
       if (!byId('location').options.length || byId('location').options.length === 1) {
         byId('location').replaceChildren(new Option('Todas las cafeterías', 'all'), ...options.locations.map(l => new Option(l.name, l.id)));
       }
@@ -225,6 +222,7 @@
   }
   async function startCalculation(extra = {}) {
     if (state.job || state.starting) return;
+    const genderRevision = state.genderRevision;
     try {
       if (!byId('form').reportValidity()) return;
       const config = configuration();
@@ -238,8 +236,10 @@
       status('Iniciando cálculo sobre los datos sincronizados…');
       const job = await apiRequest('/api/sales-clusters/jobs', { method: 'POST', signal: state.controller.signal,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (genderRevision !== state.genderRevision) return;
       state.starting = false; state.controller = null; state.job = job; await poll();
     } catch (error) {
+      if (genderRevision !== state.genderRevision) return;
       const aborted = state.controller?.signal.aborted; state.starting = false; state.controller = null;
       status(aborted ? 'Preparación cancelada. Se conserva el último resultado disponible.' : error.message, aborted ? '' : 'error');
       if (!state.job) setBusy(false);
@@ -255,6 +255,7 @@
       status(job.message);
       if (job.status === 'completed') {
         const result = await apiRequest(`/api/sales-clusters/jobs/${jobId}/result`);
+        if (state.job?.id !== jobId) return;
         state.job = null; setBusy(false);
         if (result.kind === 'refinements') renderRefinements(result);
         else if (result.depth > 1 && result.status === 'insufficient' && state.result) {
@@ -269,6 +270,7 @@
           applyResultConfiguration(result); renderResults(result);
         }
         status(result.message, result.status === 'solid' ? 'success' : '');
+        if (state.xray && !result.stale && result.depth === 1) window.dispatchEvent(new CustomEvent('sales-clusters-result', { detail: result }));
       } else if (['failed', 'cancelled'].includes(job.status)) {
         state.job = null; setBusy(false); status(job.error || job.message, job.status === 'failed' ? 'error' : '');
       } else state.timer = setTimeout(poll, 1000);
@@ -422,7 +424,27 @@
     const saved = readStorage(savedKey, []); byId('saved').replaceChildren(new Option('Seleccionar…', ''), ...saved.map((s, i) => new Option(s.name, String(i))));
   }
   function initialize() {
-    byId('open').addEventListener('click', open); byId('close').addEventListener('click', () => byId('dialog').close());
+    document.body.appendChild(byId('dialog'));
+    window.addEventListener('sales-gender-updated', () => {
+      state.genderRevision++; state.generation++; state.controller?.abort(); clearTimeout(state.timer);
+      if (state.job) apiRequest(`/api/sales-clusters/jobs/${state.job.id}`, { method: 'DELETE' }).catch(() => {});
+      state.job = null; state.starting = false; state.controller = null;
+      state.result = null; state.resultJobId = null; state.parent = null; state.referenceJobId = null;
+      setBusy(false); unlockReference(); renderContext();
+      for (const key of ['results', 'detail', 'coverage']) byId(key).replaceChildren();
+      byId('results').hidden = true; byId('detail').hidden = true;
+      byId('dialog').close();
+      status('Las asignaciones de género cambiaron. Calcula nuevamente los clusters.');
+    });
+    byId('open').addEventListener('click', () => { if (!state.job && !state.starting) state.xray = null; open(); }); byId('close').addEventListener('click', () => byId('dialog').close());
+    window.openProductClusters = context => {
+      if (state.job || state.starting) { byId('dialog').showModal(); status('Termina o cancela el cálculo en curso antes de analizar el producto.'); return; }
+      state.xray = context; state.parent = null; state.referenceJobId = null; state.result = null; state.resultJobId = null;
+      for (const [key, suffix] of Object.entries(fields)) byId(suffix).value = ['modeOfService', 'recurrence'].includes(key) ? 'all' : '';
+      byId('results').replaceChildren(); byId('results').hidden = true; byId('detail').hidden = true;
+      if (state.controlsReady) { unlockReference(); byId('dimension-gender').checked = true; }
+      open();
+    };
     byId('coverage-button').addEventListener('click', reviewCoverage);
     byId('form').addEventListener('submit', event => { event.preventDefault(); startCalculation(); });
     byId('form').addEventListener('change', markDirty);
@@ -445,7 +467,7 @@
       try {
         const name = byId('config-name').value.trim(); if (!name) throw new Error('Escribe un nombre para guardar la configuración.');
         const saved = readStorage(savedKey, []).filter(s => s.name !== name);
-        saved.push({ name, configuration: configuration(), filters: filters() });
+        saved.push({ name, configuration: configuration(), filters: filters(), xray: state.xray });
         if (!writeStorage(savedKey, saved.slice(-30))) throw new Error('Este navegador no permite guardar configuraciones. Revisa sus opciones de almacenamiento.');
         refreshSaved(); status('Configuración guardada en este navegador.', 'success');
       } catch (error) { status(error.message, 'error'); }
@@ -453,7 +475,7 @@
     byId('load').addEventListener('click', () => {
       const selected = byId('saved').value; if (selected === '') { status('Selecciona una configuración guardada.'); return; }
       const saved = readStorage(savedKey, [])[Number(selected)]; if (!saved) return;
-      state.parent = null; state.referenceJobId = null; unlockReference(); renderContext();
+      state.parent = null; state.referenceJobId = null; state.xray = saved.xray || null; unlockReference(); renderContext();
       applyResultConfiguration({ ...saved.configuration });
       byId('location').value = saved.filters.locations; byId('from').value = saved.filters.dateFrom; byId('to').value = saved.filters.dateTo;
       for (const [key, suffix] of Object.entries(fields)) byId(suffix).value = saved.filters[key] ?? (['modeOfService', 'recurrence'].includes(key) ? 'all' : '');

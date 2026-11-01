@@ -6,7 +6,7 @@ const XLSX = require('./record-workbooks');
 const { businessClock, addDays } = require('./network-sales');
 const { validDate, lastCompleteDay, resolvePeriod, effectiveCutoff } = require('./recurrence');
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
-function createRecurrenceSource({ uploadsRoot, storesFor, filesFor, ordersFor, manifests, today, cutoff }) {
+function createRecurrenceSource({ uploadsRoot, storesFor, filesFor, ordersFor, manifests, today, cutoff, analysisFingerprint = () => null }) {
   const fileIdentity = file => { try { const stat = fs.statSync(file.filePath); return [file.filePath, records.descriptor(file.filePath)?.blob || null, stat.size, stat.mtimeMs, file.excludedRanges]; } catch { return [file.filePath, 'missing']; } };
   const history = () => manifests().filter(run => run.publication === 'published' && run.reception === 'complete' && !run.antecedent);
   function coverage(stores) {
@@ -43,7 +43,7 @@ function createRecurrenceSource({ uploadsRoot, storesFor, filesFor, ordersFor, m
       const file = path.join(masterRoot, name); try { const stat = fs.statSync(file); if (stat.isFile()) purchases.push([name, stat.mtimeMs, stat.size]); } catch {}
     }
     return { mp: hash([stores, mp, evidence.filter(r => r.source === 'mercadopago'), today()]),
-      purchases: hash([purchases, evidence.filter(r => r.source !== 'mercadopago')]) };
+      purchases: hash([analysisFingerprint(), purchases, evidence.filter(r => r.source !== 'mercadopago')]) };
   }
   function readSource(query) {
     const stores = storesFor(query.location || 'all'), rows = [], warnings = [], unavailable = new Set();
@@ -78,6 +78,12 @@ function createRecurrenceSource({ uploadsRoot, storesFor, filesFor, ordersFor, m
     const requested = period.to < now ? `${period.to}T23:59:59` : `${now}T${query.serverCutoff || cutoff()}`;
     return { D, period, asOf: effectiveCutoff(cov, ids, requested) };
   }
-  return { readSource, fingerprint, cacheCutoff, readOrders: ordersFor };
+  function readProductContext(query) {
+    const stores = storesFor(query.location || 'all');
+    return { locationIds: stores.map(store => store.id), scope: { location: query.location || 'all',
+      label: query.location && query.location !== 'all' ? stores[0].name : 'Todas las cafeterías', locations: stores.map(store => ({ id: store.id, name: store.name })) },
+    today: today(), cutoff: cutoff(), coverage: coverage(stores) };
+  }
+  return { readSource, readProductContext, fingerprint, cacheCutoff, readOrders: ordersFor };
 }
 module.exports = { createRecurrenceSource };

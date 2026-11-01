@@ -33,7 +33,7 @@ function warningDetails(message, payload) {
 }
 function unverifiedProducts(facts) {
   const groups = new Map();
-  for (const fact of facts.filter(item => item.costAvailable && item.costBasisEvidence !== 'net-field-consistent')) {
+  for (const fact of facts.filter(item => item.costAvailable && !['net-field-consistent', 'net-source-declared'].includes(item.costBasisEvidence))) {
     const key = JSON.stringify([fact.locationId, fact.code, fact.costSource, fact.costSourceDate]);
     if (!groups.has(key)) groups.set(key, { Ubicación: fact.locationName, Código: fact.code, Producto: fact.name,
       Fuente: fact.costSource, 'Fecha del costo': fact.costSourceDate, Líneas: 0, Cantidad: 0, 'Venta neta afectada': 0, 'Costo usado (estimado)': 0 });

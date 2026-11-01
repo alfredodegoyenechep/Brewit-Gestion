@@ -136,7 +136,8 @@ test('participación y margen se consultan desde estadísticas y conservan su al
   assert.equal(await page.locator('#refresh-sales-dashboard, #sales-dashboard-location, [data-toteat-sales-sync="dashboard"]').count(), 0);
   assert.deepEqual(await page.locator('#sales-workspace > .workspace-tabs [role="tab"]').allTextContents(), [
     'Participación', 'Modalidad de consumo', 'Jerarquías y margen',
-    'Productos y jerarquías', 'Ventas por ingredientes', 'Franjas horarias', 'Clientes recurrentes'
+    'Productos y jerarquías', 'Ventas por ingredientes', 'Franjas horarias', 'Clientes recurrentes',
+    'Producto-Recurrencia', 'Producto-Género', 'X-ray producto'
   ]);
   assert.equal(await page.getByRole('tab', { name: 'Participación', exact: true }).getAttribute('aria-selected'), 'true');
   assert.equal(await page.locator('#sales-dashboard-metrics, .sales-location-panel').count(), 0);

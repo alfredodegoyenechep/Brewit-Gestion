@@ -63,8 +63,8 @@ function topMix(orders, limit = 5) {
 
 function aggregateNameSegments(orders) {
   const definitions = [
-    ['feminine-associated', 'Asociación femenina'], ['masculine-associated', 'Asociación masculina'],
-    ['indeterminate', 'Indeterminado/no clasificable'], ['unavailable', 'Sin nombre utilizable']
+    ['feminine-associated', 'Femenino'], ['masculine-associated', 'Masculino'],
+    ['indeterminate', 'No atribuible'], ['unavailable', 'Sin información']
   ];
   const totalSales = sum(orders.map(order => order.netSales));
   const segments = definitions.map(([key, label]) => {
@@ -72,18 +72,22 @@ function aggregateNameSegments(orders) {
     const metrics = basicMetrics(values);
     metrics.salesSharePercent = totalSales ? round(metrics.netSales / totalSales * 100, 1) : null;
     return { key, label, ...metrics,
-      dictionaryOrders: values.filter(order => order.nameClassificationMethod === 'dictionary').length,
-      inferredOrders: values.filter(order => order.nameClassificationMethod === 'inference').length,
+      reportedOrders: values.filter(order => order.nameClassificationMethod === 'source').length,
+      reviewedOrders: values.filter(order => order.nameClassificationMethod === 'manual').length,
+      dictionaryOrders: 0,
+      inferredOrders: 0,
       mix: topMix(values) };
   });
   const classifiable = segments.filter(item => ['feminine-associated', 'masculine-associated'].includes(item.key))
     .reduce((total, item) => total + item.orders, 0);
   return { segments, classifiableOrders: classifiable,
+    reportedOrders: sum(segments.map(item => item.reportedOrders)),
+    reviewedOrders: sum(segments.map(item => item.reviewedOrders)),
     dictionaryOrders: sum(segments.map(item => item.dictionaryOrders)),
     inferredOrders: sum(segments.map(item => item.inferredOrders)),
     classifiedPercent: orders.length ? round(classifiable / orders.length * 100, 1) : 0,
     scope: `${orders.length} pedidos del período; la unidad analizada es el pedido, no una persona.`,
-    limitations: '“Género estimado por nombre” es una asociación lingüística orientativa y agregada. Un nombre no confirma identidad ni género, puede corresponder a quien retira o paga, y no permite contar clientes únicos. Se prioriza un diccionario en español e inglés; sin coincidencia se prueban patrones de escritura de menor certeza, sin probabilidades calibradas. Entradas ambiguas, genéricas o sin patrón suficiente quedan indeterminadas. No se generan recomendaciones basadas solo en este segmento.' };
+    limitations: 'La clasificación corresponde a indicaciones registradas en la fuente o asignaciones proporcionadas mediante la revisión de cada pedido. Los comentarios sin asignación quedan sin información o no atribuibles. Los pedidos no equivalen a personas únicas.' };
 }
 
 function parseTimeBands(filters = {}) {

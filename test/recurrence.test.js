@@ -175,6 +175,13 @@ test('unknown original adjustment, component quantities and accounting stay expl
     [{ id: 'P', quantity: 1 }, { id: 'P', quantity: 2, lineReference: 'root' }, { id: 'Q', quantity: 3, lineReference: 'root' }]);
   assert.deepEqual(lines.map(l => l.quantity), [1, 0, 0]);
   assert.equal(lines[0].isComponent, false); assert.equal(lines[2].isComponent, true);
+  const addons = r.eligibleOrderLines([
+    { code: 'EX', quantity: 2, netSales: 600, isExtra: true },
+    { code: 'FREE', quantity: 1, netSales: 0, extraHierarchyId: 'BA.001' },
+    { code: 'C', quantity: 1, netSales: 0 }
+  ], ['EX', 'FREE', 'C'].map(id => ({ id, quantity: 1, lineReference: 'root' })));
+  assert.deepEqual(addons.map(l => l.quantity), [2, 1, 0]);
+  assert.equal(addons[0].netSales, 600); assert.equal(addons[0].isComponent, undefined); assert.equal(addons[2].isComponent, true);
 });
 
 test('a section rejects a source change during preparation; closed-window cache ignores irrelevant clock seconds', async () => {

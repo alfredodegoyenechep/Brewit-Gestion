@@ -2,8 +2,9 @@ const crypto = require('node:crypto');
 const engine = require('./recurrence');
 const purchaseHistory = require('./recurrence-history');
 const productRecurrence = require('./product-recurrence');
+const productGender = require('./product-gender');
 const error = (status, message) => Object.assign(new Error(message), { status });
-function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCutoff, clock = Date.now, ttl = 3600000, limit = 8 }) {
+function createRecurrenceService({ readSource, readProductContext, fingerprint, readOrders, cacheCutoff, clock = Date.now, ttl = 3600000, limit = 8 }) {
   const reports = new Map();
   const entryFor = (id, owner) => {
     const entry = reports.get(id);
@@ -16,11 +17,21 @@ function createRecurrenceService({ readSource, fingerprint, readOrders, cacheCut
     if (current.mp !== entry.versions.mp || (purchases && current.purchases !== entry.versions.purchases)) throw error(409, 'Las fuentes cambiaron desde la generación del reporte. Pulsa Generar reportes para trabajar con una versión coherente.');
   };
   async function request(action, input = {}, owner = 'local') {
-    if (action === 'product-options') {
+    if (action === 'product-options' || action === 'gender-options') {
       const versions = fingerprint(input);
       const data = readOrders(input, null);
       if (fingerprint(input).purchases !== versions.purchases) throw error(409, 'Las ventas cambiaron durante la carga. Vuelve a cargar las opciones.');
-      return { ...productRecurrence.productOptions(data.orders), warnings: data.warnings || [] };
+      return { ...productRecurrence.productOptions(data.orders, { includeExtras: action === 'gender-options' }), warnings: data.warnings || [] };
+    }
+    if (action === 'gender-generate') {
+      productRecurrence.selection(input);
+      const versions = fingerprint(input), context = (readProductContext || readSource)(input);
+      const period = engine.resolvePeriod(input.period === 'current-month'
+        ? { period: 'custom', dateFrom: `${context.today.slice(0, 7)}-01`, dateTo: context.today } : input, context.today, null);
+      const data = readOrders(input, period);
+      const result = productGender.buildProductGender({ ...context, period }, data.orders, input, data.warnings);
+      if (fingerprint(input).purchases !== versions.purchases) throw error(409, 'Las fuentes cambiaron durante el cálculo. Vuelve a generar el reporte.');
+      return { ...result, sourceVersions: { purchases: versions.purchases } };
     }
     if (action === 'product-generate') {
       productRecurrence.selection(input);
@@ -136,6 +147,8 @@ function registerRecurrenceRoutes(app, service) {
   app.get('/api/sales/recurrence', run('generate'));
   app.get('/api/sales/product-recurrence/options', run('product-options'));
   app.get('/api/sales/product-recurrence', run('product-generate'));
+  app.get('/api/sales/product-gender/options', run('gender-options'));
+  app.get('/api/sales/product-gender', run('gender-generate'));
   app.get('/api/sales/recurrence/:id/:section', run(null));
 }
 module.exports = { createRecurrenceService, registerRecurrenceRoutes };

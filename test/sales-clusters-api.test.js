@@ -43,14 +43,14 @@ async function waitJob(base, id) {
 }
 const dims = Object.fromEntries(Object.entries(DEFAULT_DIMENSIONS).map(([k, d]) => [k, { ...d, enabled: ['products', 'hour', 'spend'].includes(k), ...(k === 'products' ? { level: 'product' } : {}) }]));
 
-test('clusters recibe la estimación de nombres de Detalle Pagos sin exponer comentarios', async t => {
+test('clusters recibe indicaciones literales de Detalle Pagos y omite nombres sin asignación', async t => {
   const { base, uploadsRoot } = await serverFor(t); await importSales(base);
   const directory = path.join(uploadsRoot, 'transactions', 'store-1');
   const indexPath = path.join(directory, 'index.json');
   const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
   const rows = Array.from({ length: 40 }, (_, i) => ({ Comanda: `cluster-${i}`,
     FechaCierre: `2026-09-${String(1 + Math.floor(i / 2) % 10).padStart(2, '0')}`,
-    'Comentario General': i < 5 ? 'Emily' : i < 10 ? 'Marcelina' : i < 20 ? 'Pedro' : 'Cliente', Total: i % 2 ? 4760 : 1190 }));
+    'Comentario General': i < 10 ? 'mujer Emily' : i < 20 ? 'hombre Pedro' : i < 30 ? 'Marcelina' : 'Cliente', Total: i % 2 ? 4760 : 1190 }));
   const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Pagos');
   XLSX.writeFile(workbook, path.join(directory, 'identity-test.xlsx'));
   index.fields['payment-details'] = { files: [{ id: 'identity-test', name: 'identity-test.xlsx',
@@ -63,14 +63,14 @@ test('clusters recibe la estimación de nombres de Detalle Pagos sin exponer com
   const config = { dimensions: { gender: { enabled: false, level: 'validated' } } };
   const validated = await fetch(`${base}/api/sales-clusters/options?${new URLSearchParams({ locations: 'store-1', mode: 'all', configuration: JSON.stringify(config) })}`).then(r => r.json());
   const validatedGender = validated.coverage.find(d => d.key === 'gender');
-  assert.equal(validatedGender.known, 0); assert.equal(validatedGender.nameKnown, 20);
+  assert.equal(validatedGender.known, 20); assert.equal(validatedGender.nameKnown, 20);
   assert.equal(validated.identityDiagnostics.recurrence.noPaymentData, 40);
   const report = await fetch(`${base}/api/demand-analysis?locations=store-1&mode=all`).then(r => r.json());
   assert.equal(report.nameSegments.classifiableOrders, 20);
-  assert.equal(report.nameSegments.dictionaryOrders, 15);
-  assert.equal(report.nameSegments.inferredOrders, 5);
+  assert.equal(report.nameSegments.dictionaryOrders, 0);
+  assert.equal(report.nameSegments.inferredOrders, 0);
   const orders = await fetch(`${base}/api/demand-analysis/orders?locations=store-1&mode=all`).then(r => r.json());
-  assert.equal(orders.orders.filter(o => o.nameClassificationMethod === 'inference').length, 5);
+  assert.equal(orders.orders.filter(o => o.nameClassificationMethod === 'inference').length, 0);
   assert.ok(!JSON.stringify(orders).includes('Marcelina'));
   assert.ok(!JSON.stringify(options).includes('Emily'));
 });

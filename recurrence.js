@@ -296,6 +296,10 @@ function eligibleOrderLines(lines, rawProducts = []) {
   const childCodes = new Set(rawProducts.filter(l => l.lineReference).map(l => String(l.id)));
   const remaining = new Map([...childCodes].map(code => [code, sum(rawProducts.filter(l => String(l.id) === code && !l.lineReference).map(l => Number(l.quantity) || 0))]));
   return lines.map(line => {
+    // Charged add-ons have their own sales rows even when linked to a beverage.
+    // Keep their quantities for reports that include extras; root-product reports
+    // still exclude them using isExtra/extraHierarchyId.
+    if (line.isExtra || line.extraHierarchyId) return { ...line };
     if (!remaining.has(line.code)) return { ...line };
     const quantity = Math.max(0, Math.min(line.quantity, remaining.get(line.code)));
     remaining.set(line.code, remaining.get(line.code) - quantity);
