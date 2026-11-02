@@ -71,6 +71,15 @@ test('difference analysis opens on click regardless of amount, displays exceptio
   await figures.first().locator('button').click();
   await page.waitForFunction(() => document.getElementById('weekly-results-reconciliation-status').textContent.includes('vencido'));
   assert.equal(await dialog.locator('table').count(), 0);
+  await page.locator('#weekly-results-reconciliation-close').click();
+  expired = false;
+  await page.locator('#weekly-results-refresh').click();
+  await page.waitForFunction(() => document.getElementById('weekly-results-status').textContent === 'Resultados semanales actualizados.');
+  await figures.first().locator('button').click();
+  await page.locator('#weekly-reconciliation-exceptions').waitFor();
+  assert.equal(await page.locator('#weekly-results-reconciliation-status').innerText(), '');
+  assert.equal(await dialog.locator('table').count(), 2);
+  assert.equal(requests, 3, 'the refreshed report retries the same detail ID after a previous 410');
   assert.deepEqual(errors, []);
 });
 

@@ -72,3 +72,25 @@ test('unmatched TotEat credit notes identify the original payment and explain th
   assert.match(result.exceptions[0].reason, /Nota de crédito.*original-payment/);
   assert.equal(result.totals.reconciled, true);
 });
+
+test('a credit note matches the refund of its original payment without consuming the positive settlement twice', () => {
+  const original = payment('original', [form(15200, '185519838939')]);
+  const note = { ...payment('NC', [form(-15200)]), documentType: 'NC', referencedPaymentId: 'original' };
+  const collected = { ...settlement('185519838939', 15200, '2026-10-26T12:00:00', 263),
+    key: 'collection', transactionType: 'SETTLEMENT' };
+  const refunded = { ...settlement('185519838939', -15200, '2026-10-26T11:50:00', -263),
+    key: 'refund', transactionType: 'REFUND' };
+  const result = build({ sales: [sale('original', 15200), sale('NC', -15200)],
+    payments: [original, note], settlements: [refunded, collected], totals: { collectionDifference: 0 } });
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.totals.matched, 2);
+  assert.equal(result.totals.reconciled, true);
+  assert.equal(result.totals.exceptionTotal, 0);
+  assert.equal(result.totals.creditNoteCount, 0);
+  const refund = result.rows.find(row => row.paymentId === 'NC');
+  assert.equal(refund.mpType, 'REFUND');
+  assert.equal(refund.mpNet, -14937);
+  assert.equal(refund.mpFee, -263);
+  assert.equal(refund.amount, 0);
+  assert.equal(result.rows.find(row => row.paymentId === 'original').mpNet, 14937);
+});

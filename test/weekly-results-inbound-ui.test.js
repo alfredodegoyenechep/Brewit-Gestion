@@ -24,6 +24,10 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
       item('T3', 'SUB005', 'Café', 1, 'KG', 30), item('T4', 'ING001', 'Ingrediente A', 500, 'G', .02),
       item('T5', 'MISSING', 'Ingrediente sin costo', .25, 'KG', null)
     ];
+    if (central.length) {
+      central[1].document = 'T1';
+      central[4].document = 'T3';
+    }
     const supplier = [item('P1', 'DIRECT', 'Compra directa', 2, 'UN', location.id === 'store-2' ? 50 : 25)];
     return { values: { netSales: value(1000, 'complete'),
       centralWarehouseInbound: value(location.id === 'store-2' ? 0 : 90, location.id === 'store-2' ? 'complete' : 'partial'),
@@ -87,7 +91,15 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
   assert.equal(await summary.locator('tfoot td').innerText(), '$90');
   assert.match(await popup.innerText(), /Detalle parcial/);
   await popup.locator('summary').click();
-  assert.equal(await popup.locator('.weekly-results-inbound-movements tbody tr').count(), 5);
+  const movements = popup.locator('.weekly-results-inbound-movements');
+  assert.equal(await movements.locator('tbody tr:not(.weekly-results-document-subtotal)').count(), 5);
+  const subtotals = movements.locator('.weekly-results-document-subtotal');
+  assert.equal(await subtotals.count(), 2);
+  assert.equal(await subtotals.nth(0).locator('th').innerText(), 'Subtotal documento T1 (2 movimientos)');
+  assert.equal(await subtotals.nth(0).locator('td').innerText(), '$50');
+  assert.equal(await subtotals.nth(1).locator('td').innerText(), '$30 · Parcial');
+  assert.deepEqual(await movements.locator('tbody tr').evaluateAll(rows => rows.map(row => row.classList.contains('weekly-results-document-subtotal') ? 'subtotal' : row.cells[1].textContent)),
+    ['T1', 'T1', 'subtotal', 'T3', 'T3', 'subtotal', 'T4']);
   assert.equal(requests, 1);
   await page.screenshot({ path: '/private/tmp/brewit-inbound-popup.png' });
   await page.keyboard.press('Escape');
@@ -96,6 +108,7 @@ test('clicking inbound amounts opens the correct ingredient totals, movements, m
   await page.locator('#weekly-results-table [data-metric="directSupplierInbound"] button').nth(2).click();
   assert.equal(await popup.locator('h3').innerText(), 'Entradas Proveedores Directos');
   assert.equal(await popup.locator('tfoot td').innerText(), '$50');
+  assert.equal(await popup.locator('.weekly-results-document-subtotal').count(), 0);
   assert.match(await popup.innerText(), /Compra directa/);
   assert.doesNotMatch(await popup.innerText(), /SUB005/);
   await page.locator('#weekly-results-inbound-close').click();

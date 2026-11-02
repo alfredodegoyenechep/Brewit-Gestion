@@ -2157,7 +2157,7 @@ function createApp(options = {}) {
   const productAnalyticsSourceCache = new Map();
   const inventoryDetailReports = new Map();
   const weeklyDetailBuilder = require('./weekly-results-details');
-  const weeklyDetailReports = weeklyDetailBuilder.createDetailStore();
+  const weeklyDetailReports = weeklyDetailBuilder.createDetailStore({ directory: path.join(uploadsRoot, '.cache', 'weekly-results-details') });
   const demandEnrichmentCache = new Map();
   const toteatMasterDownloadBatches = new Map();
   ensureDir(weeksRoot);
@@ -7953,11 +7953,14 @@ function createApp(options = {}) {
             for (const values of sheet.rows.slice(1)) {
               const row = Object.fromEntries(header.map((name, index) => [String(name || `column-${index}`), values[index]]));
               const transactionType = String(rowValue(row, ['TRANSACTION_TYPE']) || '').trim().toUpperCase();
-              if (transactionType && transactionType !== 'SETTLEMENT') continue;
+              if (transactionType && !['SETTLEMENT', 'REFUND'].includes(transactionType)) continue;
               const date = mercadoPagoDateTime(row)?.slice(0, 10);
               if (!date || date < dateFrom || date > dateTo || dateIsExcluded(date, stored.excludedRanges)) continue;
               const sourceId = String(rowValue(row, ['SOURCE_ID']) ?? '').trim();
-              const uniqueId = `${location.id}:${sourceId || genericTransactionRowKey(values)}`;
+              // Refunds share SOURCE_ID with the original collection. Keep both and
+              // preserve distinct partial refunds while removing repeated source rows.
+              const movementType = transactionType || 'SETTLEMENT';
+              const uniqueId = `${location.id}:${sourceId || genericTransactionRowKey(values)}:${movementType}${movementType === 'REFUND' ? `:${genericTransactionRowKey(values)}` : ''}`;
               if (seen.has(uniqueId)) continue;
               seen.add(uniqueId);
               const candidates = ['FEE_AMOUNT', 'MP_FEE', 'COMMISSION_AMOUNT', 'COMISION', 'COMISIÓN', 'FEE'];
@@ -7967,8 +7970,11 @@ function createApp(options = {}) {
               if (fee !== null) locationsWithFee.add(location.id);
               const collectedAmount = numericValue(rowValue(row, [collectionField]));
               if (collectedAmount !== null) locationsWithCollection.add(location.id);
-              facts.push({ locationId: location.id, fee: fee === null ? null : Math.abs(fee), collectedAmount,
-                ...(includeDetails ? { key: uniqueId, sourceId, dateTime: mercadoPagoDateTime(row),
+              // Exported fees are debits on collections and credits on refunds.
+              // REAL_AMOUNT already carries the refund sign: never subtract it twice.
+              const chargedFee = fee === null ? null : movementType === 'REFUND' ? -fee : Math.abs(fee);
+              facts.push({ locationId: location.id, fee: chargedFee, collectedAmount,
+                ...(includeDetails ? { key: uniqueId, sourceId, transactionType: movementType, dateTime: mercadoPagoDateTime(row),
                   transactionAmount: numericValue(rowValue(row, ['TRANSACTION_AMOUNT'])) } : {}) });
             }
           }
@@ -8644,8 +8650,14 @@ function createApp(options = {}) {
     } catch (error) { failure('Inventario final', error); }
     try {
       const state = context.stock(location, true);
+      const purchaseLocation = location.type === 'warehouse' ? 'store-1' : location.id;
+      const purchaseSource = toteatSalesSync.purchases.get(purchaseLocation);
+      const masterProducts = toteatMasterSync.sharedCurrent()?.products;
       const inbound = require('./inventory-inbound').inboundResults({ state, location, period,
         centralIdentity: context.centralIdentity || (location.id === 'store-1' ? state.sourceIdentity : null),
+        purchaseSource, canonicalProducts: masterProducts?.map(product => ({ ...product,
+          custom_id: product.code, stock_unit: product.stockUnit,
+          name: { translations: { default: product.name } } })),
         ...context.inboundValuation(location, state, costCutoff) });
       Object.assign(values, inbound.values); Object.assign(sources, inbound.sources);
       for (const [key, label] of [['centralWarehouseInbound', isWarehouse ? 'Reversas / devoluciones' : 'Entradas Bodega Central'], ['directSupplierInbound', 'Entradas Proveedores Directos'],
@@ -8678,6 +8690,8 @@ function createApp(options = {}) {
   }
 
   app.get('/api/weekly-results/details/:id', (req, res) => {
+    // A 410 must not remain cached after regenerating the same content-based ID.
+    res.set('Cache-Control', 'no-store');
     const detail = weeklyDetailReports.get(req.params.id);
     if (!detail) return res.status(410).json({ error: 'Este detalle ya no está disponible. Actualiza el reporte y vuelve a abrir la cifra.' });
     res.set('Cache-Control', 'no-store').json(detail);

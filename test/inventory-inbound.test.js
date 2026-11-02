@@ -84,6 +84,32 @@ test('direct suppliers count only positive purchases received in the operative w
   assert.deepEqual(data.sources.directSupplierInbound.items.map(item => item.id), ['purchase', 'product-purchase']);
 });
 
+test('direct suppliers use current receipts beyond the inventory capture without doubling older purchases', () => {
+  const f = fixture();
+  f.state.range.to = '2026-10-06';
+  f.state.sourceCoverage.purchases.to = '2026-10-06';
+  f.options.period = { from: '2026-10-05', to: '2026-10-11', through: '2026-10-11' };
+  f.add('purchase:old:0', 'purchase', 2);
+  const product = { custom_id: 'ING', stock_unit: 'KG', name: { translations: { default: 'Ingrediente' } } };
+  f.options.canonicalProducts = [product];
+  f.options.purchaseSource = { from: '2026-10-05', through: '2026-10-11', syncedAt: '2026-10-12T10:00:00Z',
+    documents: [
+      { movement_id: 'old', document_id: '100', received_date: '20261006', products: [
+        { sku: 'ING', warehouse: 2, received_quantity: 2, received_measurement: 'KG' }] },
+      { movement_id: 'new', document_id: '3774491', received_date: '20261010', products: [
+        { sku: 'ING', warehouse: 2, received_quantity: 3, received_measurement: 'KG' }] },
+      { movement_id: 'other-warehouse', document_id: '200', received_date: '20261010', products: [
+        { sku: 'ING', warehouse: 1, received_quantity: 100, received_measurement: 'KG' }] }
+    ] };
+  const result = f.result();
+  assert.equal(result.values.directSupplierInbound.amount, 50);
+  assert.equal(result.values.directSupplierInbound.status, 'complete');
+  assert.deepEqual(result.sources.directSupplierInbound.items.map(item => item.document), ['100', '3774491']);
+  assert.equal(result.sources.directSupplierInbound.items[1].date, '2026-10-10');
+  assert.equal(result.sources.directSupplierInbound.capturedAt, '2026-10-12T10:00:00Z');
+  assert.equal(result.values.centralWarehouseInbound.amount, 0);
+});
+
 test('verified no receipts is zero; absent coverage, rejected conversions and missing costs never certify a zero', () => {
   const f = fixture();
   assert.equal(f.result().values.directSupplierInbound.amount, 0);

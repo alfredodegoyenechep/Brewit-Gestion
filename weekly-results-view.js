@@ -233,7 +233,7 @@
     try {
       let report = metricCache.get(id);
       if (!report) {
-        const response = await fetch(`/api/weekly-results/details/${encodeURIComponent(id)}`, { signal: active.signal });
+        const response = await fetch(`/api/weekly-results/details/${encodeURIComponent(id)}`, { signal: active.signal, cache: 'no-store' });
         report = await response.json();
         if (!response.ok) throw Error(report.error || 'No se pudo cargar el detalle.');
       }
@@ -275,7 +275,19 @@
       const head = table.createTHead().insertRow();
       for (const label of headers) { const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; head.append(cell); }
       const body = table.createTBody();
-      for (const values of rows) { const row = body.insertRow(); for (const text of values) row.insertCell().textContent = text; }
+      for (const values of rows) {
+        const row = body.insertRow();
+        if (values.subtotal) {
+          row.className = 'weekly-results-document-subtotal';
+          const label = document.createElement('th'); label.scope = 'row'; label.colSpan = headers.length - 1;
+          label.textContent = `Subtotal documento ${values.document} (${values.count} movimientos)`;
+          row.append(label);
+          row.insertCell().textContent = !values.known ? 'Sin costo'
+            : `${formatClp(values.amount)}${values.known < values.count ? ' · Parcial' : ''}`;
+        } else {
+          for (const text of values) row.insertCell().textContent = text;
+        }
+      }
       wrap.append(table); return { wrap, table };
     };
     if (items.length) {
@@ -292,11 +304,29 @@
       inboundBody.append(summary.wrap);
       const details = document.createElement('details'), heading = document.createElement('summary');
       heading.textContent = `Ver movimientos (${items.length})`; details.append(heading);
-      const movements = tableFor(['Fecha', 'Documento', 'Código', 'Ingrediente / artículo', 'Cantidad', 'Unidad', 'Costo unitario', 'Importe'],
-        [...items].sort((a, b) => a.date.localeCompare(b.date) || a.document.localeCompare(b.document, 'es', { numeric: true })).map(item => [
+      const documents = new Map();
+      for (const item of [...items].sort((a, b) => a.date.localeCompare(b.date)
+        || String(a.document ?? '').localeCompare(String(b.document ?? ''), 'es', { numeric: true }))) {
+        const document = String(item.document ?? '').trim();
+        // Missing document identifiers must not combine unrelated movements.
+        const identity = document && !['—', '-'].includes(document) ? document : Symbol();
+        const group = documents.get(identity) || { document, items: [] };
+        group.items.push(item); documents.set(identity, group);
+      }
+      const movementRows = [];
+      for (const group of documents.values()) {
+        movementRows.push(...group.items.map(item => [
           date(item.date), item.document, item.code, item.name, quantity(item.quantity), item.unit,
           item.available ? unitCost(item.unitCost) : 'Sin costo', item.available ? formatClp(item.amount) : 'Sin costo'
-        ]), 'weekly-results-inbound-movements');
+        ]));
+        if (group.items.length > 1) {
+          const known = group.items.filter(item => item.available && Number.isFinite(item.amount));
+          movementRows.push({ subtotal: true, document: group.document, count: group.items.length,
+            known: known.length, amount: known.reduce((sum, item) => sum + item.amount, 0) });
+        }
+      }
+      const movements = tableFor(['Fecha', 'Documento', 'Código', 'Ingrediente / artículo', 'Cantidad', 'Unidad', 'Costo unitario', 'Importe'],
+        movementRows, 'weekly-results-inbound-movements');
       details.append(movements.wrap); inboundBody.append(details);
     } else {
       paragraph(inboundBody, metric.complete ? `No se registraron ${key === 'suppliesOutbound' ? 'salidas' : 'entradas'} de este tipo en el período seleccionado.` : 'No hay movimientos con detalle disponible para el período seleccionado.');
@@ -322,7 +352,7 @@
     const columns = [
       ['toteatTime', 'TotEat · Fecha y hora'], ['orderId', 'TotEat · Comanda'], ['paymentId', 'TotEat · Pago'],
       ['method', 'TotEat · Medio'], ['toteatAmount', 'TotEat · Importe', true],
-      ['mpTime', 'MP · Fecha y hora'], ['mpId', 'MP · Operación'], ['mpGross', 'MP · Bruto', true],
+      ['mpTime', 'MP · Fecha y hora'], ['mpId', 'MP · Operación'], ['mpType', 'MP · Tipo'], ['mpGross', 'MP · Bruto', true],
       ['mpFee', 'MP · Comisión', true], ['mpNet', 'MP · Abono neto', true],
       ['amount', 'Aporte a la diferencia', true], ['status', 'Estado'], ['matching', 'Criterio de pareo'], ['reason', 'Observación']
     ];
@@ -379,7 +409,7 @@
       const id = result.detailReports.collectionDifference;
       let report = metricCache.get(id);
       if (!report) {
-        const response = await fetch(`/api/weekly-results/details/${encodeURIComponent(id)}`, { signal: active.signal });
+        const response = await fetch(`/api/weekly-results/details/${encodeURIComponent(id)}`, { signal: active.signal, cache: 'no-store' });
         report = await response.json(); if (!response.ok) throw Error(report.error || 'No se pudo cargar el análisis.');
       }
       if (request !== reconciliationGeneration || !reconciliationDialog.open) return;

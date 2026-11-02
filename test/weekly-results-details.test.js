@@ -70,3 +70,28 @@ test('detail snapshots are stable for identical reports, expire and enforce the 
   assert.equal(store.get(second), null);
   assert.equal(store.put('netSales', {}, value(), location, period, '2026-10-16'), null);
 });
+
+test('persisted snapshots survive memory eviction and restart without recalculating changed sources', t => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'brewit-detail-snapshots-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let now = Date.now();
+  const options = { directory, limit: 1, ttl: 100, diskTtl: 1000, clock: () => now };
+  let store = details.createDetailStore(options);
+  const location = { id: 'store-1', name: 'Local' }, period = { from: '2026-10-26', through: '2026-11-01' };
+  const put = amount => store.put('collectionDifference', { rows: [{ amount }] }, value(amount, 'complete'), location, period, '2026-11-02');
+  const id = put(15200), original = store.get(id);
+  put(50); // The first entry is no longer in the bounded memory cache.
+  assert.deepEqual(store.get(id), original);
+  now += 101;
+  store = details.createDetailStore(options); // A new process reads the exact original snapshot.
+  assert.deepEqual(store.get(id), original);
+  assert.equal(store.get('../outside'), null);
+  now += 1000;
+  store = details.createDetailStore(options);
+  assert.equal(store.get(id), null);
+  assert.equal(put(15200), id, 'refreshing the same report regenerates the same ID');
+  assert.deepEqual(store.get(id), original);
+  fs.writeFileSync(path.join(directory, `${id}.json`), JSON.stringify({ expires: now + 1000, report: { ...original, total: 1 } }));
+  assert.equal(details.createDetailStore(options).get(id), null, 'a mismatched snapshot must never substitute a different total');
+});

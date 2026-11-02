@@ -13,6 +13,46 @@ const day = value => {
 };
 const number = n => { if (typeof n !== 'number' || !Number.isFinite(n)) throw Error('Cantidad inválida en una fuente de inventario.'); return n; };
 const fields = ['purchase','use','transfer_local_in','transfer_local_out','transfer_warehouse_in','transfer_warehouse_out','transformed_in','transformed_out'];
+function purchaseReceiptLines(purchases, canonicalProducts, warehouses, range) {
+  const issues = [], lines = [];
+  const byCode = new Map(canonicalProducts.map(product => [product.custom_id, product]));
+  const warehouseByCode = new Map(warehouses.map(warehouse => [String(warehouse.custom_id), warehouse.id]));
+  for (const purchase of purchases?.documents || []) {
+    const received = purchase.received_date || purchase.recieived_date;
+    if (!received) {
+      issues.push({ kind: 'purchase-date', document: purchase.movement_id,
+        message: 'Compra sin fecha de recepción; excluida.' });
+      continue;
+    }
+    let date;
+    try { date = day(received); }
+    catch (error) {
+      issues.push({ kind: 'purchase-date', document: purchase.movement_id, message: error.message });
+      continue;
+    }
+    if (range && (date < range.from || date > range.to)) continue;
+    for (const [index, item] of (purchase.products || []).entries()) {
+      try {
+        const product = byCode.get(item.sku);
+        if (!product) throw Error(`Falta maestro de ${item.sku}.`);
+        const warehouse = warehouseByCode.get(String(item.warehouse));
+        if (!warehouse) throw Error('Falta bodega de movimiento.');
+        const quantity = convert(number(item.received_quantity), item.received_measurement,
+          product.stock_unit, product);
+        lines.push({ id: `purchase:${purchase.movement_id}:${index}`, document: String(purchase.movement_id),
+          documentNumber: String(purchase.document_id || purchase.movement_id), source: 'purchases',
+          date, code: item.sku, warehouse, quantity, unit: product.stock_unit,
+          name: product.name?.translations?.default || item.product || item.sku,
+          column: 'purchase', active: true });
+      } catch (error) {
+        issues.push({ kind: error.code === 'TOTEAT_UNIT_CONVERSION_REQUIRED' ? 'unit-conversion' : 'purchase-line',
+          source: 'purchases', date, code: error.productCode || item.sku,
+          document: purchase.movement_id, message: error.message });
+      }
+    }
+  }
+  return { lines, issues };
+}
 function normalizeOperations(source, canonicalProducts) {
   const products = new Map(source.products.map(p=>[p.id,p]));
   const canonical = new Map(canonicalProducts.map(p=>[p.custom_id,p]));
@@ -68,12 +108,9 @@ function buildLedger(source, canonicalProducts, sales, purchases) {
   const from=source.range.from,to=source.range.to,inRange=d=>d>=from&&d<=to;
   for(const [kind,state]of [['sales',sales],['purchases',purchases]]) if(!state||state.from>from||state.through<to) issues.push({kind:'coverage',source:kind,message:`La cobertura de ${kind==='sales'?'ventas':'compras'} no cubre todo el período.`});
   const add=(item)=>{const p=byCode.get(item.code);if(!p)throw Error(`Falta maestro de ${item.code}.`);if(!item.warehouse)throw Error('Falta bodega de movimiento.');lines.push({...item,name:p.name?.translations?.default||item.code,quantity:convert(number(item.quantity),item.unit,p.stock_unit,p),unit:p.stock_unit,active:true});};
-  for(const p of purchases?.documents||[]) {
-    const received=p.received_date||p.recieived_date;
-    if(!received){issues.push({kind:'purchase-date',document:p.movement_id,message:'Compra sin fecha de recepción; excluida.'});continue;}
-    const date=day(received);if(!inRange(date))continue;
-    for(const [i,l]of p.products.entries())try{add({id:`purchase:${p.movement_id}:${i}`,document:String(p.movement_id),source:'purchases',date,code:l.sku,warehouse:warehouseByCode.get(String(l.warehouse)),quantity:l.received_quantity,unit:l.received_measurement,column:'purchase'});}catch(e){issues.push({kind:e.code==='TOTEAT_UNIT_CONVERSION_REQUIRED'?'unit-conversion':'purchase-line',source:'purchases',date,code:e.productCode||l.sku,document:p.movement_id,message:e.message});}
-  }
+  const receipts = purchaseReceiptLines(purchases, canonicalProducts, source.warehouses, source.range);
+  lines.push(...receipts.lines);
+  issues.push(...receipts.issues);
   // Work per order, not per payment, and retain ambiguities instead of doubling split bills.
   const orders=new Map(),includedOrders=[];
   for(const payment of sales?.payments||[]){const date=localTimestamp(payment.dateClosed).date;if(!inRange(date))continue;const key=String(payment.orderId);const group=orders.get(key)||[];group.push(payment);orders.set(key,group);}
@@ -203,4 +240,4 @@ function createStockSync({uploadsRoot,activeLocation,credentials,reader,masters}
     original(id) { const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));return pointer?read(path.join(root,key,pointer.version,'original.json')):null; },
     rebuild(id) { const key=locationKey(id),pointer=read(path.join(root,key,'current.json'));if(!pointer)throw Error('Actualiza primero las fuentes originales.');publish(key,read(path.join(root,key,pointer.version,'original.json')));return current(key); }};
 }
-module.exports={normalizeOperations,buildLedger,createStockSync};
+module.exports={normalizeOperations,buildLedger,purchaseReceiptLines,createStockSync};

@@ -58,7 +58,7 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   assert.equal(week.mercadoPagoCollection.amount, 1080);
   assert.ok(Math.abs(week.mercadoPagoTheoretical.amount - 1080) < 1e-8);
   assert.ok(Math.abs(week.mercadoPagoTheoreticalBeforeFee.amount - 1100) < 1e-8);
-  assert.ok(Math.abs(week.collectionDifference.amount) < 1e-8);
+  assert.equal(week.collectionDifference.amount, 0);
   assert.equal(week.collectionDifference.complete, true);
   assert.ok(Math.abs(branch(report.weeks[0]).collectionDifference.amount - 100) < 1e-8);
   assert.ok(Math.abs(report.weeks.reduce((sum, period) => sum + branch(period).grossSalesAfterDiscounts.amount, 0) - 2190) < 1e-8);
@@ -89,6 +89,7 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   const analysisResponse = await fetch(`${base}/api/weekly-results/details/${current.detailReports.collectionDifference}`);
   const analysis = await analysisResponse.json();
   assert.equal(analysisResponse.status, 200);
+  assert.equal(analysisResponse.headers.get('cache-control'), 'no-store');
   assert.equal(analysis.total, current.values.collectionDifference.amount);
   assert.equal(analysis.totals.reconciled, true);
   assert.equal(analysis.totals.exceptionTotal, 100);
@@ -99,4 +100,15 @@ test('weekly API reconciles synced TotEat payments and MercadoPago in the same l
   // Opening the detail always returns the reviewed snapshot, even after sources change.
   app.locals.toteatSalesSync.get = () => { throw Error('The saved analysis must not reload payment sources'); };
   assert.deepEqual(await fetch(`${base}/api/weekly-results/details/${current.detailReports.collectionDifference}`).then(r => r.json()), analysis);
+  const restarted = createApp({ uploadsRoot, reportToday: '2026-09-28', enableToteatSync: false,
+    enableMercadoPagoSync: false, storageMaintenance: false }).listen(0, '127.0.0.1');
+  await new Promise(resolve => restarted.once('listening', resolve));
+  t.after(async () => { restarted.closeAllConnections(); await new Promise(resolve => restarted.close(resolve)); });
+  const restored = await fetch(`http://127.0.0.1:${restarted.address().port}/api/weekly-results/details/${current.detailReports.collectionDifference}`);
+  assert.equal(restored.status, 200);
+  assert.deepEqual(await restored.json(), analysis);
+  const expired = await fetch(`${base}/api/weekly-results/details/expired`);
+  assert.equal(expired.status, 410);
+  assert.equal(expired.headers.get('cache-control'), 'no-store');
+
 });

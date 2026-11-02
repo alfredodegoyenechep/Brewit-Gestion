@@ -9384,6 +9384,7 @@ button:disabled {
 .weekly-results-inbound-table thead th { position: sticky; top: 0; background: var(--bg-soft); z-index: 1; }
 .weekly-results-inbound-table tfoot th, .weekly-results-inbound-table tfoot td { position: sticky; bottom: 0; background: var(--bg-soft); font-weight: 800; border-top: 2px solid var(--border); }
 .weekly-results-inbound-table tfoot td { text-align: right; }
+.weekly-results-inbound-table .weekly-results-document-subtotal > * { background: var(--bg-soft); font-weight: 800; border-top: 2px solid var(--border); }
 .weekly-results-inbound-notice, .weekly-results-inbound-total { padding: 12px; background: var(--bg-soft); border-radius: 8px; }
 .weekly-results-inbound-total { font-weight: 800; }
 .weekly-results-inbound summary { cursor: pointer; font-weight: 700; }

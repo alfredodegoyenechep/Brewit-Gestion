@@ -2,7 +2,8 @@
 // of physical counts. Aggregated Kardex columns cannot establish transfer origin.
 const { value } = require('./weekly-results');
 
-function inboundResults({ state, location, centralIdentity, period, catalog, costResolver }) {
+function inboundResults({ state, location, centralIdentity, period, catalog, costResolver,
+  purchaseSource = null, canonicalProducts = null }) {
   if (state?.sourceKind !== 'native-documents' || !Array.isArray(state.movements)) {
     throw Error('Actualiza los documentos originales del Kardex para calcular las entradas.');
   }
@@ -12,10 +13,17 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
   const warehouses = new Map(state.warehouses.map(item => [item.id, item]));
   const documents = new Map((state.documents || []).map(item => [item.key, item]));
   const products = new Map([...catalog].map(([code, item]) => [String(code).trim().toUpperCase(), item]));
+  // Receipts may be newer than the latest inventory capture. Read the current
+  // purchase source directly; keep the inventory snapshot for transfers.
+  const currentReceipts = purchaseSource && canonicalProducts
+    ? require('./toteat-stock').purchaseReceiptLines(purchaseSource, canonicalProducts,
+      state.warehouses, { from: period.from, to: period.through }) : null;
   const groups = {
     centralWarehouseInbound: { lines: [], unresolvedOrigins: [], coverage: location.id === 'store-1'
       ? state.sourceCoverage?.transfers : state.sourceCoverage?.localTransfers },
-    directSupplierInbound: { lines: [], unresolvedOrigins: [], coverage: state.sourceCoverage?.purchases }
+    directSupplierInbound: { lines: [], unresolvedOrigins: [],
+      coverage: currentReceipts ? { from: purchaseSource.from, to: purchaseSource.through }
+        : state.sourceCoverage?.purchases }
   };
   if (centralLocation) {
     // Both transfer feeds must cover the interval to certify an empty flow.
@@ -27,11 +35,17 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
     groups.suppliesOutbound = { lines: [], unresolvedOrigins: [], errors: [], coverage };
   }
   groups.centralWarehouseInbound.errors = [];
-  groups.directSupplierInbound.errors = (state.issues || []).filter(issue => (['purchase-line', 'purchase-date'].includes(issue.kind)
+  groups.directSupplierInbound.errors = [
+    ...(currentReceipts ? currentReceipts.issues : state.issues || [])
+  ].filter(issue => (['purchase-line', 'purchase-date'].includes(issue.kind)
       || issue.kind === 'unit-conversion' && issue.source === 'purchases')
     && (!issue.date || issue.date >= period.from && issue.date <= period.through));
   const lines = new Map();
-  for (const line of [...(state.operationLines || []), ...state.movements]) lines.set(line.id, line);
+  for (const line of [...(state.operationLines || []), ...state.movements]) {
+    if (currentReceipts && line.column === 'purchase') continue;
+    lines.set(line.id, line);
+  }
+  for (const line of currentReceipts?.lines || []) lines.set(line.id, line);
   for (const line of lines.values()) {
     if (line.warehouse !== warehouse.id || line.date < period.from || line.date > period.through
       || !(line.quantity > 0) || (line.active === false && !line.conversionPending)) continue;
@@ -94,15 +108,16 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
         ? null : costResolver.resolve(code, line.unit, product);
       const available = !!cost && cost.source !== 'missing' && !cost.costIncomplete
         && Number.isFinite(cost.unitCost) && cost.unitCost >= 0;
-      return { id: line.id, document: String(documents.get(line.document)?.id ?? line.document), date: line.date,
+      return { id: line.id, document: String(line.documentNumber ?? documents.get(line.document)?.id ?? line.document), date: line.date,
         code, name: line.name || product?.name || code, quantity: line.quantity, unit: line.unit,
         unitCost: available ? cost.unitCost : null, amount: available ? line.quantity * cost.unitCost : null,
         costSource: cost?.source || 'missing', costSourceDate: cost?.sourceDate || null, available };
     });
     const known = items.filter(item => item.available), missingCostCodes = [...new Set(items.filter(item => !item.available).map(item => item.code))];
-    const range = group.coverage && state.range ? {
-      from: group.coverage.from > state.range.from ? group.coverage.from : state.range.from,
-      to: group.coverage.to < state.range.to ? group.coverage.to : state.range.to
+    const scope = key === 'directSupplierInbound' && currentReceipts ? group.coverage : state.range;
+    const range = group.coverage && scope ? {
+      from: group.coverage.from > scope.from ? group.coverage.from : scope.from,
+      to: group.coverage.to < scope.to ? group.coverage.to : scope.to
     } : null;
     const overlap = range?.from <= period.through && range?.to >= period.from;
     const complete = range?.from <= period.from && range?.to >= period.through
@@ -116,7 +131,8 @@ function inboundResults({ state, location, centralIdentity, period, catalog, cos
       : key === 'centralWarehouseInbound' ? 'Entradas desde Bodega Central Local 001 La Concepcion'
       : centralLocation ? 'Compras recibidas directamente en Bodega Principal'
       : 'Compras recibidas directamente en la bodega operativa', range: range || null,
-      costCutoff: period.valuationThrough || period.through, capturedAt: state.sourceCapturedAt,
+      costCutoff: period.valuationThrough || period.through,
+      capturedAt: key === 'directSupplierInbound' && currentReceipts ? purchaseSource.syncedAt : state.sourceCapturedAt,
       items, missingCostCodes, unresolvedOriginCount: group.unresolvedOrigins.length, issues: group.errors.map(issue => issue.message) };
   }
   return { values, sources };

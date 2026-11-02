@@ -845,3 +845,38 @@ test('main warehouse precedes cafes and reconciles inventory, waste and calendar
   assert.equal(excluded.weeks[1].locations[0].values.otherConsumables.status, 'not-applicable');
   assert.equal(excluded.weeks[1].locations[0].values.suppliesOutbound.amount, 30);
 });
+
+test('MercadoPago refunds reduce collections and reverse fees once, retaining the original and partial refunds with the same SOURCE_ID', async t => {
+  const { base, root } = await fixture(t);
+  const file = path.join(root, 'transactions', 'store-1', 'mp.xlsx');
+  const header = ['TRANSACTION_DATE', 'SOURCE_ID', 'TRANSACTION_TYPE', 'TRANSACTION_AMOUNT', 'FEE_AMOUNT', 'REAL_AMOUNT'];
+  const baseline = ['2026-10-05T12:00:00-03:00', 'baseline', 'SETTLEMENT', 1100, -20, 1080];
+  const original = ['2026-10-06T12:00:00-03:00', '185519838939', 'SETTLEMENT', 15200, -263, 14937];
+  const refund = ['2026-10-06T12:00:00-03:00', '185519838939', 'REFUND', -15200, 263, -14937];
+  workbook(file, [header, baseline, original]);
+  const before = (await getReport(base)).weeks[1].locations[0].values;
+  workbook(file, [header, baseline, refund, original, refund]);
+  let cell = (await getReport(base)).weeks[1].locations[0];
+  assert.equal(cell.values.mercadoPagoCollection.amount, before.mercadoPagoCollection.amount - 14937);
+  assert.equal(cell.values.mercadoPagoFee.amount, before.mercadoPagoFee.amount - 263);
+  assert.ok(Math.abs(cell.values.collectionDifference.amount - (before.collectionDifference.amount - 15200)) < 1e-8);
+  assert.equal(cell.values.mercadoPagoCollection.complete, true);
+  assert.equal(cell.sources.mercadoPagoFee.transactions, 3);
+  let detail = await fetch(`${base}/api/weekly-results/details/${cell.detailReports.collectionDifference}`).then(r => r.json());
+  assert.equal(detail.totals.reconciled, true);
+  assert.equal(detail.rows.filter(row => row.mpType === 'REFUND').length, 1);
+  assert.equal(detail.rows.find(row => row.mpType === 'REFUND').mpFee, -263);
+  // A later, partial refund of the same operation is a separate movement;
+  // payouts and refunds outside the period do not enter the collection total.
+  const partial = ['2026-10-07T12:00:00-03:00', '185519838939', 'REFUND', -100, 0, -100];
+  workbook(file, [header, baseline, refund, original, refund, partial, partial,
+    ['2026-10-14T12:00:00-03:00', 'future', 'REFUND', -500, 0, -500],
+    ['2026-10-07T12:00:00-03:00', 'payout', 'PAYOUT', -1000, 0, -1000]]);
+  cell = (await getReport(base)).weeks[1].locations[0];
+  assert.equal(cell.values.mercadoPagoCollection.amount, 980);
+  assert.equal(cell.values.mercadoPagoFee.amount, 20);
+  assert.equal(cell.sources.mercadoPagoFee.transactions, 4);
+  detail = await fetch(`${base}/api/weekly-results/details/${cell.detailReports.collectionDifference}`).then(r => r.json());
+  assert.equal(detail.totals.reconciled, true);
+  assert.equal(detail.rows.filter(row => row.mpType === 'REFUND').length, 2);
+});

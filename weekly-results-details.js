@@ -1,4 +1,6 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const labels = Object.fromEntries(require('./weekly-results').metrics);
 const column = (key, label, type = 'text') => ({ key, label, type });
@@ -70,25 +72,58 @@ function balances(items, excluded = [], configurations = {}) {
     notes: ['Valor del inventario = cantidad × costo unitario. Incluye los consumibles; los artículos sin saldo o costo completo no se suman.'] };
 }
 
-function createDetailStore({ limit = 512, ttl = 3600000, clock = Date.now } = {}) {
+function createDetailStore({ limit = 512, ttl = 3600000, clock = Date.now,
+  directory = null, diskTtl = 7 * 86400000, diskLimit = 2048 } = {}) {
   const snapshots = new Map();
+  const hash = report => crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex');
+  const fileFor = id => path.join(directory, `${id}.json`);
+  let lastPrune = -Infinity;
+  if (directory) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  function remember(id, report, expires = clock() + ttl) {
+    snapshots.delete(id);
+    while (snapshots.size >= limit) snapshots.delete(snapshots.keys().next().value);
+    snapshots.set(id, { expires, report });
+  }
+  function persist(id, report) {
+    if (!directory) return;
+    const temp = path.join(directory, `.${crypto.randomUUID()}.tmp`);
+    try {
+      fs.writeFileSync(temp, JSON.stringify({ expires: clock() + diskTtl, report }), { flag: 'wx', mode: 0o600 });
+      fs.renameSync(temp, fileFor(id));
+    } finally { fs.rmSync(temp, { force: true }); }
+    if (clock() - lastPrune < 60000) return;
+    lastPrune = clock();
+    const files = fs.readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name))
+      .flatMap(name => { try { return [{ name, time: fs.statSync(path.join(directory, name)).mtimeMs }]; } catch { return []; } })
+      .sort((a, b) => b.time - a.time || a.name.localeCompare(b.name));
+    files.forEach((file, index) => {
+      if (file.name !== `${id}.json` && (index >= diskLimit || file.time + diskTtl <= clock())) fs.rmSync(path.join(directory, file.name), { force: true });
+    });
+  }
   return {
     put(key, detail, metric, location, period, queryDate, metadata = {}) {
       if (!detail || !metric?.available) return null;
       const report = { key, title: labels[key], location: { id: location.id, name: location.name },
         period: { from: period.from, through: period.through }, queryDate, total: metric.amount,
         partial: !metric.complete, ...detail, ...metadata };
-      const id = crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex');
+      const id = hash(report);
+      // Preserve the exact report snapshot, not a recalculation against newer sources.
+      persist(id, report);
       for (const [token, entry] of snapshots) if (entry.expires <= clock()) snapshots.delete(token);
-      snapshots.delete(id);
-      while (snapshots.size >= limit) snapshots.delete(snapshots.keys().next().value);
-      snapshots.set(id, { expires: clock() + ttl, report });
+      remember(id, report);
       return id;
     },
     get(id) {
       const entry = snapshots.get(id);
-      if (!entry || entry.expires <= clock()) { snapshots.delete(id); return null; }
-      return entry.report;
+      if (entry && entry.expires > clock()) return entry.report;
+      snapshots.delete(id);
+      if (!directory || !/^[a-f0-9]{64}$/.test(id)) return null;
+      try {
+        const saved = JSON.parse(fs.readFileSync(fileFor(id), 'utf8'));
+        if (!(saved.expires > clock()) || hash(saved.report) !== id) return null;
+        remember(id, saved.report, Math.min(clock() + ttl, saved.expires));
+        return saved.report;
+      } catch { return null; }
     }
   };
 }

@@ -100,7 +100,7 @@ function finalizeCell(data = {}, includeInventory = true, location = {}) {
   values.mercadoPagoTheoreticalBeforeFee = derived(values, ['mercadoPagoTheoretical', 'mercadoPagoFee'],
     (theoretical, fee) => theoretical + fee);
   values.collectionDifference = derived(values, ['mercadoPagoCollection', 'mercadoPagoTheoretical'],
-    (mp, theoretical) => mp - theoretical);
+    (mp, theoretical) => Number((mp - theoretical).toFixed(6)) || 0);
   values.inventoryConsumptionTotal = derived(values, ['inventoryShortage', 'waste', 'marketing', 'employees', 'otherConsumables'],
     (...amounts) => amounts.reduce((sum, amount) => sum + amount, 0));
   values.suppliesInbound = derived(values, ['centralWarehouseInbound', 'directSupplierInbound'], (central, direct) => central + direct);

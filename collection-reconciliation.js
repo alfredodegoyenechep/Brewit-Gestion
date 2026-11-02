@@ -47,8 +47,11 @@ function buildCollectionReconciliation({ sales, payments, settlements, totals, m
   };
   const eligible = toteat.filter(row => row.eligible && !row.cash);
   for (const payment of eligible) {
-    const tokens = new Set(String(payment.reference || '').split(/[^a-zA-Z0-9_-]+/).filter(token => token.length >= 6));
-    const matches = [...new Map([...tokens].flatMap(token => bySourceId.get(token) || []).map(mp => [mp.key, mp])).values()];
+    const original = payment.documentType === 'NC' && payment.referencedPaymentId
+      ? eligible.find(row => row.paymentId === payment.referencedPaymentId && row.expected > 0) : null;
+    const tokens = new Set([payment.reference, original?.reference].filter(Boolean).join(' ').split(/[^a-zA-Z0-9_-]+/).filter(token => token.length >= 6));
+    const matches = [...new Map([...tokens].flatMap(token => bySourceId.get(token) || []).filter(mp => Number.isFinite(mp.transactionAmount)
+      && Math.sign(mp.transactionAmount) === Math.sign(payment.expected)).map(mp => [mp.key, mp])).values()];
     if (matches.length) addCandidates(payment, matches, true);
   }
   // An explicit, unique reference wins over an estimated amount/time candidate.
@@ -72,17 +75,17 @@ function buildCollectionReconciliation({ sales, payments, settlements, totals, m
     rows.push({ orderId: payment.orderId, paymentId: payment.paymentId, toteatTime: payment.toteatTime,
       documentType: payment.documentType || '', referencedPaymentId: payment.referencedPaymentId || '',
       method: payment.method, toteatAmount: payment.toteatAmount,
-      mpId: mp?.sourceId || (mp ? mp.key : null), mpTime: mp?.dateTime || null,
+      mpId: mp?.sourceId || (mp ? mp.key : null), mpType: mp?.transactionType || '', mpTime: mp?.dateTime || null,
       mpGross: mp?.transactionAmount ?? null, mpNet: mp?.collectedAmount ?? null, mpFee: mp?.fee ?? null,
       amount, status, matching: mp ? explicit ? 'Referencia explícita MercadoPago' : `Estimado: monto, fecha y hora (±${maximumMinutes} min)` : '',
       reason: payment.cash ? 'Efectivo descontado del MP teórico; no requiere pareo.'
         : mp ? Math.abs(amount) > .000001 ? 'El abono neto más la comisión difiere del cobro TotEat.' : ''
           : matches.length ? `${matches.length} candidato(s); no existe una asociación única en ambos sistemas.`
-            : payment.documentType === 'NC' ? `Nota de crédito TotEat sin movimiento asociado entre los SETTLEMENT del reporte.${payment.referencedPaymentId ? ` Pago original: ${payment.referencedPaymentId}.` : ''} Revisa la devolución y su fecha en MercadoPago.`
+            : payment.documentType === 'NC' ? `Nota de crédito TotEat sin movimiento asociado entre los cobros y devoluciones del reporte.${payment.referencedPaymentId ? ` Pago original: ${payment.referencedPaymentId}.` : ''} Revisa la devolución y su fecha en MercadoPago.`
               : payment.eligible ? 'No se encontró un movimiento MercadoPago asociado.' : 'Medio distinto de MercadoPago incluido en el saldo no efectivo.' });
   }
   for (const mp of settlements.filter(item => !used.has(item.key))) rows.push({
-    mpId: mp.sourceId || mp.key, mpTime: mp.dateTime, mpGross: mp.transactionAmount,
+    mpId: mp.sourceId || mp.key, mpType: mp.transactionType || '', mpTime: mp.dateTime, mpGross: mp.transactionAmount,
     mpNet: mp.collectedAmount, mpFee: mp.fee, amount: money((mp.collectedAmount ?? 0) + (mp.fee ?? 0)),
     status: reverse.has(mp.key) ? 'ambiguous' : 'mp-only',
     reason: reverse.has(mp.key) ? 'El movimiento tiene candidatos TotEat sin asociación única.' : 'No se encontró un pago TotEat asociado.'
@@ -109,7 +112,7 @@ function buildCollectionReconciliation({ sales, payments, settlements, totals, m
       'Cada aporte = abono neto MercadoPago + comisión − cobro no efectivo esperado en TotEat. Los importes sin pareja conservan su signo.',
       'Las referencias explícitas se buscan en el comentario del medio de pago TotEat. Sin referencia, solo se asocian coincidencias únicas por monto y cercanía horaria; los casos ambiguos quedan pendientes.',
       'La sección de diferencias incluye ventas y pagos TotEat que no coinciden entre sí. No se crean pareos para forzar el cuadre.',
-      'Fechas en America/Santiago. Se utilizan los SETTLEMENT, fuentes y subtotales conocidos del mismo reporte; las anulaciones y ajustes conservan el criterio del reporte.'
+      'Fechas en America/Santiago. Se incluyen cobros SETTLEMENT y devoluciones REFUND con sus importes netos y comisiones con signo. Una nota de crédito TotEat no se descuenta nuevamente si su devolución ya está registrada en MercadoPago.'
     ] };
 }
 module.exports = { buildCollectionReconciliation };
