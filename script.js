@@ -7525,7 +7525,7 @@ function filteredPurchaseProjectionItems() {
 
 function updatePurchaseOrderButton() {
   const supplier = document.getElementById('projection-supplier-filter').value || 'all';
-  const eligible = filteredPurchaseProjectionItems().some(item => item.supplierKey === supplier);
+  const eligible = filteredPurchaseProjectionItems().some(item => item.managed && item.supplierKey === supplier);
   document.getElementById('print-purchase-order').disabled = supplier === 'all' || supplier === 'unassigned' || !eligible;
 }
 
@@ -8592,6 +8592,15 @@ function purchaseOrderHasChangedCosts() {
     && Number(item.unitCost) !== roundedPurchaseOrderCost(item.referenceUnitCost || 0)) || false;
 }
 
+function confirmPurchaseOrderCosts() {
+  const dialog = document.getElementById('purchase-order-cost-confirmation');
+  dialog.returnValue = 'cancel';
+  return new Promise(resolve => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+    dialog.showModal();
+  });
+}
+
 function editablePurchaseOrderSupplierItem(item, options = {}) {
   const referenceUnitCost = roundedPurchaseOrderCost(
     item.estimatedPurchaseUnitCost ?? item.referenceUnitCost ?? item.unitCost ?? 0
@@ -8679,7 +8688,7 @@ function updatePurchaseOrderEditorTotals() {
     item.quantity = Number(row.querySelector('.purchase-order-quantity').value);
     item.unitCost = roundedPurchaseOrderCost(parseLocalizedNumber(row.querySelector('.purchase-order-cost').value));
     const changed = item.unitCost !== roundedPurchaseOrderCost(item.referenceUnitCost || 0);
-    const packageWarning = purchaseQuantityPackageWarning(item, item.quantity);
+    const packageWarning = item.selected ? purchaseQuantityPackageWarning(item, item.quantity) : '';
     const rowTotal = item.selected && Number.isFinite(item.quantity) && Number.isFinite(item.unitCost)
       ? item.quantity * item.unitCost : 0;
     row.querySelector('.purchase-order-row-total').textContent = formatClp(rowTotal);
@@ -8751,7 +8760,7 @@ function renderPurchaseOrderEditor() {
   showAll.disabled = state.supplierItemsLoading === true
     || (state.supplierItemsLoaded === true && state.items.length <= defaultItems.length);
   document.getElementById('purchase-order-show-all-supplier-items-label').textContent =
-    `Mostrar todos los ítems de ${state.supplier.name}`;
+    `Mostrar todos los ítems${state.managedItemKeys ? ' administrados' : ''} de ${state.supplier.name}`;
   document.getElementById('purchase-order-editor-item-count').textContent =
     `${visibleItems.length} visibles · ${state.items.length} del proveedor`;
   const body = document.getElementById('purchase-order-editor-body');
@@ -8865,10 +8874,10 @@ function openPurchaseOrderEditor() {
   const supplierKey = document.getElementById('projection-supplier-filter').value;
   if (!data || ['all', 'unassigned'].includes(supplierKey)) return;
   const supplier = data.suppliers.find(item => item.key === supplierKey);
-  const visibleItems = filteredPurchaseProjectionItems().filter(item => item.supplierKey === supplierKey);
+  const visibleItems = filteredPurchaseProjectionItems().filter(item => item.managed && item.supplierKey === supplierKey);
   if (!supplier || !visibleItems.length) return;
   const visibleKeys = new Set(visibleItems.map(item => item.key));
-  const supplierItems = data.items.filter(item => item.supplierKey === supplierKey);
+  const supplierItems = data.items.filter(item => item.managed && item.supplierKey === supplierKey);
   purchaseOrderEditorState = {
     id: null,
     orderNumber: null,
@@ -8876,9 +8885,10 @@ function openPurchaseOrderEditor() {
     supplier,
     projectionPeriod: data.period,
     projectionId: data.projectionId,
+    managedItemKeys: data.items.filter(item => item.managed).map(item => item.key),
     filters: {
       onlyRequired: document.getElementById('projection-only-required').checked,
-      onlyManaged: document.getElementById('projection-only-managed').checked,
+      onlyManaged: true,
       selectedPurchaseOrderIds: data.purchaseOrders?.selectedOrderIds || []
     },
     showAllSupplierItems: false,
@@ -8901,16 +8911,19 @@ async function confirmPurchaseOrder() {
   if (!selected.length) return setStatus(status, 'Selecciona al menos un ítem para guardar la orden.', 'error');
   const missingTransfer = selected.find(item => item.transferConfigured === false);
   if (missingTransfer) return setStatus(status, `${missingTransfer.name}: configura la Unidad de Transferencia a Cafeterías y su equivalencia en el Maestro de ingredientes.`, 'error');
-  if (selected.some(item => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitCost) || item.unitCost < 0)) {
-    return setStatus(status, 'Todos los ítems incluidos deben tener cantidad mayor que cero y un costo válido.', 'error');
+  const invalidItem = selected.find(item => !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.unitCost) || item.unitCost < 0);
+  if (invalidItem) {
+    return setStatus(status, `${invalidItem.name}: ingresa una cantidad mayor que cero y un costo válido, o desmarca el ítem para excluirlo.`, 'error');
   }
   const invalidMultiple = selected.find(item => !isSupplyMultiple(item.quantity, item.unitsPerPackage));
   if (invalidMultiple) return setStatus(status, `${invalidMultiple.name}: ${purchaseQuantityPackageWarning(invalidMultiple, invalidMultiple.quantity)}`, 'error');
-  if (purchaseOrderHasChangedCosts() && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden con estos nuevos costos?')) return;
   button.disabled = true;
-  button.textContent = 'Guardando orden…';
-  setStatus(status, 'Guardando orden…');
   try {
+    if (purchaseOrderHasChangedCosts() && !await confirmPurchaseOrderCosts()) {
+      return setStatus(status, 'Guardado cancelado. Se conservan tus cambios para que puedas revisarlos.', 'muted');
+    }
+    button.textContent = 'Guardando orden…';
+    setStatus(status, 'Guardando orden…');
     const existing = purchaseOrderEditorState.id;
     const payload = {
       location: purchaseOrderEditorState.location.id,
@@ -8929,6 +8942,7 @@ async function confirmPurchaseOrder() {
     const supplierItems = purchaseOrderEditorState.items;
     rememberSavedPurchaseOrder(saved);
     purchaseOrderEditorState = { ...editableSavedPurchaseOrder(saved, supplierItems),
+      managedItemKeys: purchaseOrderEditorState.managedItemKeys,
       projectionId: purchaseOrderEditorState.projectionId, supplierItemsLoaded: purchaseOrderEditorState.supplierItemsLoaded };
     renderPurchaseOrderEditor();
     setStatus(status, `Orden ${saved.orderNumber} guardada correctamente. Ya puedes imprimirla o volver a modificarla.`, 'success');
@@ -9189,7 +9203,9 @@ async function showAllPurchaseOrderSupplierItems(checked) {
     if (purchaseOrderEditorState !== state || !document.getElementById('purchase-order-editor-dialog').open) return;
     updatePurchaseOrderEditorTotals();
     const known = new Set(state.items.map(item => item.key));
-    state.items.push(...data.items.filter(item => !known.has(item.key)).map(item => editablePurchaseOrderSupplierItem(item)));
+    state.items.push(...data.items.filter(item => !known.has(item.key)
+      && (!state.managedItemKeys || state.managedItemKeys.includes(item.key)))
+      .map(item => editablePurchaseOrderSupplierItem(item)));
     state.projectionId = data.projectionId;
     state.supplierItemsLoaded = true;
   } catch (error) {
@@ -9588,14 +9604,15 @@ async function confirmTentativePurchaseOrder() {
   const selected = group.buyingItems.filter(item => item.selected);
   const issues = tentativeOrderIssues(group);
   if (issues.length) return setStatus(status, 'Revisa los productos indicados junto al botón de confirmación.', 'error');
-  if (selected.some(item => item.unitCost !== item.referenceUnitCost)
-    && !window.confirm('Modificaste uno o más costos respecto de la estimación. ¿Confirmas que deseas guardar la orden?')) return;
   const button = document.getElementById('confirm-tentative-purchase-order');
   group.confirming = true;
   renderTentativePurchaseOrderReview();
   button.disabled = true;
-  setStatus(status, 'Guardando orden definitiva…');
   try {
+    if (selected.some(item => item.unitCost !== item.referenceUnitCost) && !await confirmPurchaseOrderCosts()) {
+      return setStatus(status, 'Guardado cancelado. Se conservan tus cambios para que puedas revisarlos.', 'muted');
+    }
+    setStatus(status, 'Guardando orden definitiva…');
     const saved = await apiRequest('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

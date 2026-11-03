@@ -2795,6 +2795,11 @@ body {
     margin: 10mm;
   }
 
+  @page purchase-order {
+    size: landscape;
+    margin: 10mm 10mm 10mm 20mm;
+  }
+
   .main-content {
     width: 100%;
     margin-left: 0;
@@ -3129,6 +3134,10 @@ body {
     padding: 4px 5px !important;
   }
 
+  body.printing-purchase-order {
+    page: purchase-order;
+  }
+
   body.printing-purchase-order .sidebar,
   body.printing-purchase-order .main-content > section:not(#purchase-projection-workspace),
   body.printing-purchase-order #purchase-projection-workspace > *:not(#purchase-order-document) {
@@ -3198,14 +3207,25 @@ body {
   body.printing-purchase-order table {
     width: 100%;
     border-collapse: collapse;
-    font-size: calc(9px * var(--font-scale));
+    table-layout: fixed;
+    font-size: calc(12px * var(--font-scale));
+    line-height: 1.35;
   }
+
+  body.printing-purchase-order th:nth-child(1) { width: 8%; }
+  body.printing-purchase-order th:nth-child(2) { width: 42%; }
+  body.printing-purchase-order th:nth-child(3) { width: 8%; }
+  body.printing-purchase-order th:nth-child(4) { width: 9%; }
+  body.printing-purchase-order th:nth-child(5),
+  body.printing-purchase-order th:nth-child(6),
+  body.printing-purchase-order th:nth-child(7) { width: 11%; }
 
   body.printing-purchase-order th,
   body.printing-purchase-order td {
-    padding: 5px 6px;
+    padding: 6px;
     border: 1px solid #d8cec1;
     text-align: right;
+    overflow-wrap: anywhere;
   }
 
   body.printing-purchase-order th:nth-child(-n+2),
@@ -3227,7 +3247,7 @@ body {
   }
 
   body.printing-purchase-order .purchase-order-total-row td {
-    font-size: calc(11px * var(--font-scale));
+    font-size: calc(14px * var(--font-scale));
   }
 
   body.printing-purchase-order .purchase-order-note {
@@ -5872,9 +5892,16 @@ button.sales-projection-day:disabled { opacity: 1; cursor: default; }
 
 .purchase-order-editor-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+#purchase-order-editor-status {
+  flex: 1 1 240px;
+  margin: 0;
 }
 
 @media (max-width: 1440px) {

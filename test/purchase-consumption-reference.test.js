@@ -206,8 +206,9 @@ test('UI lists a new ingredient, saves its supplier and creates a manual order w
     body: JSON.stringify({ items: [{ code: 'E', internalUnit: 'UN', purchaseUnit: 'Caja', unitsPerPurchaseUnit: 10,
       transferUnit: 'Pack', unitsPerTransferUnit: 2 }] }) });
   const browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-  page.on('dialog', dialog => dialog.accept());
+  const page = await browser.newPage({ viewport: { width: 1600, height: 600 } });
+  // Embedded browsers can suppress native confirmation dialogs and return false.
+  await page.addInitScript(() => { window.confirm = () => { throw Error('Native confirmation is unavailable'); }; });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(base); await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
   await page.locator('[data-view="purchase-projection"]').click();
@@ -236,15 +237,99 @@ test('UI lists a new ingredient, saves its supplier and creates a manual order w
   }
   await editor.locator('.purchase-order-select').check();
   assert.equal(await editor.locator('.purchase-order-quantity').inputValue(), '3');
+  await editor.locator('.purchase-order-quantity').fill('0');
+  await page.locator('#confirm-purchase-order').click();
+  const status = page.locator('#purchase-order-editor-status');
+  assert.match(await status.innerText(), /Ingrediente nuevo:.*cantidad mayor que cero/);
+  assert.equal(await status.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= innerHeight;
+  }), true, 'the validation error must be visible beside the save button');
   await editor.locator('.purchase-order-quantity').fill('6');
   await editor.locator('.purchase-order-cost').fill('400');
   await page.locator('#confirm-purchase-order').click();
+  const confirmation = page.locator('#purchase-order-cost-confirmation');
+  await confirmation.waitFor();
+  assert.equal(await page.locator('#confirm-purchase-order').isDisabled(), true);
+  assert.equal((await json('/api/purchase-orders?location=store-2')).orders.length, 0);
+  await confirmation.getByRole('button', { name: 'Volver a revisar' }).click();
+  await page.waitForFunction(() => !document.getElementById('confirm-purchase-order').disabled);
+  assert.match(await status.innerText(), /Guardado cancelado/);
+  assert.equal(await editor.locator('.purchase-order-quantity').inputValue(), '6');
+  assert.equal(await editor.locator('.purchase-order-cost').inputValue(), '400');
+  await page.locator('#confirm-purchase-order').click();
+  await confirmation.waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('confirm-purchase-order').disabled);
+  assert.equal((await json('/api/purchase-orders?location=store-2')).orders.length, 0);
+  await page.locator('#confirm-purchase-order').click();
+  await confirmation.getByRole('button', { name: 'Guardar con estos costos' }).click();
   await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
   const list = await json('/api/purchase-orders?location=store-2');
   assert.equal(list.orders.length, 1);
   const saved = await json(`/api/purchase-orders/${list.orders[0].id}`);
   assert.deepEqual(saved.items.map(item => [item.key, item.purchaseUnit, item.internalQuantity]), [['E', 'Pack', 12]]);
   assert.equal(saved.total, 2400);
+  assert.deepEqual(errors, []);
+});
+
+test('PDF order generation excludes unmanaged ingredients even when showing all ingredients or supplier items', { skip: !fs.existsSync(chrome) }, async t => {
+  const { base, stocks, json } = await setup(t);
+  for (const row of stocks['store-2'].daily.filter(row => row.code === 'D')) {
+    Object.assign(row, { opening: 100, closing: 100, use: 0 });
+  }
+  await json('/api/purchase-projections/ingredient-master', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: ['A', 'B', 'D'].map(code => ({ code, internalUnit: code === 'D' ? 'UN' : 'L',
+      transferUnit: code === 'D' ? 'UN' : 'L', unitsPerTransferUnit: 1 })) }) });
+  await json('/api/purchase-projections/policies', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ location: 'store-2', items: ['A', 'B', 'D'].map(key => ({ key, supplierKey: '111',
+      managed: key !== 'B', minDays: 7, maxDays: 14, unitsPerPackage: 1 })) }) });
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => { window.print = () => {}; });
+  await page.goto(base); await page.waitForFunction(() => Object.keys(locationRegistry).length > 0);
+  await page.locator('[data-view="purchase-projection"]').click();
+  await page.locator('#projection-location-filter').selectOption('store-2');
+  await page.locator('#refresh-purchase-projection').click();
+  await page.waitForFunction(() => purchaseProjectionState !== null);
+  await page.locator('#show-all-projection-ingredients').click();
+  await page.locator('#projection-supplier-filter').selectOption('111');
+  const unmanaged = page.locator('#purchase-projection-body tr[data-key="B"]');
+  assert.equal(await unmanaged.isVisible(), true);
+  assert.equal(await unmanaged.locator('.projection-managed-input').isChecked(), false);
+  assert.equal(await page.evaluate(() => purchaseProjectionState.items.find(item => item.key === 'B').suggestedPurchaseUnits > 0), true);
+  const generate = page.locator('#print-purchase-order');
+  const editorKeys = () => page.locator('#purchase-order-editor-body tr[data-key]').evaluateAll(rows => rows.map(row => row.dataset.key).sort());
+  await generate.click();
+  assert.deepEqual(await editorKeys(), ['A', 'D']);
+  await page.locator('#close-purchase-order-editor').click();
+  await page.locator('#projection-only-required').check();
+  await generate.click();
+  assert.deepEqual(await editorKeys(), ['A']);
+  await page.locator('#purchase-order-show-all-supplier-items').check();
+  await page.waitForFunction(() => purchaseOrderEditorState.supplierItemsLoaded);
+  assert.deepEqual(await editorKeys(), ['A', 'D'], 'loading the supplier must not reintroduce unmanaged B');
+  const manual = page.locator('#purchase-order-editor-body tr[data-key="D"]');
+  await manual.locator('.purchase-order-select').check();
+  await manual.locator('.purchase-order-quantity').fill('2');
+  await page.locator('#confirm-purchase-order').click();
+  await page.waitForFunction(() => document.getElementById('purchase-order-editor-status').textContent.includes('guardada correctamente'));
+  const { orders } = await json('/api/purchase-orders?location=store-2');
+  assert.equal(orders.length, 1);
+  const saved = await json(`/api/purchase-orders/${orders[0].id}`);
+  assert.deepEqual(saved.items.map(item => item.key).sort(), ['A', 'D']);
+  assert.equal(saved.filters.onlyManaged, true);
+  assert.equal(saved.total, saved.items.reduce((sum, item) => sum + item.quantity * item.unitCost, 0));
+  await page.locator('#print-saved-purchase-order').click();
+  assert.deepEqual(await page.locator('#purchase-order-document tbody tr td:first-child').allTextContents(), saved.items.map(item => item.code));
+  assert.equal(await page.locator('#purchase-order-document tfoot td:last-child').textContent(),
+    await page.locator('#purchase-order-editor-total').textContent());
+  await page.locator('#close-purchase-order-editor').click();
+  await page.locator('#projection-only-required').uncheck();
+  for (const key of ['A', 'D']) await page.locator(`#purchase-projection-body tr[data-key="${key}"] .projection-managed-input`).uncheck();
+  assert.equal(await unmanaged.isVisible(), true);
+  assert.equal(await generate.isDisabled(), true, 'an unmanaged supplier selection must not generate an order');
   assert.deepEqual(errors, []);
 });
 
@@ -1112,6 +1197,7 @@ test('UI ingredient master preserves drafts through search and only refreshes pr
   const keys = await page.locator('.purchase-projection-table th').evaluateAll(headers => headers.slice(4, 7).map(header => header.dataset.sortKey));
   assert.deepEqual(keys, ['internalUnit', 'purchaseUnit', 'unitsPerPurchaseUnit']);
   const projectionRow = page.locator('#purchase-projection-body tr[data-key="A"]');
+  await projectionRow.locator('.projection-managed-input').check();
   await projectionRow.locator('.projection-package-input').fill('6');
   const suggestionColumn = await page.locator('.purchase-projection-table th').evaluateAll(headers =>
     headers.filter(header => !header.hidden).findIndex(header => header.dataset.headerLines === 'Sugerencia de|Abastecimiento'));
@@ -1626,21 +1712,31 @@ test('tentative orders explain confirmation blockers and add unmanaged and catal
   assert.ok(ids.group && ids.group !== ids.location);
   await page.locator('[data-tentative-add="E"]').click();
   assert.equal(await row('E').locator('.tentative-order-quantity').inputValue(), '1');
+  await row('E').locator('.tentative-order-cost').fill('250');
   assert.equal(await confirm.isEnabled(), true);
   let saves = 0;
   await page.route('**/api/purchase-orders', route => ++saves === 1
     ? route.fulfill({ status: 500, json: { error: 'Reintenta guardar la orden.' } }) : route.continue());
   await confirm.click();
+  const costConfirmation = page.locator('#purchase-order-cost-confirmation');
+  await costConfirmation.waitFor();
+  assert.equal(saves, 0);
+  await costConfirmation.getByRole('button', { name: 'Volver a revisar' }).click();
+  await page.waitForFunction(() => !document.getElementById('confirm-tentative-purchase-order').disabled);
+  assert.equal(saves, 0);
+  await confirm.click();
+  await costConfirmation.getByRole('button', { name: 'Guardar con estos costos' }).click();
   await page.waitForFunction(() => document.getElementById('tentative-purchase-orders-status').textContent.includes('Reintenta guardar'));
   assert.equal(await confirm.isEnabled(), true);
   assert.equal(await row('A').locator('.tentative-order-quantity').inputValue(), '4');
   await confirm.click();
+  await costConfirmation.getByRole('button', { name: 'Guardar con estos costos' }).click();
   await page.waitForFunction(() => document.getElementById('tentative-purchase-orders-status').textContent.includes('confirmada y guardada'));
   const orders = await json('/api/purchase-orders?location=store-2');
   assert.equal(orders.orders.length, 1);
   const saved = await json(`/api/purchase-orders/${orders.orders[0].id}`);
   assert.deepEqual(saved.items.map(item => [item.key, item.quantity]), [['A', 4], ['B', 1], ['E', 1]]);
-  assert.equal(saved.total, 700);
+  assert.equal(saved.total, 750);
   assert.equal(saved.filters.onlyManaged, false);
   assert.equal(saved.filters.onlyRequired, false);
   assert.equal(await confirm.isDisabled(), true);

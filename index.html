@@ -1796,7 +1796,6 @@
           </div>
           <button id="close-purchase-order-editor" class="icon-button" type="button">Cerrar</button>
         </div>
-        <div id="purchase-order-editor-status" class="form-status" aria-live="polite"></div>
         <div id="purchase-order-cost-warning" class="purchase-order-cost-warning" hidden>
           Advertencia: modificaste el costo de uno o más ítems respecto del costo estimado. Confirma cuidadosamente estos valores antes de guardar.
         </div>
@@ -1816,9 +1815,20 @@
         </div>
         <p id="purchase-order-coverage-description" class="form-status muted">Días con esta orden = (inventario actual + compra incluida en unidades de consumo) ÷ promedio diario. Se actualiza al cambiar cantidades o incluir productos. Rojo: bajo el mínimo; naranja: sobre el máximo.</p>
         <div class="purchase-order-editor-actions">
+          <div id="purchase-order-editor-status" class="form-status" aria-live="polite"></div>
           <button id="confirm-purchase-order" class="primary" type="button">Confirmar y guardar orden</button>
           <button id="print-saved-purchase-order" class="icon-button" type="button" disabled>Imprimir / PDF</button>
         </div>
+      </dialog>
+      <dialog id="purchase-order-cost-confirmation" class="inventory-criteria-dialog" aria-labelledby="purchase-order-cost-confirmation-title" aria-describedby="purchase-order-cost-confirmation-description">
+        <form method="dialog">
+          <h2 id="purchase-order-cost-confirmation-title">Confirmar costos de la orden</h2>
+          <p id="purchase-order-cost-confirmation-description" class="panel-description">Modificaste uno o más costos respecto de la estimación. ¿Deseas guardar la orden con estos nuevos costos?</p>
+          <div class="purchase-order-editor-actions">
+            <button class="icon-button" value="cancel" autofocus>Volver a revisar</button>
+            <button class="primary" value="confirm">Guardar con estos costos</button>
+          </div>
+        </form>
       </dialog>
       <dialog id="tentative-purchase-orders-dialog" class="inventory-report-dialog tentative-purchase-orders-dialog" aria-labelledby="tentative-purchase-orders-title">
         <div class="purchase-order-dialog-head">
