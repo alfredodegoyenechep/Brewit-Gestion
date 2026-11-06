@@ -1,0 +1,23 @@
+const test = require('node:test'), assert = require('node:assert/strict');
+const fs = require('node:fs'), path = require('node:path'), XLSX = require('xlsx');
+const { setup } = require('./helpers/product-xray-fixture');
+test('production worker exposes independent options and seven weekdays with explicit eligible date counts', async t => {
+  const s = await setup(t), query = new URLSearchParams(s.query); query.set('dateTo', '2026-10-18');
+  const file = path.join(s.root, 'transactions/store-1/sales.xlsx'), book = XLSX.readFile(file);
+  const rows = XLSX.utils.sheet_to_json(book.Sheets.Datos);
+  const product = rows.find(row => row['ID Producto'] === 'P0');
+  rows.push({ ...product, 'ID de orden': 'closed', 'Fecha de creacion': '2026-10-10', 'Pago total': 0, 'Precio a Pagar': 0 });
+  rows.push({ ...product, 'ID de orden': 'bakery', 'Fecha de creacion': '2026-10-11', 'ID Producto': 'BAK', Nombre: 'Croissant', 'AB.': 'AB.140150', 'Pago total': 1190, 'Precio a Pagar': 1190 });
+  book.Sheets.Datos = XLSX.utils.json_to_sheet(rows); XLSX.writeFile(book, file);
+  const get = async (suffix = '') => { const response = await fetch(`${s.base}/api/sales/daily-distribution${suffix}?${query}`); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
+  const options = await get('/options'); assert.equal(options.products.length, 6); assert.ok(options.ingredients.some(item => item.code === 'CAF001'));
+  query.set('mode', 'ingredients'); query.set('ingredients', '["CAF001"]'); query.set('groupFormats', 'true'); query.set('grain', 'monthly');
+  const r = await get(); assert.equal(r.periods.length, 7); assert.equal(r.sample.observedDays, 3);
+  assert.equal(r.periods[5].observedDays, 1); assert.equal(r.periods[5].netSales, 3000);
+  assert.equal(r.periods[6].observedDays, 2); assert.equal(r.periods[6].netSales, 1000);
+  assert.equal(r.periods[6].totalNetSales, 2000); assert.equal(r.totals.totalNetSales, 5000); assert.equal(r.totals.netSales, 1666.67);
+  assert.equal(r.series.length, 1); assert.equal(r.filters.grain, undefined);
+  query.set('bar', 'cold'); const empty = await get(); assert.equal(empty.sample.observedDays, 3); assert.equal(empty.periods[6].netSales, 0); assert.equal(empty.periods[0].netSales, null);
+  query.set('location', 'store-2'); const noDates = await get(); assert.equal(noDates.sample.observedDays, 0); assert.equal(noDates.totals.netSales, null);
+  query.set('location', 'invalid'); assert.equal((await fetch(`${s.base}/api/sales/daily-distribution?${query}`)).status, 400);
+});

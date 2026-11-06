@@ -3600,6 +3600,7 @@ function createApp(options = {}) {
   app.get('/demand-view.js', (req, res) => res.sendFile(path.join(__dirname, 'demand-view.js')));
   app.get('/recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'recurrence-view.js')));
   app.get('/product-recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-recurrence-view.js')));
+  app.get('/product-timeline-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-timeline-view.js')));
   app.get('/product-report-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-report-view.js')));
   app.get('/gender-review-view.js', (req, res) => res.sendFile(path.join(__dirname, 'gender-review-view.js')));
   app.get('/product-gender-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-gender-view.js')));
@@ -6528,6 +6529,76 @@ function createApp(options = {}) {
     : require('./recurrence-loader').createRecurrenceLoader({ uploadsRoot, sourceMode: options.sourceMode, today: projectionToday, cutoff: () => salesReportClock().cutoff });
   app.locals.recurrenceService = recurrenceService;
   require('./recurrence-service').registerRecurrenceRoutes(app, recurrenceService);
+
+  const timelineEngine = require('./product-timeline');
+  function timelineRead(action, query = {}) {
+    if (action === 'weekday-report') query = { ...query, grain: 'daily' };
+    const today = query.serverToday || projectionToday(), period = timelineEngine.periodFor(query, today);
+    if (action !== 'options') timelineEngine.selection(query);
+    const context = recurrenceReader.readProductContext(query);
+    const source = buildProductAnalyticsSource(query.location || 'all', period);
+    const orders = enrichedDemandOrders({ today, stores: source.stores, source, sourceOrders: source.orders }, { includeCosts: false });
+    const contexts = new Map(), dates = new Map(), warnings = new Set(source.warnings);
+    function at(date) {
+      if (dates.has(date)) return dates.get(date);
+      const catalogMaster = latestMasterFile('master-catalog', date), ingredientMaster = latestMasterFile('ingredient-hierarchy', date);
+      const productMaster = latestMasterFile('product-hierarchy', date), extraMaster = latestMasterFile('extras-hierarchy', date);
+      const recipeMaster = latestMasterFile('master-recipes', date);
+      const key = JSON.stringify([catalogMaster?.filePath, ingredientMaster?.filePath, productMaster?.filePath, extraMaster?.filePath,
+        recipeMaster?.filePath]);
+      if (contexts.has(key)) { dates.set(date, contexts.get(key)); return contexts.get(key); }
+      const catalog = catalogMaster ? parseSalesAnalysisCatalog(catalogMaster.filePath) : { products: new Map(), ingredients: new Map(), recipeExtras: new Map() };
+      const hierarchy = ingredientMaster ? parseNamedHierarchies(ingredientMaster.filePath, ['Nombre Jerarquía *', 'Nombre Jerarquia *', 'Nombre Jerarquía Producto *']) : null;
+      const productsHierarchy = productMaster ? parseProductHierarchies(productMaster.filePath) : null;
+      const extras = extraMaster ? parseNamedHierarchies(extraMaster.filePath, ['Nombre Jerarquía Producto *', 'Nombre Jerarquia Producto *', 'Nombre Jerarquía *']) : null;
+      const hot = extras?.descendantIds('BA.001') || new Set(['BA.001']), cold = extras?.descendantIds('BA.002') || new Set(['BA.002']);
+      const ingredients = new Map([...catalog.ingredients, ...catalog.recipeExtras].map(([code, item]) => [code, { ...item, code,
+        hierarchyPaths: item.hierarchyIds.map(id => hierarchy?.hierarchyMap.has(id) ? hierarchy.pathFor(id) : ['Sin jerarquía']) }]));
+      const products = [...catalog.products.values()].map(item => {
+        const categoryPath = productsHierarchy && item.productHierarchyIds[0] ? productsHierarchy.pathFor(item.productHierarchyIds[0]) : ['Sin jerarquía'];
+        return { code: item.code, name: item.name, categoryPath,
+          bar: require('./sales-insight-filters').classifySalesBar({ ...item, hierarchyPath: categoryPath }, hot, cold) };
+      });
+      const recipes = recipeMaster ? parseRecipes(recipeMaster.filePath) : new Map();
+      const result = { catalog, ingredients, products, recipes: new Map([...recipes].map(([code, lines]) => [code.toUpperCase(), lines])), hot, cold, recipeCache: new Map() };
+      contexts.set(key, result); dates.set(date, result); return result;
+    }
+    const current = at(period.to), products = new Map(current.products.map(item => [item.code.toUpperCase(), item]));
+    for (const order of orders) for (const line of order.lines) {
+      if (line.isExtra || line.extraHierarchyId || line.isComponent || line.parentLineId) continue;
+      const code = String(line.code || '').toUpperCase();
+      if (code && !products.has(code)) products.set(code, { code, name: line.name, categoryPath: line.categoryPath });
+    }
+    if (action === 'options') return { today, period, locations: productAnalyticsLocations('all').map(store => ({ id: store.id, name: store.name })),
+      ...timelineEngine.optionsFor([...products.values()], [...current.ingredients.values()]), warnings: [...warnings] };
+    const ingredientsFor = (code, date) => {
+      const data = at(date);
+      if (data.recipeCache.has(code)) return data.recipeCache.get(code);
+      const found = new Map();
+      function walk(key, ancestors) {
+        if (ancestors.has(key) || ancestors.size > 20) { warnings.add(`Hay una subreceta circular o demasiado profunda para ${code}.`); return; }
+        const lines = data.recipes.get(key);
+        if (!lines?.length) { if (key === code) warnings.add(`Sin receta vigente para ${code} en ${date}.`); return; }
+        const visited = new Set([...ancestors, key]);
+        for (const line of lines) {
+          if (!(Number(line.quantity) > 0)) continue;
+          const id = String(line.ingredientId).toUpperCase();
+          found.set(id, data.ingredients.get(id) || { code: id, hierarchyPaths: [] });
+          if (data.recipes.has(id)) walk(id, visited);
+        }
+      }
+      walk(code, new Set()); const list = [...found.values()]; data.recipeCache.set(code, list); return list;
+    };
+    const build = action === 'weekday-report' ? require('./daily-distribution').buildReport : timelineEngine.buildReport;
+    const report = build({ orders, period, scope: context.scope, locationIds: context.locationIds,
+      coverage: context.coverage, ingredientsFor, query,
+      barFor(line, date) { const data = at(date); return require('./sales-insight-filters').classifySalesBar({ name: line.name,
+        hierarchyPath: line.categoryPath || [], hierarchyIds: data.catalog.products.get(String(line.code).toUpperCase())?.hierarchyIds || [] }, data.hot, data.cold); } });
+    report.warnings = [...new Set([...report.warnings, ...warnings])]; return report;
+  }
+  app.locals.productTimeline = { read: timelineRead };
+  const timelineRoutes = require('./product-timeline-api').register(app, { uploadsRoot, sourceMode: options.sourceMode,
+    today: projectionToday, cutoff: () => salesReportClock().cutoff, local: options.productTimelineWorker === false, read: timelineRead });
 
   const xrayEngine = require('./product-xray');
   function xrayFingerprint(query = {}) {
@@ -13093,7 +13164,7 @@ function createApp(options = {}) {
     server.close = callback => {
       if (!closing) {
         app.locals.commentProcessing?.dispose();
-        toteatSalesSync?.stop(); toteatSalesSync?.purchases.stop(); app.locals.uploadRefresh?.stop(); recurrenceService.dispose(); xrayRoutes.dispose(); boardRoutes.dispose();
+        toteatSalesSync?.stop(); toteatSalesSync?.purchases.stop(); app.locals.uploadRefresh?.stop(); recurrenceService.dispose(); xrayRoutes.dispose(); timelineRoutes.dispose(); boardRoutes.dispose();
         closing = new Promise(resolve=>close(error=>resolve(error))).then(async error=>{
           await mercadoPagoSync.close(); await historicalControl.idle(); return error;
         });

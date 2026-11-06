@@ -834,6 +834,71 @@
         <dialog id="recurrence-detail-dialog" class="demand-dialog" aria-labelledby="recurrence-detail-title"><div class="demand-dialog-head"><h3 id="recurrence-detail-title">Detalle del reporte</h3><button id="recurrence-detail-close" class="icon-button" type="button">Cerrar</button></div><p id="recurrence-detail-status" role="status" aria-live="polite"></p><div id="recurrence-detail-content"></div><div class="demand-dialog-pages"><button id="recurrence-detail-prev" class="icon-button" type="button">Anterior</button><span id="recurrence-detail-page"></span><button id="recurrence-detail-next" class="icon-button" type="button">Siguiente</button></div></dialog>
       </section>
 
+      <section id="product-timeline-workspace" class="panel product-timeline-workspace" aria-labelledby="product-timeline-title">
+        <div class="panel-head"><div><div class="panel-eyebrow">Evolución de ventas</div><h3 id="product-timeline-title">Productos en el tiempo</h3><p class="panel-description">Compara la venta de productos por día, semana o mes. Selecciona productos, barras o ingredientes de sus recetas.</p></div><button id="product-timeline-export" class="icon-button" type="button" disabled>Exportar XLSX</button></div>
+        <form id="product-timeline-filters">
+        <div class="financial-results-filters sales-report-filters">
+          <label>Cafetería<select id="product-timeline-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select></label>
+          <label>Período<select id="product-timeline-period"><option value="last-30-days">Últimos 30 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Rango de fechas</option></select></label>
+          <label>Desde<input id="product-timeline-from" type="date" required disabled></label>
+          <label>Hasta<input id="product-timeline-to" type="date" required disabled></label>
+          <label>Evolución<select id="product-timeline-grain"><option value="daily">Diaria</option><option value="weekly">Semanal</option><option value="monthly">Mensual</option></select></label>
+          <label>Seleccionar por<select id="product-timeline-mode"><option value="all">Todos / barra</option><option value="products">Lista de productos</option><option value="product-hierarchy">Jerarquía de productos</option><option value="ingredients">Lista de ingredientes</option><option value="ingredient-hierarchy">Jerarquía de ingredientes</option></select></label>
+          <label>Barra<select id="product-timeline-bar"><option value="all">Todas</option><option value="hot">Barra Caliente</option><option value="cold">Barra Fría</option><option value="other">Otros / sin barra</option></select></label>
+          <label id="product-timeline-hierarchy-field" hidden>Jerarquía<select id="product-timeline-hierarchy"><option value="[]">Todas las jerarquías</option></select></label>
+          <label class="sales-report-checkbox"><input id="product-timeline-formats" type="checkbox"> Agrupar tamaños de bebidas (CL, GR, XTR; anteriores M, G, X)</label>
+        </div>
+        <p id="product-timeline-options-status" class="form-status" role="status" aria-live="polite" hidden></p>
+        <fieldset id="product-timeline-picker" disabled class="product-timeline-picker" hidden><legend id="product-timeline-picker-title">Seleccionar productos</legend><div class="product-timeline-picker-tools"><label>Buscar por código o nombre<input id="product-timeline-search" type="search" autocomplete="off"></label><span id="product-timeline-selection-count" class="chip neutral">0 seleccionados</span><button id="product-timeline-clear" class="icon-button small" type="button">Limpiar selección</button></div><div id="product-timeline-choices" class="product-timeline-choices"></div></fieldset>
+        <div class="product-timeline-actions">
+          <button id="product-timeline-run" class="primary" type="submit">Generar reporte</button>
+          <button id="product-timeline-cancel" class="icon-button" type="button" hidden>Cancelar</button>
+        </div>
+        </form>
+        <p id="product-timeline-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reporte.</p>
+        <progress id="product-timeline-progress" hidden aria-label="Preparando Productos en el tiempo"></progress>
+        <div id="product-timeline-results" hidden>
+          <p id="product-timeline-context" class="panel-description"></p>
+          <div id="product-timeline-summary" class="product-timeline-summary"></div>
+          <div class="product-timeline-display"><label>Medida<select id="product-timeline-metric"><option value="units">Unidades vendidas</option><option value="netSales">Venta neta ($)</option></select></label><label>Ver como<select id="product-timeline-presentation"><option value="table">Tabla de datos</option><option value="chart">Gráfico</option><option value="both">Tabla y gráfico</option></select></label></div>
+          <section id="product-timeline-chart-panel" aria-label="Gráfico de evolución" hidden><details class="product-timeline-series-picker"><summary>Series del gráfico: total y productos</summary><p class="panel-description">Compara hasta 12 series. La tabla y la exportación conservan todos los productos del reporte.</p><div id="product-timeline-series" class="product-timeline-choices"></div></details><p id="product-timeline-chart-status" class="form-status" role="status"></p><div id="product-timeline-chart" class="product-timeline-chart"></div><div id="product-timeline-legend" class="product-timeline-legend"></div></section>
+          <div id="product-timeline-table-wrap" class="product-timeline-table-wrap" tabindex="0" role="region" aria-label="Tabla de evolución de ventas"><table id="product-timeline-table" class="product-timeline-table"></table></div>
+          <p id="product-timeline-definition" class="panel-description"></p><p id="product-timeline-warnings" class="form-status warning"></p>
+        </div>
+      </section>
+
+      <section id="daily-distribution-workspace" class="panel product-timeline-workspace" aria-labelledby="daily-distribution-title">
+        <div class="panel-head"><div><div class="panel-eyebrow">Promedios de venta</div><h3 id="daily-distribution-title">Distribución diaria</h3><p class="panel-description">Promedio diario de lunes a domingo en el período seleccionado. Se excluyen del divisor las fechas sin venta total de la cafetería o de la red; los días abiertos sin venta del producto elegido aportan cero.</p></div><button id="daily-distribution-export" class="icon-button" type="button" disabled>Exportar XLSX</button></div>
+        <form id="daily-distribution-filters">
+        <div class="financial-results-filters sales-report-filters">
+          <label>Cafetería<select id="daily-distribution-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select></label>
+          <label>Período<select id="daily-distribution-period"><option value="last-30-days">Últimos 30 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Rango de fechas</option></select></label>
+          <label>Desde<input id="daily-distribution-from" type="date" required disabled></label>
+          <label>Hasta<input id="daily-distribution-to" type="date" required disabled></label>
+          <label>Seleccionar por<select id="daily-distribution-mode"><option value="all">Todos / barra</option><option value="products">Lista de productos</option><option value="product-hierarchy">Jerarquía de productos</option><option value="ingredients">Lista de ingredientes</option><option value="ingredient-hierarchy">Jerarquía de ingredientes</option></select></label>
+          <label>Barra<select id="daily-distribution-bar"><option value="all">Todas</option><option value="hot">Barra Caliente</option><option value="cold">Barra Fría</option><option value="other">Otros / sin barra</option></select></label>
+          <label id="daily-distribution-hierarchy-field" hidden>Jerarquía<select id="daily-distribution-hierarchy"><option value="[]">Todas las jerarquías</option></select></label>
+          <label class="sales-report-checkbox"><input id="daily-distribution-formats" type="checkbox"> Agrupar tamaños de bebidas (CL, GR, XTR; anteriores M, G, X)</label>
+        </div>
+        <p id="daily-distribution-options-status" class="form-status" role="status" aria-live="polite" hidden></p>
+        <fieldset id="daily-distribution-picker" disabled class="product-timeline-picker" hidden><legend id="daily-distribution-picker-title">Seleccionar productos</legend><div class="product-timeline-picker-tools"><label>Buscar por código o nombre<input id="daily-distribution-search" type="search" autocomplete="off"></label><span id="daily-distribution-selection-count" class="chip neutral">0 seleccionados</span><button id="daily-distribution-clear" class="icon-button small" type="button">Limpiar selección</button></div><div id="daily-distribution-choices" class="product-timeline-choices"></div></fieldset>
+        <div class="product-timeline-actions">
+          <button id="daily-distribution-run" class="primary" type="submit">Generar reporte</button>
+          <button id="daily-distribution-cancel" class="icon-button" type="button" hidden>Cancelar</button>
+        </div>
+        </form>
+        <p id="daily-distribution-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reporte.</p>
+        <progress id="daily-distribution-progress" hidden aria-label="Preparando Distribución diaria"></progress>
+        <div id="daily-distribution-results" hidden>
+          <p id="daily-distribution-context" class="panel-description"></p>
+          <div id="daily-distribution-summary" class="product-timeline-summary"></div>
+          <div class="product-timeline-display"><label>Medida<select id="daily-distribution-metric"><option value="netSales">Venta neta promedio ($)</option><option value="units">Unidades promedio</option></select></label><label>Ver como<select id="daily-distribution-presentation"><option value="table">Tabla de datos</option><option value="chart">Gráfico</option><option value="both" selected>Tabla y gráfico</option></select></label></div>
+          <section id="daily-distribution-chart-panel" aria-label="Gráfico de promedios diarios" hidden><details class="product-timeline-series-picker"><summary>Series del gráfico: promedio y productos</summary><p class="panel-description">Compara hasta 12 series. La tabla y la exportación conservan todos los productos del reporte.</p><div id="daily-distribution-series" class="product-timeline-choices"></div></details><p id="daily-distribution-chart-status" class="form-status" role="status"></p><div id="daily-distribution-chart" class="product-timeline-chart"></div><div id="daily-distribution-legend" class="product-timeline-legend"></div></section>
+          <div id="daily-distribution-table-wrap" class="product-timeline-table-wrap" tabindex="0" role="region" aria-label="Tabla de promedios por día de la semana"><table id="daily-distribution-table" class="product-timeline-table"></table></div>
+          <p id="daily-distribution-definition" class="panel-description"></p><p id="daily-distribution-warnings" class="form-status warning"></p>
+        </div>
+      </section>
+
       <section id="product-recurrence-workspace" class="panel product-recurrence-workspace" aria-labelledby="product-recurrence-title">
         <div class="panel-head">
           <div><div class="panel-eyebrow">Comportamiento de compra por producto</div><h3 id="product-recurrence-title">Producto-Recurrencia</h3><p class="panel-description">Ventas y unidades por jerarquía o productos seleccionados, con el porcentaje de venta asociado a compras anteriores del mismo medio de pago.</p></div>
@@ -2944,6 +3009,7 @@
   <script src="recurrence-view.js"></script>
   <script src="product-report-view.js"></script>
   <script src="product-recurrence-view.js"></script>
+  <script src="product-timeline-view.js"></script>
   <script src="product-gender-view.js"></script>
   <script src="product-xray-document.js"></script>
   <script src="product-xray-view.js"></script>

@@ -13714,6 +13714,8 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
   ['service', 'Modalidad de consumo', ['.sales-service-mode-panel']],
   ['hierarchies', 'Jerarquías y margen', ['#sales-hierarchy-margin-controls', '.financial-hierarchy-panel']],
   ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-filters', '#sales-insight-range-status', '#sales-insight-context', '#sales-insight-filter-note', '.sales-insights-grid']],
+  ['product-timeline', 'Productos en el tiempo', ['#product-timeline-workspace']],
+  ['daily-distribution', 'Distribución diaria', ['#daily-distribution-workspace']],
   ['ingredients', 'Ventas por ingredientes', ['#sales-ingredients-workspace']],
   ['hourly', 'Franjas horarias', ['.hourly-demand-panel']],
   ['customers', 'Clientes recurrentes', ['.mercadopago-panel']],
@@ -13721,6 +13723,10 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
   ['product-gender', 'Producto-Género', ['#product-gender-workspace']],
   ['product-xray', 'X-ray producto', ['#product-xray-workspace']]
 ], key => {
+  if (key === 'product-timeline') window.openProductTimeline?.();
+  else window.cancelProductTimeline?.();
+  if (key === 'daily-distribution') window.openDailyDistribution?.();
+  else window.cancelDailyDistribution?.();
   if (key === 'product-recurrence') window.openProductRecurrence?.();
   if (key === 'product-gender') window.openProductGender?.();
   if (key === 'product-xray') window.openProductXray?.();
