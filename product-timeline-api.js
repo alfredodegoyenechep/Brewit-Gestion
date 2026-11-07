@@ -28,6 +28,7 @@ function register(app, config) {
   };
   app.get('/api/sales/product-timeline/options', run('options'));
   app.get('/api/sales/product-timeline', run('report'));
+  app.get('/api/sales/product-hourly', run('product-hourly'));
   app.get('/api/sales/daily-distribution/options', run('options'));
   app.get('/api/sales/daily-distribution', run('weekday-report'));
   return { dispose() { for (const worker of active) worker.terminate().catch(() => {}); active.clear(); } };

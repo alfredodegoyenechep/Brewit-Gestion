@@ -1965,6 +1965,10 @@ function buildSalesReport(dailySales, todayKey, includeToday, comparison) {
       equivalentRank: rankTotals(comparableMonthTotals, referenceDate.slice(0, 7))
     },
     statistics: { months, weeks, days, equivalentDays },
+    dailyHistory: Array.from({ length: 90 }, (_, index) => {
+      const date = addDays(referenceDate, index - 89);
+      return { date, netSales: dailySales[date]?.net || 0 };
+    }),
     orderCountStatistics: {
       months: addSequentialVariation(averageTicketMonths.map(item => ({ ...item })), 'orders'),
       weeks: addSequentialVariation(averageTicketWeeks.map(item => ({ ...item })), 'orders'),
@@ -3601,6 +3605,7 @@ function createApp(options = {}) {
   app.get('/recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'recurrence-view.js')));
   app.get('/product-recurrence-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-recurrence-view.js')));
   app.get('/product-timeline-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-timeline-view.js')));
+  app.get('/product-hourly-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-hourly-view.js')));
   app.get('/product-report-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-report-view.js')));
   app.get('/gender-review-view.js', (req, res) => res.sendFile(path.join(__dirname, 'gender-review-view.js')));
   app.get('/product-gender-view.js', (req, res) => res.sendFile(path.join(__dirname, 'product-gender-view.js')));
@@ -6589,9 +6594,10 @@ function createApp(options = {}) {
       }
       walk(code, new Set()); const list = [...found.values()]; data.recipeCache.set(code, list); return list;
     };
-    const build = action === 'weekday-report' ? require('./daily-distribution').buildReport : timelineEngine.buildReport;
+    const build = action === 'weekday-report' ? require('./daily-distribution').buildReport
+      : action === 'product-hourly' ? require('./product-hourly').buildReport : timelineEngine.buildReport;
     const report = build({ orders, period, scope: context.scope, locationIds: context.locationIds,
-      coverage: context.coverage, ingredientsFor, query,
+      coverage: context.coverage, locations: source.stores.map(store => ({ id: store.id, name: store.name })), ingredientsFor, query,
       barFor(line, date) { const data = at(date); return require('./sales-insight-filters').classifySalesBar({ name: line.name,
         hierarchyPath: line.categoryPath || [], hierarchyIds: data.catalog.products.get(String(line.code).toUpperCase())?.hierarchyIds || [] }, data.hot, data.cold); } });
     report.warnings = [...new Set([...report.warnings, ...warnings])]; return report;

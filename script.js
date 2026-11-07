@@ -2830,20 +2830,23 @@ function renderReportChart(config) {
   const svg = document.getElementById('report-chart-svg');
   const scroll = document.getElementById('report-chart-scroll');
   const empty = document.getElementById('report-chart-empty');
+  const tooltip = document.getElementById('report-chart-tooltip');
+  tooltip.hidden = true;
+  svg.classList.toggle('report-chart-daily-history', Boolean(config.dailyHistory));
   let labels = config.labels || [];
   let series = (config.series || []).map((item, index) => ({
     ...item,
     color: item.color || REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length],
-    values: (item.values || []).map(value => Number.isFinite(Number(value)) ? Number(value) : null)
+    values: (item.values || []).map(value => value != null && Number.isFinite(Number(value)) ? Number(value) : null)
   }));
   const values = series.flatMap(item => item.values).filter(Number.isFinite);
-  const hasData = labels.length && values.length;
+  const hasData = labels.length && (values.length || config.dailyHistory);
   empty.hidden = hasData;
   scroll.hidden = !hasData;
   svg.replaceChildren();
   if (!hasData) return;
 
-  if (config.type !== 'line' && labels.length > 20) {
+  if (config.type !== 'line' && labels.length > 20 && !config.dailyHistory) {
     const selectedIndexes = labels.map((label, index) => ({ label, index, value: Math.abs(series[0]?.values[index] || 0) }))
       .sort((left, right) => right.value - left.value).slice(0, 20).map(item => item.index);
     labels = selectedIndexes.map(index => labels[index]);
@@ -2901,12 +2904,12 @@ function renderReportChart(config) {
     return;
   }
 
-  const width = Math.max(760, labels.length * (config.type === 'bar' ? 105 : 72));
+  const width = config.dailyHistory ? 1200 : Math.max(760, labels.length * (config.type === 'bar' ? 105 : 72));
   const height = 430;
   const margin = { top: 30, right: 28, bottom: 92, left: 84 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const maxValue = Math.max(...values, 0);
+  const maxValue = config.dailyHistory && values.every(value => value === 0) ? 1 : Math.max(...values, 0);
   const minValue = Math.min(...values, 0);
   const range = maxValue - minValue || 1;
   const y = value => margin.top + (maxValue - value) / range * plotHeight;
@@ -2914,6 +2917,14 @@ function renderReportChart(config) {
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
+
+  for (const index of config.sundayIndexes || []) {
+    svg.appendChild(reportChartSvgElement('rect', {
+      x: margin.left + index * plotWidth / labels.length, y: margin.top,
+      width: plotWidth / labels.length, height: plotHeight,
+      fill: 'currentColor', opacity: .06, class: 'report-chart-sunday', 'pointer-events': 'none'
+    }));
+  }
 
   for (let index = 0; index <= 5; index += 1) {
     const value = maxValue - (range * index / 5);
@@ -2934,7 +2945,7 @@ function renderReportChart(config) {
       const rect = reportChartSvgElement('rect', {
         x: margin.left + labelIndex * groupWidth + (groupWidth - barWidth * series.length) / 2 + seriesIndex * barWidth,
         y: Math.min(zeroY, valueY), width: Math.max(barWidth - 3, 2), height: Math.max(Math.abs(zeroY - valueY), 1),
-        rx: 4, fill: item.color, class: 'report-chart-mark'
+        rx: config.dailyHistory ? 1 : 4, fill: item.colors?.[labelIndex] || item.color, class: 'report-chart-mark'
       });
       rect.appendChild(reportChartSvgElement('title', {}, `${labels[labelIndex]} · ${item.name}: ${config.formatValue(value)}`));
       svg.appendChild(rect);
@@ -2953,7 +2964,46 @@ function renderReportChart(config) {
       });
     });
   }
+  for (const reference of config.referenceLines || []) {
+    if (!Number.isFinite(reference.value)) continue;
+    const line = reportChartSvgElement('line', {
+      x1: margin.left, x2: width - margin.right, y1: y(reference.value), y2: y(reference.value),
+      stroke: reference.color, 'stroke-width': 2, 'stroke-dasharray': reference.dash || '7 5',
+      class: 'report-chart-average', 'pointer-events': 'none'
+    });
+    line.appendChild(reportChartSvgElement('title', {}, `${reference.name}: ${config.formatValue(reference.value)}`));
+    svg.appendChild(line);
+  }
+  if (config.dailyHistory) {
+    labels.forEach((label, index) => {
+      const value = series[0].values[index];
+      const description = Number.isFinite(value)
+        ? `${label} · Venta neta sin IVA: ${config.formatValue(value)}`
+        : `${label} · Venta neta ≤ $20.000: sin barra ni promedio`;
+      const target = reportChartSvgElement('rect', {
+        x: margin.left + index * plotWidth / labels.length, y: margin.top,
+        width: plotWidth / labels.length, height: plotHeight + 8,
+        fill: 'transparent', class: 'report-chart-day-target', tabindex: 0,
+        role: 'img', 'aria-label': description
+      });
+      const showTooltip = event => {
+        tooltip.textContent = description;
+        tooltip.hidden = false;
+        const bounds = target.getBoundingClientRect();
+        const left = event.clientX ?? bounds.left + bounds.width / 2;
+        const top = event.clientY ?? bounds.top + bounds.height / 2;
+        tooltip.style.left = `${Math.max(8, Math.min(left + 12, window.innerWidth - tooltip.offsetWidth - 12))}px`;
+        tooltip.style.top = `${Math.max(8, Math.min(top + 16, window.innerHeight - tooltip.offsetHeight - 12))}px`;
+      };
+      target.addEventListener('pointermove', showTooltip);
+      target.addEventListener('focus', showTooltip);
+      target.addEventListener('pointerleave', () => { tooltip.hidden = true; });
+      target.addEventListener('blur', () => { tooltip.hidden = true; });
+      svg.appendChild(target);
+    });
+  }
   labels.forEach((label, index) => {
+    if (config.dailyHistory && index % 7 !== 0 && index !== labels.length - 1) return;
     const labelX = config.type === 'bar'
       ? margin.left + (index + 0.5) * plotWidth / labels.length
       : x(index);
@@ -2982,7 +3032,7 @@ function renderReportChartData(config) {
     for (const item of config.series || []) {
       const cell = document.createElement('td');
       const value = item.values?.[index];
-      cell.textContent = Number.isFinite(Number(value)) ? config.formatValue(Number(value)) : '—';
+      cell.textContent = value != null && Number.isFinite(Number(value)) ? config.formatValue(Number(value)) : '—';
       row.appendChild(cell);
     }
     return row;
@@ -3037,10 +3087,11 @@ function updateReportChartDialog() {
   });
   const legend = document.getElementById('report-chart-legend');
   legend.hidden = config.type === 'pie';
-  legend.replaceChildren(...(config.series || []).map((item, index) => {
+  legend.replaceChildren(...(config.legend || config.series || []).map((item, index) => {
     const entry = document.createElement('span');
     const marker = document.createElement('i');
     marker.style.background = item.color || REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length];
+    if (item.line) marker.classList.add('report-chart-legend-line');
     entry.append(marker, document.createTextNode(item.name));
     return entry;
   }));
@@ -3235,6 +3286,43 @@ function renderSalesStatistics(statistics, averageTicketStatistics, discountStat
   register('discount-statistics-equivalent-days', 'Descuento de los últimos 14 días equivalentes', discountStatistics.equivalentDays, item => shortDate(item.date, true), 'discountPercent', 'Descuento sobre venta', percent);
 }
 
+function dailySalesHistoryChart(report) {
+  const weekdayOf = date => new Date(`${date}T00:00:00Z`).getUTCDay();
+  const referenceWeekday = weekdayOf(report.previousDay.date);
+  const weekday = new Intl.DateTimeFormat('es-CL', { weekday: 'long', timeZone: 'UTC' })
+    .format(new Date(`${report.previousDay.date}T00:00:00Z`));
+  const days = report.dailyHistory || [];
+  const averageDays = days.filter(day => day.netSales > 20000);
+  const equivalentDays = averageDays.filter(day => weekdayOf(day.date) === referenceWeekday);
+  const average = rows => rows.length ? rows.reduce((sum, day) => sum + day.netSales, 0) / rows.length : null;
+  const regularColor = '#7c969e';
+  const highlightColor = '#d98545';
+  const referenceLines = [
+    { name: 'Promedio general', value: average(averageDays), color: regularColor },
+    { name: `Promedio de ${weekday}`, value: average(equivalentDays), color: highlightColor, dash: '3 3' }
+  ].filter(line => line.value !== null);
+  return {
+    type: 'bar', dailyHistory: true,
+    title: 'Venta neta de los últimos 90 días',
+    subtitle: `${report.scope.label || 'Todas las cafeterías'} · ${formatReportDate(report.dailyHistory?.[0]?.date)} – ${formatReportDate(report.previousDay.date)}. ${report.includeToday ? `Hoy acumulado hasta ${report.previousDay.comparisonCutoffTime.slice(0, 5)}; los días anteriores son completos. ` : ''}Se conservan todos los días; los domingos están sombreados. Barras y promedios: solo ventas netas mayores a $20.000 (${averageDays.length} días en general; ${equivalentDays.length} de ${weekday}).`,
+    sundayIndexes: days.flatMap((day, index) => weekdayOf(day.date) === 0 ? [index] : []),
+    labels: days.map(day => new Intl.DateTimeFormat('es-CL', {
+      weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
+    }).format(new Date(`${day.date}T00:00:00Z`)).replace(/\./g, '')),
+    series: [{
+      name: 'Venta neta sin IVA', color: regularColor,
+      values: days.map(day => day.netSales > 20000 ? day.netSales : null),
+      colors: days.map(day => weekdayOf(day.date) === referenceWeekday ? highlightColor : regularColor)
+    }],
+    referenceLines,
+    legend: [
+      { name: 'Venta diaria', color: regularColor },
+      { name: `Mismo día: ${weekday}`, color: highlightColor },
+      ...referenceLines.map(line => ({ name: `${line.name}: ${formatClp(line.value)}`, color: line.color, line: true }))
+    ]
+  };
+}
+
 async function loadWeeklySalesReport() {
   const status = document.getElementById('report-status');
   const locationFilter = document.getElementById('report-location-filter');
@@ -3287,13 +3375,7 @@ async function loadWeeklySalesReport() {
     document.getElementById('report-weekday-label').title = `Fechas de referencia: ${report.previousDay.equivalentDays.dates.map(formatReportDate).join(', ')} · ${comparisonCutoff} · America/Santiago`;
     renderIntradayReport(report.intraday, report.includeToday);
     renderSalesStatistics(report.statistics, report.averageTicketStatistics, report.discountStatistics, report.orderCountStatistics);
-    setReportChart('report-summary-day', {
-      type: 'bar',
-      title: report.includeToday ? 'Venta de hoy frente a su referencia' : 'Venta del día anterior frente a su referencia',
-      subtitle: `Venta neta sin IVA · ${report.scope.label || 'todas las cafeterías'} · comparación con el promedio de los últimos ${report.previousDay.averageSampleSize || 0} días equivalentes.`,
-      labels: ['Promedio días equivalentes', report.includeToday ? 'Hoy' : 'Día anterior'],
-      series: [{ name: 'Venta neta', values: [report.previousDay.sameWeekdayAverage, report.previousDay.netSales] }]
-    });
+    setReportChart('report-summary-day', dailySalesHistoryChart(report));
     const weekChart = reportChartRegistry.get('sales-statistics-weeks');
     const monthChart = reportChartRegistry.get('sales-statistics-months');
     if (weekChart) setReportChart('report-summary-week', { ...weekChart, title: 'Evolución de la venta semanal' });
@@ -13714,6 +13796,7 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
   ['service', 'Modalidad de consumo', ['.sales-service-mode-panel']],
   ['hierarchies', 'Jerarquías y margen', ['#sales-hierarchy-margin-controls', '.financial-hierarchy-panel']],
   ['products', 'Productos y jerarquías', ['.sales-insight-heading', '#sales-insight-filters', '#sales-insight-range-status', '#sales-insight-context', '#sales-insight-filter-note', '.sales-insights-grid']],
+  ['product-hourly', 'Producto horario', ['#product-hourly-workspace']],
   ['product-timeline', 'Productos en el tiempo', ['#product-timeline-workspace']],
   ['daily-distribution', 'Distribución diaria', ['#daily-distribution-workspace']],
   ['ingredients', 'Ventas por ingredientes', ['#sales-ingredients-workspace']],
@@ -13725,6 +13808,7 @@ installWorkspaceTabs('sales-workspace', '.sales-dashboard-heading', [
 ], key => {
   if (key === 'product-timeline') window.openProductTimeline?.();
   else window.cancelProductTimeline?.();
+  if (key === 'product-hourly') window.openProductHourly?.();
   if (key === 'daily-distribution') window.openDailyDistribution?.();
   else window.cancelDailyDistribution?.();
   if (key === 'product-recurrence') window.openProductRecurrence?.();

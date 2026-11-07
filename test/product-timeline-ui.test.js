@@ -30,12 +30,15 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   assert.deepEqual(JSON.parse(requests[0].searchParams.get('products')).sort(), ['P0', 'P1', 'P2']);
   assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 7);
   assert.equal(await page.locator('#product-timeline-table thead th').count(), 3);
-  assert.match(await page.locator('#product-timeline-table tfoot').innerText(), /Total del período\s+5\s+5/);
+  assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /Total del período\s+5\s+5/);
+  assert.deepEqual(await page.locator('#product-timeline-table tfoot tr').count(), 3);
+  assert.match(await page.locator('#product-timeline-table tfoot tr').nth(1).innerText(), /% del total\s+100,0%\s+100,0%/);
+  assert.match(await page.locator('#product-timeline-table tfoot tr').nth(2).innerText(), /% acumulado\s+100,0%\s+100,0%/);
   await page.locator('#product-timeline-presentation').selectOption('both');
   assert.equal(await page.locator('#product-timeline-chart svg').count(), 1);
   assert.equal(await page.locator('#product-timeline-chart circle').count(), 7);
   await page.locator('#product-timeline-metric').selectOption('netSales');
-  assert.match(await page.locator('#product-timeline-table tfoot').innerText(), /5\.000/);
+  assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /5\.000/);
   assert.ok((await page.locator('#product-timeline-chart circle').all()).length === 7);
   assert.ok((await page.locator('#product-timeline-chart circle').nth(2).getAttribute('aria-label')).includes('3.000'));
   await page.locator('#product-timeline-workspace .product-timeline-series-picker summary').click();
@@ -45,8 +48,9 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   const downloadEvent = page.waitForEvent('download'); await page.locator('#product-timeline-export').click();
   const file = path.join(os.tmpdir(), `product-timeline-${Date.now()}.xlsx`); await (await downloadEvent).saveAs(file); t.after(() => fs.rmSync(file, { force: true }));
   const book = XLSX.readFile(file), sales = XLSX.utils.sheet_to_json(book.Sheets['Venta neta'], { header: 1 }), units = XLSX.utils.sheet_to_json(book.Sheets.Unidades, { header: 1 });
-  assert.equal(sales.at(-1).at(-1), 5000); assert.equal(units.at(-1).at(-1), 5);
-  assert.equal(sales.slice(1, -1).reduce((sum, row) => sum + row.at(-1), 0), 5000);
+  assert.equal(sales.at(-3).at(-1), 5000); assert.equal(units.at(-3).at(-1), 5);
+  assert.equal(sales.at(-2).at(-1), 1); assert.equal(sales.at(-1).at(-1), 1);
+  assert.equal(sales.slice(1, -3).reduce((sum, row) => sum + row.at(-1), 0), 5000);
   await page.getByRole('tab', { name: 'Productos y jerarquías', exact: true }).click();
   await page.getByRole('tab', { name: 'Productos en el tiempo', exact: true }).click();
   assert.equal(requests.length, 1); assert.equal(await page.locator('#product-timeline-from').inputValue(), '2026-10-01');
@@ -57,7 +61,7 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   await page.locator('#product-timeline-run').click();
   await page.locator('#product-timeline-status').filter({ hasText: 'Reporte generado' }).waitFor();
   assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 2);
-  assert.match(await page.locator('#product-timeline-table tfoot').innerText(), /5\.000/);
+  assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /5\.000/);
   for (const width of [390, 768, 1700]) {
     await page.setViewportSize({ width, height: 1100 });
     await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
@@ -68,6 +72,34 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   }
   await page.locator('#product-timeline-workspace').screenshot({ path: '/private/tmp/brewit-product-timeline.png' });
   assert.deepEqual(errors, []);
+});
+
+test('timeline participation and cumulative percentages follow the selected measure across products', { skip: !fs.existsSync(chrome) }, async t => {
+  const s = await setup(t), browser = await chromium.launch({ executablePath: chrome, headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await open(page, s);
+  await page.locator('#product-timeline-run').click();
+  await page.locator('#product-timeline-status').filter({ hasText: 'Reporte generado' }).waitFor();
+  const footer = page.locator('#product-timeline-table tfoot tr');
+  const cells = row => footer.nth(row).locator('td').allTextContents();
+  const parse = value => Number(value.replace('%', '').replace(',', '.'));
+  const verify = async () => {
+    const shares = (await cells(1)).map(parse), cumulative = (await cells(2)).map(parse);
+    assert.ok(shares.length > 2);
+    assert.equal(shares.at(-1), 100);
+    assert.equal(cumulative.at(-1), 100);
+    assert.ok(shares[0] > 0 && shares[0] < 100);
+    for (let index = 0; index < cumulative.length - 1; index++) {
+      assert.ok(Math.abs(cumulative[index] - shares.slice(0, index + 1).reduce((sum, part) => sum + part, 0)) <= .15);
+    }
+    assert.equal(cumulative.at(-2), 100);
+    return shares;
+  };
+  const unitShares = await verify();
+  await page.locator('#product-timeline-metric').selectOption('netSales');
+  const salesShares = await verify();
+  assert.notDeepEqual(salesShares, unitShares);
 });
 test('timeline UI cancels outdated results, validates selections and retries server errors', { skip: !fs.existsSync(chrome) }, async t => {
   const s = await setup(t), browser = await chromium.launch({ executablePath: chrome, headless: true }); t.after(() => browser.close());
@@ -90,6 +122,6 @@ test('timeline UI cancels outdated results, validates selections and retries ser
   await page.unroute('**/api/sales/product-timeline?*');
   await page.locator('#product-timeline-run').click(); await page.locator('#product-timeline-status').filter({ hasText: 'Reporte generado' }).waitFor();
   assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 1);
-  assert.match(await page.locator('#product-timeline-table tfoot').innerText(), /5/);
+  assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /5/);
   assert.deepEqual(errors, []);
 });

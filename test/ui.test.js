@@ -102,7 +102,7 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.deepEqual(await page.locator('.navigation .nav-group-label').allTextContents(),
     ['Ventas y resultados', 'Análisis de ventas', 'Inventario y compras', 'Productos y costos', 'Control y configuración']);
   assert.deepEqual(await page.locator('.navigation .nav-link').evaluateAll(links => links.map(link => link.dataset.view)), [
-    'report', 'financial-results',
+    'report', 'financial-results', 'board-reports',
     'sales', 'demand-analysis',
     'inventory', 'purchases', 'purchase-projection', 'past-orders',
     'products', 'ingredients', 'cost-review',
@@ -128,9 +128,9 @@ test('Resumen General ofrece gráficos trazables para indicadores, intradía e h
   assert.ok(chartDialogLayout.width >= 1200);
   assert.ok(chartDialogLayout.height >= 680);
   assert.equal(chartDialogLayout.resize, 'both');
-  assert.match(await page.locator('#report-chart-title').innerText(), /Venta de hoy/);
+  assert.equal(await page.locator('#report-chart-title').innerText(), 'Venta neta de los últimos 90 días');
   assert.equal(await page.locator('#report-chart-data-head th').count(), 2);
-  assert.equal(await page.locator('#report-chart-data-body tr').count(), 2);
+  assert.equal(await page.locator('#report-chart-data-body tr').count(), 90);
   await page.locator('#report-chart-close').click();
   await page.getByRole('button', { name: 'Ver gráfico: Venta de los últimos 14 meses' }).click();
   await page.locator('#report-chart-dialog').waitFor({ state: 'visible' });

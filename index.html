@@ -834,6 +834,29 @@
         <dialog id="recurrence-detail-dialog" class="demand-dialog" aria-labelledby="recurrence-detail-title"><div class="demand-dialog-head"><h3 id="recurrence-detail-title">Detalle del reporte</h3><button id="recurrence-detail-close" class="icon-button" type="button">Cerrar</button></div><p id="recurrence-detail-status" role="status" aria-live="polite"></p><div id="recurrence-detail-content"></div><div class="demand-dialog-pages"><button id="recurrence-detail-prev" class="icon-button" type="button">Anterior</button><span id="recurrence-detail-page"></span><button id="recurrence-detail-next" class="icon-button" type="button">Siguiente</button></div></dialog>
       </section>
 
+      <section id="product-hourly-workspace" class="panel product-hourly-workspace" aria-labelledby="product-hourly-title">
+        <div class="panel-head"><div><div class="panel-eyebrow">Productos por franja</div><h3 id="product-hourly-title">Producto horario</h3><p class="panel-description">Cinco productos líderes por cafetería y franja de dos horas, desde las 07:00 hasta las 23:00.</p></div></div>
+        <form id="product-hourly-filters">
+          <div class="financial-results-filters sales-report-filters">
+            <label>Cafetería<select id="product-hourly-location" class="sales-report-location"><option value="all">Todas las cafeterías</option></select></label>
+            <label>Período<select id="product-hourly-period"><option value="last-30-days">Últimos 30 días completos</option><option value="today">Hoy</option><option value="current-week">Semana actual</option><option value="current-month">Mes actual</option><option value="custom">Rango de fechas</option></select></label>
+            <label>Desde<input id="product-hourly-from" type="date" required disabled></label>
+            <label>Hasta<input id="product-hourly-to" type="date" required disabled></label>
+            <label>Barra<select id="product-hourly-bar"><option value="all">Todas</option><option value="hot">Barra Caliente</option><option value="cold">Barra Fría</option><option value="other">Otros / sin barra</option></select></label>
+            <label class="sales-report-checkbox"><input id="product-hourly-formats" type="checkbox"> Agrupar formatos de bebidas (CL, GR, XTR; anteriores M, G, X)</label>
+            <button id="product-hourly-run" class="primary" type="submit">Generar reporte</button>
+          </div>
+        </form>
+        <p id="product-hourly-status" class="form-status" role="status" aria-live="polite">Selecciona los filtros y pulsa Generar reporte.</p>
+        <div id="product-hourly-results" hidden>
+          <div class="product-hourly-result-head"><p id="product-hourly-context" class="panel-description"></p><label>Ordenar top 5 por <select id="product-hourly-metric"><option value="units">Unidades vendidas</option><option value="netSales">Venta neta ($)</option></select></label></div>
+          <div class="product-hourly-scroll" role="region" tabindex="0" aria-label="Productos por franja horaria y cafetería, desplazable horizontalmente">
+            <table class="product-hourly-table"><thead id="product-hourly-head"></thead><tbody id="product-hourly-body"></tbody></table>
+          </div>
+          <p id="product-hourly-note" class="panel-description"></p>
+        </div>
+      </section>
+
       <section id="product-timeline-workspace" class="panel product-timeline-workspace" aria-labelledby="product-timeline-title">
         <div class="panel-head"><div><div class="panel-eyebrow">Evolución de ventas</div><h3 id="product-timeline-title">Productos en el tiempo</h3><p class="panel-description">Compara la venta de productos por día, semana o mes. Selecciona productos, barras o ingredientes de sus recetas.</p></div><button id="product-timeline-export" class="icon-button" type="button" disabled>Exportar XLSX</button></div>
         <form id="product-timeline-filters">
@@ -1336,6 +1359,7 @@
           <div id="report-chart-scroll" class="report-chart-scroll">
             <svg id="report-chart-svg" role="img" aria-labelledby="report-chart-title report-chart-subtitle"></svg>
           </div>
+          <div id="report-chart-tooltip" class="report-chart-tooltip" role="tooltip" hidden></div>
           <details class="report-chart-data">
             <summary>Ver datos utilizados</summary>
             <div class="report-chart-data-scroll">
@@ -3010,6 +3034,7 @@
   <script src="product-report-view.js"></script>
   <script src="product-recurrence-view.js"></script>
   <script src="product-timeline-view.js"></script>
+  <script src="product-hourly-view.js"></script>
   <script src="product-gender-view.js"></script>
   <script src="product-xray-document.js"></script>
   <script src="product-xray-view.js"></script>

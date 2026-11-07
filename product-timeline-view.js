@@ -12,6 +12,8 @@ window.initializeProductTimeline = config => {
   const status = (message, type = 'muted') => setStatus($('status'), message, type);
   const metric = () => $('metric').value;
   const format = value => metric() === 'netSales' ? money(value) : number(value);
+  const share = (amount, total) => Number.isFinite(amount) && Number.isFinite(total) && total !== 0 ? amount / total : null;
+  const percent = value => value == null ? '—' : `${new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value * 100)}%`;
   function syncDates() {
     const mode = $('period').value, today = state.today;
     for (const name of ['from', 'to']) { $(name).disabled = mode !== 'custom'; $(name).max = today; }
@@ -127,6 +129,22 @@ window.initializeProductTimeline = config => {
     if (weekdayReport) foot.append(el('td', number(data.sample.observedDays)), el('td', number(data.sample.excludedDays)));
     for (const item of data.series) foot.append(el('td', format(item[value])));
     foot.append(el('td', format(data.totals[value])));
+    if (!weekdayReport) {
+      const total = data.totals[value], participation = table.tFoot.insertRow(), accumulated = table.tFoot.insertRow();
+      const partHeading = el('th', '% del total'), accumulatedHeading = el('th', '% acumulado');
+      partHeading.scope = 'row'; accumulatedHeading.scope = 'row';
+      participation.append(partHeading); accumulated.append(accumulatedHeading);
+      let running = 0;
+      for (const item of data.series) {
+        const fraction = share(item[value], total);
+        participation.append(el('td', percent(fraction)));
+        if (fraction != null) running += fraction;
+        accumulated.append(el('td', percent(fraction == null ? null : running)));
+      }
+      const whole = share(total, total);
+      participation.append(el('td', percent(whole)));
+      accumulated.append(el('td', percent(whole)));
+    }
   }
   const colors = ['#a85d37', '#397a8d', '#688943', '#a34f78', '#6c62ac', '#9b791e', '#29856e', '#b34d4d', '#4d72ab', '#8d6c4e', '#895989', '#527b69'];
   const graphChoices = () => [{ key: 'total', label: weekdayReport ? 'Promedio de la selección' : 'Total selección', points: state.report.periods }, ...state.report.series];
@@ -224,8 +242,17 @@ window.initializeProductTimeline = config => {
         ['Promedio diario del período', data.sample.observedDays, data.sample.excludedDays, data.sample.unknownDays, ...data.series.map(item => item[value]), data.totals[value], data.totals[value === 'units' ? 'totalUnits' : 'totalNetSales']]]
         : [['Período', 'Desde', 'Hasta', ...data.series.map(item => `${item.label} · ${item.codes.join(' / ')}`), 'Total selección'],
         ...data.periods.map((point, i) => [label(point), point.from, point.to, ...data.series.map(item => item.points[i][value]), point[value]]),
-        ['Total del período', '', '', ...data.series.map(item => item[value]), data.totals[value]]];
+        ['Total del período', '', '', ...data.series.map(item => item[value]), data.totals[value]],
+        ['% del total', '', '', ...data.series.map(item => share(item[value], data.totals[value])), share(data.totals[value], data.totals[value])],
+        ['% acumulado', '', '', ...data.series.map((item, index) => {
+          const fractions = data.series.slice(0, index + 1).map(series => share(series[value], data.totals[value]));
+          return fractions.some(fraction => fraction == null) ? null : fractions.reduce((sum, fraction) => sum + fraction, 0);
+        }), share(data.totals[value], data.totals[value])]];
       const sheet = XLSX.utils.aoa_to_sheet(rows); sheet['!cols'] = [{ wch: 38 }, { wch: 12 }, { wch: 12 }, ...data.series.map(() => ({ wch: 25 })), { wch: 20 }];
+      if (!weekdayReport) for (let row = rows.length - 2; row < rows.length; row++) for (let column = 3; column < rows[row].length; column++) {
+        const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+        if (cell?.t === 'n') cell.z = '0.0%';
+      }
       XLSX.utils.book_append_sheet(workbook, sheet, name);
     }
     if (weekdayReport) XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Día de la semana', 'Fecha incluida en el divisor'], ...data.periods.flatMap(point => point.dates.map(date => [point.label, date]))]), 'Fechas con venta');

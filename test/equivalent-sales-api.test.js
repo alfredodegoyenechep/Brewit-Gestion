@@ -20,6 +20,7 @@ test('classic, grid and intraday share eight exact weekdays, the Santiago cutoff
   }
   sale('2026-10-13', '09:00:00', 100); sale('2026-10-13', '18:00:00', 300);
   sale('2026-10-14', '09:00:00', 50); sale('2026-10-14', '12:00:00', 1000);
+  sale('2026-10-11', '09:00:00', 200); // Low Sunday sales keep their date but have no bar.
   const file = path.join(root, 'sales.csv'); fs.writeFileSync(file, rows.map(row => row.join('\t')).join('\n'));
   app.locals.toteatSalesSync.source = () => [{ filePath: file, excludedRanges: [], record: { originalName: 'sales.csv', confirmedRange: { from: '2026-08-12', to: '2026-10-14' } } }];
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
@@ -30,6 +31,12 @@ test('classic, grid and intraday share eight exact weekdays, the Santiago cutoff
     read('/api/reports/weekly-sales?location=store-1&includeToday=true'), read('/api/reports/network-sales'), read('/api/reports/weekly-sales?location=store-1')
   ]);
   const row = grid.rows[0];
+  assert.equal(classic.dailyHistory.length, 90);
+  assert.deepEqual(classic.dailyHistory[0], { date: '2026-07-17', netSales: 0 });
+  assert.deepEqual(classic.dailyHistory.at(-1), { date: '2026-10-14', netSales: 50 });
+  assert.deepEqual(yesterday.dailyHistory.at(-1), { date: '2026-10-13', netSales: 400 });
+  assert.equal(classic.dailyHistory.find(day => day.date === '2026-09-09').netSales, 0);
+  assert.equal(classic.dailyHistory.find(day => day.date === '2026-08-12').netSales, 10000);
   assert.equal(row.today.sales, 50);
   assert.equal(classic.previousDay.netSales, 50);
   assert.equal(classic.intraday.today.netSales, 50);
@@ -60,6 +67,58 @@ test('classic, grid and intraday share eight exact weekdays, the Santiago cutoff
       assert.equal(await page.locator('#intraday-average-comparison').innerText(), '-42,9%');
       assert.match(await page.locator('#report-weekday-label').innerText(), /8 de 8 días · Corte 10:30/);
       assert.match(await page.locator('#report-weekday-label').getAttribute('title'), /09 sept 2026/);
+      await page.locator('[data-report-chart="report-summary-day"]').click();
+      assert.equal(await page.locator('#report-chart-title').innerText(), 'Venta neta de los últimos 90 días');
+      assert.equal(await page.locator('#report-chart-svg .report-chart-mark').count(), 0, 'Sales at most $20,000 have no bars');
+      assert.equal(await page.locator('#report-chart-data-body tr').count(), 90);
+      assert.equal(await page.locator('.report-chart-day-target').count(), 90, 'All calendar days retain an equally spaced slot');
+      assert.equal(await page.locator('.report-chart-sunday').count(), 13);
+      assert.equal(await page.locator('#report-chart-scroll').isVisible(), true);
+      const historyLabels = await page.locator('#report-chart-data-body tr td:first-child').allTextContents();
+      assert.match(historyLabels[0], /17 jul 2026/);
+      assert.match(historyLabels.at(-1), /14 oct 2026/);
+      assert.equal(historyLabels.filter(label => label.startsWith('dom')).length, 13);
+      assert.ok(historyLabels.some(label => label.includes('09 sept 2026')), 'Zero Wednesday remains');
+      const history = await page.evaluate(() => reportChartRegistry.get('report-summary-day'));
+      assert.deepEqual(history.referenceLines, [], 'No average line when all sales are at most $20,000');
+      assert.match(history.subtitle, /0 días en general; 0 de miércoles/);
+      const thresholdHistory = await page.evaluate(report => dailySalesHistoryChart({
+        ...report,
+        dailyHistory: [
+          { date: '2026-09-09', netSales: -10 },
+          { date: '2026-09-16', netSales: 0 },
+          { date: '2026-09-23', netSales: 19999 },
+          { date: '2026-09-30', netSales: 20000 },
+          { date: '2026-10-01', netSales: 60000 },
+          { date: '2026-10-07', netSales: 40000 },
+          { date: '2026-10-11', netSales: 0 },
+          { date: '2026-10-14', netSales: 20001 }
+        ]
+      }), classic);
+      assert.equal(thresholdHistory.referenceLines[0].value, 120001 / 3);
+      assert.equal(thresholdHistory.referenceLines[1].value, 60001 / 2);
+      assert.equal(thresholdHistory.labels.length, 8, 'The threshold must not remove calendar dates');
+      assert.deepEqual(thresholdHistory.series[0].values, [null, null, null, null, 60000, 40000, null, 20001]);
+      assert.match(thresholdHistory.subtitle, /3 días en general; 2 de miércoles/);
+      assert.equal(await page.locator('#report-chart-svg .report-chart-average').count(), 0);
+      const zeroDay = page.locator('.report-chart-day-target').nth(historyLabels.findIndex(label => label.includes('09 sept 2026')));
+      await zeroDay.hover();
+      assert.match(await page.locator('#report-chart-tooltip').innerText(), /09 sept 2026 · Venta neta ≤ \$20.000: sin barra ni promedio/);
+      await page.locator('.report-chart-day-target').last().focus();
+      assert.match(await page.locator('#report-chart-tooltip').innerText(), /14 oct 2026 · Venta neta ≤ \$20.000: sin barra ni promedio/);
+      await page.evaluate(config => {
+        setReportChart('threshold-history-test', config);
+        openReportChart('threshold-history-test');
+      }, thresholdHistory);
+      assert.equal(await page.locator('#report-chart-svg .report-chart-mark').count(), 3);
+      const highlights = page.locator(`#report-chart-svg .report-chart-mark[fill="${thresholdHistory.referenceLines[1].color}"]`);
+      assert.equal(await highlights.count(), 2);
+      for (const title of await highlights.locator('title').allTextContents()) assert.match(title, /^mié/);
+      assert.equal(await page.locator('#report-chart-svg .report-chart-average').count(), 2);
+      assert.equal(await page.locator('#report-chart-data-body tr').first().locator('td').nth(1).textContent(), '—');
+      await page.locator('.report-chart-day-target').last().hover();
+      assert.match(await page.locator('#report-chart-tooltip').innerText(), /Venta neta sin IVA: \$20.001/);
+      await page.locator('#report-chart-close').click();
       let reportReads = 0;
       page.on('request', request => { if (new URL(request.url()).pathname === '/api/reports/weekly-sales') reportReads++; });
       const indicators = await page.locator('#intraday-indicators').innerText();

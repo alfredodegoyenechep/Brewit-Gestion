@@ -212,12 +212,31 @@
 .report-chart-legend i { width: 11px; height: 11px; border-radius: 3px; }
 .report-chart-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--coffee-soft-2); }
 #report-chart-svg { display: block; min-width: 100%; }
+#report-chart-svg.report-chart-daily-history { width: 100%; min-width: 760px; height: auto; }
+.report-chart-legend i.report-chart-legend-line { width: 24px; height: 2px; border-radius: 0; }
+.report-chart-day-target:hover, .report-chart-day-target:focus { fill: rgba(128, 128, 128, .12); outline: none; }
+.report-chart-tooltip { position: fixed; z-index: 1; max-width: min(350px, calc(100vw - 24px)); padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 4px 18px rgba(0, 0, 0, .2); font-size: 13px; font-weight: 700; pointer-events: none; }
 .report-chart-grid { stroke: var(--border); stroke-width: 1; }
 .report-chart-axis, .report-chart-label { fill: var(--text-soft); font-size: calc(10px * var(--font-scale)); font-weight: 700; }
 .report-chart-pie-label { fill: var(--text); font-size: calc(11px * var(--font-scale)); font-weight: 700; }
 .report-chart-mark { transition: opacity 120ms ease; }
 .report-chart-mark:hover { opacity: .72; }
 .report-chart-empty { margin: 16px 0; padding: 28px; border: 1px dashed var(--border); border-radius: 11px; color: var(--text-soft); text-align: center; }
+.product-hourly-result-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.product-hourly-result-head label { display: grid; gap: 5px; color: var(--text-soft); font-size: 12px; font-weight: 800; }
+.product-hourly-result-head select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-soft); color: var(--text); }
+.product-hourly-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+.product-hourly-table { width: 100%; min-width: max-content; border-collapse: separate; border-spacing: 0; }
+.product-hourly-table th, .product-hourly-table td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 12px; vertical-align: top; }
+.product-hourly-table thead th { position: sticky; top: 0; z-index: 2; background: var(--coffee-soft-2); text-align: left; min-width: 280px; }
+.product-hourly-table thead th:first-child, .product-hourly-table tbody th { position: sticky; left: 0; z-index: 1; min-width: 120px; background: var(--panel); white-space: nowrap; }
+.product-hourly-table thead th:first-child { z-index: 3; background: var(--coffee-soft-2); }
+.product-hourly-top { display: grid; gap: 8px; margin: 0; padding-left: 24px; }
+.product-hourly-top li { padding-left: 3px; }
+.product-hourly-top strong { display: block; font-size: 12px; }
+.product-hourly-figures { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-soft); font-size: 11px; }
+.product-hourly-figures .selected { color: var(--clay); font-weight: 800; }
+.product-hourly-empty { color: var(--text-soft); }
 .report-chart-data { margin-top: 14px; }
 .report-chart-data summary { color: var(--clay); font-weight: 800; cursor: pointer; }
 .report-chart-data-scroll { max-height: 260px; margin-top: 10px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; }
