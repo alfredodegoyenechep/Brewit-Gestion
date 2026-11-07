@@ -6,6 +6,7 @@ window.initializeProductTimeline = config => {
   const state = { today: browserIsoToday(), report: null, options: null, optionsKey: null, selectedProducts: new Set(), selectedIngredients: new Set(),
     chartSeries: new Set(['total']), controller: null, optionsController: null, optionsRequest: null, optionsTimer: null, optionsNotice: '', hierarchyUnavailable: false, generation: 0 };
   const number = value => value == null ? '—' : new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(value);
+  const oneDecimal = value => new Intl.NumberFormat('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value);
   const money = value => value == null ? '—' : formatClp(value);
   const date = value => new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`));
   const label = point => weekdayReport ? point.label : point.from === point.to ? date(point.from) : `${date(point.from)} – ${date(point.to)}`;
@@ -119,6 +120,24 @@ window.initializeProductTimeline = config => {
     const head = table.createTHead().insertRow();
     for (const text of [weekdayReport ? 'Día de la semana' : 'Período', ...(weekdayReport ? ['Días con venta', 'Días sin venta excluidos'] : []), ...data.series.map(item => `${item.label} · ${item.codes.join(' / ')}`), weekdayReport ? 'Promedio selección' : 'Total selección']) { const cell = el('th', text); cell.scope = 'col'; head.append(cell); }
     const body = table.createTBody();
+    if (!weekdayReport) {
+      const price = body.insertRow(), margin = body.insertRow();
+      price.className = margin.className = 'product-timeline-reference-row';
+      const priceHeading = el('th', 'Precio venta público (IVA incluido)'), marginHeading = el('th', 'Margen % (precio neto y costo neto)');
+      priceHeading.scope = marginHeading.scope = 'row'; price.append(priceHeading); margin.append(marginHeading);
+      const priceLabel = row => row.priceGrossMin == null || row.priceGrossMax == null ? '—'
+        : row.priceGrossMin === row.priceGrossMax ? money(row.priceGrossMin)
+          : `${money(row.priceGrossMin)}–${money(row.priceGrossMax)}`;
+      for (const item of data.series) {
+        price.append(el('td', priceLabel(item)));
+        const marginCell = el('td', item.marginPercent == null ? '—' : `${oneDecimal(item.marginPercent)}%`);
+        if (item.referenceIssues?.length) marginCell.title = item.referenceIssues.join('\n');
+        else if (item.referenceFallbacks?.length) marginCell.title = `Costo maestro vigente usado para: ${item.referenceFallbacks.join(', ')}`;
+        margin.append(marginCell);
+      }
+      price.append(el('td', '—', 'product-timeline-total'));
+      margin.append(el('td', data.totals.marginPercent == null ? '—' : `${oneDecimal(data.totals.marginPercent)}%`, 'product-timeline-total'));
+    }
     data.periods.forEach((point, index) => {
       const row = body.insertRow(), heading = el('th', label(point)); heading.scope = 'row'; row.append(heading);
       if (weekdayReport) row.append(el('td', number(point.observedDays)), el('td', number(point.excludedDays)));
@@ -241,6 +260,10 @@ window.initializeProductTimeline = config => {
         ...data.periods.map((point, i) => [point.label, point.observedDays, point.excludedDays, point.unknownDays, ...data.series.map(item => item.points[i][value]), point[value], point[value === 'units' ? 'totalUnits' : 'totalNetSales']]),
         ['Promedio diario del período', data.sample.observedDays, data.sample.excludedDays, data.sample.unknownDays, ...data.series.map(item => item[value]), data.totals[value], data.totals[value === 'units' ? 'totalUnits' : 'totalNetSales']]]
         : [['Período', 'Desde', 'Hasta', ...data.series.map(item => `${item.label} · ${item.codes.join(' / ')}`), 'Total selección'],
+        ['Precio venta público (IVA incluido)', '', '', ...data.series.map(item => item.priceGrossMin == null || item.priceGrossMax == null ? null
+          : item.priceGrossMin === item.priceGrossMax ? item.priceGrossMin : `${money(item.priceGrossMin)}–${money(item.priceGrossMax)}`), null],
+        ['Margen % (precio neto y costo neto)', '', '', ...data.series.map(item => item.marginPercent == null ? null : item.marginPercent / 100),
+          data.totals.marginPercent == null ? null : data.totals.marginPercent / 100],
         ...data.periods.map((point, i) => [label(point), point.from, point.to, ...data.series.map(item => item.points[i][value]), point[value]]),
         ['Total del período', '', '', ...data.series.map(item => item[value]), data.totals[value]],
         ['% del total', '', '', ...data.series.map(item => share(item[value], data.totals[value])), share(data.totals[value], data.totals[value])],
@@ -249,6 +272,10 @@ window.initializeProductTimeline = config => {
           return fractions.some(fraction => fraction == null) ? null : fractions.reduce((sum, fraction) => sum + fraction, 0);
         }), share(data.totals[value], data.totals[value])]];
       const sheet = XLSX.utils.aoa_to_sheet(rows); sheet['!cols'] = [{ wch: 38 }, { wch: 12 }, { wch: 12 }, ...data.series.map(() => ({ wch: 25 })), { wch: 20 }];
+      if (!weekdayReport) for (let column = 3; column < rows[2].length; column++) {
+        const cell = sheet[XLSX.utils.encode_cell({ r: 2, c: column })];
+        if (cell?.t === 'n') cell.z = '0.0%';
+      }
       if (!weekdayReport) for (let row = rows.length - 2; row < rows.length; row++) for (let column = 3; column < rows[row].length; column++) {
         const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
         if (cell?.t === 'n') cell.z = '0.0%';

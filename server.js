@@ -4064,7 +4064,8 @@ function createApp(options = {}) {
     const activeStores = activeLocations.filter(location => location.type === 'store');
     const requestedIds = [...new Set((locationIds || []).filter(id => activeLocations.some(location => location.id === id)))];
     const requestedSet = new Set(requestedIds.length ? requestedIds : activeStores.map(location => location.id));
-    const locationsToRead = new Set([...requestedSet, ...(synchronizedOnly ? activeLocations : activeStores).map(location => location.id)]);
+    const purchaseLocations = options.includeWarehousePurchases || synchronizedOnly ? activeLocations : activeStores;
+    const locationsToRead = new Set([...requestedSet, ...purchaseLocations.map(location => location.id)]);
     const localByCode = new Map();
     const globalByCode = new Map();
     const rowIdentity = row => [row.locationId, row.date, row.document, row.line, row.code, row.purchaseUnit || row.unit].join('|');
@@ -4095,7 +4096,7 @@ function createApp(options = {}) {
         if (!code || row.date > cutoffDate) continue;
         if (!(row.quantity > 0) || /credito|credit note|credit_note/.test(normalizeHeader(row.documentType))) continue;
         if (requestedSet.has(locationId)) addCandidate(localByCode, code, row);
-        if ((synchronizedOnly ? activeLocations : activeStores).some(location => location.id === locationId)) addCandidate(globalByCode, code, row);
+        if (purchaseLocations.some(location => location.id === locationId)) addCandidate(globalByCode, code, row);
       }
     }
     for (const map of [localByCode, globalByCode]) {
@@ -4112,7 +4113,13 @@ function createApp(options = {}) {
       const sourceUnit = hasBaseCost ? row.baseUnit : (row.purchaseUnit || row.unit);
       if (!(rawCost > 0)) return null;
       if (options.netCostBasis && (!sourceUnit || !targetUnit)) return null;
-      return unitCostForRecipeUnit({ unitCost: rawCost, unit: sourceUnit }, targetUnit);
+      const directCost = unitCostForRecipeUnit({ unitCost: rawCost, unit: sourceUnit }, targetUnit);
+      if (directCost !== null) return directCost;
+      const conversion = options.purchaseUnitConversions?.get(String(row.code || '').toUpperCase())
+        ?.conversions.get(normalizedUnit(sourceUnit));
+      if (!(conversion?.unitsPerPurchaseUnit > 0)) return null;
+      return unitCostForRecipeUnit({ unitCost: rawCost / conversion.unitsPerPurchaseUnit,
+        unit: conversion.baseUnit }, targetUnit);
     };
 
     return {
@@ -6594,10 +6601,49 @@ function createApp(options = {}) {
       }
       walk(code, new Set()); const list = [...found.values()]; data.recipeCache.set(code, list); return list;
     };
+    const referenceCache = new Map(), referenceResolvers = new Map();
+    const referenceFor = (line, locationId) => {
+      if (action !== 'report') return null;
+      const code = String(line.code || '').toUpperCase(), key = `${locationId}:${code}`;
+      if (referenceCache.has(key)) return referenceCache.get(key);
+      const currentCatalog = at(today).catalog.products.get(code);
+      const priceGross = currentCatalog?.listPrice > 0 ? currentCatalog.listPrice : null;
+      let costNet = null, costReason = null, costFallbacks = [];
+      if (priceGross !== null) {
+        if (!referenceResolvers.has(locationId)) {
+          const master = latestMasterFile('master-catalog', today), recipes = resolveRecipes(today);
+          let catalog = new Map();
+          try { if (master) catalog = parseIngredientCatalog(master.filePath); } catch {}
+          referenceResolvers.set(locationId, { catalog, resolve: buildCostResolver(today, [locationId], {
+            catalog, recipes: recipes.recipes, netCostBasis: true, includeBreakdown: true,
+            projected: true, strictPurchase: true, includeWarehousePurchases: true,
+            purchaseUnitConversions: master ? parsePurchaseUnitConversions(master.filePath) : new Map(),
+            masterEffectiveDate: master?.validFrom || null,
+            recipeEffectiveDate: recipes.primary?.validFrom || null
+          }) });
+        }
+        const { catalog, resolve } = referenceResolvers.get(locationId);
+        const ref = resolve.resolve(code, currentCatalog.unit, catalog.get(code));
+        const { costInfo, costBreakdown } = require('./product-xray');
+        const info = costInfo(ref), breakdown = costBreakdown(ref, code, catalog);
+        if (info.comparable && breakdown.complete) {
+          costNet = ref.unitCost;
+          costFallbacks = [...new Set(breakdown.rows.filter(row => row.source === 'master').map(row => row.code))];
+        }
+        else {
+          const missing = breakdown.rows.filter(row => row.source === 'missing' || row.totalCost == null)
+            .map(row => `${row.code}: ${row.reason || 'sin compra o conversión compatible'}`);
+          costReason = `${code} · ${locationId}: ${[...new Set(missing)].join('; ') || info.reason || breakdown.reason || ref.reason || 'Costo neto no disponible'}`;
+        }
+      }
+      const reference = { priceGross, costNet, costReason, costFallbacks };
+      referenceCache.set(key, reference);
+      return reference;
+    };
     const build = action === 'weekday-report' ? require('./daily-distribution').buildReport
       : action === 'product-hourly' ? require('./product-hourly').buildReport : timelineEngine.buildReport;
     const report = build({ orders, period, scope: context.scope, locationIds: context.locationIds,
-      coverage: context.coverage, locations: source.stores.map(store => ({ id: store.id, name: store.name })), ingredientsFor, query,
+      coverage: context.coverage, locations: source.stores.map(store => ({ id: store.id, name: store.name })), ingredientsFor, referenceFor, query,
       barFor(line, date) { const data = at(date); return require('./sales-insight-filters').classifySalesBar({ name: line.name,
         hierarchyPath: line.categoryPath || [], hierarchyIds: data.catalog.products.get(String(line.code).toUpperCase())?.hierarchyIds || [] }, data.hot, data.cold); } });
     report.warnings = [...new Set([...report.warnings, ...warnings])]; return report;

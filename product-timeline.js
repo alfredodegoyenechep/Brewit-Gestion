@@ -80,15 +80,38 @@ function bucketsFor(period, grain) {
   return { buckets, byDate };
 }
 function buildReport({ orders, period, scope, locationIds, coverage = [], ingredientsFor = () => [], barFor = line => line.bar,
-  query = {}, warnings = [], bucketConfig = null }) {
+  referenceFor = () => null, query = {}, warnings = [], bucketConfig = null }) {
   const filters = selection(query), selectedProducts = new Set(filters.products.map(code => code.toUpperCase()));
   const selectedIngredients = new Set(filters.ingredients.map(code => code.toUpperCase()));
   const { buckets, byDate } = bucketConfig || bucketsFor(period, filters.grain), groups = new Map();
   const blank = () => ({ units: 0, netSales: 0, missingSales: 0 });
-  const totals = blank(), periods = buckets.map(bucket => ({ ...bucket, ...blank() }));
+  const referenceBlank = () => ({ referenceUnits: 0, referenceNetPrice: 0, referenceNetCost: 0,
+    referencePriceMin: null, referencePriceMax: null, referencePriceComplete: true, referenceCostComplete: true,
+    referenceIssues: [], referenceFallbacks: [] });
+  const totals = { ...blank(), ...referenceBlank() }, periods = buckets.map(bucket => ({ ...bucket, ...blank() }));
   const add = (target, line, amount) => {
     target.units += Number.isFinite(line.quantity) ? line.quantity : 0;
     if (Number.isFinite(amount)) target.netSales += amount; else target.missingSales++;
+  };
+  const addReference = (target, line, reference) => {
+    const quantity = Number(line.quantity);
+    if (!(quantity > 0)) return;
+    target.referenceUnits += quantity;
+    if (!(reference?.priceGross > 0)) target.referencePriceComplete = false;
+    else {
+      target.referencePriceMin = Math.min(target.referencePriceMin ?? reference.priceGross, reference.priceGross);
+      target.referencePriceMax = Math.max(target.referencePriceMax ?? reference.priceGross, reference.priceGross);
+      target.referenceNetPrice += quantity * reference.priceGross / 1.19;
+    }
+    if (!Number.isFinite(reference?.costNet)) {
+      target.referenceCostComplete = false;
+      const issue = reference?.costReason || 'Costo neto no disponible';
+      if (!target.referenceIssues.includes(issue)) target.referenceIssues.push(issue);
+    }
+    else {
+      target.referenceNetCost += quantity * reference.costNet;
+      for (const code of reference.costFallbacks || []) if (!target.referenceFallbacks.includes(code)) target.referenceFallbacks.push(code);
+    }
   };
   for (const order of orders) {
     if (!locationIds.includes(order.locationId) || !byDate.has(order.date)) continue;
@@ -110,20 +133,36 @@ function buildReport({ orders, period, scope, locationIds, coverage = [], ingred
       const product = identity(line, filters.groupFormats);
       if (!groups.has(product.key)) {
         if ((groups.size + 1) * buckets.length > 500000) fail('La tabla es demasiado grande. Reduce el período o selecciona menos productos.');
-        groups.set(product.key, { key: product.key, label: product.label, codes: [], ...blank(), points: buckets.map(blank) });
+        groups.set(product.key, { key: product.key, label: product.label, codes: [], ...blank(), ...referenceBlank(), points: buckets.map(blank) });
       }
       const row = groups.get(product.key); if (code && !row.codes.includes(code)) row.codes.push(code);
       add(row, line, amount); add(row.points[index], line, amount); add(periods[index], line, amount); add(totals, line, amount);
+      const reference = referenceFor(line, order.locationId);
+      addReference(row, line, reference); addReference(totals, line, reference);
     }
   }
   const finish = value => ({ ...value, units: round(value.units), netSales: value.missingSales ? null : round(value.netSales) });
+  const finishReference = value => ({
+    priceGrossMin: value.referenceUnits > 0 && value.referencePriceComplete ? value.referencePriceMin : null,
+    priceGrossMax: value.referenceUnits > 0 && value.referencePriceComplete ? value.referencePriceMax : null,
+    marginPercent: value.referenceUnits > 0 && value.referencePriceComplete && value.referenceCostComplete && value.referenceNetPrice > 0
+      ? round((value.referenceNetPrice - value.referenceNetCost) / value.referenceNetPrice * 100) : null,
+    referenceIssues: value.referenceIssues, referenceFallbacks: value.referenceFallbacks
+  });
+  const finishSeries = value => {
+    const { referenceUnits, referenceNetPrice, referenceNetCost, referencePriceMin, referencePriceMax,
+      referencePriceComplete, referenceCostComplete, referenceIssues, referenceFallbacks, ...publicValues } = value;
+    return { ...finish(publicValues), ...finishReference(value) };
+  };
   const salesCoverage = coverageFor(coverage, locationIds, period.from, period.to, 'sales');
   return { definitionVersion: VERSION, period, scope, filters,
-    series: [...groups.values()].map(row => ({ ...finish(row), codes: row.codes.sort(), points: row.points.map(finish) }))
+    referenceDate: query.serverToday || period.to,
+    series: [...groups.values()].map(row => ({ ...finishSeries(row), codes: row.codes.sort(), points: row.points.map(finish) }))
       .sort((a, b) => (b.netSales || 0) - (a.netSales || 0) || a.label.localeCompare(b.label, 'es')),
-    periods: periods.map(finish), totals: finish(totals), coverage: salesCoverage,
-    definition: 'Unidades y venta neta de los productos vendidos, después de descuentos y sin IVA. Las selecciones de ingredientes incluyen la venta completa del producto una sola vez, según las recetas vigentes en la fecha de venta, incluidas subrecetas; no representan consumo de ingredientes. Semanas de lunes a domingo y meses calendario, recortados al período consultado.',
-    warnings: [...new Set([...warnings, ...(!salesCoverage.complete ? ['La cobertura de ventas no está confirmada para todo el período. Los ceros indican ausencia de ventas registradas, no certifican que el local estuvo sin actividad.'] : []),
+    periods: periods.map(finish), totals: finishSeries(totals), coverage: salesCoverage,
+    definition: `Unidades y venta neta de los productos vendidos, después de descuentos y sin IVA. Precio público con IVA y costo neto vigentes al ${query.serverToday || period.to}; precio neto = precio público / 1,19; margen = (precio neto − costo neto) / precio neto. En formatos agrupados y varias cafeterías, el margen pondera las unidades positivas observadas en el período. Si falta un precio o costo comparable, el margen se muestra sin dato. Las selecciones de ingredientes incluyen la venta completa del producto una sola vez, según las recetas vigentes en la fecha de venta, incluidas subrecetas; no representan consumo de ingredientes. Semanas de lunes a domingo y meses calendario, recortados al período consultado.`,
+    warnings: [...new Set([...warnings, ...(totals.referenceFallbacks.length ? [`${totals.referenceFallbacks.length} insumos sin compra compatible usan el costo neto del maestro vigente para estimar el margen: ${totals.referenceFallbacks.slice(0, 12).join(', ')}${totals.referenceFallbacks.length > 12 ? ' y otros' : ''}.`] : []),
+      ...(!salesCoverage.complete ? ['La cobertura de ventas no está confirmada para todo el período. Los ceros indican ausencia de ventas registradas, no certifican que el local estuvo sin actividad.'] : []),
       ...(totals.missingSales ? ['Hay líneas sin importe disponible: sus unidades se incluyen y el importe afectado se muestra sin dato.'] : [])])] };
 }
 module.exports = { VERSION, periodFor, selection, identity, optionsFor, bucketsFor, buildReport };

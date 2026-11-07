@@ -9787,6 +9787,8 @@ body:has(#financial-results-workspace:not([style*="display: none"]):not([style*=
 .product-timeline-table tr > :first-child { position: sticky; left: 0; z-index: 1; min-width: 200px; text-align: left; background: var(--panel); }
 .product-timeline-table thead tr > :first-child { z-index: 3; background: var(--coffee-soft-2); }
 .product-timeline-table tfoot th, .product-timeline-table tfoot td, .product-timeline-total { font-weight: 800; background: var(--coffee-soft-2); }
+.product-timeline-reference-row th, .product-timeline-reference-row td { background: var(--coffee-soft-2) !important; font-weight: 700; }
+.product-timeline-table tbody .product-timeline-reference-row:nth-child(2) th, .product-timeline-table tbody .product-timeline-reference-row:nth-child(2) td { border-bottom: 2px solid var(--border); }
 .product-timeline-series-picker { margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .product-timeline-series-picker summary { cursor: pointer; font-weight: 800; }
 .product-timeline-chart { width: 100%; overflow: auto; color: var(--text); }

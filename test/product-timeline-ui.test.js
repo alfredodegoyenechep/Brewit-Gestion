@@ -28,7 +28,9 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   await page.locator('#product-timeline-status').filter({ hasText: 'Reporte generado' }).waitFor();
   assert.equal(requests.length, 1);
   assert.deepEqual(JSON.parse(requests[0].searchParams.get('products')).sort(), ['P0', 'P1', 'P2']);
-  assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 7);
+  assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 9);
+  assert.match(await page.locator('#product-timeline-table tbody tr').first().innerText(), /Precio venta público.*\$1\.190–\$2\.380/);
+  assert.match(await page.locator('#product-timeline-table tbody tr').nth(1).innerText(), /Margen.*85,7%/);
   assert.equal(await page.locator('#product-timeline-table thead th').count(), 3);
   assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /Total del período\s+5\s+5/);
   assert.deepEqual(await page.locator('#product-timeline-table tfoot tr').count(), 3);
@@ -47,10 +49,13 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   assert.equal(requests.length, 1, 'presentation changes must never reload sales');
   const downloadEvent = page.waitForEvent('download'); await page.locator('#product-timeline-export').click();
   const file = path.join(os.tmpdir(), `product-timeline-${Date.now()}.xlsx`); await (await downloadEvent).saveAs(file); t.after(() => fs.rmSync(file, { force: true }));
-  const book = XLSX.readFile(file), sales = XLSX.utils.sheet_to_json(book.Sheets['Venta neta'], { header: 1 }), units = XLSX.utils.sheet_to_json(book.Sheets.Unidades, { header: 1 });
+  const book = XLSX.readFile(file, { cellNF: true }), sales = XLSX.utils.sheet_to_json(book.Sheets['Venta neta'], { header: 1 }), units = XLSX.utils.sheet_to_json(book.Sheets.Unidades, { header: 1 });
   assert.equal(sales.at(-3).at(-1), 5000); assert.equal(units.at(-3).at(-1), 5);
   assert.equal(sales.at(-2).at(-1), 1); assert.equal(sales.at(-1).at(-1), 1);
-  assert.equal(sales.slice(1, -3).reduce((sum, row) => sum + row.at(-1), 0), 5000);
+  assert.equal(sales[1][3], '$1.190–$2.380');
+  assert.equal(sales[2][3], 0.8571);
+  assert.equal(book.Sheets['Venta neta'].D3.z, '0.0%');
+  assert.equal(sales.slice(3, -3).reduce((sum, row) => sum + row.at(-1), 0), 5000);
   await page.getByRole('tab', { name: 'Productos y jerarquías', exact: true }).click();
   await page.getByRole('tab', { name: 'Productos en el tiempo', exact: true }).click();
   assert.equal(requests.length, 1); assert.equal(await page.locator('#product-timeline-from').inputValue(), '2026-10-01');
@@ -60,7 +65,7 @@ test('timeline UI preserves independent selections, groups sizes and uses the sa
   await page.locator('#product-timeline-grain').selectOption('weekly');
   await page.locator('#product-timeline-run').click();
   await page.locator('#product-timeline-status').filter({ hasText: 'Reporte generado' }).waitFor();
-  assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 2);
+  assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 4);
   assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /5\.000/);
   for (const width of [390, 768, 1700]) {
     await page.setViewportSize({ width, height: 1100 });
@@ -121,7 +126,7 @@ test('timeline UI cancels outdated results, validates selections and retries ser
   assert.equal(await page.locator('#product-timeline-run').isEnabled(), true);
   await page.unroute('**/api/sales/product-timeline?*');
   await page.locator('#product-timeline-run').click(); await page.locator('#product-timeline-status').filter({ hasText: 'Reporte generado' }).waitFor();
-  assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 1);
+  assert.equal(await page.locator('#product-timeline-table tbody tr').count(), 3);
   assert.match(await page.locator('#product-timeline-table tfoot tr').first().innerText(), /5/);
   assert.deepEqual(errors, []);
 });
